@@ -1,0 +1,526 @@
+name: Zen agent
+
+# Runs the fork's own agent (agent/zen-agent.js) on a runner and publishes its
+# web hub through a cloudflared quick tunnel, so it is usable from a phone
+# browser with no account, no token and no one-tunnel limit.
+#
+# Why this instead of the opencode workflow: opencode was slow to start, could
+# not reach other repositories, and its free models were mostly dead ends. This
+# agent uses the three Zen models that actually answer, starts in seconds, and
+# has a git tool - so it can clone and fix any repository the token can reach,
+# not just this one.
+#
+# WHERE THE WORK GOES
+#   The runner is destroyed when the job ends. Everything under work/ is
+#   committed to a branch every two minutes and once more on the way out,
+#   including on cancellation and on the six-hour timeout. Reconnecting later
+#   continues the same branch.
+#
+# ACCESS
+#   The hub binds to 0.0.0.0 so the tunnel can reach it, and the agent refuses
+#   non-loopback requests without ZEN_REMOTE_TOKEN. A token is generated per
+#   run and embedded in the link printed in the summary, which sets a cookie on
+#   first load. Anyone with that link has the session, so treat it as a
+#   password.
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "Runner OS"
+        type: choice
+        options: [linux, windows]
+        default: linux
+      branch:
+        description: "Branch to keep the work on (created if absent)"
+        type: string
+        default: "agent-work"
+      repos:
+        description: "Extra repositories to clone into work/, space separated (owner/name)"
+        type: string
+        default: ""
+      autosave_minutes:
+        description: "Commit and push every N minutes"
+        type: string
+        default: "2"
+
+permissions:
+  contents: write
+
+jobs:
+  agent:
+    if: inputs.os == 'linux'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+          # Full history: a shallow clone cannot push a branch.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Prepare the working branch
+        working-directory: fork
+        run: |
+          git config user.email "agent@symbiosis"
+          git config user.name  "Zen agent"
+          BRANCH="${{ inputs.branch }}"
+
+          # Start from the checked-out commit, never from the old branch tip.
+          #
+          # Checking the branch out replaced the whole tree with whatever it
+          # held last time, so a session launched after new commits still
+          # served the agent and its hub from an older state - the UI on the
+          # tunnel stayed stale no matter what had been pushed to main.
+          #
+          # Move the branch pointer to HEAD instead: the session always runs
+          # the current code, and autosave still commits to a branch rather
+          # than to main.
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git branch -f "$BRANCH" HEAD
+            git checkout -q "$BRANCH"
+            git push -q --force-with-lease origin "$BRANCH" || git push -q -f origin "$BRANCH"
+            echo "reset $BRANCH to $(git rev-parse --short HEAD)"
+          else
+            git checkout -q -b "$BRANCH" && git push -q -u origin "$BRANCH"
+            echo "created $BRANCH at $(git rev-parse --short HEAD)"
+          fi
+          echo "WORK_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+          # Prove which build is about to be served, so a stale UI is visible
+          # in the log rather than only in the browser.
+          echo "hub/index.html: $(git log -1 --format='%h %s' -- agent/hub/index.html)"
+
+      - name: Clone the repositories to work on
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/fork/work"
+          cd "$GITHUB_WORKSPACE/fork/work"
+
+          # Credentials for any repository the token can see, so the agent can
+          # clone and push without being handed a token in conversation.
+          git config --global credential.helper store
+          echo "https://x-access-token:${GH_TOKEN}@github.com" > "$HOME/.git-credentials"
+          chmod 600 "$HOME/.git-credentials"
+
+          for repo in ${{ inputs.repos }}; do
+            name=$(basename "$repo")
+            if git clone -q "https://github.com/$repo.git" "$name" 2>/dev/null; then
+              echo "cloned $repo"
+            else
+              echo "::warning::could not clone $repo - check the name and that the token can see it"
+            fi
+          done
+          ls -1 2>/dev/null || true
+
+      - name: Start autosave
+        run: |
+          # printf, not a heredoc: this run: block is indented, and an indented
+          # heredoc writes those spaces into the file - fatal for a shebang.
+          printf '%s\n' \
+            '#!/bin/bash' \
+            'cd "$1" || exit 1' \
+            'while true; do' \
+            '  sleep "$2"' \
+            '  if [ -n "$(git status --porcelain)" ]; then' \
+            '    git add -A' \
+            '    git commit -q -m "agent autosave $(date -u "+%Y-%m-%d %H:%M:%S")" >/dev/null 2>&1' \
+            '    git push -q origin HEAD >/dev/null 2>&1' \
+            '  fi' \
+            'done' > "$HOME/autosave.sh"
+          chmod +x "$HOME/autosave.sh"
+          nohup "$HOME/autosave.sh" "$GITHUB_WORKSPACE/fork" \
+            "$(( ${{ inputs.autosave_minutes }} * 60 ))" > /tmp/autosave.log 2>&1 &
+          echo "autosave every ${{ inputs.autosave_minutes }} min -> $WORK_BRANCH"
+
+      - name: Start the agent and open the tunnel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # No tunnel secret any more - see the cloudflared note below.
+          TOKEN="zen-$(openssl rand -hex 12)"
+          cd "$GITHUB_WORKSPACE/fork"
+
+          # 0.0.0.0 so the tunnel can reach it; the agent then requires the token for
+          # every non-loopback request.
+          # ZEN_LONG_TASKS raises the round ceiling from 25 to 250 and allows
+          # longer-running commands. A short question still finishes in one
+          # round - the limit is a ceiling, not a quota - but a real build or a
+          # multi-file refactor needs the headroom, and hitting the cap
+          # mid-task looks exactly like the agent giving up.
+          # Provider credentials.
+          #
+          # SYMBIOSIS_KEY is the only secret worth setting: paste every token
+          # you have into it, one per line, and the agent routes each by its
+          # prefix - sk-or- to OpenRouter, hf_ to Hugging Face, ghp_/github_pat_
+          # to GitHub. Six separately-named secrets meant a typo in any one of
+          # them showed up only as a provider silently listed as unavailable.
+          #
+          # The individual variables below still win when set, so an existing
+          # setup keeps working and one provider can be overridden without
+          # touching the rest. All of them are optional: an absent secret
+          # expands to an empty string and the model stays visibly disabled
+          # rather than failing at request time.
+          #
+          # A Hugging Face token does double duty: it is that provider's key,
+          # and it lifts the anonymous rate limit when pulling a GGUF for the
+          # local runtime, which is what makes a multi-gigabyte download
+          # finish reliably.
+          ZEN_BIND_HOST=0.0.0.0 ZEN_REMOTE_TOKEN="$TOKEN" MCP_PORT=8765 \
+            ZEN_LONG_TASKS=1 ZEN_LONG_MAX_STEPS=250 \
+            SESSION_STARTED_MS="$(date +%s000)" SESSION_LIMIT_MS=21600000 \
+            GITHUB_TOKEN="$GH_TOKEN" \
+            SYMBIOSIS_KEY="${{ secrets.SYMBIOSIS_KEY }}" \
+            HF_TOKEN="${{ secrets.HF_TOKEN }}" \
+            OPENROUTER_API_KEY="${{ secrets.OPENROUTER_API_KEY }}" \
+            ZEN_LOCAL_AI_PORT=8791 \
+            nohup node agent/zen-agent.js > /tmp/agent.log 2>&1 &
+
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null "http://127.0.0.1:8765/mcp/status" && break
+            sleep 2
+          done
+          if ! curl -sf -o /dev/null "http://127.0.0.1:8765/mcp/status"; then
+            echo "::error::the agent did not start."
+            tail -40 /tmp/agent.log
+            exit 1
+          fi
+          echo "agent is up on 8765"
+
+          # cloudflared, not ngrok.
+          #
+          # ngrok's free plan allows one tunnel per account, so the agent and a
+          # desk could never be up at the same time - and it needed an
+          # authtoken kept alive as a secret. A cloudflared quick tunnel needs
+          # no account and no token, and there is no limit on how many run at
+          # once. Same tool the desks use, so there is one thing to understand
+          # instead of two.
+          #
+          # The trade is an address that changes every run. Nobody types it:
+          # the panel reads it from session-state, and the link carries the
+          # token.
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8765 /tmp/tunnel.log)
+          if [ -z "$URL" ]; then
+            echo "::error::no tunnel came up."
+            tail -25 /tmp/tunnel.log
+            exit 1
+          fi
+
+          {
+            echo "## Zen agent"
+            echo ""
+            echo "**[Open the agent]($URL/hub?token=$TOKEN)**"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Address | \`$URL\` |"
+            echo "| Token | \`$TOKEN\` |"
+            echo "| Branch | \`$WORK_BRANCH\`, pushed every ${{ inputs.autosave_minutes }} min |"
+            echo "| Models | laguna-s-2.1-free · mimo-v2.5-free · deepseek-v4-flash-free |"
+            echo ""
+            echo "The link carries the token and sets a cookie on first load, so"
+            echo "it opens straight into the hub. Treat it as a password."
+            echo ""
+            echo "Repositories cloned under \`work/\` can be edited and pushed by"
+            echo "the agent; credentials for anything the token can see are"
+            echo "already configured."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "=================================================="
+          echo " Agent: $URL/hub?token=$TOKEN"
+          echo " Branch: $WORK_BRANCH"
+          echo "=================================================="
+
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "slot=agent" "kind=CLI-агент" "os=linux" \
+              "url=$URL" "agentUrl=$URL/hub?token=$TOKEN" \
+              "agentToken=$TOKEN" "branch=$WORK_BRANCH"
+
+      - name: Keep the session alive
+        run: |
+          echo "Running until cancelled, or for six hours."
+          sleep 21000
+
+      - name: Clear the published session
+        if: always()
+        run: |
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent" "state=ended" || true
+
+      - name: Final save
+        if: always()
+        run: |
+          cd "$GITHUB_WORKSPACE/fork" || exit 0
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -q -m "agent final save $(date -u '+%Y-%m-%d %H:%M')" || true
+            git push -q origin HEAD || true
+            echo "Pushed the last changes to ${WORK_BRANCH:-the working branch}."
+          else
+            echo "Nothing left to save."
+          fi
+
+  # ── Windows ────────────────────────────────────────────────────────
+  #
+  #  The same agent on a windows-latest runner. Node and pwsh are on the image
+  #  already, so the agent itself needs nothing extra; capabilities then pick
+  #  the PowerShell runtime automatically and the windows_* blueprints become
+  #  the ones on offer.
+  #
+  #  Why a separate job rather than a matrix: every shell line differs, and a
+  #  matrix with `if: runner.os` on each step is harder to read than two jobs
+  #  that each say what they do. The Windows runner is also the better machine
+  #  for interactive work - 4 cores and 16 GB against 2 and 7 - it just cannot
+  #  build the Android APK.
+
+  agent-windows:
+    if: inputs.os == 'windows'
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Prepare the working branch
+        working-directory: fork
+        shell: pwsh
+        run: |
+          git config user.email "agent@symbiosis"
+          git config user.name  "Zen agent"
+          $branch = "${{ inputs.branch }}-windows"
+
+          # Same rule as the Linux job: move the pointer to HEAD so the session
+          # runs current code instead of whatever the branch held last time.
+          git ls-remote --exit-code --heads origin $branch *> $null
+          if ($LASTEXITCODE -eq 0) {
+            git branch -f $branch HEAD
+            git checkout -q $branch
+            git push -q --force-with-lease origin $branch
+            if ($LASTEXITCODE -ne 0) { git push -q -f origin $branch }
+          } else {
+            git checkout -q -b $branch
+            git push -q -u origin $branch
+          }
+          "WORK_BRANCH=$branch" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "branch $branch at $(git rev-parse --short HEAD)"
+
+      - name: Clone the repositories to work on
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\fork\work" | Out-Null
+          Set-Location "$env:GITHUB_WORKSPACE\fork\work"
+
+          git config --global credential.helper store
+          "https://x-access-token:$env:GH_TOKEN@github.com" |
+            Out-File -FilePath "$env:USERPROFILE\.git-credentials" -Encoding ascii
+
+          foreach ($repo in ("${{ inputs.repos }}" -split '\s+' | Where-Object { $_ })) {
+            $name = Split-Path $repo -Leaf
+            git clone -q "https://github.com/$repo.git" $name 2>$null
+            if ($LASTEXITCODE -eq 0) { Write-Host "cloned $repo" }
+            else { Write-Host "::warning::could not clone $repo" }
+          }
+
+      - name: Start autosave
+        shell: pwsh
+        run: |
+          # Built line by line rather than with a here-string: a PowerShell
+          # here-string has to start at column zero, which breaks out of this
+          # indented YAML block scalar and corrupts the whole file. Same trap
+          # as the shebang-in-a-heredoc one on the Linux side.
+          $lines = @(
+            'param($Root, $Seconds)',
+            'Set-Location $Root',
+            'while ($true) {',
+            '  Start-Sleep -Seconds $Seconds',
+            '  if (git status --porcelain) {',
+            '    git add -A',
+            '    git commit -q -m ("agent autosave " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) 2>$null',
+            '    git push -q origin HEAD 2>$null',
+            '  }',
+            '}'
+          )
+          $path = Join-Path $env:USERPROFILE 'autosave.ps1'
+          $lines | Out-File -FilePath $path -Encoding utf8
+          $seconds = [int]"${{ inputs.autosave_minutes }}" * 60
+          Start-Process pwsh -ArgumentList @(
+            "-NoProfile", "-File", $path,
+            "-Root", "$env:GITHUB_WORKSPACE\fork", "-Seconds", "$seconds"
+          ) -WindowStyle Hidden
+          Write-Host "autosave every ${{ inputs.autosave_minutes }} min"
+
+      - name: Start the agent and open the tunnel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $token = "zen-" + [guid]::NewGuid().ToString("N").Substring(0, 24)
+          Set-Location "$env:GITHUB_WORKSPACE\fork"
+
+          $env:ZEN_BIND_HOST     = "0.0.0.0"
+          $env:ZEN_REMOTE_TOKEN  = $token
+          $env:MCP_PORT          = "8765"
+          $env:ZEN_LONG_TASKS    = "1"
+          $env:ZEN_LONG_MAX_STEPS = "250"
+          $env:SESSION_STARTED_MS = [string][int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+          $env:SESSION_LIMIT_MS  = "21600000"
+          $env:GITHUB_TOKEN      = $env:GH_TOKEN
+
+          # cmd /c start, NOT Start-Process -NoNewWindow.
+          #
+          # This is why the agent showed "Host Error": the tunnel stayed up and
+          # the thing behind it was already dead. A process started with
+          # Start-Process is killed when its step ends, so node died the moment
+          # "Start the agent and open the tunnel" finished, while cloudflared -
+          # already fixed the same way - kept serving 502 from an empty port.
+          #
+          # Measured on a live runner earlier in this project: three servers
+          # launched in one step, Start-Process on 6080, cmd /c start on 6081,
+          # a scheduled task on 6082. In the next step 6080 was gone and the
+          # other two were still answering.
+          #
+          # The redirects are not optional either: without them pwsh waits for
+          # the child's stdout to close and the step hangs forever.
+          cmd /c start "" /b node agent/zen-agent.js `
+            "1>$env:TEMP\agent.log" "2>$env:TEMP\agent.err"
+
+          $up = $false
+          foreach ($i in 1..30) {
+            Start-Sleep -Seconds 2
+            try {
+              Invoke-WebRequest -Uri "http://127.0.0.1:8765/mcp/status" -TimeoutSec 3 -UseBasicParsing | Out-Null
+              $up = $true; break
+            } catch { }
+          }
+          if (-not $up) {
+            Write-Host "::error::the agent did not start."
+            Get-Content "$env:TEMP\agent.log", "$env:TEMP\agent.err" -Tail 40 -ErrorAction SilentlyContinue
+            exit 1
+          }
+          Write-Host "agent is up on 8765"
+
+          # cloudflared, not ngrok - no account, no token, no one-tunnel
+          # limit, and the same tool the desks use.
+          #
+          # curl.exe rather than Invoke-WebRequest: the .NET stack on this
+          # image fails GitHub's redirect to objects.githubusercontent.com with
+          # RemoteCertificateNameMismatch. Measured on a live runner.
+          $cf = "$env:TEMP\cloudflared.exe"
+          curl.exe -sL --retry 3 -o $cf `
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          if (-not (Test-Path $cf)) { throw "could not download cloudflared" }
+
+          # cmd /c start with redirects, not Start-Process: a process started
+          # with Start-Process is killed when its step ends, and one started
+          # without redirects keeps the step waiting on it forever. Both were
+          # measured on live runners.
+          $log = "$env:TEMP\cf.log"
+          cmd /c start "" /b "$cf" tunnel --url http://localhost:8765 --no-autoupdate --loglevel info `
+            "1>$log" "2>$env:TEMP\cf.err"
+
+          $url = $null
+          foreach ($i in 1..40) {
+            Start-Sleep -Seconds 2
+            $text = (Get-Content $log, "$env:TEMP\cf.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+            if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+          }
+          if (-not $url) {
+            Write-Host "::error::no tunnel came up."
+            Get-Content $log, "$env:TEMP\cf.err" -Tail 25 -ErrorAction SilentlyContinue
+            exit 1
+          }
+
+          # The hostname resolves before the edge will serve it; a client that
+          # opens it too early sees 502 and blames the agent.
+          foreach ($i in 1..20) {
+            if ((curl.exe -s -o NUL -w "%{http_code}" -m 15 "$url/mcp/status") -match "^[234]") { break }
+            Start-Sleep -Seconds 3
+          }
+
+          # Array of lines, not a here-string, for the same YAML reason as
+          # the autosave script above.
+          $summary = @(
+            "## Zen agent (Windows)",
+            "",
+            "**[Open the agent]($url/hub?token=$token)**",
+            "",
+            "| | |",
+            "|---|---|",
+            "| Address | ``$url`` |",
+            "| Token | ``$token`` |",
+            "| Branch | ``$env:WORK_BRANCH`` |",
+            "| Runner | windows-latest, 4 cores, 16 GB |",
+            "| Capabilities | PowerShell runtime; windows_rdp, windows_screenshot, windows_adb, windows_system |",
+            "",
+            "The link carries the token and sets a cookie on first load. Treat it",
+            "as a password. This runner cannot build the Android APK - use the",
+            "Linux session for that."
+          ) -join "`n"
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host "=================================================="
+          Write-Host " Agent: $url/hub?token=$token"
+          Write-Host "=================================================="
+
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            "slot=agent" "kind=CLI-агент" "os=windows" `
+            "url=$url" "agentUrl=$url/hub?token=$token" `
+            "agentToken=$token" "branch=$env:WORK_BRANCH"
+
+      - name: Keep the session alive
+        shell: pwsh
+        run: |
+          Write-Host "Running until cancelled, or for six hours."
+
+          # Watch what a visitor sees, not a process id. A dead agent behind a
+          # live tunnel answers 502 - which is exactly what happened - and no
+          # pid check would ever notice, because cloudflared was perfectly
+          # healthy the whole time.
+          for ($i = 0; $i -lt 1400; $i++) {
+            Start-Sleep -Seconds 15
+            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:8765/mcp/status")
+            if ($code -eq "200") { continue }
+
+            Write-Host "::warning::the agent stopped answering ($code); restarting it."
+            cmd /c start "" /b node agent/zen-agent.js `
+              "1>$env:TEMP\agent2.log" "2>$env:TEMP\agent2.err"
+            Start-Sleep -Seconds 10
+          }
+          Start-Sleep -Seconds 21000
+
+      - name: Clear the published session
+        if: always()
+        shell: pwsh
+        run: |
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent" "state=ended"
+
+      - name: Final save
+        if: always()
+        shell: pwsh
+        run: |
+          Set-Location "$env:GITHUB_WORKSPACE\fork"
+          if (git status --porcelain) {
+            git add -A
+            git commit -q -m "agent final save $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+            git push -q origin HEAD
+            Write-Host "Pushed the last changes."
+          } else {
+            Write-Host "Nothing left to save."
+          }

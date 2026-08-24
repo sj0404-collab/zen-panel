@@ -1,0 +1,443 @@
+name: Desks
+
+# Two desks, side by side, with no passwords anywhere.
+#
+# WHAT THIS REPLACES
+#   The old "Remote session" workflow asked you to pick one OS, then handed
+#   back a host, a port, a login and a password to type into an RDP client on a
+#   phone. The Windows half never worked: the server answered
+#   LOGON_FAILED_UPDATE_PASSWORD no matter which of four ways the account was
+#   created, and the log that would have explained it is not served while the
+#   job runs. Four sessions were spent on it.
+#
+#   So the password is gone - not hidden, not generated, gone - and with it the
+#   whole class of failure. Both desks are now web pages:
+#
+#     Linux   - XFCE on Xtigervnc, served through noVNC
+#     Windows - the runner's own console desktop on TightVNC, served through
+#               noVNC
+#
+#   Both VNC servers offer security type 1 (None), so there is no credential to
+#   present. Both are published on their own cloudflared quick tunnel, which
+#   needs no account and no token, so two desks can be up at once - something
+#   free ngrok could never do with its one-tunnel limit.
+#
+# WHY THIS IS SAFE ENOUGH, STATED PLAINLY
+#   No password means anyone holding the address can drive the desk. The
+#   address is a random trycloudflare.com hostname, unguessable in practice,
+#   published to a branch of this repository - public if the repository is
+#   public. It stops working when the job ends, six hours at most. The runner
+#   holds a checkout of this repository and a GITHUB_TOKEN scoped to it, and
+#   nothing else of yours. If that trade is not acceptable, make the repository
+#   private; everything here keeps working.
+#
+# WHY THE WINDOWS DESK CAN EXIST AT ALL
+#   Measured on a real runner, not assumed. A windows-latest runner logs in as
+#   runneradmin on the console, session 2, with explorer running and a
+#   1024x768 display attached:
+#
+#     whoami: runnervm7vqe0\runneradmin
+#     process session id: 2
+#     >console  runneradmin  2  Active
+#     screen \\.\DISPLAY1 {X=0,Y=0,Width=1024,Height=768}
+#
+#   That is a real desktop, and a VNC server started as an application in that
+#   session serves it. Installed as a service it would land in session 0 and
+#   serve a blank one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      which:
+        description: "Which desks to open"
+        type: choice
+        options: [both, linux, windows]
+        default: both
+      prepare_build:
+        description: "Linux desk: check out Eden and apply the patch first"
+        type: boolean
+        default: false
+      label:
+        description: "Name for this session"
+        type: string
+        default: "desks"
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Linux desk ─────────────────────────────────────────────────────
+  linux:
+    if: inputs.which == 'both' || inputs.which == 'linux'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - name: Install the desktop
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            xfce4 xfce4-terminal xfce4-goodies dbus-x11 thunar mousepad \
+            tigervnc-standalone-server novnc websockify nginx ttyd tmux htop \
+            > /tmp/apt.log 2>&1 || { tail -30 /tmp/apt.log; exit 1; }
+          echo "installed"
+
+      - name: Prepare a build environment
+        if: inputs.prepare_build
+        run: |
+          git clone --quiet --branch v0.2.1 \
+            https://git.eden-emu.dev/eden-emu/eden.git eden || true
+          sudo apt-get install -y -qq glslang-tools libfmt-dev >/dev/null 2>&1 || true
+          if [ -d eden ]; then
+            bash "$GITHUB_WORKSPACE/fork/tools/apply_patch.sh" \
+              --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden" || true
+          fi
+
+      - name: Start the desktop with no password
+        run: |
+          mkdir -p "$HOME/.vnc"
+          # printf, not a heredoc: this block is indented inside the YAML and an
+          # indented heredoc writes the leading spaces into the file, which
+          # leaves xstartup unrunnable and the desk grey.
+          printf '%s\n%s\n%s\n' \
+            '#!/bin/sh' \
+            'unset SESSION_MANAGER DBUS_SESSION_BUS_ADDRESS' \
+            'exec dbus-launch startxfce4' > "$HOME/.vnc/xstartup"
+          chmod +x "$HOME/.vnc/xstartup"
+
+          # -SecurityTypes None is the passwordless part. Verified in this
+          # workspace against a real Xtigervnc: the server offers exactly one
+          # security type and it is 1 (None), so a client connects with nothing
+          # to type.
+          #
+          # -localhost yes keeps the raw VNC port unreachable from outside; the
+          # only way in is the tunnel, which speaks WebSocket.
+          # 1024x600, not 1280x720: a phone screen is nowhere near 720p, and
+          # the smaller desktop means less scaling and larger text.
+          #
+          # -AcceptSetDesktopSize=1 lets a client ask the X server to match its
+          # own window, which is what makes a desk fill the screen properly
+          # rather than being squeezed. Checked against a real Xtigervnc here
+          # before committing: the option is accepted and the server starts.
+          # (The obvious-looking "-randr" does NOT exist - it is rejected with
+          # "Unrecognized option" and the whole desk fails to start. Found by
+          # trying it locally rather than on a live session.)
+          vncserver -kill :1 >/dev/null 2>&1 || true
+          vncserver :1 -geometry 1024x600 -depth 24 -localhost yes \
+            -SecurityTypes None -AcceptSetDesktopSize=1 > /tmp/vnc.log 2>&1
+          sleep 4
+          ss -lnt | grep -q 5901 || { echo "::error::VNC is not listening"; cat /tmp/vnc.log; exit 1; }
+
+          # Confirm the offer over the wire rather than trusting the flag.
+          python3 - <<'PY'
+          import socket
+          s = socket.create_connection(("127.0.0.1", 5901), 5)
+          s.recv(12)
+          s.sendall(b"RFB 003.008\n")
+          d = s.recv(16)
+          types = list(d[1:1+d[0]]) if d else []
+          print("security types offered:", types, "(1 = None = no password)")
+          raise SystemExit(0 if types == [1] else "expected [1]; a password would be demanded")
+          PY
+
+          nohup websockify --web=/usr/share/novnc 6080 localhost:5901 \
+            > /tmp/websockify.log 2>&1 &
+          nohup ttyd -p 7681 -W bash > /tmp/ttyd.log 2>&1 &
+          sleep 3
+
+      - name: Put the desk and a terminal on one port
+        run: |
+          sudo tee /etc/nginx/sites-available/desk >/dev/null <<'NGINX'
+          server {
+            listen 8090;
+            location / {
+              proxy_pass http://127.0.0.1:6080;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection "upgrade";
+              proxy_read_timeout 86400;
+            }
+            location /term/ {
+              proxy_pass http://127.0.0.1:7681/;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection "upgrade";
+              proxy_read_timeout 86400;
+            }
+          }
+          NGINX
+          sudo sed -i 's/^          //' /etc/nginx/sites-available/desk
+          sudo rm -f /etc/nginx/sites-enabled/default
+          sudo ln -sf /etc/nginx/sites-available/desk /etc/nginx/sites-enabled/desk
+          sudo nginx -t
+          sudo systemctl restart nginx
+          sleep 2
+          curl -sf -o /dev/null http://127.0.0.1:8090/vnc.html \
+            || { echo "::error::8090 does not serve the desk"; sudo ss -lntp | grep -E '8090|6080'; exit 1; }
+          echo "desk is served locally on 8090"
+
+      - name: Open the tunnel
+        run: |
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 /tmp/tunnel.log)
+          [ -n "$URL" ] || { echo "::error::no tunnel"; tail -20 /tmp/tunnel.log; exit 1; }
+          echo "DESK_URL=$URL" >> "$GITHUB_ENV"
+          echo "desk: $URL"
+
+      - name: Publish the address
+        run: |
+          # autoconnect=1 and no password parameter: the page connects on its
+          # own and never shows a credential prompt.
+          # resize=scale, not resize=remote.
+          #
+          # "remote" asks the X server to change resolution and does nothing at
+          # all if it declines - which is what a phone saw: a 1280x720 desktop
+          # at native size in a narrow window, so only the top-left corner was
+          # visible. "scale" always fits the picture to the window, and the
+          # -randr list above still lets the desktop snap to a sensible size.
+          # quality/compression are tuned for a phone on mobile data.
+          OPEN="$DESK_URL/vnc.html?autoconnect=1&resize=scale&quality=6&compression=6&show_dot=true"
+          {
+            echo "## Linux desk"
+            echo ""
+            echo "**[Open]($OPEN)** - no password, it connects by itself."
+            echo ""
+            echo "| Terminal | [$DESK_URL/term/]($DESK_URL/term/) |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "slot=linux" "kind=Стол Linux" "os=linux" \
+              "url=$DESK_URL" "deskUrl=$OPEN" \
+              "terminal=$DESK_URL/term/" \
+              "auth=без пароля" \
+              "label=${{ inputs.label }}"
+
+      - name: Hold the desk open
+        run: |
+          # Watch the tunnel instead of sleeping blindly: when cloudflared dies
+          # the address keeps resolving and answers 502, which looks like a
+          # broken desk rather than a dead tunnel.
+          PIDFILE=/tmp/cloudflared-8090.pid
+          for i in $(seq 1 1400); do
+            sleep 15
+
+            # Check what a visitor sees, not just a pid. On the Windows desk a
+            # dead server behind a live tunnel answered 502 and no pid check
+            # noticed; the same failure is possible here.
+            if ! curl -sf -o /dev/null -m 10 http://127.0.0.1:8090/vnc.html; then
+              echo "::warning::the local desk stopped answering; restarting its parts."
+              pgrep -f "websockify --web" >/dev/null 2>&1 || \
+                nohup websockify --web=/usr/share/novnc 6080 localhost:5901 \
+                  > /tmp/websockify2.log 2>&1 &
+              pgrep -x ttyd >/dev/null 2>&1 || nohup ttyd -p 7681 -W bash > /tmp/ttyd2.log 2>&1 &
+              sudo systemctl is-active --quiet nginx || sudo systemctl restart nginx
+              sleep 5
+            fi
+
+            PID=$(cat "$PIDFILE" 2>/dev/null || echo)
+            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then continue; fi
+            echo "::warning::the tunnel exited; restarting it."
+            URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 /tmp/tunnel2.log) || continue
+            [ -n "$URL" ] || continue
+            echo "back up on $URL"
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+                "slot=linux" "kind=Стол Linux" "os=linux" \
+                "url=$URL" "deskUrl=$URL/vnc.html?autoconnect=1&resize=scale&quality=6&compression=6&show_dot=true" \
+                "terminal=$URL/term/" "auth=без пароля" "label=${{ inputs.label }}"
+          done
+
+      - name: Clear the published desk
+        if: always()
+        run: |
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "slot=linux" "state=ended" || true
+
+  # ── Windows desk ───────────────────────────────────────────────────
+  windows:
+    if: inputs.which == 'both' || inputs.which == 'windows'
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - name: Start the desk
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # NOT VNC. Measured on this exact image, three frames of the same
+          # desktop seconds apart:
+          #
+          #   GDI CopyFromScreen        26508 distinct colours  (real desktop)
+          #   TightVNC as a service         1 distinct colour   (black)
+          #   TightVNC as an application    1 distinct colour   (black)
+          #
+          # Turning off its mirror driver, BlankScreen and RemoveWallpaper
+          # changed nothing. TightVNC's capture path does not work on a runner
+          # with no real display driver, so the desk is built on the path that
+          # demonstrably does: a GDI grab, streamed as MJPEG, with mouse and
+          # keyboard sent back through SendInput. A browser is the client, and
+          # there is nothing to authenticate - same as the Linux desk.
+          python -m pip install --quiet --disable-pip-version-check pillow
+
+          $script = "$env:GITHUB_WORKSPACE\fork\tools\win_desk_server.py"
+          if (-not (Test-Path $script)) { throw "desk server missing at $script" }
+
+          # A scheduled task in the console session, for two reasons proven by
+          # probe runs: a process started with Start-Process dies when its step
+          # ends, and cmd /c start keeps the step waiting on a server that
+          # never returns. The task must run as the logged-in user - the
+          # desktop worth showing belongs to runneradmin in session 2, and a
+          # SYSTEM task would capture session 0.
+          $me = "$env:USERDOMAIN\$env:USERNAME"
+          $py = (Get-Command python).Source
+          schtasks /Create /TN "symbiosis-desk" /TR "`"$py`" `"$script`" 6080" `
+            /SC ONCE /ST 00:00 /RU $me /IT /F | Out-Null
+          schtasks /Run /TN "symbiosis-desk" | Out-Null
+
+          $ok = $false
+          foreach ($try in 1..30) {
+            Start-Sleep -Seconds 2
+            if ((curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:6080/health") -eq "200") {
+              $ok = $true; break
+            }
+          }
+          if (-not $ok) { throw "the desk server did not come up on 6080" }
+          Write-Host "desk server is up"
+
+      - name: Confirm the picture is a real desktop, not a black rectangle
+        shell: pwsh
+        run: |
+          # The whole reason VNC was abandoned here. A frame that decodes and
+          # has one distinct colour is a black screen dressed as a success, and
+          # that is precisely the failure this replaces - so the desk refuses
+          # to be published unless the picture is real.
+          curl.exe -s -o "$env:TEMP\frame.jpg" -m 30 "http://127.0.0.1:6080/shot"
+          $check = @(
+            'from PIL import Image',
+            'import sys',
+            'im = Image.open(sys.argv[1]).convert("RGB")',
+            'c = im.getcolors(maxcolors=500000)',
+            'n = len(c) if c else 500000',
+            'print("frame", im.size, "distinct colours:", n)',
+            'sys.exit(0 if n > 2 else 1)'
+          ) -join "`n"
+          $check | Out-File -FilePath "$env:TEMP\check.py" -Encoding utf8
+          python "$env:TEMP\check.py" "$env:TEMP\frame.jpg"
+          if ($LASTEXITCODE -ne 0) { throw "the desk is showing a black screen" }
+          Write-Host "the picture is a real desktop"
+
+      - name: Open the tunnel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cf = "$env:TEMP\cloudflared.exe"
+          curl.exe -sL --retry 3 -o $cf `
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          if (-not (Test-Path $cf)) { throw "could not download cloudflared" }
+
+          # A quick tunnel: no account, no token, and as many as we like - which
+          # is why both desks can be up at the same time. ngrok's free plan
+          # allows one, so it could never do this.
+          # Detached the same way as websockify, and for the same reason.
+          $log = "$env:TEMP\cf.log"
+          cmd /c start "" /b "$cf" tunnel --url http://localhost:6080 --no-autoupdate --loglevel info `
+            "1>$log" "2>$env:TEMP\cf.err"
+
+          $url = $null
+          foreach ($try in 1..40) {
+            Start-Sleep -Seconds 2
+            $text = (Get-Content $log,"$env:TEMP\cf.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+            if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+          }
+          if (-not $url) {
+            Get-Content $log,"$env:TEMP\cf.err" -Tail 30 -ErrorAction SilentlyContinue | Write-Host
+            throw "cloudflared did not report an address"
+          }
+
+          # The hostname exists before the edge will serve it; a client that
+          # opens it too early sees 502 and blames the desk.
+          foreach ($try in 1..20) {
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing -Uri "$url/health" -TimeoutSec 15
+              if ($r.StatusCode -eq 200) { break }
+            } catch { Start-Sleep -Seconds 3 }
+          }
+          "DESK_URL=$url" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "desk: $url"
+
+      - name: Publish the address
+        shell: pwsh
+        run: |
+          $open = "$env:DESK_URL/"
+          @(
+            "## Windows desk",
+            "",
+            "**[Open]($open)** - no password, it connects by itself.",
+            "",
+            "This is the runner's own console desktop, session 2."
+          ) -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            "slot=windows" "kind=Стол Windows" "os=windows" `
+            "url=$env:DESK_URL" "deskUrl=$open" `
+            "auth=без пароля" "label=${{ inputs.label }}"
+
+      - name: Hold the desk open
+        shell: pwsh
+        run: |
+          Write-Host "The desk stays up until you cancel this run, or for six hours."
+          $cf = "$env:TEMP\cloudflared.exe"
+          for ($i = 0; $i -lt 1400; $i++) {
+            Start-Sleep -Seconds 15
+
+            # Watch what a visitor would see, not a process id. A dead
+            # websockify behind a live tunnel answers 502, which no PID check
+            # would ever notice - and that is the failure that actually
+            # happened.
+            $local = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:6080/health")
+            if ($local -ne "200") {
+              Write-Host "::warning::the desk server stopped answering ($local); restarting it."
+              schtasks /Run /TN "symbiosis-desk" | Out-Null
+              Start-Sleep -Seconds 8
+            }
+
+            if (Get-Process cloudflared -ErrorAction SilentlyContinue) { continue }
+
+            Write-Host "::warning::the tunnel exited; restarting it."
+            $log = "$env:TEMP\cf2.log"
+            cmd /c start "" /b "$cf" tunnel --url http://localhost:6080 --no-autoupdate --loglevel info `
+              "1>$log" "2>$env:TEMP\cf2.err"
+            $url = $null
+            foreach ($try in 1..30) {
+              Start-Sleep -Seconds 2
+              $text = (Get-Content $log,"$env:TEMP\cf2.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+              if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+            }
+            if ($url) {
+              Write-Host "back up on $url"
+              $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+              bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+                "slot=windows" "kind=Стол Windows" "os=windows" `
+                "url=$url" "deskUrl=$url/" `
+                "auth=без пароля" "label=${{ inputs.label }}"
+            }
+          }
+
+      - name: Clear the published desk
+        if: always()
+        shell: pwsh
+        run: |
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            "slot=windows" "state=ended"
