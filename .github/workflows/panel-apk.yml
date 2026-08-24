@@ -26,6 +26,16 @@ jobs:
           set -o pipefail
           ( /opt/gradle-8.7/bin/gradle wrapper --gradle-version 8.7 --no-daemon &&
             ./gradlew assembleRelease --no-daemon --stacktrace ) 2>&1 | tee /tmp/gradle-build.log
+      - name: Publish failed Gradle log for diagnosis
+        if: failure()
+        run: |
+          mkdir -p ci
+          cp /tmp/gradle-build.log ci/last-build-failure.log
+          git config user.name "Zen Panel CI"
+          git config user.email "ci@zen-panel"
+          git add ci/last-build-failure.log
+          git commit -m "ci: capture failed APK build log" || exit 0
+          git push
       - name: Verify bundled panel
         run: |
           APK=$(find app -path '*release*.apk' | head -1)
