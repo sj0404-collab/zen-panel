@@ -16,9 +16,14 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
+      - name: Install Gradle 8.7
+        run: |
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /opt
+          echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
       - name: Build release APK
         run: |
-          gradle wrapper --gradle-version 8.7 --no-daemon
+          /opt/gradle-8.7/bin/gradle wrapper --gradle-version 8.7 --no-daemon
           ./gradlew assembleRelease --no-daemon --stacktrace
       - name: Verify bundled panel
         run: |
