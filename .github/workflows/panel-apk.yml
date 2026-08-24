@@ -24,7 +24,8 @@ jobs:
       - name: Build release APK
         run: |
           /opt/gradle-8.7/bin/gradle wrapper --gradle-version 8.7 --no-daemon
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          set -o pipefail
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-build.log
       - name: Verify bundled panel
         run: |
           APK=$(find app -path '*release*.apk' | head -1)
@@ -32,4 +33,8 @@ jobs:
           unzip -l "$APK" | grep -q 'assets/panel/index.html'
           unzip -l "$APK" | grep -q 'assets/panel/desks.html'
       - uses: actions/upload-artifact@v4
-        with: { name: zen-panel-apk, path: app/build/outputs/apk/release/*.apk }
+        if: always()
+        with: { name: zen-panel-build-log, path: /tmp/gradle-build.log, if-no-files-found: warn }
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with: { name: zen-panel-apk, path: app/build/outputs/apk/release/*.apk, if-no-files-found: error }
