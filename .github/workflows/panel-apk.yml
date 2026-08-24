@@ -23,9 +23,9 @@ jobs:
           echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
       - name: Build release APK
         run: |
-          /opt/gradle-8.7/bin/gradle wrapper --gradle-version 8.7 --no-daemon
           set -o pipefail
-          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-build.log
+          ( /opt/gradle-8.7/bin/gradle wrapper --gradle-version 8.7 --no-daemon &&
+            ./gradlew assembleRelease --no-daemon --stacktrace ) 2>&1 | tee /tmp/gradle-build.log
       - name: Verify bundled panel
         run: |
           APK=$(find app -path '*release*.apk' | head -1)
