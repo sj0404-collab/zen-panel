@@ -1,0 +1,1600 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d12">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Zen Panel</title>
+<!--
+  Single-page control panel for the fork and for the whole GitHub account.
+
+  Everything is inline - no CDN, no external font, no build step - so it works
+  from a phone on bad mobile data, inside the APK's WebView, and straight from
+  disk. The APK is a thin WebView over this page, so shipping a change here
+  updates the app with no reinstall; that is the whole point of loading it from
+  the network rather than bundling it.
+
+  It talks to the GitHub REST API from the browser. Reading a public repository
+  needs no token, so the page is useful before you paste anything; a token is
+  required for private repositories, for starting workflows and for stopping
+  sessions. The token is kept in localStorage on the device and is sent only to
+  api.github.com.
+-->
+<style>
+  :root {
+    --bg: #0d0d12; --panel: #16161f; --line: #262633; --raise: #1d1d29;
+    --text: #e8e8f0; --dim: #8a8a9e;
+    --pink: #ff2d78; --cyan: #22e0d6; --amber: #ffb020; --red: #ff4d4d;
+    --green: #3fd17a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 12px; padding-bottom: 90px;
+  }
+  h1 { font-size: 21px; margin: 4px 0 2px; letter-spacing: .5px; }
+  h1 span { color: var(--pink); }
+  .sub { color: var(--dim); font-size: 13px; margin-bottom: 12px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px; margin-bottom: 12px;
+  }
+  .card h2 {
+    font-size: 14px; margin: 0 0 10px; color: var(--cyan);
+    text-transform: uppercase; letter-spacing: .8px;
+  }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 10px;
+    padding: 11px 13px; margin: 4px 4px 4px 0; cursor: pointer;
+    background: var(--pink); color: #fff; min-height: 44px;
+  }
+  button.ghost { background: transparent; color: var(--cyan); border: 1px solid var(--line); }
+  button.small { min-height: 0; padding: 6px 10px; font-size: 12.5px; }
+  button:disabled { opacity: .45; }
+  input, select {
+    font: inherit; width: 100%; padding: 11px; margin: 4px 0 8px;
+    background: #0b0b10; color: var(--text);
+    border: 1px solid var(--line); border-radius: 10px; min-height: 44px;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 150px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td { padding: 8px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { color: var(--dim); white-space: nowrap; width: 1%; padding-right: 12px; }
+  .pill {
+    display: inline-block; padding: 2px 9px; border-radius: 99px;
+    font-size: 12px; font-weight: 700;
+  }
+  .ok { background: rgba(63,209,122,.15); color: var(--green); }
+  .run { background: rgba(255,176,32,.15); color: var(--amber); }
+  .bad { background: rgba(255,77,77,.15); color: var(--red); }
+  .idle { background: #22222e; color: var(--dim); }
+  code, .mono {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px; word-break: break-all;
+  }
+  .note { color: var(--dim); font-size: 12.5px; margin-top: 8px; }
+  .warn {
+    border-left: 3px solid var(--amber); padding-left: 10px;
+    color: #ffd79a; font-size: 13px; margin: 10px 0;
+  }
+  .danger {
+    border-left: 3px solid var(--red); padding-left: 10px;
+    color: #ffb3b3; font-size: 13px; margin: 10px 0;
+  }
+  a { color: var(--cyan); }
+  .tabs {
+    position: fixed; left: 0; right: 0; bottom: 0; display: flex;
+    background: #101018; border-top: 1px solid var(--line);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); z-index: 20;
+  }
+  .tabs button {
+    flex: 1; background: transparent; color: var(--dim); margin: 0;
+    font-size: 11.5px; font-weight: 600; padding: 6px 2px; min-height: 44px;
+    border-radius: 8px; line-height: 1.25;
+  }
+  .tabs button.on { color: var(--pink); background: #191922; }
+  .tabs button b { display: block; font-size: 16px; font-weight: 500; }
+  .page { display: none; }
+  .page.on { display: block; }
+  .item {
+    display: flex; align-items: center; gap: 10px; padding: 10px 8px;
+    border-bottom: 1px solid var(--line); cursor: pointer;
+  }
+  .item:last-child { border-bottom: 0; }
+  .item .ico { width: 20px; text-align: center; color: var(--dim); flex: 0 0 20px; }
+  .item .grow { flex: 1; min-width: 0; }
+  .item .name { font-size: 13.5px; word-break: break-word; }
+  .item .meta { color: var(--dim); font-size: 11.5px; }
+  .crumb { color: var(--dim); font-size: 12.5px; margin-bottom: 8px; word-break: break-all; }
+  .crumb a { cursor: pointer; }
+  pre {
+    background: #0b0b10; border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px; overflow: auto; max-height: 60vh; font-size: 12px;
+    white-space: pre; -webkit-overflow-scrolling: touch;
+  }
+  .kv { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+  .kv .k { color: var(--dim); font-size: 12px; width: 84px; flex: 0 0 84px; }
+  .kv .v { flex: 1; font-family: ui-monospace, Menlo, Consolas, monospace;
+           font-size: 12.5px; word-break: break-all; }
+  .avatar { width: 46px; height: 46px; border-radius: 50%; background: #22222e; }
+  .head { display: flex; gap: 12px; align-items: center; }
+  .spin { color: var(--dim); font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<h1>Zen <span>Panel</span></h1>
+<div class="sub" id="subtitle">панель управления</div>
+
+<!-- ══ ACCOUNT ══════════════════════════════════════════════════════ -->
+<div class="page" id="p-acc">
+  <div class="card">
+    <h2>Аккаунт</h2>
+    <div id="acc"><span class="spin">загрузка…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Добавить аккаунт</h2>
+    <label>Токен GitHub</label>
+    <input id="tok" type="password" placeholder="ghp_…" autocomplete="off">
+    <div class="row">
+      <button id="btn-add" onclick="addAccount()">Добавить</button>
+      <button class="ghost" onclick="window.open('https://github.com/settings/tokens/new?scopes=repo,workflow&description=Symbiosis%20panel','_blank')">Создать токен</button>
+    </div>
+    <div class="note">
+      Аккаунтов может быть несколько — переключайтесь кнопкой выше. Токен
+      хранится только в этом браузере (localStorage) и уходит исключительно на
+      api.github.com. Нужны права <code>repo</code> и <code>workflow</code>.
+      Без токена видны только публичные репозитории и статусы.
+    </div>
+  </div>
+</div>
+
+<!-- ══ REPOS / FILES ════════════════════════════════════════════════ -->
+<div class="page" id="p-repo">
+  <div class="card">
+    <h2>Репозитории <button class="ghost small" style="float:right"
+        onclick="loadRepos(true)">Обновить</button></h2>
+    <input id="repo-filter" placeholder="фильтр по имени" oninput="renderRepos()">
+    <div class="note" style="margin-top:0">
+      🔒 приватный · 🌐 публичный — нажатие на значок меняет видимость.
+    </div>
+    <div id="repos"><span class="spin">загрузка…</span></div>
+  </div>
+</div>
+
+<!-- ══ FILES (drill-in) ═════════════════════════════════════════════ -->
+<div class="page" id="p-files">
+  <div class="card">
+    <h2 id="files-title">Файлы</h2>
+    <div class="crumb" id="crumb"></div>
+    <div id="files"><span class="spin">загрузка…</span></div>
+  </div>
+</div>
+
+<!-- ══ ACTIONS ══════════════════════════════════════════════════════ -->
+<div class="page" id="p-act">
+  <div class="card" id="watch-card" style="display:none">
+    <h2>Идёт сейчас <button class="ghost small" style="float:right"
+        onclick="toggleWatch()" id="watch-btn">пауза</button></h2>
+    <div id="watch"></div>
+  </div>
+
+  <div class="card">
+    <h2>Workflow <button class="ghost small" style="float:right"
+        onclick="loadActions(true)">Обновить</button></h2>
+    <div class="note" style="margin-top:0">Репозиторий: <code id="act-repo"></code>
+      · <a onclick="go('repo')">сменить</a></div>
+    <div id="workflows"><span class="spin">загрузка…</span></div>
+  </div>
+  <div class="card">
+    <h2>Последние запуски</h2>
+    <div id="runs"><span class="spin">загрузка…</span></div>
+  </div>
+</div>
+
+<!-- ══ SESSIONS ═════════════════════════════════════════════════════ -->
+<div class="page" id="p-sess">
+  <div class="card">
+    <h2>Столы</h2>
+    <div class="note" style="margin-top:0">
+      Два стола рядом, оба в браузере и оба без пароля. Живут до шести часов.
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="btn-both" onclick="launchDesks('both')">Оба стола</button>
+      <button class="ghost" id="btn-linux" onclick="launchDesks('linux')">Только Linux</button>
+      <button class="ghost" id="btn-windows" onclick="launchDesks('windows')">Только Windows</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost small" id="btn-agent" onclick="launchAgent()">CLI-агент</button>
+    </div>
+    <div class="note">
+      Linux — XFCE и терминал. Windows — собственный рабочий стол раннера.
+      Клиент не нужен: обе открываются ссылкой. RDP больше не используется —
+      он требовал логин с паролем и всё равно отказывал.
+    </div>
+    <div id="agent-conflict" class="warn" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>Активная сессия</h2>
+    <div id="live"><span class="spin">проверяю…</span></div>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost small" onclick="window.open('desks.html','_blank')">
+        Столы на отдельной странице</button>
+    </div>
+  </div>
+
+  <div class="card" id="desks-card" style="display:none">
+    <h2>Столы</h2>
+    <div id="desks"></div>
+    <div class="note">
+      Пароля нет ни у одного: ссылка открывает стол сразу. Кто знает адрес —
+      тот управляет; адрес живёт до конца сессии, не дольше шести часов.
+    </div>
+  </div>
+
+  <div class="card" id="screen-card" style="display:none">
+    <h2>Экран</h2>
+    <div id="preview"><span class="spin">проверяю…</span></div>
+  </div>
+
+  <div class="card" id="creds-card" style="display:none">
+    <h2>Доступы</h2>
+    <div id="creds"></div>
+    <div class="note">
+      Публикуются самой сессией и стираются, когда она заканчивается.
+    </div>
+  </div>
+</div>
+
+<!-- ══ APK ══════════════════════════════════════════════════════════ -->
+<div class="page" id="p-apk">
+  <div class="card">
+    <h2>Панель как приложение</h2>
+    <div id="apk-panel"><span class="spin">загрузка…</span></div>
+    <div class="note">
+      Приложение — тонкая оболочка над этой страницей: содержимое грузится из
+      сети, поэтому правки в панели видны сразу, без переустановки. Обновлять
+      APK нужно только когда меняется сама оболочка.
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button onclick="run('panel-apk.yml',{})">Собрать APK панели</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Последний APK эмулятора</h2>
+    <div id="apk"><span class="spin">загрузка…</span></div>
+    <div class="row" style="margin-top:10px">
+      <button onclick="run('build.yml',{upload_to_gofile:'true'})">Собрать APK</button>
+      <button class="ghost" onclick="run('tests.yml',{})">Тесты</button>
+    </div>
+  </div>
+</div>
+
+<div class="tabs">
+  <button id="t-acc"  onclick="go('acc')"><b>◉</b>Аккаунт</button>
+  <button id="t-repo" onclick="go('repo')"><b>▤</b>Репо</button>
+  <button id="t-act"  onclick="go('act')"><b>▶</b>Actions</button>
+  <button id="t-sess" onclick="go('sess')"><b>⬢</b>Сессии</button>
+  <button id="t-apk"  onclick="go('apk')"><b>⬇</b>APK</button>
+</div>
+
+<script>
+'use strict';
+
+const GH = 'https://api.github.com';
+
+// Where the panel points when nobody has signed in yet. Any account can be
+// added later; this is only the read-only starting view.
+const DEFAULT_OWNER = 'sj0404-collab';
+const DEFAULT_REPO  = DEFAULT_OWNER + '/symbiosis';
+
+// No hardcoded tunnel address. The reserved domain is only used when the
+// session actually got it; whichever address a session reports is the one the
+// panel opens. Assuming the static domain is what showed a blank page when
+// something else already held it.
+
+// ── accounts ────────────────────────────────────────────────────────
+//
+// Several GitHub accounts can be kept side by side and switched between. Each
+// carries its own token and its own control repository - the fork whose
+// workflows this panel starts - because a second account will not have the
+// first one's fork, and firing a workflow into the wrong repository is the
+// mistake worth designing out.
+//
+// Tokens sit in localStorage, on the device, and are sent only to
+// api.github.com. Switching accounts is a local operation: nothing is revoked
+// and nothing is uploaded.
+const STORE_KEY = 'panel_accounts';
+
+function loadStore() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) { s = null; }
+  if (!s || !Array.isArray(s.accounts)) s = { v: 1, active: 0, accounts: [] };
+
+  // Carry over the single token the panel used before accounts existed, so an
+  // upgrade does not silently log the user out.
+  const legacy = localStorage.getItem('gh_token');
+  if (legacy && !s.accounts.some(a => a.token === legacy)) {
+    s.accounts.push({ login: '', token: legacy, avatar: '', control: DEFAULT_REPO });
+    s.active = s.accounts.length - 1;
+    localStorage.removeItem('gh_token');
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) {}
+  }
+  if (s.active >= s.accounts.length) s.active = Math.max(0, s.accounts.length - 1);
+  return s;
+}
+
+function saveStore(s) {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) {}
+}
+
+let STORE = loadStore();
+
+const acct   = () => STORE.accounts[STORE.active] || null;
+const tok    = () => (acct() && acct().token) || '';
+const owner  = () => (acct() && acct().login) || DEFAULT_OWNER;
+const ctlRepo = () => (acct() && acct().control) || DEFAULT_REPO;
+
+// The control repository is chosen per account, so this cannot be a constant.
+const CTL = () => `${GH}/repos/${ctlRepo()}`;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function hdr() {
+  const h = { 'Accept': 'application/vnd.github+json' };
+  if (tok()) h['Authorization'] = 'token ' + tok();
+  return h;
+}
+
+// Adding an account verifies the token before storing it. A token that is
+// expired or missing a scope otherwise turns into an empty panel with no
+// explanation, which is the failure this avoids.
+async function addAccount() {
+  const value = $('tok').value.trim();
+  if (!value) { alert('Вставьте токен.'); return; }
+  const btn = $('btn-add'); const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Проверяю…';
+  try {
+    const r = await fetch(`${GH}/user`, {
+      headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'token ' + value }
+    });
+    if (r.status === 401) throw new Error('Токен недействителен (401).');
+    if (!r.ok) throw new Error('GitHub ответил ' + r.status);
+    const u = await r.json();
+    const scopes = r.headers.get('x-oauth-scopes') || '';
+
+    const existing = STORE.accounts.findIndex(a => a.login === u.login);
+    const entry = {
+      login: u.login,
+      token: value,
+      avatar: u.avatar_url || '',
+      scopes,
+      // Default the control repository to this account's own fork if it has
+      // one; otherwise leave the shared default, which is still readable.
+      control: await guessControl(u.login, value)
+    };
+    if (existing >= 0) { STORE.accounts[existing] = entry; STORE.active = existing; }
+    else { STORE.accounts.push(entry); STORE.active = STORE.accounts.length - 1; }
+    saveStore(STORE);
+    $('tok').value = '';
+
+    if (!/repo/.test(scopes) || !/workflow/.test(scopes)) {
+      alert('Аккаунт ' + u.login + ' добавлен, но у токена нет прав repo/workflow — ' +
+            'запуск и остановка сессий работать не будут.');
+    }
+    switchTo(STORE.active);
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+}
+
+// Which repository holds the workflows this panel drives. A fork keeps the
+// upstream name, so looking for it by name is right far more often than not;
+// when it is missing the user picks one by hand.
+async function guessControl(login, token) {
+  const mine = `${login}/symbiosis`;
+  try {
+    const r = await fetch(`${GH}/repos/${mine}`, {
+      headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'token ' + token }
+    });
+    if (r.ok) return mine;
+  } catch (e) { /* fall through to the shared default */ }
+  return DEFAULT_REPO;
+}
+
+function switchTo(index) {
+  STORE.active = index;
+  saveStore(STORE);
+  REPOS = [];
+  ACT_REPO = ctlRepo();
+  if ($('act-repo')) $('act-repo').textContent = ACT_REPO;
+  loadAccount();
+  if (page === 'repo') loadRepos(true);
+  if (page === 'act')  loadActions(true);
+  refresh();
+}
+
+function removeAccount(index) {
+  const a = STORE.accounts[index];
+  if (!a) return;
+  if (!confirm('Убрать ' + (a.login || 'этот аккаунт') + ' с этого устройства?\n\n' +
+               'Токен удаляется только здесь — на GitHub он продолжает действовать. ' +
+               'Отозвать его можно в настройках GitHub.')) return;
+  STORE.accounts.splice(index, 1);
+  if (STORE.active >= STORE.accounts.length) STORE.active = Math.max(0, STORE.accounts.length - 1);
+  saveStore(STORE);
+  switchTo(STORE.active);
+}
+
+// The control repository can be set by hand: a fork under a different name, or
+// somebody else's repository the token can reach.
+function setControl() {
+  const a = acct();
+  if (!a) { alert('Сначала добавьте аккаунт.'); return; }
+  const value = prompt('Репозиторий с workflow (owner/name):', a.control || DEFAULT_REPO);
+  if (!value) return;
+  const clean = value.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '');
+  if (!/^[\w.-]+\/[\w.-]+$/.test(clean)) { alert('Ожидается owner/name.'); return; }
+  a.control = clean;
+  saveStore(STORE);
+  switchTo(STORE.active);
+}
+
+// A single place for API calls so an expired token reports itself once, in
+// words, instead of every panel silently rendering empty.
+async function api(url, opts) {
+  const r = await fetch(url, Object.assign({ headers: hdr() }, opts || {}));
+  if (r.status === 401) throw new Error('Токен недействителен (401). Вставьте новый.');
+  if (r.status === 403) throw new Error('403: лимит запросов или нет прав. Без токена лимит 60/час.');
+  if (r.status === 404) throw new Error('404: не найдено или не видно этому токену.');
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+// ── navigation ──────────────────────────────────────────────────────
+let page = 'sess';
+function go(p) {
+  page = p;
+  for (const id of ['acc','repo','files','act','sess','apk']) {
+    const el = $('p-' + id); if (el) el.classList.toggle('on', id === p);
+    const tb = $('t-' + id); if (tb) tb.classList.remove('on');
+  }
+  // The files page is a drill-in of Repos, so it keeps that tab lit.
+  const lit = p === 'files' ? 'repo' : p;
+  if ($('t-' + lit)) $('t-' + lit).classList.add('on');
+  window.scrollTo(0, 0);
+  if (p === 'acc')  loadAccount();
+  if (p === 'repo') loadRepos();
+  if (p === 'act')  { loadActions(); pollWatch(); }
+  if (p === 'sess') refresh();
+  if (p === 'apk')  { refresh(); loadPanelApk(); }
+}
+
+// ── account ─────────────────────────────────────────────────────────
+async function loadAccount() {
+  const box = $('acc');
+  const rows = [];
+
+  // The switcher comes first: with several accounts stored, which one is
+  // active decides what every other tab shows, so it should be the first
+  // thing on screen rather than a detail under the profile.
+  if (STORE.accounts.length) {
+    rows.push('<div style="margin-bottom:10px">' + STORE.accounts.map((a, i) => `
+      <div class="item" style="${i === STORE.active ? 'background:#1d1d29;border-radius:10px' : ''}">
+        <div class="ico">${i === STORE.active ? '●' : '○'}</div>
+        <div class="grow" onclick="switchTo(${i})">
+          <div class="name">${esc(a.login || 'без имени')}${
+            i === STORE.active ? ' <span class="pill ok">активен</span>' : ''}</div>
+          <div class="meta">workflow: ${esc(a.control || DEFAULT_REPO)}</div>
+        </div>
+        <button class="ghost small" onclick="event.stopPropagation();removeAccount(${i})">✕</button>
+      </div>`).join('') + '</div>');
+  }
+
+  try {
+    // /user needs a token; without one fall back to the public profile so the
+    // page still says whose repositories it is showing.
+    const u = tok() ? await api(`${GH}/user`) : await api(`${GH}/users/${DEFAULT_OWNER}`);
+    if (tok() && acct() && !acct().login) {
+      // A token carried over from the old single-token panel has no name yet.
+      acct().login = u.login; acct().avatar = u.avatar_url || ''; saveStore(STORE);
+    }
+    rows.push(`
+      <div class="head">
+        <img class="avatar" src="${esc(u.avatar_url)}" alt="">
+        <div class="grow">
+          <div style="font-weight:700">${esc(u.login)}</div>
+          <div class="note" style="margin:0">${esc(u.name || '')}</div>
+          <a href="${esc(u.html_url)}" target="_blank">${esc(u.html_url)}</a>
+        </div>
+      </div>
+      <table style="margin-top:10px">
+        <tr><td>Репозитории</td><td>${u.public_repos ?? '—'} публичных${
+          u.total_private_repos != null ? ' · ' + u.total_private_repos + ' приватных' : ''}</td></tr>
+        <tr><td>Токен</td><td>${tok()
+          ? '<span class="pill ok">есть</span>' +
+            (acct() && acct().scopes ? ' <span class="note">' + esc(acct().scopes) + '</span>' : '')
+          : '<span class="pill idle">нет</span> <span class="note">только чтение публичного</span>'}</td></tr>
+        <tr><td>Workflow</td><td><code>${esc(ctlRepo())}</code>
+          <div class="note"><a onclick="setControl()">сменить репозиторий</a> —
+            отсюда запускаются сессии и сборки</div></td></tr>
+      </table>`);
+    box.innerHTML = rows.join('');
+  } catch (e) {
+    box.innerHTML = rows.join('') + `<div class="danger">${esc(e.message)}</div>`;
+  }
+}
+
+
+// ── repositories ────────────────────────────────────────────────────
+let REPOS = [];
+async function loadRepos(force) {
+  const box = $('repos');
+  if (REPOS.length && !force) { renderRepos(); return; }
+  box.innerHTML = '<span class="spin">загрузка…</span>';
+  try {
+    // With a token: everything it can see, newest first. Without: the public
+    // ones, which is still enough to browse this fork.
+    const url = tok()
+      ? `${GH}/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member`
+      : `${GH}/users/${owner()}/repos?per_page=100&sort=updated`;
+    REPOS = await api(url);
+    renderRepos();
+  } catch (e) {
+    box.innerHTML = `<div class="danger">${esc(e.message)}</div>`;
+  }
+}
+
+function renderRepos() {
+  const q = ($('repo-filter').value || '').toLowerCase();
+  const list = REPOS.filter(r => !q || r.full_name.toLowerCase().includes(q));
+  $('repos').innerHTML = list.length ? list.map(r => `
+    <div class="item">
+      <div class="ico" title="${r.private ? 'приватный' : 'публичный'}"
+           onclick="setVisibility('${esc(r.full_name)}', ${r.private ? 'false' : 'true'})"
+           style="cursor:pointer">${r.private ? '🔒' : '🌐'}</div>
+      <div class="grow" onclick="openRepo('${esc(r.full_name)}')">
+        <div class="name">${esc(r.name)}</div>
+        <div class="meta">${esc(r.description || 'без описания').slice(0, 70)}</div>
+        <div class="meta">${esc(r.default_branch)} · обновлён ${ago(r.updated_at)}</div>
+      </div>
+      <div class="ico" onclick="openRepo('${esc(r.full_name)}')">›</div>
+    </div>`).join('')
+    : '<span class="note">ничего не найдено</span>';
+}
+
+// ── file browser ────────────────────────────────────────────────────
+let CUR = { repo: ctlRepo(), path: '', branch: '' };
+
+function openRepo(full) {
+  CUR = { repo: full, path: '', branch: '' };
+  $('act-repo').textContent = full;
+  ACT_REPO = full;
+  openPath('');
+}
+
+// Flip a repository between private and public.
+//
+// Going public is the irreversible-feeling direction - the history becomes
+// readable by anyone, including any secret ever committed to it - so it asks
+// twice and says that plainly. Going private is offered too, since the useful
+// operation is "change this", not "publish this".
+async function setVisibility(full, makePrivate) {
+  if (!tok()) { alert('Нужен токен с правом repo.'); return; }
+  const warning = makePrivate
+    ? 'Сделать ' + full + ' приватным?\n\nGitHub Pages на бесплатном плане ' +
+      'работает только для публичных репозиториев — панель по адресу github.io ' +
+      'перестанет открываться.'
+    : 'Сделать ' + full + ' публичным?\n\nВся история станет видна любому: ' +
+      'файлы, коммиты, и любой токен или пароль, который когда-либо попадал ' +
+      'в репозиторий. Ветка session-state с паролями сессий — тоже.';
+  if (!confirm(warning)) return;
+  if (!makePrivate && !confirm('Точно? Это видно всему интернету сразу.')) return;
+
+  try {
+    const r = await fetch(`${GH}/repos/${full}`, {
+      method: 'PATCH', headers: hdr(),
+      body: JSON.stringify({ private: !!makePrivate })
+    });
+    if (r.status === 403) throw new Error('403: у токена нет права repo, ' +
+      'либо смена видимости запрещена настройками организации.');
+    if (r.status === 422) throw new Error('422: GitHub отказал — ' +
+      'обычно это лимит плана на приватные репозитории.');
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+    alert(full + ' теперь ' + (makePrivate ? 'приватный' : 'публичный') + '.');
+    await loadRepos(true);
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  }
+}
+
+async function openPath(path) {
+  CUR.path = path;
+  go('files');
+  $('files-title').textContent = CUR.repo.split('/')[1];
+  const parts = path ? path.split('/') : [];
+  let acc = '';
+  const crumbs = ['<a onclick="openPath(\'\')">' + esc(CUR.repo) + '</a>'];
+  for (const p of parts) {
+    acc = acc ? acc + '/' + p : p;
+    crumbs.push(`<a onclick="openPath('${esc(acc)}')">${esc(p)}</a>`);
+  }
+  $('crumb').innerHTML = crumbs.join(' / ') +
+    ` · <a href="https://github.com/${esc(CUR.repo)}/tree/HEAD/${esc(path)}" target="_blank">на GitHub</a>`;
+
+  const box = $('files');
+  box.innerHTML = '<span class="spin">загрузка…</span>';
+  try {
+    const items = await api(`${GH}/repos/${CUR.repo}/contents/${encodeURI(path)}`);
+    if (!Array.isArray(items)) { showFile(items); return; }
+    items.sort((a, b) => (a.type === b.type)
+      ? a.name.localeCompare(b.name)
+      : (a.type === 'dir' ? -1 : 1));
+    const up = path
+      ? `<div class="item" onclick="openPath('${esc(path.split('/').slice(0, -1).join('/'))}')">
+           <div class="ico">↰</div><div class="grow"><div class="name">..</div></div></div>`
+      : '';
+    box.innerHTML = up + items.map(it => `
+      <div class="item" onclick="${it.type === 'dir'
+          ? `openPath('${esc(it.path)}')`
+          : `openFile('${esc(it.path)}')`}">
+        <div class="ico">${it.type === 'dir' ? '▸' : '·'}</div>
+        <div class="grow">
+          <div class="name">${esc(it.name)}</div>
+          ${it.type === 'file' ? `<div class="meta">${kb(it.size)}</div>` : ''}
+        </div>
+        <div class="ico">›</div>
+      </div>`).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="danger">${esc(e.message)}</div>`;
+  }
+}
+
+async function openFile(path) {
+  const box = $('files');
+  box.innerHTML = '<span class="spin">загрузка…</span>';
+  try {
+    const f = await api(`${GH}/repos/${CUR.repo}/contents/${encodeURI(path)}`);
+    showFile(f);
+  } catch (e) {
+    box.innerHTML = `<div class="danger">${esc(e.message)}</div>`;
+  }
+}
+
+function showFile(f) {
+  const back = f.path.split('/').slice(0, -1).join('/');
+  const raw = `https://github.com/${CUR.repo}/blob/HEAD/${f.path}`;
+  let body;
+  if (f.size > 400000) {
+    body = '<div class="note">Файл больше 400 КБ — открывайте на GitHub.</div>';
+  } else if (/\.(png|jpe?g|gif|webp|svg)$/i.test(f.name)) {
+    body = `<img style="max-width:100%;border-radius:10px" src="${esc(f.download_url)}" alt="">`;
+  } else if (f.content) {
+    let text;
+    try { text = decodeURIComponent(escape(atob(f.content.replace(/\n/g, '')))); }
+    catch (e) { text = atob(f.content.replace(/\n/g, '')); }
+    body = `<pre>${esc(text)}</pre>`;
+  } else {
+    body = '<div class="note">Двоичный файл.</div>';
+  }
+  $('crumb').innerHTML =
+    `<a onclick="openPath('${esc(back)}')">↰ назад</a> · ${esc(f.path)} · ${kb(f.size)} ·
+     <a href="${esc(raw)}" target="_blank">на GitHub</a>`;
+  $('files').innerHTML = body;
+}
+
+// ── actions ─────────────────────────────────────────────────────────
+let ACT_REPO = ctlRepo();
+
+// ── live progress ───────────────────────────────────────────────────
+//
+// Watching a build meant leaving for github.com and hunting for the running
+// step. This polls the jobs endpoint, which is CORS-open, and shows each step
+// with a tick, a spinner and how long it has taken.
+//
+// It deliberately does not show log text: GitHub only publishes a job's log
+// after the job finishes - the endpoint 404s with BlobNotFound while it runs -
+// so a "live log" here would be an empty box pretending to work. Steps do
+// update in real time, and the link to the real log is one tap away.
+
+let watchTimer = null;
+let watchPaused = false;
+const WATCH_NAMES = ['Build APK', 'Tests', 'Panel APK', 'Zen agent', 'Remote session', 'Desks'];
+
+function fmtSecs(sec) {
+  if (sec < 60) return sec + ' с';
+  const m = Math.floor(sec / 60), r = sec % 60;
+  return m + ' мин' + (r ? ' ' + r + ' с' : '');
+}
+
+function stepIcon(st) {
+  if (st.status === 'in_progress') return '<span style="color:var(--amber)">◐</span>';
+  if (st.status === 'queued' || st.status === 'pending') return '<span style="color:var(--dim)">○</span>';
+  if (st.conclusion === 'success') return '<span style="color:var(--green)">✓</span>';
+  if (st.conclusion === 'skipped') return '<span style="color:var(--dim)">–</span>';
+  return '<span style="color:var(--red)">✕</span>';
+}
+
+function stepSecs(st) {
+  if (!st.started_at) return null;
+  const from = new Date(st.started_at).getTime();
+  const to = st.completed_at ? new Date(st.completed_at).getTime() : Date.now();
+  return Math.max(0, Math.round((to - from) / 1000));
+}
+
+async function pollWatch() {
+  const card = $('watch-card'), box = $('watch');
+  if (!card || !box) return;
+  let runs = [];
+  try { runs = (await api(`${CTL()}/actions/runs?per_page=15`)).workflow_runs || []; }
+  catch (e) { return; }
+
+  const live = runs.filter(r => r.status !== 'completed' && WATCH_NAMES.includes(r.name));
+  if (!live.length) {
+    card.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  card.style.display = '';
+
+  const parts = [];
+  for (const r of live.slice(0, 3)) {
+    let jobs = [];
+    try { jobs = (await api(`${CTL()}/actions/runs/${r.id}/jobs`)).jobs || []; }
+    catch (e) { continue; }
+    for (const j of jobs) {
+      if (j.conclusion === 'skipped') continue;
+      const done = j.steps.filter(x => x.status === 'completed').length;
+      const total = j.steps.length;
+      const cur = j.steps.find(x => x.status === 'in_progress');
+      const elapsed = j.started_at
+        ? Math.round((Date.now() - new Date(j.started_at).getTime()) / 1000) : 0;
+
+      parts.push(`
+        <div style="margin-bottom:12px">
+          <div><b>${esc(r.name)}</b> #${r.run_number} ${pill(r)}
+            <span class="note">· ${fmtSecs(elapsed)} · ${done}/${total}</span></div>
+          <div style="height:6px;background:#22222e;border-radius:99px;margin:6px 0">
+            <div style="height:6px;width:${Math.round(done / Math.max(1, total) * 100)}%;
+                 background:var(--cyan);border-radius:99px;transition:width .4s"></div>
+          </div>
+          ${cur ? `<div class="note" style="margin:0">сейчас: ${esc(cur.name)}
+                    ${stepSecs(cur) != null ? '· ' + fmtSecs(stepSecs(cur)) : ''}</div>` : ''}
+          <details style="margin-top:6px">
+            <summary>все шаги</summary>
+            ${j.steps.map(st => `<div style="font-size:12.5px;padding:2px 0">
+              ${stepIcon(st)} ${esc(st.name)}
+              ${stepSecs(st) != null ? `<span class="note">· ${fmtSecs(stepSecs(st))}</span>` : ''}
+            </div>`).join('')}
+          </details>
+          <div class="row" style="margin-top:6px">
+            <a class="note" href="${esc(r.html_url)}" target="_blank">полный лог на GitHub</a>
+          </div>
+        </div>`);
+    }
+  }
+  box.innerHTML = parts.join('') ||
+    '<span class="note">запуск ставится в очередь…</span>';
+}
+
+function toggleWatch() {
+  watchPaused = !watchPaused;
+  const b = $('watch-btn');
+  if (b) b.textContent = watchPaused ? 'продолжить' : 'пауза';
+  if (!watchPaused) pollWatch();
+}
+
+function startWatching() {
+  if (watchTimer) return;
+  pollWatch();
+  // Five seconds: fast enough to feel live, slow enough that the hourly rate
+  // limit is never in danger even with the Actions tab left open.
+  watchTimer = setInterval(() => {
+    if (!watchPaused && (page === 'act' || page === 'sess')) pollWatch();
+  }, 5000);
+}
+
+async function loadActions(force) {
+  $('act-repo').textContent = ACT_REPO;
+  const wbox = $('workflows'), rbox = $('runs');
+  wbox.innerHTML = '<span class="spin">загрузка…</span>';
+  try {
+    const d = await api(`${GH}/repos/${ACT_REPO}/actions/workflows?per_page=50`);
+    const list = (d.workflows || []).filter(w => w.state === 'active');
+    wbox.innerHTML = list.length ? list.map(w => {
+      const file = w.path.split('/').pop();
+      return `<div class="item">
+        <div class="ico">▶</div>
+        <div class="grow" onclick="openPath('${esc(w.path)}')">
+          <div class="name">${esc(w.name)}</div>
+          <div class="meta">${esc(file)}</div>
+        </div>
+        <button class="ghost small" onclick="event.stopPropagation();runIn('${esc(ACT_REPO)}','${esc(file)}')">Запустить</button>
+      </div>`;
+    }).join('') : '<span class="note">workflow нет</span>';
+  } catch (e) {
+    wbox.innerHTML = `<div class="danger">${esc(e.message)}</div>`;
+  }
+
+  rbox.innerHTML = '<span class="spin">загрузка…</span>';
+  try {
+    const d = await api(`${GH}/repos/${ACT_REPO}/actions/runs?per_page=12`);
+    const rs = d.workflow_runs || [];
+    rbox.innerHTML = rs.length ? '<table>' + rs.map(r => `<tr>
+      <td>#${r.run_number}</td>
+      <td><a href="${esc(r.html_url)}" target="_blank">${esc(r.name)}</a> ${pill(r)}
+        <div class="note">${ago(r.updated_at)}${
+          r.status !== 'completed' && tok()
+            ? ` · <a onclick="stopRun(${r.id},'${esc(ACT_REPO)}')">остановить</a>` : ''}</div></td>
+      </tr>`).join('') + '</table>' : '<span class="note">запусков нет</span>';
+  } catch (e) {
+    rbox.innerHTML = `<div class="danger">${esc(e.message)}</div>`;
+  }
+}
+
+async function runIn(repo, wf) {
+  if (!tok()) { alert('Нужен токен, чтобы запускать.'); return; }
+  const r = await fetch(`${GH}/repos/${repo}/actions/workflows/${wf}/dispatches`, {
+    method: 'POST', headers: hdr(), body: JSON.stringify({ ref: 'main' })
+  });
+  if (r.status === 204) { alert('Запущено.'); setTimeout(() => loadActions(true), 2500); return; }
+  // A workflow with required inputs, or one without workflow_dispatch, says so
+  // in the body; showing it beats a bare status code.
+  alert('Не вышло: ' + r.status + ' ' + (await r.text()).slice(0, 300));
+}
+
+async function run(wf, inputs) {
+  if (!tok()) { alert('Сначала вставьте токен — без него запуск невозможен.'); return; }
+  const r = await fetch(`${CTL()}/actions/workflows/${wf}/dispatches`, {
+    method: 'POST', headers: hdr(), body: JSON.stringify({ ref: 'main', inputs })
+  });
+  alert(r.status === 204 ? 'Запущено.' : 'Не вышло: ' + r.status + ' ' + await r.text());
+  setTimeout(refresh, 2500);
+}
+
+// ── sessions ────────────────────────────────────────────────────────
+const liveAgents   = rs => rs.filter(r => r.name === 'Zen agent' && r.status !== 'completed');
+const liveDesktops = rs => rs.filter(r => (r.name === 'Remote session' || r.name === 'opencode')
+                                          && r.status !== 'completed');
+
+async function currentRuns() {
+  try { return (await api(`${CTL()}/actions/runs?per_page=20`)).workflow_runs || []; }
+  catch (e) { return []; }
+}
+
+// The address a session is actually on, not the one it hoped for.
+//
+// This is what produced the black screen. The free ngrok plan allows one
+// tunnel; when the reserved domain is already taken the workflow falls back to
+// a generated address and prints that, while the panel opened the reserved one
+// unconditionally and served whatever else was there - a 404, i.e. a blank
+// page with no explanation. Everything now comes from session.json.
+let LIVE = null;
+let LAST_RUNS = [];
+
+function desktopUrl() {
+  if (!LIVE) return null;
+  if (LIVE.vncUrl) return LIVE.vncUrl;
+  // An agent publishes url + agentUrl and serves no VNC; deriving a desktop
+  // address from it produces the 404 that looked like a black screen.
+  if (LIVE.agentUrl) return null;
+  if (LIVE.url) return LIVE.url + '/vnc.html?autoconnect=1&resize=remote';
+  return null;
+}
+
+let previewOpen = false;
+let previewTab = 'screen';   // screen | term
+
+function renderPreview() {
+  const box = $('preview');
+  const card = $('screen-card');
+  if (!box || !card) return;
+
+  const screen = desktopUrl();
+  const term = LIVE && LIVE.terminal ? LIVE.terminal : null;
+  const agent = LIVE && LIVE.agentUrl ? LIVE.agentUrl : null;
+
+  // Windows RDP has nothing embeddable: it is not HTTP. Saying so beats an
+  // empty black box that looks broken.
+  if (!screen && !term && !agent) {
+    if (LIVE && LIVE.rdpHost) {
+      card.style.display = '';
+      box.innerHTML = '<span class="note">Windows по RDP — встроить в браузер нельзя. ' +
+        'Адрес, логин и пароль ниже; открывайте в Microsoft Remote Desktop.</span>';
+    } else {
+      card.style.display = 'none';
+    }
+    previewOpen = false;
+    return;
+  }
+
+  card.style.display = '';
+  if (previewTab === 'term' && !term) previewTab = 'screen';
+  const url = previewTab === 'term' ? term : (screen || agent);
+
+  const tabs = `
+    <div class="row" style="margin-bottom:8px">
+      ${screen || agent ? `<button class="${previewTab === 'screen' ? '' : 'ghost '}small"
+        onclick="previewTab='screen';renderPreview()">${agent && !screen ? 'Агент' : 'Экран'}</button>` : ''}
+      ${term ? `<button class="${previewTab === 'term' ? '' : 'ghost '}small"
+        onclick="previewTab='term';renderPreview()">Терминал</button>` : ''}
+    </div>`;
+
+  if (!previewOpen) {
+    box.innerHTML = tabs + `
+      <div style="position:relative;border:1px solid var(--line);border-radius:10px;
+           overflow:hidden;background:#000;height:200px">
+        <iframe src="${esc(url)}" style="border:0;width:200%;height:400px;
+                transform:scale(.5);transform-origin:0 0" scrolling="no"
+                sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+        <div onclick="expandPreview()" style="position:absolute;inset:0;cursor:pointer"></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost small" onclick="expandPreview()">Развернуть</button>
+        <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">В новой вкладке</button>
+      </div>`;
+  } else {
+    box.innerHTML = tabs + `
+      <iframe src="${esc(url)}" style="border:1px solid var(--line);border-radius:10px;
+              width:100%;height:70vh;background:#000"
+              sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost small" onclick="collapsePreview()">Свернуть</button>
+        <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">В новой вкладке</button>
+      </div>`;
+  }
+}
+
+function expandPreview()   { previewOpen = true;  renderPreview(); }
+function collapsePreview() { previewOpen = false; renderPreview(); }
+
+// ── two desks, side by side ─────────────────────────────────────────
+//
+// The Desks workflow publishes one file per desk - session-linux.json and
+// session-windows.json - so the two never overwrite each other. That split
+// exists because the old single mailbox meant only one desk could be live at
+// a time, and because free ngrok allowed exactly one tunnel. cloudflared quick
+// tunnels have no such limit, so both desks are genuinely up at once.
+//
+// Neither has a password. There is nothing to copy and nothing to type: the
+// button opens the desk and it connects on its own.
+let DESKS = { linux: null, windows: null };
+let deskOpen = null;   // 'linux' | 'windows' | null - which one is expanded
+
+// The signature of what is currently drawn. Rebuilding the card replaces the
+// iframes, and a replaced iframe reconnects from scratch - which is exactly
+// the "black for a couple of seconds, then fine again" that showed up on the
+// phone, on both desks, on a timer. Measured while it was happening: the
+// Windows stream itself was steady at 4.35 fps with a median 0.23s gap and no
+// disconnects, so nothing was wrong with either desk. refresh() simply ran
+// every 30 seconds and rewrote innerHTML underneath them.
+//
+// So the DOM is only rebuilt when something that matters actually changes -
+// an address, a desk appearing or going away, the expanded view. The minute
+// counter updates on its own, as text.
+let deskSig = '';
+
+async function loadDesks() {
+  const box = $('desks');
+  const card = $('desks-card');
+  if (!box || !card) return;
+
+  // The session page refreshes itself every 30 seconds, and this function
+  // rewrites the card's innerHTML. With the chat embedded that would tear down
+  // the iframe and reload the hub mid-sentence - losing whatever was typed and
+  // scrolling the conversation back to the top. The open chat is left exactly
+  // as it is; the poll still runs, it just does not touch this card.
+  //
+  // Only the chat is protected: a desk iframe is a video stream with no state
+  // to lose, and its thumbnails genuinely need refreshing.
+  if (deskOpen === 'agent' && box.querySelector('iframe')) return;
+
+  const read = async slot => {
+    try {
+      const f = await api(
+        `${CTL()}/contents/session-${slot}.json?ref=session-state&t=${Date.now()}`);
+      const s = JSON.parse(decodeURIComponent(escape(
+        atob((f.content || '').replace(/\n/g, '')))));
+      // A runner killed hard never clears its file, so an old entry lingers
+      // and would advertise a desk that stopped answering hours ago.
+      const age = (Date.now() - new Date(s.startedAt).getTime()) / 60000;
+      if (s.state === 'ended' || age > 361) return null;
+      s._age = Math.round(age);
+      return s;
+    } catch (e) { return null; }
+  };
+
+  const [lin, win, agent] = await Promise.all(
+    [read('linux'), read('windows'), read('agent')]);
+  DESKS = { linux: lin, windows: win, agent: agent };
+
+  if (!lin && !win && !agent) {
+    card.style.display = 'none';
+    deskSig = '';
+    return;
+  }
+  card.style.display = '';
+
+  const ageLine = s => `${s.agentUrl ? 'по ссылке с токеном' : 'без пароля'} · идёт ${s._age} мин · осталось ~${Math.max(0, 360 - s._age)} мин`;
+
+  // Nothing structural changed: touch the counters and leave the iframes be.
+  const sig = JSON.stringify([
+    deskOpen,
+    lin && [lin.deskUrl || lin.url, lin.terminal || '', lin.runId || ''],
+    win && [win.deskUrl || win.url, win.terminal || '', win.runId || ''],
+    agent && [agent.agentUrl || agent.url, agent.runId || '']
+  ]);
+  if (sig === deskSig) {
+    for (const [slot, s] of [['linux', lin], ['windows', win], ['agent', agent]]) {
+      const el = $('desk-age-' + slot);
+      if (el && s) el.textContent = ageLine(s);
+    }
+    return;
+  }
+  deskSig = sig;
+
+  const tile = (slot, s, title) => {
+    if (!s) return `
+      <div style="flex:1;min-width:150px;border:1px dashed var(--line);border-radius:10px;
+           padding:12px;opacity:.55">
+        <b>${title}</b><div class="note" style="margin-top:4px">не запущен</div>
+      </div>`;
+    const url = s.deskUrl || s.url || '';
+    // The thumbnail asks the Windows desk for a small, slow stream: measured
+    // 99% fewer bytes per frame at 340px, and an idle desktop sends almost
+    // nothing because identical frames are skipped. The Linux desk is noVNC
+    // and ignores these parameters harmlessly.
+    const thumb = slot === 'windows' ? (s.url || url) + '/stream?w=340&fps=1' : url;
+    return `
+      <div style="flex:1;min-width:150px;border:1px solid var(--line);border-radius:10px;
+           padding:12px">
+        <b>${title}</b>
+        <div class="note" style="margin:4px 0 8px" id="desk-age-${slot}">${esc(ageLine(s))}</div>
+        <div style="position:relative;border:1px solid var(--line);border-radius:8px;
+             overflow:hidden;background:#000;height:110px;margin-bottom:8px">
+          ${slot === 'windows'
+            ? `<img src="${esc(thumb)}" style="width:100%;height:100%;object-fit:cover;display:block">`
+            : `<iframe src="${esc(url)}" style="border:0;width:300%;height:330px;
+                 transform:scale(.333);transform-origin:0 0" scrolling="no"
+                 sandbox="allow-scripts allow-same-origin allow-forms"></iframe>`}
+          <div onclick="expandDesk('${slot}')" style="position:absolute;inset:0;cursor:pointer"></div>
+        </div>
+        <div class="row">
+          <button class="small" onclick="expandDesk('${slot}')">Открыть здесь</button>
+          <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">В новой вкладке</button>
+        </div>
+        ${s.terminal ? `<div class="row" style="margin-top:6px">
+          <button class="ghost small" onclick="window.open('${esc(s.terminal)}','_blank')">Терминал</button></div>` : ''}
+        ${s.runId && tok() ? `<div class="row" style="margin-top:6px">
+          <button class="ghost small" onclick="stopRun(${s.runId})">Выключить</button></div>` : ''}
+      </div>`;
+  };
+
+  if (deskOpen === 'agent' && agent) {
+    // The chat opens full-screen, inside the app.
+    //
+    // It used to be window.open(): on a phone that leaves the app entirely,
+    // and the address carries the session token. Then it was an 85vh iframe
+    // inside this card - but the card sits on a page with 12px padding and
+    // 90px of bottom padding for the tab bar, so the chat lost roughly a
+    // fifth of the screen and its composer sat above a dead strip.
+    //
+    // A fixed overlay ignores all of that: it covers the viewport exactly,
+    // and 100dvh (not vh) follows the browser chrome as it collapses, which
+    // is what keeps the input visible when the keyboard opens on Android.
+    const url = agent.agentUrl || agent.url || '';
+    let ov = document.getElementById('chat-overlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'chat-overlay';
+      document.body.appendChild(ov);
+    }
+    ov.style.cssText =
+      'position:fixed;inset:0;z-index:9999;background:var(--bg);' +
+      'display:flex;flex-direction:column;height:100dvh';
+    // Rebuilt only when the address changes, so a re-render never reloads the
+    // hub and throws away what the user was typing.
+    if (ov.dataset.url !== url) {
+      ov.dataset.url = url;
+      ov.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;
+                    padding-top:calc(8px + env(safe-area-inset-top));
+                    border-bottom:1px solid var(--line);background:var(--panel)">
+          <b style="flex:1;font-size:14px">CLI-агент</b>
+          <button class="ghost small" onclick="openChatInBrowser()">В браузере</button>
+          <button class="ghost small" onclick="collapseDesks()">Закрыть</button>
+        </div>
+        <iframe src="${esc(url)}" style="border:0;flex:1;width:100%;background:var(--bg)"
+                allow="clipboard-read; clipboard-write"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`;
+    }
+    document.body.style.overflow = 'hidden';
+    box.innerHTML = '<div class="note">Чат открыт на весь экран.</div>';
+  } else if (deskOpen && DESKS[deskOpen]) {
+    const s = DESKS[deskOpen];
+    const url = s.deskUrl || s.url || '';
+    const other = deskOpen === 'linux' ? 'windows' : 'linux';
+    box.innerHTML = `
+      <div class="row" style="margin-bottom:8px">
+        <button class="small">${deskOpen === 'linux' ? 'Linux' : 'Windows'}</button>
+        ${DESKS[other] ? `<button class="ghost small" onclick="expandDesk('${other}')">
+          ${other === 'linux' ? 'Linux' : 'Windows'}</button>` : ''}
+        <button class="ghost small" onclick="collapseDesks()">Оба рядом</button>
+      </div>
+      <iframe src="${esc(url)}" style="border:1px solid var(--line);border-radius:10px;
+              width:100%;height:70vh;background:#000"
+              sandbox="allow-scripts allow-same-origin allow-forms"></iframe>`;
+  } else {
+    // The agent has no screen to show - it is a chat page - so it gets a row
+    // of its own rather than an empty black thumbnail pretending to be a desk.
+    const agentRow = agent ? `
+      <div style="margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:12px">
+        <b>CLI-агент</b>
+        <div class="note" style="margin:4px 0 8px" id="desk-age-agent">${esc(ageLine(agent))}</div>
+        <div class="row">
+          <button class="small" onclick="expandDesk('agent')">Открыть чат</button>
+          <button class="ghost small"
+                  onclick="window.open('${esc(agent.agentUrl || agent.url)}','_blank')">
+            В браузере</button>
+          ${agent.runId && tok() ? `<button class="ghost small" onclick="stopRun(${agent.runId})">Выключить</button>` : ''}
+        </div>
+      </div>` : '';
+    box.innerHTML = `<div class="row" style="gap:10px;align-items:stretch">
+      ${tile('linux', lin, 'Linux')}
+      ${tile('windows', win, 'Windows')}
+    </div>` + agentRow;
+  }
+}
+
+function expandDesk(slot) { deskOpen = slot; loadDesks(); }
+function collapseDesks()  { deskOpen = null; closeChatOverlay(); loadDesks(); }
+
+/** Tear down the full-screen chat and give the page its scrolling back. */
+function closeChatOverlay() {
+  const ov = document.getElementById('chat-overlay');
+  if (ov) ov.remove();
+  document.body.style.overflow = '';
+}
+
+/** Hand the current chat address to a real browser tab, on request. */
+function openChatInBrowser() {
+  const ov = document.getElementById('chat-overlay');
+  const url = ov && ov.dataset.url;
+  if (url) window.open(url, '_blank');
+}
+
+// Android's back gesture should leave the chat, not the panel. Without this
+// the overlay stays up and back appears to do nothing.
+window.addEventListener('popstate', () => {
+  if (document.getElementById('chat-overlay')) collapseDesks();
+});
+
+/**
+ * Open a desk or the chat inside the panel, from anywhere in the UI.
+ *
+ * The desks card sits on the session page, so a button elsewhere has to switch
+ * to that page first and then scroll to it - expanding something the user
+ * cannot see reads as a dead button. loadDesks() is async, hence the scroll on
+ * the next frame, once the iframe has been laid out.
+ */
+function openDeskInPanel(slot) {
+  go('sess');
+  expandDesk(slot);
+  requestAnimationFrame(() => {
+    const el = $('desks');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+// ── one session per account ─────────────────────────────────────────
+//
+// Three workflows and four modes were three too many decisions to make before
+// getting a screen. There is one session at a time now, and what it is decides
+// what opens: Windows means RDP, Linux means a desktop and a terminal, the
+// agent means its own hub. Free ngrok allows one tunnel anyway, so a second
+// concurrent session could never have been reachable - the old panel let you
+// start one regardless and then showed a blank page.
+
+const KIND_LABEL = { linux: 'Linux', windows: 'Windows', agent: 'CLI-агент' };
+
+function busyButtons(on, which) {
+  for (const id of ['btn-linux', 'btn-windows', 'btn-agent']) {
+    const b = $(id); if (!b) continue;
+    b.disabled = on;
+  }
+  const b = $(which); if (b) b.textContent = on ? 'Запускаю…' : (b.dataset.label || b.textContent);
+}
+
+// Anything already running, whatever kind.
+function anyLive(runs) {
+  return runs.filter(r => ['Zen agent', 'Remote session', 'opencode'].includes(r.name)
+                          && r.status !== 'completed');
+}
+
+async function launch(os) {
+  if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
+
+  const running = anyLive(await currentRuns());
+  if (running.length) {
+    const mins_ = mins(running[0].created_at);
+    const again = confirm(
+      `Сессия уже идёт (${mins_} мин).\n\n` +
+      'ОК — остановить её и начать заново.\n' +
+      'Отмена — подключиться к текущей.');
+    if (!again) { await refresh(); openLive(); return; }
+    for (const r of running) await cancelRun(r.id);
+    await new Promise(r => setTimeout(r, 8000));
+  }
+
+  const btn = $(os === 'windows' ? 'btn-windows' : 'btn-linux');
+  btn.dataset.label = btn.dataset.label || btn.textContent;
+  busyButtons(true, btn.id);
+  try {
+    const r = await fetch(`${CTL()}/actions/workflows/remote.yml/dispatches`, {
+      method: 'POST', headers: hdr(),
+      body: JSON.stringify({ ref: 'main', inputs: {
+        os,
+        // Linux serves the desktop and the terminal from one tunnel; Windows
+        // has only its built-in RDP.
+        mode: os === 'windows' ? 'rdp' : 'web',
+        prepare_build: 'false',
+        label: (acct() && acct().login) || 'session'
+      } })
+    });
+    if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
+    await waitAndOpen(os);
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  } finally {
+    busyButtons(false, btn.id);
+    btn.textContent = btn.dataset.label;
+  }
+}
+
+// ── start the desks ─────────────────────────────────────────────────
+//
+// Unlike launch() above, this does NOT stop what is already running. The old
+// rule - one session at a time - existed because free ngrok allows one tunnel,
+// so a second session was unreachable no matter what the panel said.
+// cloudflared quick tunnels have no such limit, which is the whole reason two
+// desks can exist. The Desks workflow runs both as separate jobs of one run.
+async function launchDesks(which) {
+  if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
+
+  const already = (await currentRuns()).filter(
+    r => r.name === 'Desks' && r.status !== 'completed');
+  if (already.length) {
+    if (!confirm(`Столы уже подняты (${mins(already[0].created_at)} мин).\n\n` +
+                 'ОК — остановить и поднять заново.\nОтмена — оставить как есть.')) {
+      await refresh(); return;
+    }
+    for (const r of already) await cancelRun(r.id);
+    await new Promise(r => setTimeout(r, 8000));
+  }
+
+  const id = which === 'both' ? 'btn-both' : which === 'windows' ? 'btn-windows' : 'btn-linux';
+  const btn = $(id);
+  btn.dataset.label = btn.dataset.label || btn.textContent;
+  for (const b of ['btn-both', 'btn-linux', 'btn-windows']) {
+    if ($(b)) $(b).disabled = true;
+  }
+  btn.textContent = 'Поднимаю…';
+  try {
+    const r = await fetch(`${CTL()}/actions/workflows/desks.yml/dispatches`, {
+      method: 'POST', headers: hdr(),
+      body: JSON.stringify({ ref: 'main', inputs: {
+        which,
+        prepare_build: 'false',
+        label: (acct() && acct().login) || 'desks'
+      } })
+    });
+    if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
+
+    // A desk takes two to four minutes to install, tunnel and publish. Poll
+    // rather than promising it is ready: the tile appears the moment the
+    // address lands in the session-state branch.
+    for (let i = 0; i < 90; i++) {
+      await new Promise(res => setTimeout(res, 5000));
+      await loadDesks();
+      if (DESKS.linux || DESKS.windows) break;
+      btn.textContent = `Поднимаю… ${Math.round(i * 5 / 60 * 10) / 10} мин`;
+    }
+    await refresh();
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  } finally {
+    for (const b of ['btn-both', 'btn-linux', 'btn-windows']) {
+      if ($(b)) { $(b).disabled = false; $(b).textContent = $(b).dataset.label || $(b).textContent; }
+    }
+  }
+}
+
+async function launchAgent() {
+  if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
+  const where = confirm('Где поднять агента?\n\nОК — Linux (2 ядра, умеет собирать APK)\n' +
+                        'Отмена — Windows (4 ядра, 16 ГБ)') ? 'linux' : 'windows';
+
+  const running = anyLive(await currentRuns());
+  if (running.length) {
+    if (!confirm(`Сессия уже идёт (${mins(running[0].created_at)} мин).\n\n` +
+                 'ОК — остановить её и поднять агента.\nОтмена — оставить как есть.')) {
+      await refresh(); openLive(); return;
+    }
+    for (const r of running) await cancelRun(r.id);
+    await new Promise(r => setTimeout(r, 8000));
+  }
+
+  const btn = $('btn-agent');
+  btn.dataset.label = btn.dataset.label || btn.textContent;
+  busyButtons(true, 'btn-agent');
+  try {
+    const r = await fetch(`${CTL()}/actions/workflows/agent.yml/dispatches`, {
+      method: 'POST', headers: hdr(),
+      body: JSON.stringify({ ref: 'main', inputs: {
+        os: where, branch: 'agent-work', repos: '', autosave_minutes: '2' } })
+    });
+    if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
+    await waitAndOpen('agent');
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  } finally {
+    busyButtons(false, 'btn-agent');
+    btn.textContent = btn.dataset.label;
+  }
+}
+
+// Poll until the session publishes an address, then go straight in. Waiting
+// for a link to appear in a log is the step people gave up at.
+async function waitAndOpen(kind) {
+  const btn = $(kind === 'windows' ? 'btn-windows' : kind === 'agent' ? 'btn-agent' : 'btn-linux');
+  const budget = kind === 'windows' ? 60 : 48;
+  for (let i = 0; i < budget; i++) {
+    if (btn) btn.textContent = `Поднимаю… ${i * 5}s`;
+    await new Promise(r => setTimeout(r, 5000));
+    const s = await loadCreds();
+    if (s && (s.agentUrl || s.vncUrl || s.rdpHost)) {
+      await refresh();
+      openLive();
+      return;
+    }
+  }
+  await refresh();
+  alert('Сессия ещё поднимается. Адрес появится в «Доступах» через минуту.');
+}
+
+// Open whatever the live session is, in the way that suits it.
+function openLive() {
+  const s = LIVE;
+  if (!s) {
+    // The run list and the published address come from different places: a
+    // session can be running for a minute before it has an address, and an
+    // entry left by an earlier run can be stale. Saying "no active session"
+    // while two are visibly running - which is what the panel did - is the
+    // least useful answer available.
+    alert(LAST_RUNS && LAST_RUNS.length
+      ? 'Сессия запущена, но ещё не сообщила адрес.\n\n' +
+        'Обычно это первые 1–2 минуты. Если висит дольше — откройте журнал: ' +
+        'возможно, туннель занят другой сессией.'
+      : 'Активной сессии нет.');
+    return;
+  }
+  // Both of these used to be window.open(), which on a phone leaves the app
+  // and hands the session token to the browser's address bar and history.
+  // They open in the panel now; "В браузере" is still there for anyone who
+  // wants a real tab.
+  //
+  // The desks card lives on the session page - there is no separate "desks"
+  // tab - and openDeskInPanel() scrolls to it, because expanding a panel that
+  // is off-screen looks like the button did nothing.
+  if (s.agentUrl) { openDeskInPanel('agent'); return; }
+  if (s.vncUrl)   { openDeskInPanel(s.rdpHost ? 'windows' : 'linux'); return; }
+  if (s.rdpHost) {
+    // RDP is not HTTP: there is nothing to open in a browser, so hand over the
+    // details and let the RDP client take them.
+    alert('Windows: откройте Microsoft Remote Desktop и добавьте ПК\n\n' +
+          'Адрес: ' + s.rdpHost + '\nЛогин: ' + (s.rdpUser || 'zenrdp') +
+          '\nПароль: ' + (s.rdpPass || '—') +
+          '\n\nЭти же поля с кнопкой «копия» — ниже в «Доступах».');
+    go('sess');
+    return;
+  }
+  alert('Сессия ещё не сообщила адрес.');
+}
+
+async function cancelRun(id, repo) {
+  const r = await fetch(`${GH}/repos/${repo || ctlRepo()}/actions/runs/${id}/cancel`,
+    { method: 'POST', headers: hdr() });
+  // 202 accepted; 409 means it had already finished, which is fine here.
+  return r.status === 202 || r.status === 409;
+}
+
+async function stopRun(id, repo) {
+  if (!tok()) { alert('Нужен токен, чтобы останавливать.'); return; }
+  if (!confirm('Остановить сессию? Автосейв уже отправил работу в ветку.')) return;
+  const ok = await cancelRun(id, repo);
+  alert(ok ? 'Остановлено. Раннер сворачивается ~полминуты.' : 'Не вышло.');
+  setTimeout(() => { refresh(); if (page === 'act') loadActions(true); }, 4000);
+}
+
+// ── session credentials ─────────────────────────────────────────────
+//
+// A running session writes session.json to the session-state branch. The job
+// summary already carries the same values, but it is not machine-readable and
+// on a phone it is several taps away; this puts the address, user and password
+// on the screen that starts the session.
+async function loadCreds() {
+  const box = $('creds');
+  try {
+    const f = await api(
+      `${CTL()}/contents/session.json?ref=session-state&t=${Date.now()}`);
+    const raw = atob((f.content || '').replace(/\n/g, ''));
+    const s = JSON.parse(raw);
+
+    // Stale entries linger: a runner killed hard never gets to clear the file.
+    const age = (Date.now() - new Date(s.startedAt).getTime()) / 60000;
+    if (s.state === 'ended' || age > 361) {
+      box.innerHTML = '<span class="note">активных сессий нет</span>';
+      LIVE = null; renderPreview();
+      return null;
+    }
+    const left = Math.max(0, 360 - Math.round(age));
+    const rows = [];
+    const kv = (k, v, mono) => rows.push(
+      `<div class="kv"><div class="k">${esc(k)}</div>
+       <div class="v">${mono === false ? esc(v) : `<code>${esc(v)}</code>`}</div>
+       <button class="ghost small" onclick="copy(${JSON.stringify(String(v)).replace(/"/g,'&quot;')})">копия</button></div>`);
+
+    if (s.kind) rows.push(`<div class="note" style="margin:0 0 6px">
+      ${esc(s.kind)} · ${esc(s.os || '')} · идёт ${Math.round(age)} мин · осталось ~${left} мин</div>`);
+    if (s.url)      kv('Адрес', s.url);
+    if (s.rdpHost)  kv('RDP', s.rdpHost);
+    if (s.rdpUser)  kv('Логин', s.rdpUser);
+    if (s.rdpPass)  kv('Пароль', s.rdpPass);
+    if (s.vncUrl)   kv('VNC', s.vncUrl);
+    if (s.vncPass)  kv('Пароль VNC', s.vncPass);
+    if (s.sshCmd)   kv('SSH', s.sshCmd);
+    if (s.agentUrl) kv('Агент', s.agentUrl);
+    if (s.branch)   kv('Ветка', s.branch);
+
+    const open = s.agentUrl || s.vncUrl || s.url;
+    box.innerHTML = rows.join('') +
+      (open ? `<button onclick="window.open('${esc(open)}','_blank')">Открыть</button>` : '') +
+      (s.runId && tok()
+        ? `<button class="ghost" onclick="stopRun(${s.runId})">Выключить</button>` : '');
+    LIVE = s; renderPreview();
+    return s;
+  } catch (e) {
+    // 404 simply means nothing has published yet, which is the normal state.
+    box.innerHTML = /404/.test(e.message)
+      ? '<span class="note">активных сессий нет</span>'
+      : `<div class="danger">${esc(e.message)}</div>`;
+    LIVE = null; renderPreview();
+    if ($('creds-card')) $('creds-card').style.display = 'none';
+    return null;
+  }
+}
+
+function copy(text) {
+  const done = () => alert('Скопировано.');
+  if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => fallback());
+  else fallback();
+  function fallback() {
+    const a = document.createElement('textarea');
+    a.value = text; document.body.appendChild(a); a.select();
+    try { document.execCommand('copy'); done(); } catch (e) { alert(text); }
+    a.remove();
+  }
+}
+
+// ── panel APK ───────────────────────────────────────────────────────
+async function loadPanelApk() {
+  const box = $('apk-panel');
+  try {
+    const d = await api(`${CTL()}/actions/runs?per_page=20`);
+    const b = (d.workflow_runs || []).find(r =>
+      r.name === 'Panel APK' && r.conclusion === 'success');
+    if (!b) {
+      box.innerHTML = '<span class="note">приложение ещё не собиралось</span>';
+      return;
+    }
+    box.innerHTML = `<table>
+      <tr><td>Сборка</td><td>#${b.run_number} · ${ago(b.updated_at)}</td></tr>
+      <tr><td>Скачать</td><td><a href="${esc(b.html_url)}" target="_blank">сводка запуска —
+        там ссылка и MD5</a></td></tr></table>`;
+  } catch (e) {
+    box.innerHTML = `<div class="danger">${esc(e.message)}</div>`;
+  }
+}
+
+// ── shared bits ─────────────────────────────────────────────────────
+function pill(r) {
+  if (r.status !== 'completed')     return '<span class="pill run">идёт</span>';
+  if (r.conclusion === 'success')   return '<span class="pill ok">успех</span>';
+  if (r.conclusion === 'cancelled') return '<span class="pill idle">отменён</span>';
+  return '<span class="pill bad">ошибка</span>';
+}
+const mins = iso => Math.round((Date.now() - new Date(iso)) / 60000);
+function ago(iso) {
+  const m = mins(iso);
+  if (m < 60) return m + ' мин назад';
+  if (m < 1440) return Math.round(m / 60) + ' ч назад';
+  return Math.round(m / 1440) + ' дн назад';
+}
+const kb = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' МБ'
+             : n >= 1024 ? Math.round(n / 1024) + ' КБ' : n + ' Б';
+
+async function refresh() {
+  let runs = [];
+  try { runs = (await api(`${CTL()}/actions/runs?per_page=20`)).workflow_runs || []; }
+  catch (e) {
+    $('live').innerHTML = `<div class="danger">${esc(e.message)}</div>`;
+    return;
+  }
+
+  const live = anyLive(runs);
+  LAST_RUNS = live;
+  const conflict = $('agent-conflict');
+  if (live.length > 1) {
+    // Should not happen now that launching stops what is running, but an old
+    // session started before this change can still collide - and the free plan
+    // gives one tunnel, so the extra one is simply unreachable.
+    conflict.style.display = '';
+    conflict.innerHTML = 'Запущено несколько сессий. Туннель достанется первой, ' +
+      'остальные недоступны — лишние стоит выключить.';
+  } else conflict.style.display = 'none';
+
+  $('live').innerHTML = live.length
+    ? '<table>' + live.map(r => {
+        const used = mins(r.created_at), left = Math.max(0, 360 - used);
+        const kind = r.name === 'Zen agent' ? 'CLI-агент' : 'Рабочий стол';
+        return `<tr><td>#${r.run_number}</td>
+          <td><b>${esc(kind)}</b> ${pill(r)}
+            <div class="note">идёт ${used} мин · осталось ~${left} мин ·
+              <a href="${esc(r.html_url)}" target="_blank">журнал</a></div>
+            <button class="small" onclick="openLive()">Открыть</button>
+            <button class="ghost small" onclick="stopRun(${r.id})">Выключить</button></td>
+          </tr>`;
+      }).join('') + '</table>'
+    : '<span class="note">сессия не запущена</span>';
+
+  // Awaited: the credentials decide what the screen and access cards show, and
+  // firing this off unawaited left refresh() reporting a live session above two
+  // cards that were still empty.
+  await loadCreds();
+  await loadDesks();
+
+  const build = runs.find(r => r.name === 'Build APK' && r.conclusion === 'success');
+  const box = $('apk');
+  if (!build) { box.innerHTML = '<span class="note">успешных сборок пока нет</span>'; return; }
+  try {
+    const a = await api(`${CTL()}/actions/runs/${build.id}/artifacts`);
+    const arts = a.artifacts || [];
+    box.innerHTML = `<table>
+      <tr><td>Сборка</td><td>#${build.run_number} · ${ago(build.updated_at)}</td></tr>
+      <tr><td>Артефакт</td><td>${arts.length
+        ? (arts[0].size_in_bytes / 1048576).toFixed(1) + ' МБ (сжатый)' : 'истёк'}</td></tr>
+      <tr><td>Ссылка</td><td><a href="${esc(build.html_url)}" target="_blank">сводка —
+        там gofile и MD5</a></td></tr></table>`;
+  } catch (e) {
+    box.innerHTML = '<span class="note">не удалось прочитать артефакты</span>';
+  }
+}
+
+$('act-repo').textContent = ACT_REPO;
+go('sess');
+loadAccount();
+startWatching();
+setInterval(() => { if (page === 'sess') refresh(); }, 30000);
+</script>
+</body>
+</html>
