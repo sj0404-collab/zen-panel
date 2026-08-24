@@ -3297,6 +3297,27 @@ function startEmbeddedServer() {
     if (req.method === 'OPTIONS') { res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type,X-Zen-Token,Authorization' }); res.end(); return; }
 
     try {
+      // Raw streaming upload: avoid buffering APKs, books and videos in Node memory.
+      if (url.pathname === '/api/uploads' && req.method === 'POST') {
+        const limit = 512 * 1024 * 1024;
+        const original = String(req.headers['x-file-name'] || 'upload.bin');
+        const safeName = path.basename(original).replace(/[^a-zA-Z0-9._() -]/g, '_').slice(0, 180) || 'upload.bin';
+        const declared = Number(req.headers['content-length'] || 0);
+        if (declared > limit) { json(res, 413, { error: 'Файл больше 512 МБ.' }); return; }
+        const dir = path.join(WORKSPACE_ROOT, 'uploads'); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        const target = path.join(dir, `${Date.now()}-${safeName}`);
+        let written = 0, failed = false; const out = fs.createWriteStream(target, { mode: 0o600 });
+        req.on('data', chunk => { written += chunk.length; if (written > limit && !failed) { failed = true; req.destroy(new Error('Upload exceeds 512 MB')); } });
+        req.on('aborted', () => { failed = true; out.destroy(); });
+        req.on('error', () => { failed = true; out.destroy(); });
+        out.on('error', () => { failed = true; });
+        out.on('finish', () => {
+          if (failed || written === 0) { try { fs.unlinkSync(target); } catch {} json(res, 400, { error: 'Загрузка прервана.' }); return; }
+          const relative = path.relative(WORKSPACE_ROOT, target).split(path.sep).join('/');
+          json(res, 201, { success: true, path: relative, name: safeName, size: written, mime: String(req.headers['content-type'] || 'application/octet-stream') });
+        });
+        req.pipe(out); return;
+      }
       // Core collection mode serves only AIN and its decomposed assets.
       // Hub and standalone have their own servers and proxy only their required APIs here.
       if (CORE_ONLY && req.method === 'GET' && url.pathname === '/collection-config.js') {
