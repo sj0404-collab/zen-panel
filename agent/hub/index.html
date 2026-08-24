@@ -524,7 +524,7 @@ function finishCard(key, ok, ms, preview){
   }
 }
 
-let runId=null, timer=null, seen=new Set(), startedAt=0, curStep=0, pending=[];
+let runId=null, timer=null, seen=new Set(), startedAt=0, curStep=0, pending=[], lastInput='';
 
 /* The send control doubles as stop, the way Agent Mode does it: an arrow when
    idle, a filled square while the agent is working. Two buttons meant the stop
@@ -632,6 +632,29 @@ function endRun(run){
   if (run.answer) say(run.answer);
   else if (run.error) say('**Ошибка:** ' + run.error);
   else if (!ok) say('_Запуск завершился без ответа (' + (run.status||'?') + ')._');
+  // Keep a failed request recoverable without retyping it on a phone. A retry
+  // is deliberately offered only after the run is over, never while tools are
+  // active, so it cannot create two concurrent agent tasks.
+  if (!ok && lastInput) offerRetry();
+}
+
+function offerRetry(){
+  const stick = atBottom();
+  const box = document.createElement('div');
+  box.className = 'say';
+  box.style.cssText = 'border:1px solid #2b7fff;background:#10233d';
+  const note = document.createElement('span');
+  note.textContent = 'Повторить последний запрос?';
+  const btn = document.createElement('button');
+  btn.textContent = 'Повторить';
+  btn.style.cssText = 'margin-left:10px;background:#2b7fff;color:#fff;border:0;border-radius:6px;padding:7px 12px;font:inherit;font-weight:600;cursor:pointer';
+  btn.onclick = () => {
+    if (runId) return;
+    box.remove();
+    $('q').value = lastInput;
+    send();
+  };
+  box.append(note, btn); stream.appendChild(box); if(stick) scroll();
 }
 
 async function poll(){
@@ -672,6 +695,7 @@ async function poll(){
 async function send(){
   const q=$('q'), text=q.value.trim();
   if(!text || runId) return;
+  lastInput = text;
   q.value=''; q.style.height='auto';
   say(text, true);
   setBusy(true); startedAt=Date.now(); seen.clear(); pending=[]; curStep=0;
