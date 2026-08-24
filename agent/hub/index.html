@@ -183,6 +183,8 @@
 </div>
 
 <footer>
+  <input id="file" type="file" hidden onchange="uploadSelected(this.files[0])">
+  <button class="ghost" id="attach" onclick="$('file').click()" aria-label="Прикрепить файл">📎</button>
   <textarea id="q" rows="1" placeholder="Задача…"
     onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();primary();}"></textarea>
   <button id="send" onclick="primary()" aria-label="Отправить">→</button>
@@ -542,6 +544,24 @@ function setBusy(on){
    one is going - it stops the current one instead. */
 function primary(){
   if (runId) abortRun(); else send();
+}
+
+async function uploadSelected(file){
+  if (!file) return;
+  if (file.size > 512 * 1024 * 1024) { say('**Файл слишком большой:** максимум 512 МБ.'); return; }
+  const attach = $('attach'); attach.disabled = true; attach.textContent = '0%';
+  const xhr = new XMLHttpRequest(); xhr.open('POST','/api/uploads');
+  if (TOKEN) xhr.setRequestHeader('X-Zen-Token', TOKEN);
+  xhr.setRequestHeader('X-File-Name', file.name); xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+  xhr.upload.onprogress = e => { if (e.lengthComputable) attach.textContent = Math.round(e.loaded * 100 / e.total) + '%'; };
+  xhr.onerror = () => { attach.disabled=false; attach.textContent='📎'; say('**Загрузка не удалась:** проверьте сеть и повторите.'); };
+  xhr.onload = () => { attach.disabled=false; attach.textContent='📎'; try {
+    const r=JSON.parse(xhr.responseText); if(xhr.status<200||xhr.status>=300) throw new Error(r.error||xhr.status);
+    const line=`[Прикреплён файл: ${r.name}; путь: ${r.path}; размер: ${Math.round(r.size/1024)} КБ]`;
+    $('q').value = ($('q').value ? $('q').value+'\n' : '') + line; $('q').focus();
+    say('_Файл загружен: '+r.name+'._');
+  } catch(e) { say('**Загрузка не удалась:** '+e.message); } };
+  xhr.send(file);
 }
 
 function applyEvent(ev){
