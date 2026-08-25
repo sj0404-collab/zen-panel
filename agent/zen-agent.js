@@ -569,18 +569,53 @@ function printBanner() {
 //
 // The dead ones are kept out of the list entirely: offering a model that
 // never answers is what made the agent feel broken rather than slow.
-const ZEN_MODELS = [
-  { id: 'laguna-s-2.1-free', name: 'Laguna S 2.1', ctx: '128K', note: 'быстрая, стабильная' },
-  { id: 'mimo-v2.5-free', name: 'MiMo V2.5', ctx: '128K', note: 'самая быстрая' },
-  { id: 'kimi-k2.5-free', name: 'Kimi K2.5', ctx: '128K', note: 'код и длинный контекст' },
-  { id: 'glm-4.7-free', name: 'GLM 4.7 Free', ctx: '128K', note: 'бесплатная GLM' },
-  { id: 'nemotron-3-ultra-free', name: 'Nemotron 3 Ultra', ctx: '128K', note: 'может быть медленной' },
-  { id: 'minimax-m2.5', name: 'MiniMax M2.5', ctx: '128K', note: 'Zen / Go' },
-  { id: 'deepseek-v4-flash-free', name: 'DeepSeek V4 Flash', ctx: '200K', note: 'медленная, большой контекст' }
-];
+// Free OpenCode Zen models — same list the official OpenCode picker shows.
+// IDs checked against GET https://opencode.ai/zen/v1/models on 2026-08-25.
+const ZEN_MODEL_NAMES = {
+  'nemotron-3.5-lightning-free': { name: 'Nemotron 3.5 Lightning', ctx: '262K', note: 'бесплатная, быстрая' },
+  'nemotron-3-ultra-free': { name: 'Nemotron 3 Ultra', ctx: '1M', note: 'бесплатная, большой контекст' },
+  'hy3-free': { name: 'Hy3', ctx: '190K', note: 'бесплатная Tencent' },
+  'muse-spark-1.2-contributor-free': { name: 'Muse Spark 1.2', ctx: '1M', note: 'бесплатная contributor' },
+  'x-preview-f-free': { name: 'Ox Alpha Free (Unlimited)', ctx: '1M', note: 'бесплатная unlimited' },
+  'mimo-v2.5-free': { name: 'MiMo V2.5', ctx: '200K', note: 'бесплатная Xiaomi' },
+  'big-pickle': { name: 'Big Pickle', ctx: '200K', note: 'бесплатная, дефолт OpenCode' },
+  'laguna-s-2.1-free': { name: 'Laguna S 2.1', ctx: '256K', note: 'бесплатная, стабильная' },
+  'deepseek-v4-flash-free': { name: 'DeepSeek V4 Flash', ctx: '200K', note: 'если ещё отдаётся' }
+};
+function zenEntry(id) {
+  const meta = ZEN_MODEL_NAMES[id] || {};
+  const pretty = id.replace(/-free$/, '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  return { id, name: meta.name || pretty, ctx: meta.ctx || '128K', note: meta.note || 'OpenCode Zen free' };
+}
+let ZEN_MODELS = [
+  'nemotron-3.5-lightning-free',
+  'nemotron-3-ultra-free',
+  'hy3-free',
+  'muse-spark-1.2-contributor-free',
+  'x-preview-f-free',
+  'mimo-v2.5-free',
+  'big-pickle',
+  'laguna-s-2.1-free'
+].map(zenEntry);
 
 /** Models to try, in order, when the chosen one fails. */
-const ZEN_FALLBACK_ORDER = ZEN_MODELS.map(m => m.id);
+function zenFallbackOrder() { return ZEN_MODELS.map(m => m.id); }
+let ZEN_FALLBACK_ORDER = zenFallbackOrder();
+
+function mergeZenCatalog(ids) {
+  const seen = new Set();
+  const next = [];
+  for (const id of ids) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    next.push(zenEntry(id));
+  }
+  if (next.length) {
+    ZEN_MODELS = next;
+    ZEN_FALLBACK_ORDER = zenFallbackOrder();
+  }
+  return ZEN_MODELS;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 //  LEGACY COLOR HELPER (backward compat)
@@ -3740,7 +3775,10 @@ function startEmbeddedServer() {
         json(res, 200, { success: true }); return;
       }
       if (url.pathname === '/api/fs/download' && req.method === 'GET') { const target = hubPath(url.searchParams.get('path')); if (target.error) { json(res, 400, { error: target.error }); return; } const fileName = path.basename(target.path).replace(/[\r\n"]/g, '_'); res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${fileName}"` }); fs.createReadStream(target.path).pipe(res); return; }
-      if (url.pathname === '/api/models' && req.method === 'GET') { json(res, 200, { success: true, models: getHubModels(), selected: currentModel, provider: currentProvider }); return; }
+      if (url.pathname === '/api/models' && req.method === 'GET') {
+        try { await fetchZenFreeModels(); } catch {}
+        json(res, 200, { success: true, models: getHubModels(), selected: currentModel, provider: currentProvider }); return;
+      }
       if (url.pathname === '/api/models/full' && req.method === 'GET') { const allModels = getHubModels(); const providers = [
         { id: 'zen', name: 'OpenCode Zen', icon: '🟢', free: true, configured: true },
         { id: 'openrouter', name: 'OpenRouter', icon: '🟣', free: false, configured: !!openRouterKey() },
@@ -6237,6 +6275,7 @@ loadPresets();
   startEmbeddedServer();
   await new Promise(r => setTimeout(r, 300));
   await checkNetwork();
+  try { await fetchZenFreeModels(); } catch {}
   await checkMCP();
   printBanner();
 
