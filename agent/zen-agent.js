@@ -33,6 +33,16 @@ try { ({ GitHubApi } = require('../lib/github-api')); } catch {}
 let LocalAiManager = null;
 try { ({ LocalAiManager } = require('../lib/local-ai')); } catch {}
 if (!LocalAiManager) {
+  const BUILTIN_LOCAL_CATALOG = [
+    { id: 'qwen2.5-1.5b-instruct-q4', name: 'Qwen2.5 1.5B Q4', sizeMb: 1100, ctx: 32768, downloaded: false,
+      repo: 'Qwen/Qwen2.5-1.5B-Instruct-GGUF', file: 'qwen2.5-1.5b-instruct-q4_k_m.gguf' },
+    { id: 'qwen2.5-3b-instruct-q4', name: 'Qwen2.5 3B Q4', sizeMb: 2000, ctx: 32768, downloaded: false,
+      repo: 'Qwen/Qwen2.5-3B-Instruct-GGUF', file: 'qwen2.5-3b-instruct-q4_k_m.gguf' },
+    { id: 'llama-3.2-3b-instruct-q4', name: 'Llama 3.2 3B Q4', sizeMb: 2000, ctx: 131072, downloaded: false,
+      repo: 'bartowski/Llama-3.2-3B-Instruct-GGUF', file: 'Llama-3.2-3B-Instruct-Q4_K_M.gguf' },
+    { id: 'gemma-3-1b-it-q4', name: 'Gemma 3 1B IT Q4', sizeMb: 800, ctx: 32768, downloaded: false,
+      repo: 'unsloth/gemma-3-1b-it-GGUF', file: 'gemma-3-1b-it-Q4_K_M.gguf' }
+  ];
   const unavailable = () => ({ success: false, error: 'local-ai module not installed' });
   // Every method the agent calls has to exist here, or the fallback is worse
   // than no fallback: /api/local-ai/models called listModels() and threw a
@@ -569,6 +579,10 @@ function printBanner() {
 const ZEN_MODELS = [
   { id: 'laguna-s-2.1-free', name: 'Laguna S 2.1', ctx: '128K', note: 'быстрая, стабильная' },
   { id: 'mimo-v2.5-free', name: 'MiMo V2.5', ctx: '128K', note: 'самая быстрая' },
+  { id: 'kimi-k2.5-free', name: 'Kimi K2.5', ctx: '128K', note: 'код и длинный контекст' },
+  { id: 'glm-4.7-free', name: 'GLM 4.7 Free', ctx: '128K', note: 'бесплатная GLM' },
+  { id: 'nemotron-3-ultra-free', name: 'Nemotron 3 Ultra', ctx: '128K', note: 'может быть медленной' },
+  { id: 'minimax-m2.5', name: 'MiniMax M2.5', ctx: '128K', note: 'Zen / Go' },
   { id: 'deepseek-v4-flash-free', name: 'DeepSeek V4 Flash', ctx: '200K', note: 'медленная, большой контекст' }
 ];
 
@@ -1139,9 +1153,6 @@ function startManagedProcess(args) {
   if (cwdResult.error) return cwdResult;
   const command = String(args.command || '').trim();
   if (!command) return { error: 'Для process_start нужна command.' };
-  const registry = readProcessRegistry();
-  const existing = registry[name];
-  if (existing && processIsAlive(existing.pid)) return { error: `Процесс '${name}' уже запущен (PID ${existing.pid}). Используй process_status, process_logs или process_stop.` };
   const logPath = managedProcessLogPath(name);
   const logFd = fs.openSync(logPath, 'a');
   const isWin = process.platform === 'win32';
@@ -2985,6 +2996,7 @@ function startEmbeddedServer() {
 
   const HUB_BIND_HOST = process.env.ZEN_BIND_HOST || '127.0.0.1';
   const HUB_REMOTE_TOKEN = String(process.env.ZEN_REMOTE_TOKEN || '');
+  if (HUB_REMOTE_TOKEN) CONFIG.autoApprove = true;
   // Collection mode keeps agent/MCP in Core and serves AIN from an external UI tree.
   const CORE_ONLY = process.env.ZEN_CORE_ONLY === '1';
   const STATIC_UI_ROOT = process.env.ZEN_UI_DIR ? path.resolve(process.env.ZEN_UI_DIR) : __dirname;
@@ -3151,6 +3163,14 @@ function startEmbeddedServer() {
 
     // A model chosen from the CLI that no catalogue lists - a paid OpenRouter
     // id, a freshly pulled local file - must not vanish from the dropdown.
+    for (const [id, p] of Object.entries(customProviderStore || {})) {
+      const configured = !!(providerKeyStore['custom_' + id]);
+      const models = (p.models && p.models.length) ? p.models : [p.defaultModel || 'default'];
+      for (const mid of models) {
+        add(mid, mid, id, p.name || id, '🧩', { configured, desc: p.hostname || 'custom' });
+      }
+    }
+
     if (currentModel && !rows.some(m => m.id === currentModel && m.providerId === currentProvider)) {
       rows.unshift({
         id: currentModel, name: currentModel,
@@ -3215,7 +3235,12 @@ function startEmbeddedServer() {
   const safeWebModel = value => {
     const v = String(value || '').trim(); return /^[A-Za-z0-9._:/-]{1,160}$/.test(v) ? v : null;
   };
-  const safeWebProvider = value => ['zen', 'openrouter', 'tokenra', 'orcarouter', 'github', 'huggingface', 'local'].includes(String(value || '').trim()) ? String(value).trim() : null;
+  const safeWebProvider = value => {
+    const v = String(value || '').trim();
+    if (['zen', 'openrouter', 'tokenra', 'orcarouter', 'github', 'huggingface', 'local', 'anthropic', 'openai'].includes(v)) return v;
+    if (customProviderStore[v] || COMPATIBLE_PROVIDERS[v]) return v;
+    return null;
+  };
   // A run is over the moment its status is not one of these. Both sides need
   // the same list, and they used to disagree: the server wrote 'error' while
   // the browser only ever ended on completed/failed/aborted, so a failed run
@@ -3523,13 +3548,16 @@ function startEmbeddedServer() {
         json(res, 200, { success: true, provider: currentProvider, model: currentModel, openRouterConfigured: !!openRouterKey(), githubConfigured: !!githubModelsToken(), huggingFaceConfigured: !!huggingFaceToken(), githubRetiresOn: '2026-07-30', zenModels: ZEN_MODELS, githubModels: ['openai/gpt-4.1', 'openai/gpt-4o', 'meta/llama-3.3-70b-instruct'], huggingFaceModels: ['openai/gpt-oss-120b:cerebras', 'google/gemma-4-31B-it:cerebras', 'deepseek-ai/DeepSeek-R1:fastest'], localAi: { storagePath: localConfig.storagePath, activeEngine: localConfig.activeEngine, selectedModel: localConfig.selectedModel, configuredModel: localConfig.engines?.[localConfig.activeEngine]?.model || '' } }); return;
       }
       if (url.pathname === '/api/agent/settings' && req.method === 'POST') {
-        const body = await readJson(req); const provider = safeWebProvider(body.provider); const model = body.model ? safeWebModel(body.model) : null;
-        if (!provider) { json(res, 400, { error: 'provider must be zen, openrouter, github, huggingface or local' }); return; }
-        if (provider === 'openrouter' && !openRouterKey()) { json(res, 400, { error: 'OpenRouter key is not configured. Set it locally with the CLI command /key; never paste it into this web console.' }); return; }
-        if (provider === 'github' && !githubModelsToken()) { json(res, 400, { error: 'GitHub Models token is not configured. Set GITHUB_TOKEN or GITHUB_MODELS_TOKEN in the Core environment; never paste it into this web console.' }); return; }
-        if (provider === 'huggingface' && !huggingFaceToken()) { json(res, 400, { error: 'Hugging Face token is not configured. Set HF_TOKEN or HUGGINGFACE_TOKEN in the Core environment; never paste it into this web console.' }); return; }
-        currentProvider = provider; if (model) currentModel = model; saveHistory();
-        json(res, 200, { success: true, provider: currentProvider, model: currentModel, openRouterConfigured: !!openRouterKey(), localAi: localAi.publicConfig() }); return;
+        const body = await readJson(req);
+        if (typeof body.autoApprove === 'boolean') CONFIG.autoApprove = body.autoApprove;
+        if (typeof body.autoSwitchModel === 'boolean') CONFIG.autoSwitchModel = body.autoSwitchModel;
+        const provider = body.provider ? safeWebProvider(body.provider) : null;
+        const model = body.model ? safeWebModel(body.model) : null;
+        if (body.provider && !provider) { json(res, 400, { error: 'Unknown provider' }); return; }
+        if (provider) currentProvider = provider;
+        if (model) currentModel = model;
+        saveHistory();
+        json(res, 200, { success: true, provider: currentProvider, model: currentModel, autoApprove: !!CONFIG.autoApprove, autoSwitchModel: !!CONFIG.autoSwitchModel, openRouterConfigured: !!openRouterKey(), huggingFaceConfigured: !!huggingFaceToken(), githubConfigured: !!githubModelsToken(), localAi: localAi.publicConfig() }); return;
       }
       // ── AIN web-agent session API: same persistent store as the CLI agent. ──
       if (url.pathname === '/api/agent/sessions' && req.method === 'GET') {
@@ -3545,6 +3573,12 @@ function startEmbeddedServer() {
       }
       const sessionMatch = url.pathname.match(/^\/api\/agent\/sessions\/([A-Za-z0-9а-яА-ЯёЁ._-]{1,48})$/);
       if (sessionMatch && req.method === 'GET') { loadSessionStore(); const view = sessionView(decodeURIComponent(sessionMatch[1])); view ? json(res, 200, { success: true, session: view }) : json(res, 404, { error: 'Session not found' }); return; }
+      if (sessionMatch && req.method === 'POST') {
+        const name = decodeURIComponent(sessionMatch[1]);
+        const switched = switchSession(name);
+        if (switched.error) { json(res, 400, switched); return; }
+        json(res, 200, { success: true, session: sessionView(name), active: activeSession }); return;
+      }
       if (sessionMatch && req.method === 'DELETE') {
         const name = decodeURIComponent(sessionMatch[1]); loadSessionStore();
         if (!sessionStore.sessions[name]) { json(res, 404, { error: 'Session not found' }); return; }
@@ -3722,7 +3756,33 @@ function startEmbeddedServer() {
       ].map(x => ({ ...x, modelCount: allModels.filter(m => m.providerId === x.id).length })); json(res, 200, { success: true, models: allModels, providers, selected: currentModel, provider: currentProvider }); return; }
       if (url.pathname === '/api/models/select' && req.method === 'POST') { const body = await readJson(req); const model = safeWebModel(body.modelId); const provider = safeWebProvider(body.providerId); if (!model || !provider) { json(res, 400, { error: 'Invalid model or provider id' }); return; } currentModel = model; currentProvider = provider; saveHistory(); json(res, 200, { success: true, selected: currentModel, provider: currentProvider }); return; }
       if (url.pathname === '/api/models/current' && req.method === 'GET') { json(res, 200, { success: true, model: currentModel, provider: currentProvider, apiKeyConfigured: !!openRouterKey() }); return; }
-      if ((url.pathname === '/api/models/key' || url.pathname === '/api/models/apikey') && req.method === 'POST') { json(res, 400, { success: false, error: 'API keys are not accepted over the Hub web form. Use the local CLI command /key or a secure environment variable.' }); return; }
+      if ((url.pathname === '/api/models/key' || url.pathname === '/api/models/apikey' || url.pathname === '/api/keys') && req.method === 'GET') {
+        const mask = v => v ? maskOpenRouterKey(v) : '';
+        json(res, 200, { success: true, keys: {
+          openrouter: { configured: !!openRouterKey(), masked: mask(openRouterKey()) },
+          huggingface: { configured: !!huggingFaceToken(), masked: mask(huggingFaceToken()) },
+          github: { configured: !!githubModelsToken(), masked: mask(githubModelsToken()) },
+          tokenra: { configured: !!tokenraKey(), masked: mask(tokenraKey()) },
+          orcarouter: { configured: !!orcaRouterKey(), masked: mask(orcaRouterKey()) },
+          anthropic: { configured: !!(process.env.ANTHROPIC_API_KEY || providerKeyStore.anthropic), masked: mask(process.env.ANTHROPIC_API_KEY || providerKeyStore.anthropic) },
+          openai: { configured: !!(process.env.OPENAI_API_KEY || providerKeyStore.openai), masked: mask(process.env.OPENAI_API_KEY || providerKeyStore.openai) }
+        }, agents: Object.values(customProviderStore), autoApprove: !!CONFIG.autoApprove }); return;
+      }
+      if ((url.pathname === '/api/models/key' || url.pathname === '/api/models/apikey' || url.pathname === '/api/keys') && req.method === 'POST') {
+        const body = await readJson(req);
+        const kind = String(body.provider || body.kind || 'openrouter').toLowerCase();
+        const key = String(body.key || body.apiKey || '').trim();
+        const saved = saveProviderKey(kind, key);
+        if (saved.error) { json(res, 400, saved); return; }
+        if (kind === 'openrouter') { try { await fetchOpenRouterFreeModels(); } catch {} }
+        json(res, 200, saved); return;
+      }
+      if (url.pathname === '/api/agents' && req.method === 'POST') {
+        const body = await readJson(req);
+        const saved = saveCustomProvider(body || {});
+        if (saved.error) { json(res, 400, saved); return; }
+        json(res, 201, saved); return;
+      }
 
       json(res, 404, { error: 'Not found', path: url.pathname });
     } catch (e) { json(res, 500, { error: redactSecrets(String(e && e.message || e)) }); }
@@ -4286,9 +4346,9 @@ function openSecretKeyInput() {
     return false;
   }
 }
-function openRouterKey() { return CONFIG.openRouterApiKey || process.env.OPENROUTER_API_KEY || symbiosisKeys().openrouter || ''; }
-function tokenraKey() { return CONFIG.tokenraApiKey || process.env.TOKENRA_API_KEY || ''; }
-function orcaRouterKey() { return CONFIG.orcaRouterApiKey || process.env.ORCAROUTER_API_KEY || ''; }
+function openRouterKey() { return CONFIG.openRouterApiKey || process.env.OPENROUTER_API_KEY || providerKeyStore.openrouter || symbiosisKeys().openrouter || ''; }
+function tokenraKey() { return CONFIG.tokenraApiKey || process.env.TOKENRA_API_KEY || providerKeyStore.tokenra || ''; }
+function orcaRouterKey() { return CONFIG.orcaRouterApiKey || process.env.ORCAROUTER_API_KEY || providerKeyStore.orcarouter || ''; }
 function openRouterRequest(payload) {
   return new Promise((resolve, reject) => {
     const key = openRouterKey();
@@ -4581,7 +4641,7 @@ function symbiosisKeyReport() {
 }
 
 function githubModelsToken() {
-  return process.env.GITHUB_MODELS_TOKEN || process.env.GITHUB_TOKEN || symbiosisKeys().github || '';
+  return process.env.GITHUB_MODELS_TOKEN || process.env.GITHUB_TOKEN || providerKeyStore.github || symbiosisKeys().github || '';
 }
 async function fetchGitHubModelsCatalog() {
   const token = githubModelsToken();
@@ -4600,7 +4660,7 @@ async function fetchGitHubModelsCatalog() {
     req.on('error', reject); req.on('timeout', () => req.destroy(new Error('GitHub Models catalog timeout'))); req.end();
   });
 }
-function huggingFaceToken() { return process.env.HF_TOKEN || process.env.HUGGINGFACE_TOKEN || symbiosisKeys().huggingface || ''; }
+function huggingFaceToken() { return process.env.HF_TOKEN || process.env.HUGGINGFACE_TOKEN || providerKeyStore.huggingface || symbiosisKeys().huggingface || ''; }
 // Named here rather than inline in the settings response, so the hub's model
 // list and that response cannot drift apart. Both read these.
 const GITHUB_MODELS = [
@@ -4636,7 +4696,8 @@ const COMPATIBLE_PROVIDERS = {
   tokenra: { label: 'Tokenra', hostname: 'tokenra.io', path: '/v1/chat/completions', key: tokenraKey, defaultModel: 'stealth/ox-alpha', headers: {} },
   orcarouter: { label: 'OrcaRouter', hostname: 'api.orcarouter.ai', path: '/v1/chat/completions', key: orcaRouterKey, defaultModel: 'orcarouter/auto', headers: {} },
   github: { label: 'GitHub Models', hostname: 'models.github.ai', path: '/inference/chat/completions', key: githubModelsToken, defaultModel: 'openai/gpt-4.1', headers: { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } },
-  huggingface: { label: 'Hugging Face Inference Providers', hostname: 'router.huggingface.co', path: '/v1/chat/completions', key: huggingFaceToken, defaultModel: 'openai/gpt-oss-120b:cerebras', headers: {} }
+  huggingface: { label: 'Hugging Face Inference Providers', hostname: 'router.huggingface.co', path: '/v1/chat/completions', key: huggingFaceToken, defaultModel: 'openai/gpt-oss-120b:cerebras', headers: {} },
+  openai: { label: 'OpenAI', hostname: 'api.openai.com', path: '/v1/chat/completions', key: () => process.env.OPENAI_API_KEY || providerKeyStore.openai || '', defaultModel: 'gpt-4o-mini', headers: {} }
 };
 async function callCompatibleProvider(providerId, messages, model = currentModel) {
   const provider = COMPATIBLE_PROVIDERS[providerId];
@@ -4966,6 +5027,31 @@ let currentModel = CONFIG.defaultModel;
 let history = [];
 let agentBusy = false;
 let abortRequested = false;
+const RECENT_FAILED_TOOLS = [];
+const MODEL_STALL_MS = Math.max(30000, parseInt(process.env.ZEN_STALL_MS || '300000', 10) || 300000);
+async function callCurrentProviderWithStall() {
+  let timer = null;
+  const stall = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      try { activeProviderAbort?.(); } catch {}
+      reject(new Error('MODEL_STALL: модель думает без ответа больше ' + Math.round(MODEL_STALL_MS / 60000) + ' мин'));
+    }, MODEL_STALL_MS);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([callCurrentProvider(), stall]);
+  } catch (e) {
+    const msg = String(e && e.message || e);
+    if (/MODEL_STALL/i.test(msg) && CONFIG.autoSwitchModel && currentProvider === 'zen') {
+      const prev = currentModel;
+      currentModel = nextModel(currentModel);
+      webRunEvent('model_switched', { from: prev, to: currentModel, reason: 'stall' });
+      console.log(c('⚠️ Зависание ' + prev + ' — переключаюсь на ' + currentModel, 'yellow'));
+      return await callCurrentProvider();
+    }
+    throw e;
+  } finally { if (timer) clearTimeout(timer); }
+}
 let correctionQueue = [];
 let activeProviderAbort = null;
 let pendingConfirmation = null;
@@ -5574,6 +5660,15 @@ async function handleToolCall(text, writtenFiles) {
   }
 
   const validationError = validateToolArguments(toolName, args);
+  const toolSig = toolName + '|' + String(args.command || args.path || JSON.stringify(args || {})).slice(0, 400);
+  if (RECENT_FAILED_TOOLS.filter(s => s === toolSig).length >= 1) {
+    const bounce = 'Этот вызов уже провалился: ' + toolName + '. Не повторяй ту же команду — смени путь, флаги или инструмент.';
+    console.log(c('⚠️ ' + bounce, 'yellow'));
+    history.push({ role: 'assistant', content: text });
+    history.push({ role: 'user', content: bounce });
+    webRunEvent('tool_denied', { tool: toolName, reason: 'repeat_failed' });
+    return true;
+  }
   if (validationError) {
     console.log(c(`⚠️ MCP schema: ${validationError}`, 'yellow'));
     history.push({ role: 'assistant', content: text });
@@ -5648,6 +5743,10 @@ async function handleToolCall(text, writtenFiles) {
   const t0 = Date.now();
   webRunEvent('tool_started', { tool: toolName, args: JSON.stringify(args || {}).slice(0, 600), index: String(TELEMETRY.toolCalls) });
   const result = await useTool(toolName, args);
+  if (/^(Ошибка|Error|Permission denied)/i.test(String(result || ''))) {
+    RECENT_FAILED_TOOLS.push(toolSig || (toolName + '|'));
+    if (RECENT_FAILED_TOOLS.length > 24) RECENT_FAILED_TOOLS.splice(0, RECENT_FAILED_TOOLS.length - 24);
+  }
   await pluginHook('afterTool', { name: toolName, args, result });
   TELEMETRY.outputChars += String(result || '').length;
   const ms = Date.now() - t0;
@@ -5807,7 +5906,7 @@ ${correction}` });
       if (spinner) spinner.start();
       const telemetryTimer = startTelemetryTicker(spinner);
       let res;
-      try { res = await callCurrentProvider(); }
+      try { res = await callCurrentProviderWithStall(); }
       catch (firstError) {
         // The fallback used to be gated on streamMode. The web console turns
         // streaming off for every run it launches, so in the browser this

@@ -52,7 +52,22 @@
   .dot.ok{background:var(--ok);} .dot.bad{background:var(--bad);}
   @keyframes pulse{50%{opacity:.2}}
 
+  
+  .work{flex:1;display:flex;min-height:0;}
   #stream{flex:1;overflow-y:auto;padding:14px 12px 4px;}
+  #studio{display:none;width:42%;min-width:220px;border-left:1px solid var(--line);
+          background:#101014;overflow-y:auto;padding:10px;}
+  body.studio-on #studio{display:block;}
+  .studio-h{font-size:11px;letter-spacing:.8px;text-transform:uppercase;color:var(--dim);margin:0 0 8px;}
+  .studio-item{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:0 0 8px;background:var(--panel);}
+  .studio-item pre{margin:6px 0 0;white-space:pre-wrap;word-break:break-word;font:12px ui-monospace,Menlo,monospace;max-height:240px;overflow:auto;}
+  .sheet{display:none;border-bottom:1px solid var(--line);background:var(--panel);padding:10px 12px;max-height:46vh;overflow:auto;}
+  .sheet.on{display:block;}
+  .sess{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--line);border-radius:10px;margin:0 0 6px;cursor:pointer;}
+  .sess.on{border-color:var(--accent);}
+  header .tools{display:flex;gap:6px;flex-wrap:wrap;}
+  header button.ghost{padding:6px 8px;font-size:13px;}
+
 
   /* Prose: the model talking. No bubble - it reads as a document. */
   .say{margin:0 0 14px;white-space:pre-wrap;word-wrap:break-word;}
@@ -115,11 +130,56 @@
 
 <header>
   <span class="title"><b>Zen</b> Agent</span>
-  <select id="model" style="max-width:38%"></select>
-  <button class="ghost" onclick="togglePresets()" title="Пресеты — постоянные указания">☰</button>
-  <button class="ghost" onclick="toggleLocal()" title="Локальная модель в раннере">⤓</button>
-  <button class="ghost" onclick="toggleTerm()" title="Терминал">▣</button>
+  <select id="model" style="max-width:34%"></select>
+  <div class="tools">
+    <button class="ghost" onclick="toggleSheet('sessions')" title="Сессии">⧉</button>
+    <button class="ghost" onclick="toggleSheet('keys')" title="Ключи">🔑</button>
+    <button class="ghost" onclick="toggleSheet('agents')" title="Агенты">＋</button>
+    <button class="ghost" onclick="toggleStudio()" title="VS Studio">⧉VS</button>
+    <button class="ghost" onclick="togglePresets()" title="Пресеты">☰</button>
+    <button class="ghost" onclick="toggleLocal()" title="Локальные модели">⤓</button>
+    <button class="ghost" onclick="toggleTerm()" title="Терминал">▣</button>
+  </div>
 </header>
+
+<div id="sessions" class="sheet">
+  <div class="row" style="margin-bottom:8px;flex-wrap:wrap">
+    <input id="sess-name" placeholder="имя сессии" style="flex:1;min-width:120px">
+    <button onclick="createSession()">Новая</button>
+  </div>
+  <div id="sess-list" class="hint">загрузка…</div>
+</div>
+<div id="keys" class="sheet">
+  <div class="hint" style="margin-bottom:8px">Ключи хранятся только на раннере. Никогда не попадают в чат.</div>
+  <div class="row" style="flex-wrap:wrap;margin-bottom:8px">
+    <select id="key-kind" style="flex:0 0 160px">
+      <option value="openrouter">OpenRouter</option>
+      <option value="huggingface">Hugging Face</option>
+      <option value="github">GitHub</option>
+      <option value="anthropic">Anthropic</option>
+      <option value="openai">OpenAI</option>
+      <option value="tokenra">Tokenra</option>
+      <option value="orcarouter">OrcaRouter</option>
+    </select>
+    <input id="key-val" type="password" placeholder="вставьте ключ" style="flex:1;min-width:160px">
+    <button onclick="saveKey()">Сохранить</button>
+  </div>
+  <label class="row" style="margin:8px 0"><input type="checkbox" id="auto-approve" onchange="setAutoApprove(this.checked)"> автосогласие инструментам</label>
+  <div id="key-status" class="hint"></div>
+</div>
+<div id="agents" class="sheet">
+  <div class="hint" style="margin-bottom:8px">Свой агент — любой OpenAI-совместимый endpoint: OpenCode, Anthropic-прокси, OmniRoute…</div>
+  <div class="row" style="flex-wrap:wrap;gap:8px">
+    <input id="ag-id" placeholder="id (opencode)" style="flex:0 0 120px">
+    <input id="ag-name" placeholder="имя" style="flex:0 0 140px">
+    <input id="ag-host" placeholder="hostname (api.example.com)" style="flex:1;min-width:160px">
+    <input id="ag-path" placeholder="/v1/chat/completions" style="flex:1;min-width:160px">
+    <input id="ag-model" placeholder="модель по умолчанию" style="flex:1;min-width:140px">
+    <input id="ag-key" type="password" placeholder="ключ" style="flex:1;min-width:140px">
+    <button onclick="saveAgent()">Добавить</button>
+  </div>
+  <div id="ag-list" class="hint" style="margin-top:8px"></div>
+</div>
 
 <!-- Presets: standing instructions that apply to every task, so a way of
      working is stated once instead of being retyped - "here is the token,
@@ -165,10 +225,16 @@
 поэтому старая сессия показывает старый интерфейс.">сборка <span class="v" id="m-build">—</span></span>
 </div>
 
+<div class="work">
 <div id="stream">
-  <div class="say">Готов. Опишите задачу — каждый вызов инструмента появится здесь карточкой: что запущено, сколько заняло и что вернуло. Нажмите на карточку, чтобы раскрыть.
+  <div class="say">Готов. Выберите модель — она и будет отвечать. Ключи, сессии и Studio — кнопки сверху. Автосогласие включено на раннере.
 
-«Стоп» прерывает в любой момент. Работа коммитится в ветку каждые 2 минуты.</div>
+«Стоп» прерывает. Рерайт переписывает подход, не повторяя провалившуюся команду.</div>
+</div>
+<aside id="studio">
+  <div class="studio-h">VS Studio · инструменты и вывод</div>
+  <div id="studio-body" class="hint">Здесь появляются команды и файлы, чтобы не крутить чат вниз.</div>
+</aside>
 </div>
 
 <div id="drawer">
@@ -239,7 +305,7 @@ async function loadModels(){
       o.value = m.id;
       o.textContent = (m.name || m.id) + (m.free ? ' · free' : '');
       // Selectable only when its provider can actually be used.
-      if (m.configured === false){ o.disabled = true; o.textContent += ' — нет ключа'; }
+      if (m.configured === false){ o.textContent += ' — нет ключа'; }
       o.dataset.provider = m.providerId || '';
       g.appendChild(o);
     }
@@ -247,24 +313,31 @@ async function loadModels(){
   }
 
   const saved = localStorage.getItem('zen_model');
-  const usable = [...sel.options].filter(o => !o.disabled);
-  const pick = models.find(m => m.selected && m.configured !== false)
-    || models.find(m => m.id === saved && m.configured !== false);
-  sel.value = pick ? pick.id : (usable[0] ? usable[0].value : '');
+  const savedP = localStorage.getItem('zen_provider');
+  const usable = [...sel.options];
+  const pick = models.find(m => m.selected)
+    || models.find(m => m.id === saved && (!savedP || m.providerId === savedP))
+    || models.find(m => m.id === saved);
+  if (pick) {
+    sel.value = pick.id;
+    const opt = [...sel.options].find(o => o.value === pick.id && o.dataset.provider === (pick.providerId||''));
+    if (opt) sel.value = opt.value;
+  } else if (usable[0]) sel.value = usable[0].value;
+  updateStudioMeta();
 }
 
 $('model').onchange = async () => {
   const opt = $('model').selectedOptions[0];
   localStorage.setItem('zen_model', $('model').value);
-  // Switching model may also mean switching provider, and the server has to be
-  // told: picking a GitHub model while the agent still talks to Zen would send
-  // an unknown id to the wrong endpoint.
   const provider = opt && opt.dataset.provider;
+  if (provider) localStorage.setItem('zen_provider', provider);
+  updateStudioMeta();
   if (!provider) return;
   try {
     const r = await apiFetch('/api/agent/settings', { method:'POST',
       body: JSON.stringify({ provider, model: $('model').value }) });
     if (!r.ok) say('**Не удалось выбрать модель:** ' + ((await r.json()).error || r.status));
+    else say('_Модель: **' + $('model').value + '** · ' + provider + '_');
   } catch (e) { say('**Не удалось выбрать модель:** ' + e.message); }
 };
 
@@ -347,7 +420,14 @@ async function loadLocalCatalog(){
       apiFetch('/api/local-ai/status').then(r=>r.json())
     ]);
     sel.innerHTML = '';
-    for (const m of (cat.catalog || [])){
+    let catalog = cat.catalog || [];
+    if (!catalog.length) catalog = [
+      {id:'qwen2.5-1.5b-instruct-q4', name:'Qwen2.5 1.5B Q4', sizeMb:1100, ctx:32768},
+      {id:'qwen2.5-3b-instruct-q4', name:'Qwen2.5 3B Q4', sizeMb:2000, ctx:32768},
+      {id:'llama-3.2-3b-instruct-q4', name:'Llama 3.2 3B Q4', sizeMb:2000, ctx:131072},
+      {id:'gemma-3-1b-it-q4', name:'Gemma 3 1B IT Q4', sizeMb:800, ctx:32768}
+    ];
+    for (const m of catalog){
       const o = document.createElement('option');
       o.value = m.id;
       // Size and context are the two things that decide whether a model is
@@ -514,6 +594,7 @@ function toolCard(tool, argsJson, key){
   stream.appendChild(el);
   if (stick) scroll();
   cards[key] = el;
+  studioPush(tool, target, argsJson);
   return el;
 }
 
@@ -532,6 +613,7 @@ function finishCard(key, ok, ms, preview){
     s.querySelector('pre').textContent = preview;
     el.querySelector('.body').appendChild(s);
     if (!ok) el.classList.add('open');   // failures open themselves
+    studioFinish(el.querySelector('.target').textContent, ok, preview);
   }
 }
 
@@ -614,7 +696,10 @@ function applyEvent(ev){
     }
     case 'approval_required': askApproval(ev.tool, ev.args); break;
     case 'tool_denied': say('_Отклонено: ' + ev.tool + '_'); break;
-    case 'task_started': break;
+    case 'task_started': lastThinkAt = Date.now(); break;
+    case 'model_switched':
+      say('_Модель зависла — переключено на **' + (ev.to||'') + '**_');
+      break;
     default: break;
   }
 }
@@ -735,8 +820,10 @@ async function send(){
   $('phase').textContent='запуск';
   try{
     // /api/agent/run drives the real loop; /api/chat is only a model proxy.
+    const opt = $('model').selectedOptions[0];
+    const provider = (opt && opt.dataset.provider) || localStorage.getItem('zen_provider') || 'zen';
     const r = await apiFetch('/api/agent/run',{method:'POST',
-      body:JSON.stringify({input:text, model:$('model').value})});
+      body:JSON.stringify({input:text, model:$('model').value, provider, session: currentSession})});
     const d = await r.json();
     if(r.status === 409){
       // The server thinks a task is still running while this tab has no run to
@@ -879,6 +966,190 @@ setInterval(sessionClock, 30000);
     if(!r.ok) $('phase').textContent='ошибка '+r.status;
   }catch(e){ $('dot').className='dot bad'; $('phase').textContent='нет связи'; }
 })();
+
+
+let currentSession = 'default';
+let lastThinkAt = 0;
+
+function toggleSheet(id){
+  for (const sid of ['sessions','keys','agents','presets','local']) {
+    const el = $(sid); if (!el) continue;
+    if (sid === id) el.classList.toggle('on');
+    else if (sid === 'presets' || sid === 'local') el.style.display = 'none';
+    else el.classList.remove('on');
+  }
+  if (id === 'sessions') loadSessions();
+  if (id === 'keys') loadKeys();
+  if (id === 'agents') loadAgents();
+}
+function toggleStudio(){
+  document.body.classList.toggle('studio-on');
+}
+function updateStudioMeta(){
+  const opt = $('model') && $('model').selectedOptions[0];
+  const meta = $('studio-body');
+  if (!meta) return;
+  if (!meta.dataset.ready) {
+    meta.dataset.ready = '1';
+  }
+}
+function studioPush(tool, target, argsJson){
+  const box = $('studio-body'); if (!box) return;
+  if (box.classList.contains('hint')) { box.className = ''; box.textContent = ''; }
+  const el = document.createElement('div');
+  el.className = 'studio-item';
+  el.dataset.tool = tool;
+  el.innerHTML = '<b></b><div class="hint"></div><pre></pre>';
+  el.querySelector('b').textContent = verbOf(tool) + ' ' + (target||'');
+  el.querySelector('.hint').textContent = 'идёт…';
+  try { el.querySelector('pre').textContent = JSON.stringify(JSON.parse(argsJson||'{}'), null, 2); } catch(e) {
+    el.querySelector('pre').textContent = argsJson || '';
+  }
+  box.prepend(el);
+}
+function studioFinish(target, ok, preview){
+  const box = $('studio-body'); if (!box) return;
+  const el = [...box.querySelectorAll('.studio-item')].find(x => x.querySelector('b') && x.querySelector('b').textContent.indexOf(target||'') >= 0) || box.querySelector('.studio-item');
+  if (!el) return;
+  el.querySelector('.hint').textContent = ok ? 'готово' : 'ошибка';
+  if (preview) el.querySelector('pre').textContent = preview;
+}
+
+async function loadSessions(){
+  const box = $('sess-list');
+  try{
+    const d = await (await apiFetch('/api/agent/sessions')).json();
+    currentSession = d.active || currentSession;
+    box.innerHTML = '';
+    for (const s of (d.sessions||[])){
+      const row = document.createElement('div');
+      row.className = 'sess' + (s.id === currentSession || s.active ? ' on' : '');
+      row.innerHTML = '<div class="grow"><b></b><div class="hint"></div></div><button class="ghost" data-del="1">✕</button>';
+      row.querySelector('b').textContent = s.title || s.id || s.name;
+      row.querySelector('.hint').textContent = (s.model||'') + ' · ' + (s.messages || s.webMessages || 0) + ' сообщ.';
+      row.onclick = ev => { if (ev.target.dataset.del) return; switchSession(s.id || s.name); };
+      row.querySelector('[data-del]').onclick = ev => { ev.stopPropagation(); deleteSession(s.id || s.name); };
+      box.appendChild(row);
+    }
+    if (!(d.sessions||[]).length) box.textContent = 'Сессий нет — создайте первую.';
+  }catch(e){ box.textContent = 'Не удалось загрузить: ' + e.message; }
+}
+async function createSession(){
+  const name = ($('sess-name').value || '').trim() || ('s' + Date.now().toString(36));
+  const r = await apiFetch('/api/agent/sessions', {method:'POST', body: JSON.stringify({name, title:name})});
+  const d = await r.json();
+  if (!r.ok) { say('**Сессия:** ' + (d.error||r.status)); return; }
+  $('sess-name').value = '';
+  await switchSession(name);
+}
+async function switchSession(name){
+  currentSession = name;
+  try { await apiFetch('/api/agent/sessions/' + encodeURIComponent(name), {method:'POST', body:'{}'}); } catch(e) {}
+  try {
+    const d = await (await apiFetch('/api/agent/sessions/' + encodeURIComponent(name))).json();
+    const msgs = (d.session && d.session.messages) || [];
+    stream.innerHTML = '';
+    if (!msgs.length) say('Сессия **' + name + '**. Пусто — напишите задачу.');
+    else msgs.forEach(m => say(m.content, m.role === 'user'));
+  } catch(e) { say('Сессия **' + name + '**.'); }
+  loadSessions();
+}
+async function deleteSession(name){
+  if (!confirm('Удалить сессию ' + name + '?')) return;
+  await apiFetch('/api/agent/sessions/' + encodeURIComponent(name), {method:'DELETE'});
+  loadSessions();
+}
+
+async function loadKeys(){
+  const st = $('key-status');
+  try{
+    const d = await (await apiFetch('/api/keys')).json();
+    const bits = [];
+    for (const [k,v] of Object.entries(d.keys||{})) bits.push(k + ': ' + (v.configured ? (v.masked||'есть') : 'нет'));
+    st.textContent = bits.join(' · ');
+    if ($('auto-approve')) $('auto-approve').checked = !!d.autoApprove;
+  }catch(e){ st.textContent = e.message; }
+}
+async function saveKey(){
+  const provider = $('key-kind').value;
+  const key = $('key-val').value.trim();
+  if (!key) return;
+  const r = await apiFetch('/api/keys', {method:'POST', body: JSON.stringify({provider, key})});
+  const d = await r.json();
+  $('key-val').value = '';
+  if (!r.ok) { say('**Ключ не сохранён:** ' + (d.error||r.status)); return; }
+  say('Ключ **' + provider + '** сохранён: ' + (d.masked||'ok'));
+  await loadKeys();
+  await loadModels();
+}
+async function setAutoApprove(on){
+  await apiFetch('/api/agent/settings', {method:'POST', body: JSON.stringify({autoApprove: !!on})});
+}
+
+async function loadAgents(){
+  const box = $('ag-list');
+  try{
+    const d = await (await apiFetch('/api/keys')).json();
+    const list = d.agents || [];
+    box.textContent = list.length ? list.map(a => a.id + ' · ' + (a.hostname||'')).join('\\n') : 'Пока только встроенные провайдеры.';
+  }catch(e){ box.textContent = e.message; }
+}
+async function saveAgent(){
+  const body = {
+    id: $('ag-id').value.trim(),
+    name: $('ag-name').value.trim(),
+    hostname: $('ag-host').value.trim(),
+    path: $('ag-path').value.trim() || '/v1/chat/completions',
+    model: $('ag-model').value.trim(),
+    models: ($('ag-model').value.trim() ? [$('ag-model').value.trim()] : []),
+    key: $('ag-key').value.trim()
+  };
+  const r = await apiFetch('/api/agents', {method:'POST', body: JSON.stringify(body)});
+  const d = await r.json();
+  if (!r.ok) { say('**Агент не добавлен:** ' + (d.error||r.status)); return; }
+  say('Агент **' + body.id + '** добавлен. Выберите его в списке моделей.');
+  $('ag-key').value = '';
+  await loadAgents();
+  await loadModels();
+}
+
+function rewriteLast(){
+  if (!lastInput || runId) return;
+  $('q').value = lastInput + '\\n\\nПредыдущий подход не сработал. Не повторяй ту же команду. Смени инструмент, путь или аргументы и сделай иначе.';
+  send();
+}
+
+/* Stall watchdog: 5 minutes thinking without a tool → abort and rewrite on next model. */
+setInterval(async () => {
+  if (!runId) return;
+  const phase = $('phase') && $('phase').textContent;
+  if (phase !== 'думает') { lastThinkAt = Date.now(); return; }
+  if (!lastThinkAt) lastThinkAt = Date.now();
+  if (Date.now() - lastThinkAt < 300000) return;
+  say('_5 минут «думает» без инструмента — останавливаю и прошу другую модель._');
+  lastThinkAt = Date.now();
+  await abortRun();
+  const sel = $('model');
+  const opts = [...sel.options];
+  const i = opts.findIndex(o => o.selected);
+  const next = opts[(i+1) % Math.max(opts.length,1)];
+  if (next) { sel.value = next.value; sel.dispatchEvent(new Event('change')); }
+  if (lastInput) { $('q').value = lastInput; send(); }
+}, 15000);
+
+/* Rewrite control next to send */
+(function(){
+  const foot = document.querySelector('footer');
+  if (!foot || $('rewrite')) return;
+  const b = document.createElement('button');
+  b.id = 'rewrite'; b.className = 'ghost'; b.textContent = '↻';
+  b.title = 'Рерайт: другой подход, без повтора команды';
+  b.onclick = rewriteLast;
+  foot.insertBefore(b, $('send'));
+})();
+
+loadSessions();
+loadKeys();
 
 /* First command from the panel (?q=) is sent once the hub is ready. */
 (function autoSendQuery(){
