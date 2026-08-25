@@ -176,6 +176,10 @@ class MainActivity : ComponentActivity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 bar.visibility = View.GONE
+                val js = "window.ZEN_PANEL_BUILD={versionCode:${BuildConfig.PANEL_VERSION_CODE}," +
+                    "versionName:${org.json.JSONObject.quote(BuildConfig.PANEL_VERSION)}};" +
+                    "if(window.onZenPanelBuild)window.onZenPanelBuild(window.ZEN_PANEL_BUILD);"
+                view.evaluateJavascript(js, null)
             }
         }
 

@@ -1,11 +1,18 @@
 name: Build Zen Panel APK
+
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["app/**", "build.gradle.kts", "settings.gradle.kts", ".github/workflows/panel-apk.yml"]
+    paths:
+      - "app/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - ".github/workflows/panel-apk.yml"
+
 permissions:
   contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -13,19 +20,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
+
+      - name: Version from git
+        run: |
+          CODE=$(git rev-list --count HEAD)
+          SHA=$(git rev-parse --short HEAD)
+          echo "VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "VERSION_SHA=$SHA" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=1.$CODE.$SHA" >> "$GITHUB_ENV"
+          echo "TAG=v1.$CODE" >> "$GITHUB_ENV"
+          echo "version 1.$CODE.$SHA (code $CODE)"
+
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
+
       - name: Install Gradle 8.9
         run: |
           curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /opt
           echo "/opt/gradle-8.9/bin" >> "$GITHUB_PATH"
+
       - name: Build release APK
         run: |
           set -o pipefail
           ( /opt/gradle-8.9/bin/gradle wrapper --gradle-version 8.9 --no-daemon &&
             ./gradlew assembleRelease --no-daemon --stacktrace ) 2>&1 | tee /tmp/gradle-build.log
+
       - name: Publish failed Gradle log for diagnosis
         if: failure()
         run: |
@@ -36,15 +57,48 @@ jobs:
           git add ci/last-build-failure.log
           git commit -m "ci: capture failed APK build log" || exit 0
           git push
-      - name: Verify bundled panel
+
+      - name: Package APK
         run: |
-          APK=$(find app -path '*release*.apk' | head -1)
-          test -n "$APK"
-          unzip -l "$APK" | grep -q 'assets/panel/index.html'
-          unzip -l "$APK" | grep -q 'assets/panel/desks.html'
+          SRC=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
+          test -n "$SRC"
+          unzip -l "$SRC" | grep -q 'assets/panel/index.html'
+          unzip -l "$SRC" | grep -q 'assets/panel/desks.html'
+          NAME="zen-panel-${VERSION_NAME}.apk"
+          cp "$SRC" "$NAME"
+          echo "APK_FILE=$NAME" >> "$GITHUB_ENV"
+          ls -lh "$NAME"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: zen-panel-build-log, path: /tmp/gradle-build.log, if-no-files-found: warn }
+
       - uses: actions/upload-artifact@v4
         if: success()
-        with: { name: zen-panel-apk, path: app/build/outputs/apk/release/*.apk, if-no-files-found: error }
+        with:
+          name: zen-panel-apk
+          path: zen-panel-*.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Zen Panel ${{ env.VERSION_NAME }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          make_latest: true
+          files: ${{ env.APK_FILE }}
+          body: |
+            Автосборка APK.
+
+            | | |
+            |---|---|
+            | Версия | `${{ env.VERSION_NAME }}` |
+            | versionCode | `${{ env.VERSION_CODE }}` |
+            | Коммит | `${{ github.sha }}` |
+
+            Установка поверх предыдущей сборки работает: `versionCode` растёт с каждым коммитом.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

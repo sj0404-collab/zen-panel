@@ -264,12 +264,11 @@
     <h2>Панель как приложение</h2>
     <div id="apk-panel"><span class="spin">загрузка…</span></div>
     <div class="note">
-      Приложение — тонкая оболочка над этой страницей: содержимое грузится из
-      сети, поэтому правки в панели видны сразу, без переустановки. Обновлять
-      APK нужно только когда меняется сама оболочка.
+      Каждый успешный билд публикует GitHub Release: тег <code>v1.N</code>,
+      versionCode = число коммитов. Установка поверх старой работает.
     </div>
     <div class="row" style="margin-top:10px">
-      <button onclick="run('panel-apk.yml',{})">Собрать APK панели</button>
+      <button onclick="run('panel-apk.yml',{})">Собрать и выпустить APK</button>
     </div>
   </div>
 
@@ -746,7 +745,7 @@ let ACT_REPO = ctlRepo();
 
 let watchTimer = null;
 let watchPaused = false;
-const WATCH_NAMES = ['Build APK', 'Tests', 'Panel APK', 'Zen agent', 'Remote session', 'Desks'];
+const WATCH_NAMES = ['Build APK', 'Tests', 'Panel APK', 'Build Zen Panel APK', 'Zen agent', 'Remote session', 'Desks', 'OpenCode'];
 
 function fmtSecs(sec) {
   if (sec < 60) return sec + ' с';
@@ -1622,23 +1621,98 @@ function copy(text) {
 }
 
 // ── panel APK ───────────────────────────────────────────────────────
+let INSTALLED = { versionCode: 0, versionName: '' };
+async function loadInstalledVersion() {
+  try {
+    if (window.ZEN_PANEL_BUILD && window.ZEN_PANEL_BUILD.versionCode) {
+      INSTALLED = window.ZEN_PANEL_BUILD;
+      return INSTALLED;
+    }
+    const r = await fetch('/version.json', { cache: 'no-store' });
+    if (r.ok) INSTALLED = await r.json();
+  } catch (e) {}
+  return INSTALLED;
+}
+window.onZenPanelBuild = v => { INSTALLED = v || INSTALLED; renderUpdateBanner(); };
+
+async function latestRelease() {
+  const seen = new Set();
+  for (const repo of [ctlRepo(), DEFAULT_REPO]) {
+    if (seen.has(repo)) continue;
+    seen.add(repo);
+    try { return await api(`${GH}/repos/${repo}/releases/latest`); }
+    catch (e) {}
+  }
+  return null;
+}
+function releaseApk(rel) {
+  return ((rel && rel.assets) || []).find(a => /\.apk$/i.test(a.name)) || null;
+}
+function releaseCode(rel) {
+  const tag = String((rel && rel.tag_name) || '');
+  const m = tag.match(/v?1\.(\d+)/) || tag.match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
 async function loadPanelApk() {
   const box = $('apk-panel');
+  await loadInstalledVersion();
+  renderUpdateBanner();
   try {
-    const d = await api(`${CTL()}/actions/runs?per_page=20`);
-    const b = (d.workflow_runs || []).find(r =>
-      r.name === 'Panel APK' && r.conclusion === 'success');
-    if (!b) {
-      box.innerHTML = '<span class="note">приложение ещё не собиралось</span>';
+    const rel = await latestRelease();
+    const apk = releaseApk(rel);
+    const remote = releaseCode(rel);
+    const mine = parseInt(INSTALLED.versionCode, 10) || 0;
+    const newer = remote > mine && mine > 0;
+    if (!rel || !apk) {
+      const d = await api(`${CTL()}/actions/runs?per_page=20`);
+      const b = (d.workflow_runs || []).find(r =>
+        (r.name === 'Panel APK' || r.name === 'Build Zen Panel APK') && r.conclusion === 'success');
+      box.innerHTML = b
+        ? `<table><tr><td>Сборка</td><td>#${b.run_number} · ${ago(b.updated_at)}</td></tr>
+           <tr><td>Скачать</td><td><a href="${esc(b.html_url)}" target="_blank">артефакт запуска</a></td></tr></table>`
+        : '<span class="note">релиза ещё нет — нажмите «Собрать и выпустить APK»</span>';
       return;
     }
     box.innerHTML = `<table>
-      <tr><td>Сборка</td><td>#${b.run_number} · ${ago(b.updated_at)}</td></tr>
-      <tr><td>Скачать</td><td><a href="${esc(b.html_url)}" target="_blank">сводка запуска —
-        там ссылка и MD5</a></td></tr></table>`;
+      <tr><td>Релиз</td><td><b>${esc(rel.name || rel.tag_name)}</b> · ${ago(rel.published_at || rel.created_at)}</td></tr>
+      <tr><td>У вас</td><td>${mine ? esc(INSTALLED.versionName || String(mine)) : 'не APK / веб'}</td></tr>
+      <tr><td>Файл</td><td>${esc(apk.name)} · ${kb(apk.size)}</td></tr>
+    </table>
+    <div class="row" style="margin-top:10px">
+      <a href="${esc(apk.browser_download_url)}"><button>${newer ? 'Обновить APK' : 'Скачать APK'}</button></a>
+      <button class="ghost" onclick="window.open('${esc(rel.html_url)}','_blank')">Страница релиза</button>
+    </div>
+    ${newer ? '<div class="warn">Доступна более новая версия. Скачайте и установите поверх текущей.</div>' : ''}`;
   } catch (e) {
     box.innerHTML = `<div class="danger">${esc(e.message)}</div>`;
   }
+}
+
+function renderUpdateBanner() {
+  const sub = $('subtitle');
+  if (sub) sub.textContent = INSTALLED.versionName
+    ? ('панель · ' + INSTALLED.versionName)
+    : 'панель управления';
+}
+
+async function checkUpdateBanner() {
+  await loadInstalledVersion();
+  renderUpdateBanner();
+  const mine = parseInt(INSTALLED.versionCode, 10) || 0;
+  if (!mine) return;
+  try {
+    const rel = await latestRelease();
+    const apk = releaseApk(rel);
+    const remote = releaseCode(rel);
+    if (!apk || remote <= mine || document.getElementById('upd-banner')) return;
+    const bar = document.createElement('div');
+    bar.id = 'upd-banner';
+    bar.className = 'warn';
+    bar.innerHTML = 'Доступен APK <b>' + esc(rel.tag_name || rel.name) +
+      '</b> · <a href="' + esc(apk.browser_download_url) + '">скачать обновление</a>';
+    document.body.insertBefore(bar, document.body.firstChild);
+  } catch (e) {}
 }
 
 // ── shared bits ─────────────────────────────────────────────────────
@@ -1719,6 +1793,7 @@ $('act-repo').textContent = ACT_REPO;
 go('sess');
 loadAccount();
 startWatching();
+checkUpdateBanner();
 setInterval(() => { if (page === 'sess') refresh(); }, 30000);
 </script>
 </body>

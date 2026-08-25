@@ -33,6 +33,13 @@ class PanelAssets(private val context: Context) {
         if (!url.host.equals(MainActivity.PANEL_HOST, ignoreCase = true)) return null
 
         val name = fileNameFor(url) ?: return notFound()
+        if (name == "version.json") {
+            val json = """{"versionCode":${dev.zen.panel.BuildConfig.PANEL_VERSION_CODE},"versionName":"${dev.zen.panel.BuildConfig.PANEL_VERSION}","applicationId":"dev.zen.panel"}"""
+            return WebResourceResponse(
+                "application/json", "utf-8", 200, "OK", headers(),
+                ByteArrayInputStream(json.toByteArray(Charsets.UTF_8))
+            )
+        }
         return try {
             val stream: InputStream = context.assets.open("$ASSET_DIR/$name")
             WebResourceResponse(mimeFor(name), "utf-8", 200, "OK", headers(), stream)

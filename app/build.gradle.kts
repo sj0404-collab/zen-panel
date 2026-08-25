@@ -20,8 +20,9 @@ android {
         minSdk = 24
         targetSdk = 34
         versionCode = buildNumber
-        versionName = "$buildNumber.$buildSha"
-        buildConfigField("String", "PANEL_VERSION", "\"$buildNumber.$buildSha\"")
+        versionName = "1.$buildNumber.$buildSha"
+        buildConfigField("int", "PANEL_VERSION_CODE", "$buildNumber")
+        buildConfigField("String", "PANEL_VERSION", "\"1.$buildNumber.$buildSha\"")
     }
     buildFeatures { buildConfig = true }
     buildTypes {

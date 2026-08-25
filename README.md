@@ -12,7 +12,7 @@ Android-панель и GitHub Actions для Zen Agent, OpenCode и удалё�
   - `agent.yml` — CLI-агент на Linux/Windows, туннель, чат в оверлее
   - `opencode.yml` — OpenCode web на Linux/Windows, туннель, чат в оверлее
   - `desks.yml` — столы Linux (noVNC) и Windows (MJPEG)
-  - `panel-apk.yml` — сборка APK панели
+  - `panel-apk.yml` — сборка APK и GitHub Release (`v1.{commits}`, versionCode растёт сам)
 
 ## Как пользоваться
 
