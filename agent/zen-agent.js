@@ -122,6 +122,8 @@ let CONFIG = {
   provider: 'zen',
   openRouterApiKey: process.env.OPENROUTER_API_KEY || '',
   openRouterModel: process.env.OPENROUTER_MODEL || '',
+  tokenraApiKey: process.env.TOKENRA_API_KEY || '',
+  orcaRouterApiKey: process.env.ORCAROUTER_API_KEY || '',
   visionModel: process.env.OPENROUTER_VISION_MODEL || 'google/gemma-3-27b-it:free',
 };
 
@@ -131,7 +133,7 @@ const AGENT_MODES = {
   explore: { label: '🔎 Explore', description: 'Только чтение, поиск и диагностика; изменения запрещены.' }
 };
 function normalizedAgentMode(value) { return AGENT_MODES[value] ? value : 'build'; }
-function providerDisplayName() { return currentProvider === 'openrouter' ? 'OpenRouter' : currentProvider === 'zen' ? 'Zen' : currentProvider === 'local' ? 'Local AI' : currentProvider; }
+function providerDisplayName() { return currentProvider === 'openrouter' ? 'OpenRouter' : currentProvider === 'tokenra' ? 'Tokenra' : currentProvider === 'orcarouter' ? 'OrcaRouter' : currentProvider === 'zen' ? 'Zen' : currentProvider === 'local' ? 'Local AI' : currentProvider; }
 function agentStepLimit() { return CONFIG.longTaskMode ? Math.max(CONFIG.maxAgentSteps, CONFIG.longTaskMaxSteps) : CONFIG.maxAgentSteps; }
 function safeCommandTimeout(value, defaultValue = 18000) {
   const requested = parseInt(value || String(defaultValue), 10) || defaultValue;
@@ -3199,7 +3201,7 @@ function startEmbeddedServer() {
   const safeWebModel = value => {
     const v = String(value || '').trim(); return /^[A-Za-z0-9._:/-]{1,160}$/.test(v) ? v : null;
   };
-  const safeWebProvider = value => ['zen', 'openrouter', 'github', 'huggingface', 'local'].includes(String(value || '').trim()) ? String(value).trim() : null;
+  const safeWebProvider = value => ['zen', 'openrouter', 'tokenra', 'orcarouter', 'github', 'huggingface', 'local'].includes(String(value || '').trim()) ? String(value).trim() : null;
   // A run is over the moment its status is not one of these. Both sides need
   // the same list, and they used to disagree: the server wrote 'error' while
   // the browser only ever ended on completed/failed/aborted, so a failed run
@@ -3947,7 +3949,11 @@ ${capabilitiesModule ? capabilitiesModule.CAPABILITY_PROMPT : ''}`;
 function buildSystemPrompt() {
   const providerRule = currentProvider === 'openrouter'
     ? 'Провайдер OpenRouter: используй только переданные нативные function tools/tool_calls. Инструментальный JSON в тексте не нужен.'
-    : currentProvider === 'github'
+    : currentProvider === 'tokenra'
+      ? 'Провайдер Tokenra: используй нативные tools, если активная модель их вернула; иначе TOOL_JSON fallback строго по схеме.'
+      : currentProvider === 'orcarouter'
+        ? 'Провайдер OrcaRouter: используй нативные function tools/tool_calls; при несовместимой модели используй TOOL_JSON fallback строго по схеме.'
+        : currentProvider === 'github'
       ? 'Провайдер GitHub Models: используй переданные нативные function tools/tool_calls, если выбранная модель их поддерживает; иначе дай текстовый ответ без фейкового вызова.'
       : currentProvider === 'huggingface'
         ? 'Провайдер Hugging Face Inference Providers: используй нативные function tools/tool_calls только если модель/маршрутизатор их вернул; иначе дай текстовый ответ без фейкового вызова.'
@@ -4260,6 +4266,8 @@ function openSecretKeyInput() {
   }
 }
 function openRouterKey() { return CONFIG.openRouterApiKey || process.env.OPENROUTER_API_KEY || symbiosisKeys().openrouter || ''; }
+function tokenraKey() { return CONFIG.tokenraApiKey || process.env.TOKENRA_API_KEY || ''; }
+function orcaRouterKey() { return CONFIG.orcaRouterApiKey || process.env.ORCAROUTER_API_KEY || ''; }
 function openRouterRequest(payload) {
   return new Promise((resolve, reject) => {
     const key = openRouterKey();
@@ -4586,6 +4594,8 @@ const HUGGINGFACE_MODELS = [
 ];
 
 const COMPATIBLE_PROVIDERS = {
+  tokenra: { label: 'Tokenra', hostname: 'tokenra.io', path: '/v1/chat/completions', key: tokenraKey, defaultModel: 'stealth/ox-alpha', headers: {} },
+  orcarouter: { label: 'OrcaRouter', hostname: 'api.orcarouter.ai', path: '/v1/chat/completions', key: orcaRouterKey, defaultModel: 'orcarouter/auto', headers: {} },
   github: { label: 'GitHub Models', hostname: 'models.github.ai', path: '/inference/chat/completions', key: githubModelsToken, defaultModel: 'openai/gpt-4.1', headers: { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } },
   huggingface: { label: 'Hugging Face Inference Providers', hostname: 'router.huggingface.co', path: '/v1/chat/completions', key: huggingFaceToken, defaultModel: 'openai/gpt-oss-120b:cerebras', headers: {} }
 };
@@ -4783,7 +4793,7 @@ async function callCurrentProvider() {
   let result;
   if (provider === 'openrouter') result = await callOpenRouterWithRetry(request.messages, model);
   else if (provider === 'zen') result = await callZenWithRetry(request.messages, model, undefined, CONFIG.streamMode);
-  else if (provider === 'github' || provider === 'huggingface') result = await callCompatibleProvider(provider, request.messages, model);
+  else if (provider === 'github' || provider === 'huggingface' || provider === 'tokenra' || provider === 'orcarouter') result = await callCompatibleProvider(provider, request.messages, model);
   else if (provider === 'local') {
     // Do not pass a stale Zen/OpenRouter model name into a local runtime. The
     // Local AI manager uses the model explicitly configured for its active
