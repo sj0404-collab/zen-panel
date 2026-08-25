@@ -191,8 +191,17 @@
 </footer>
 
 <script>
-const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const TOKEN = (() => {
+  const q = new URLSearchParams(location.search).get('token') || '';
+  if (q) { try { sessionStorage.setItem('zen_hub_token', q); } catch (e) {} return q; }
+  try { return sessionStorage.getItem('zen_hub_token') || ''; } catch (e) { return ''; }
+})();
 const H = () => { const h={'Content-Type':'application/json'}; if(TOKEN) h['X-Zen-Token']=TOKEN; return h; };
+const apiFetch = (url, opts) => {
+  const o = Object.assign({ credentials: 'include' }, opts || {});
+  o.headers = Object.assign(H(), (opts && opts.headers) || {});
+  return fetch(url, o);
+};
 const $ = id => document.getElementById(id);
 const stream = $('stream');
 
@@ -210,7 +219,7 @@ async function loadModels(){
   const sel = $('model');
   let models = [];
   try {
-    const r = await fetch('/api/models', { headers: H() });
+    const r = await apiFetch('/api/models');
     models = (await r.json()).models || [];
   } catch (e) { /* offline: fall through to the built-in entry */ }
   if (!models.length) models = FALLBACK_MODELS;
@@ -253,7 +262,7 @@ $('model').onchange = async () => {
   const provider = opt && opt.dataset.provider;
   if (!provider) return;
   try {
-    const r = await fetch('/api/agent/settings', { method:'POST', headers:H(),
+    const r = await apiFetch('/api/agent/settings', { method:'POST',
       body: JSON.stringify({ provider, model: $('model').value }) });
     if (!r.ok) say('**Не удалось выбрать модель:** ' + ((await r.json()).error || r.status));
   } catch (e) { say('**Не удалось выбрать модель:** ' + e.message); }
@@ -272,7 +281,7 @@ function togglePresets(){
 async function loadPresets(){
   const box = $('preset-list');
   try{
-    const d = await (await fetch('/api/presets', {headers:H()})).json();
+    const d = await (await apiFetch('/api/presets')).json();
     box.innerHTML = '';
     for (const p of (d.presets || [])){
       const row = document.createElement('label');
@@ -299,7 +308,7 @@ async function loadPresets(){
 
 async function setPreset(id, on){
   try{
-    await fetch('/api/presets', {method:'POST', headers:H(), body: JSON.stringify({id, on})});
+    await apiFetch('/api/presets', {method:'POST', body: JSON.stringify({id, on})});
   }catch(e){ say('**Не удалось переключить пресет:** ' + e.message); }
 }
 
@@ -308,7 +317,7 @@ async function savePreset(){
   const text = $('preset-text').value.trim();
   if (!id || !text) return;
   try{
-    const r = await fetch('/api/presets', {method:'POST', headers:H(),
+    const r = await apiFetch('/api/presets', {method:'POST',
       body: JSON.stringify({save:true, id, text})});
     const d = await r.json();
     if (!r.ok){ say('**Пресет не сохранён:** ' + (d.error || r.status)); return; }
@@ -334,8 +343,8 @@ async function loadLocalCatalog(){
   const st  = $('local-status');
   try{
     const [cat, status] = await Promise.all([
-      fetch('/api/local-ai/catalog', {headers:H()}).then(r=>r.json()),
-      fetch('/api/local-ai/status',  {headers:H()}).then(r=>r.json())
+      apiFetch('/api/local-ai/catalog').then(r=>r.json()),
+      apiFetch('/api/local-ai/status').then(r=>r.json())
     ]);
     sel.innerHTML = '';
     for (const m of (cat.catalog || [])){
@@ -373,7 +382,7 @@ async function prepareLocal(){
                    + 'Скачивание и первый запуск занимают несколько минут.';
   }, 1000);
   try{
-    const r = await fetch('/api/local-ai/prepare', {method:'POST', headers:H(),
+    const r = await apiFetch('/api/local-ai/prepare', {method:'POST',
       body: JSON.stringify({modelId:id})});
     const d = await r.json();
     clearInterval(tick);
@@ -394,7 +403,7 @@ async function prepareLocal(){
 async function stopLocal(){
   const st = $('local-status');
   try{
-    await fetch('/api/local-ai/stop', {method:'POST', headers:H()});
+    await apiFetch('/api/local-ai/stop', {method:'POST'});
     st.textContent = 'Локальная модель остановлена.';
     await loadLocalCatalog();
   }catch(e){ st.textContent = 'Не удалось остановить: ' + e.message; }
@@ -551,6 +560,7 @@ async function uploadSelected(file){
   if (file.size > 512 * 1024 * 1024) { say('**Файл слишком большой:** максимум 512 МБ.'); return; }
   const attach = $('attach'); attach.disabled = true; attach.textContent = '0%';
   const xhr = new XMLHttpRequest(); xhr.open('POST','/api/uploads');
+  xhr.withCredentials = true;
   if (TOKEN) xhr.setRequestHeader('X-Zen-Token', TOKEN);
   xhr.setRequestHeader('X-File-Name', file.name); xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
   xhr.upload.onprogress = e => { if (e.lengthComputable) attach.textContent = Math.round(e.loaded * 100 / e.total) + '%'; };
@@ -621,7 +631,7 @@ function askApproval(tool, args){
   const decide = async d => {
     yes.disabled = no.disabled = true;
     box.querySelector('.row').textContent = d==='allow' ? 'Разрешено.' : 'Отклонено.';
-    await fetch('/api/agent/run/'+runId+'/approve',{method:'POST',headers:H(),
+    await apiFetch('/api/agent/run/'+runId+'/approve',{method:'POST',
       body:JSON.stringify({decision:d})});
   };
   yes.onclick=()=>decide('allow'); no.onclick=()=>decide('deny');
@@ -682,7 +692,7 @@ async function poll(){
   polling = true;
   const myRun = runId;
   try{
-    const r = await fetch('/api/agent/run/'+myRun,{headers:H()});
+    const r = await apiFetch('/api/agent/run/'+myRun);
     // An expired or forgotten run answers 404 forever. Without this the page
     // polls a dead id until it is reloaded, which looks identical to a hang.
     if (r.status === 404){
@@ -725,7 +735,7 @@ async function send(){
   $('phase').textContent='запуск';
   try{
     // /api/agent/run drives the real loop; /api/chat is only a model proxy.
-    const r = await fetch('/api/agent/run',{method:'POST',headers:H(),
+    const r = await apiFetch('/api/agent/run',{method:'POST',
       body:JSON.stringify({input:text, model:$('model').value})});
     const d = await r.json();
     if(r.status === 409){
@@ -761,7 +771,7 @@ function offerReset(retryText){
   btn.onclick = async () => {
     btn.disabled = true; btn.textContent = 'Сбрасываю…';
     try{
-      const r = await fetch('/api/agent/reset',{method:'POST',headers:H()});
+      const r = await apiFetch('/api/agent/reset',{method:'POST'});
       const d = await r.json();
       box.remove();
       say('Сброшено' + (d.cleared && d.cleared.length ? ' (запусков: '+d.cleared.length+')' : '') + '.');
@@ -781,7 +791,7 @@ async function abortRun(){
   const b = $('send');
   $('phase').textContent='останавливаю';
   b.disabled = true;                       // avoid a second abort mid-request
-  try{ await fetch('/api/agent/run/'+runId+'/abort',{method:'POST',headers:H()}); }
+  try{ await apiFetch('/api/agent/run/'+runId+'/abort',{method:'POST'}); }
   catch(e){ say('**Не удалось остановить:** ' + e.message); }
   b.disabled = false;
 
@@ -805,7 +815,7 @@ async function runCmd(){
   const c=$('cmd').value.trim(); if(!c) return;
   const term=$('term'); term.textContent += '$ '+c+'\n'; $('cmd').value='';
   try{
-    const r = await fetch('/mcp/call',{method:'POST',headers:H(),
+    const r = await apiFetch('/mcp/call',{method:'POST',
       body:JSON.stringify({tool:'execute_command',args:{command:c}})});
     const d = await r.json(); const out = d.result ?? d;
     term.textContent += (typeof out==='string'?out:JSON.stringify(out,null,2))+'\n';
@@ -823,7 +833,7 @@ $('q').addEventListener('input',e=>{
    amber under 30 minutes and red under 10. */
 async function sessionClock(){
   try{
-    const r = await fetch('/api/info', { headers: H() });
+    const r = await apiFetch('/api/info');
     const info = await r.json();
     // Build identity, from the same request the clock already makes.
     if (info.build){
@@ -864,10 +874,24 @@ setInterval(sessionClock, 30000);
 
 (async function ping(){
   try{
-    const r=await fetch('/mcp/status',{headers:H()});
+    const r=await apiFetch('/mcp/status');
     $('dot').className='dot '+(r.ok?'ok':'bad');
     if(!r.ok) $('phase').textContent='ошибка '+r.status;
   }catch(e){ $('dot').className='dot bad'; $('phase').textContent='нет связи'; }
+})();
+
+/* First command from the panel (?q=) is sent once the hub is ready. */
+(function autoSendQuery(){
+  const q = new URLSearchParams(location.search).get('q');
+  if (!q) return;
+  try {
+    if (sessionStorage.getItem('zen_q_sent') === q) return;
+    sessionStorage.setItem('zen_q_sent', q);
+  } catch (e) {}
+  const box = $('q');
+  if (box) box.value = q;
+  const kick = () => { if (!runId && box && box.value.trim()) send(); };
+  setTimeout(kick, 600);
 })();
 </script>
 </body>

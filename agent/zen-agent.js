@@ -73,6 +73,9 @@ try { nodePty = require('/data/data/com.termux/files/home/pty-helper/pty-bridge.
 // MCP/agent API никогда не должна занимать порт проекта (обычно 3000).
 // Переопределение: MCP_PORT=8765 node cli-agent-unified-termux-mcp.js
 let UI_PORT = parseInt(process.env.MCP_PORT || process.env.AGENT_PORT || '8765', 10) || 8765;
+// Assigned when the embedded hub starts so the CLI can reopen the web UI
+// after the first command (xdg-open on a desktop; no-op on a headless runner).
+let openHubFromCli = (_url, _force) => {};
 
 // ═══════════════════════════════════════════════════════════════════
 //  CONFIG
@@ -2993,8 +2996,9 @@ function startEmbeddedServer() {
   // Disable for headless/automated use with ZEN_OPEN_BROWSER=0.
   const HUB_AUTO_OPEN_BROWSER = process.env.ZEN_OPEN_BROWSER !== '0';
   let hubBrowserOpenAttempted = false;
-  const openHubInBrowser = targetUrl => {
-    if (!HUB_AUTO_OPEN_BROWSER || hubBrowserOpenAttempted) return;
+  const openHubInBrowser = (targetUrl, force) => {
+    if (!HUB_AUTO_OPEN_BROWSER) return;
+    if (hubBrowserOpenAttempted && !force) return;
     hubBrowserOpenAttempted = true;
     let command, args;
     if (PLATFORM.isTermux) { command = 'termux-open-url'; args = [targetUrl]; }
@@ -3007,6 +3011,7 @@ function startEmbeddedServer() {
       child.on('error', () => console.log(c(`ℹ️ Не удалось автоматически открыть браузер. Открой: ${targetUrl}`, 'gray')));
     } catch { console.log(c(`ℹ️ Открой браузер вручную: ${targetUrl}`, 'gray')); }
   };
+  openHubFromCli = openHubInBrowser;
   const HUB_TOOL_DEFS = [
     { id: '_terminal', name: 'Terminal', cmd: '', color: '#58a6ff', icon: '>_', installed: true },
     { id: 'opencode', name: 'OpenCode', cmd: 'opencode', color: '#00d4aa', icon: 'OC' },
@@ -3297,14 +3302,16 @@ function startEmbeddedServer() {
     const access = hubAccess(req, url);
     if (!access.authorized) { json(res, 401, { error: 'Unauthorized. LAN use requires ZEN_REMOTE_TOKEN.' }); return; }
     if (fileStandaloneZen) { res.setHeader('Access-Control-Allow-Origin', 'null'); res.setHeader('Vary', 'Origin'); }
-    if (access.suppliedByQuery && req.method === 'GET' && url.searchParams.has('token')) {
-      // Store the token in a same-origin HttpOnly cookie, then remove it from
-      // the visible URL so it is not retained in browser history/referrers.
-      url.searchParams.delete('token');
-      res.writeHead(302, { 'Set-Cookie': `zen_remote_token=${encodeURIComponent(HUB_REMOTE_TOKEN)}; Path=/; HttpOnly; SameSite=Strict`, 'Location': url.pathname + (url.search || '') });
-      res.end(); return;
+    if (access.suppliedByQuery && HUB_REMOTE_TOKEN) {
+      // Keep ?token= on the URL. The hub JS reads it and sends X-Zen-Token.
+      // A 302 that stripped the query left TOKEN empty; SameSite=Strict plus
+      // HttpOnly then meant a third-party iframe (the panel overlay) sent
+      // neither the cookie nor the header, so every chat call was 401.
+      const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+      const https = proto === 'https';
+      const flags = https ? 'Path=/; SameSite=None; Secure' : 'Path=/; SameSite=Lax';
+      res.setHeader('Set-Cookie', `zen_remote_token=${encodeURIComponent(HUB_REMOTE_TOKEN)}; ${flags}`);
     }
-    if (access.suppliedByQuery) res.setHeader('Set-Cookie', `zen_remote_token=${encodeURIComponent(HUB_REMOTE_TOKEN)}; Path=/; HttpOnly; SameSite=Strict`);
     if (req.method === 'OPTIONS') { res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type,X-Zen-Token,Authorization' }); res.end(); return; }
 
     try {
@@ -6420,6 +6427,10 @@ loadPresets();
     if (lower.startsWith('/rm ')) { const id = parseInt(lower.slice(3).trim(), 10); console.log(removeTodo(id, WORKSPACE_ROOT) ? c('✓ Задача удалена', 'green') : c('✗ Задача не найдена', 'red')); drawTodos(); finishCommand(); return; }
     if (lower === '/clear-todo' || lower === '/cleartodo') { clearTodos(WORKSPACE_ROOT); console.log(c('✓ Задачи очищены', 'green')); finishCommand(); return; }
     if (CONFIG.showDashboard) drawDashboard();
+    try {
+      const q = encodeURIComponent(String(text).slice(0, 1500));
+      openHubFromCli(`http://127.0.0.1:${UI_PORT}/hub?q=${q}`, true);
+    } catch {}
     void agentLoop(text).then(() => { if (!CONFIG.compactMode) drawMiniStatus(); }).catch(e => console.log(c('❌ ' + e.message, 'red'))).finally(prompt);
   }
 

@@ -211,13 +211,17 @@
       <button class="ghost" id="btn-linux" onclick="launchDesks('linux')">Только Linux</button>
       <button class="ghost" id="btn-windows" onclick="launchDesks('windows')">Только Windows</button>
     </div>
+    <input id="first-cmd" placeholder="Первая команда — уйдёт в чат сразу после запуска"
+           autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
     <div class="row" style="margin-top:8px">
       <button class="ghost small" id="btn-agent" onclick="launchAgent()">CLI-агент</button>
+      <button class="ghost small" id="btn-opencode" onclick="launchOpencode()">OpenCode</button>
     </div>
     <div class="note">
       Linux — XFCE и терминал. Windows — собственный рабочий стол раннера.
-      Клиент не нужен: обе открываются ссылкой. RDP больше не используется —
-      он требовал логин с паролем и всё равно отказывал.
+      CLI-агент и OpenCode поднимаются в раннере (Linux или Windows) и
+      открываются здесь же, в оверлее. Первая команда, если её указать,
+      отправится в чат автоматически.
     </div>
     <div id="agent-conflict" class="warn" style="display:none"></div>
   </div>
@@ -329,6 +333,19 @@ function loadStore() {
     localStorage.removeItem('gh_token');
     try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) {}
   }
+  // Workflows now live in zen-panel, not the old Symbiosis fork. A stored
+  // control repo pointing at /symbiosis would dispatch into a repo that has
+  // no agent.yml / opencode.yml.
+  let migrated = false;
+  for (const a of s.accounts) {
+    if (a.control && /\/(symbiosis|SymbEK)$/i.test(a.control)) {
+      a.control = a.login ? (a.login + '/zen-panel') : DEFAULT_REPO;
+      migrated = true;
+    }
+  }
+  if (migrated) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) {}
+  }
   if (s.active >= s.accounts.length) s.active = Math.max(0, s.accounts.length - 1);
   return s;
 }
@@ -419,13 +436,16 @@ async function addAccount() {
 // upstream name, so looking for it by name is right far more often than not;
 // when it is missing the user picks one by hand.
 async function guessControl(login, token) {
-  const mine = `${login}/symbiosis`;
-  try {
-    const r = await fetch(`${GH}/repos/${mine}`, {
-      headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'token ' + token }
-    });
-    if (r.ok) return mine;
-  } catch (e) { /* fall through to the shared default */ }
+  const headers = { 'Accept': 'application/vnd.github+json', 'Authorization': 'token ' + token };
+  const candidates = [`${login}/zen-panel`, DEFAULT_REPO];
+  for (const repo of candidates) {
+    try {
+      const r = await fetch(`${GH}/repos/${repo}`, { headers });
+      if (!r.ok) continue;
+      const w = await fetch(`${GH}/repos/${repo}/contents/.github/workflows/agent.yml`, { headers });
+      if (w.ok) return repo;
+    } catch (e) { /* try the next candidate */ }
+  }
   return DEFAULT_REPO;
 }
 
@@ -872,16 +892,35 @@ async function runIn(repo, wf) {
 
 async function run(wf, inputs) {
   if (!tok()) { alert('Сначала вставьте токен — без него запуск невозможен.'); return; }
-  const r = await fetch(`${CTL()}/actions/workflows/${wf}/dispatches`, {
-    method: 'POST', headers: hdr(), body: JSON.stringify({ ref: 'main', inputs })
-  });
+  const r = await dispatchWorkflow(wf, inputs);
   alert(r.status === 204 ? 'Запущено.' : 'Не вышло: ' + r.status + ' ' + await r.text());
   setTimeout(refresh, 2500);
 }
 
+// Dispatch into the account's control repo, then the shared default if that
+// repo has no such workflow (typical after a leftover /symbiosis control).
+async function dispatchWorkflow(wf, inputs) {
+  const body = JSON.stringify({ ref: 'main', inputs: inputs || {} });
+  const post = repo => fetch(`${GH}/repos/${repo}/actions/workflows/${wf}/dispatches`, {
+    method: 'POST', headers: hdr(), body
+  });
+  let r = await post(ctlRepo());
+  if (r.status === 404 && ctlRepo() !== DEFAULT_REPO) {
+    const fallback = await post(DEFAULT_REPO);
+    if (fallback.status === 204) {
+      const a = acct();
+      if (a) { a.control = DEFAULT_REPO; saveStore(STORE); }
+      return fallback;
+    }
+  }
+  return r;
+}
+
 // ── sessions ────────────────────────────────────────────────────────
 const liveAgents   = rs => rs.filter(r => r.name === 'Zen agent' && r.status !== 'completed');
-const liveDesktops = rs => rs.filter(r => (r.name === 'Remote session' || r.name === 'opencode')
+const liveOpencode = rs => rs.filter(r => (r.name === 'OpenCode' || r.name === 'opencode')
+                                          && r.status !== 'completed');
+const liveDesktops = rs => rs.filter(r => (r.name === 'Remote session' || r.name === 'Desks')
                                           && r.status !== 'completed');
 
 async function currentRuns() {
@@ -985,7 +1024,7 @@ function collapsePreview() { previewOpen = false; renderPreview(); }
 //
 // Neither has a password. There is nothing to copy and nothing to type: the
 // button opens the desk and it connects on its own.
-let DESKS = { linux: null, windows: null };
+let DESKS = { linux: null, windows: null, agent: null, opencode: null };
 let deskOpen = null;   // 'linux' | 'windows' | null - which one is expanded
 
 // The signature of what is currently drawn. Rebuilding the card replaces the
@@ -1014,7 +1053,7 @@ async function loadDesks() {
   //
   // Only the chat is protected: a desk iframe is a video stream with no state
   // to lose, and its thumbnails genuinely need refreshing.
-  if (deskOpen === 'agent' && box.querySelector('iframe')) return;
+  if ((deskOpen === 'agent' || deskOpen === 'opencode') && document.getElementById('chat-overlay')) return;
 
   const read = async slot => {
     try {
@@ -1031,11 +1070,11 @@ async function loadDesks() {
     } catch (e) { return null; }
   };
 
-  const [lin, win, agent] = await Promise.all(
-    [read('linux'), read('windows'), read('agent')]);
-  DESKS = { linux: lin, windows: win, agent: agent };
+  const [lin, win, agent, opencode] = await Promise.all(
+    [read('linux'), read('windows'), read('agent'), read('opencode')]);
+  DESKS = { linux: lin, windows: win, agent: agent, opencode: opencode };
 
-  if (!lin && !win && !agent) {
+  if (!lin && !win && !agent && !opencode) {
     card.style.display = 'none';
     deskSig = '';
     return;
@@ -1097,7 +1136,7 @@ async function loadDesks() {
       </div>`;
   };
 
-  if (deskOpen === 'agent' && agent) {
+  if ((deskOpen === 'agent' || deskOpen === 'opencode') && DESKS[deskOpen]) {
     // The chat opens full-screen, inside the app.
     //
     // It used to be window.open(): on a phone that leaves the app entirely,
@@ -1109,7 +1148,9 @@ async function loadDesks() {
     // A fixed overlay ignores all of that: it covers the viewport exactly,
     // and 100dvh (not vh) follows the browser chrome as it collapses, which
     // is what keeps the input visible when the keyboard opens on Android.
-    const url = agent.agentUrl || agent.url || '';
+    const session = DESKS[deskOpen];
+    const url = chatUrlWithQ(session.agentUrl || session.url || '');
+    const title = deskOpen === 'opencode' ? 'OpenCode' : 'CLI-агент';
     let ov = document.getElementById('chat-overlay');
     if (!ov) {
       ov = document.createElement('div');
@@ -1127,7 +1168,7 @@ async function loadDesks() {
         <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;
                     padding-top:calc(8px + env(safe-area-inset-top));
                     border-bottom:1px solid var(--line);background:var(--panel)">
-          <b style="flex:1;font-size:14px">CLI-агент</b>
+          <b style="flex:1;font-size:14px">${esc(title)}</b>
           <button class="ghost small" onclick="openChatInBrowser()">В браузере</button>
           <button class="ghost small" onclick="collapseDesks()">Закрыть</button>
         </div>
@@ -1222,20 +1263,32 @@ function openDeskInPanel(slot) {
 // concurrent session could never have been reachable - the old panel let you
 // start one regardless and then showed a blank page.
 
-const KIND_LABEL = { linux: 'Linux', windows: 'Windows', agent: 'CLI-агент' };
+const KIND_LABEL = { linux: 'Linux', windows: 'Windows', agent: 'CLI-агент', opencode: 'OpenCode' };
 
 function busyButtons(on, which) {
-  for (const id of ['btn-linux', 'btn-windows', 'btn-agent']) {
+  for (const id of ['btn-linux', 'btn-windows', 'btn-agent', 'btn-opencode', 'btn-both']) {
     const b = $(id); if (!b) continue;
     b.disabled = on;
   }
   const b = $(which); if (b) b.textContent = on ? 'Запускаю…' : (b.dataset.label || b.textContent);
 }
 
-// Anything already running, whatever kind.
+// Chat sessions only. Desks use a different tunnel and can stay up.
 function anyLive(runs) {
-  return runs.filter(r => ['Zen agent', 'Remote session', 'opencode'].includes(r.name)
+  return runs.filter(r => ['Zen agent', 'Remote session', 'OpenCode', 'opencode', 'Desks'].includes(r.name)
                           && r.status !== 'completed');
+}
+
+let PENDING_Q = '';
+function readFirstCommand() {
+  const el = $('first-cmd');
+  PENDING_Q = (el && el.value.trim()) || '';
+  return PENDING_Q;
+}
+function chatUrlWithQ(url) {
+  if (!PENDING_Q || !url) return url;
+  if (/[?&]q=/.test(url)) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(PENDING_Q);
 }
 
 async function launch(os) {
@@ -1257,16 +1310,10 @@ async function launch(os) {
   btn.dataset.label = btn.dataset.label || btn.textContent;
   busyButtons(true, btn.id);
   try {
-    const r = await fetch(`${CTL()}/actions/workflows/remote.yml/dispatches`, {
-      method: 'POST', headers: hdr(),
-      body: JSON.stringify({ ref: 'main', inputs: {
-        os,
-        // Linux serves the desktop and the terminal from one tunnel; Windows
-        // has only its built-in RDP.
-        mode: os === 'windows' ? 'rdp' : 'web',
-        prepare_build: 'false',
-        label: (acct() && acct().login) || 'session'
-      } })
+    const r = await dispatchWorkflow('desks.yml', {
+      which: os,
+      prepare_build: 'false',
+      label: (acct() && acct().login) || 'session'
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
     await waitAndOpen(os);
@@ -1307,13 +1354,10 @@ async function launchDesks(which) {
   }
   btn.textContent = 'Поднимаю…';
   try {
-    const r = await fetch(`${CTL()}/actions/workflows/desks.yml/dispatches`, {
-      method: 'POST', headers: hdr(),
-      body: JSON.stringify({ ref: 'main', inputs: {
-        which,
-        prepare_build: 'false',
-        label: (acct() && acct().login) || 'desks'
-      } })
+    const r = await dispatchWorkflow('desks.yml', {
+      which,
+      prepare_build: 'false',
+      label: (acct() && acct().login) || 'desks'
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
 
@@ -1338,14 +1382,15 @@ async function launchDesks(which) {
 
 async function launchAgent() {
   if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
-  const where = confirm('Где поднять агента?\n\nОК — Linux (2 ядра, умеет собирать APK)\n' +
+  readFirstCommand();
+  const where = confirm('Где поднять CLI-агента?\n\nОК — Linux (2 ядра, умеет собирать APK)\n' +
                         'Отмена — Windows (4 ядра, 16 ГБ)') ? 'linux' : 'windows';
 
-  const running = anyLive(await currentRuns());
+  const running = liveAgents(await currentRuns());
   if (running.length) {
-    if (!confirm(`Сессия уже идёт (${mins(running[0].created_at)} мин).\n\n` +
-                 'ОК — остановить её и поднять агента.\nОтмена — оставить как есть.')) {
-      await refresh(); openLive(); return;
+    if (!confirm(`CLI-агент уже идёт (${mins(running[0].created_at)} мин).\n\n` +
+                 'ОК — остановить его и поднять заново.\nОтмена — открыть текущий чат.')) {
+      await refresh(); openDeskInPanel('agent'); return;
     }
     for (const r of running) await cancelRun(r.id);
     await new Promise(r => setTimeout(r, 8000));
@@ -1355,10 +1400,8 @@ async function launchAgent() {
   btn.dataset.label = btn.dataset.label || btn.textContent;
   busyButtons(true, 'btn-agent');
   try {
-    const r = await fetch(`${CTL()}/actions/workflows/agent.yml/dispatches`, {
-      method: 'POST', headers: hdr(),
-      body: JSON.stringify({ ref: 'main', inputs: {
-        os: where, branch: 'agent-work', repos: '', autosave_minutes: '2' } })
+    const r = await dispatchWorkflow('agent.yml', {
+      os: where, branch: 'agent-work', repos: '', autosave_minutes: '2'
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
     await waitAndOpen('agent');
@@ -1370,18 +1413,57 @@ async function launchAgent() {
   }
 }
 
+async function launchOpencode() {
+  if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
+  readFirstCommand();
+  const where = confirm('Где поднять OpenCode?\n\nОК — Linux\nОтмена — Windows') ? 'linux' : 'windows';
+
+  const running = liveOpencode(await currentRuns());
+  if (running.length) {
+    if (!confirm(`OpenCode уже идёт (${mins(running[0].created_at)} мин).\n\n` +
+                 'ОК — остановить и поднять заново.\nОтмена — открыть текущий чат.')) {
+      await refresh(); openDeskInPanel('opencode'); return;
+    }
+    for (const r of running) await cancelRun(r.id);
+    await new Promise(r => setTimeout(r, 8000));
+  }
+
+  const btn = $('btn-opencode');
+  btn.dataset.label = btn.dataset.label || btn.textContent;
+  busyButtons(true, 'btn-opencode');
+  try {
+    const r = await dispatchWorkflow('opencode.yml', {
+      os: where, prompt: PENDING_Q, branch: 'opencode-work'
+    });
+    if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
+    await waitAndOpen('opencode');
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  } finally {
+    busyButtons(false, 'btn-opencode');
+    btn.textContent = btn.dataset.label;
+  }
+}
+
 // Poll until the session publishes an address, then go straight in. Waiting
 // for a link to appear in a log is the step people gave up at.
 async function waitAndOpen(kind) {
-  const btn = $(kind === 'windows' ? 'btn-windows' : kind === 'agent' ? 'btn-agent' : 'btn-linux');
-  const budget = kind === 'windows' ? 60 : 48;
+  const btnId = kind === 'windows' ? 'btn-windows'
+    : kind === 'agent' ? 'btn-agent'
+    : kind === 'opencode' ? 'btn-opencode'
+    : 'btn-linux';
+  const btn = $(btnId);
+  const budget = kind === 'windows' || kind === 'opencode' ? 72 : 56;
   for (let i = 0; i < budget; i++) {
     if (btn) btn.textContent = `Поднимаю… ${i * 5}s`;
     await new Promise(r => setTimeout(r, 5000));
-    const s = await loadCreds();
-    if (s && (s.agentUrl || s.vncUrl || s.rdpHost)) {
+    const s = await loadCreds(kind);
+    const ready = s && (s.agentUrl || s.deskUrl || s.vncUrl || s.rdpHost ||
+      (kind !== 'agent' && kind !== 'opencode' && s.url));
+    if (ready) {
       await refresh();
-      openLive();
+      if (kind === 'agent' || kind === 'opencode') openDeskInPanel(kind);
+      else openLive();
       return;
     }
   }
@@ -1413,7 +1495,10 @@ function openLive() {
   // The desks card lives on the session page - there is no separate "desks"
   // tab - and openDeskInPanel() scrolls to it, because expanding a panel that
   // is off-screen looks like the button did nothing.
-  if (s.agentUrl) { openDeskInPanel('agent'); return; }
+  if (s.agentUrl) {
+    openDeskInPanel(s._slot === 'opencode' || /opencode/i.test(s.kind || '') ? 'opencode' : 'agent');
+    return;
+  }
   if (s.vncUrl)   { openDeskInPanel(s.rdpHost ? 'windows' : 'linux'); return; }
   if (s.rdpHost) {
     // RDP is not HTTP: there is nothing to open in a browser, so hand over the
@@ -1449,21 +1534,44 @@ async function stopRun(id, repo) {
 // summary already carries the same values, but it is not machine-readable and
 // on a phone it is several taps away; this puts the address, user and password
 // on the screen that starts the session.
-async function loadCreds() {
-  const box = $('creds');
+async function readSessionSlot(slot) {
+  const file = slot ? `session-${slot}.json` : 'session.json';
   try {
     const f = await api(
-      `${CTL()}/contents/session.json?ref=session-state&t=${Date.now()}`);
-    const raw = atob((f.content || '').replace(/\n/g, ''));
+      `${CTL()}/contents/${file}?ref=session-state&t=${Date.now()}`);
+    const raw = decodeURIComponent(escape(atob((f.content || '').replace(/\n/g, ''))));
     const s = JSON.parse(raw);
-
-    // Stale entries linger: a runner killed hard never gets to clear the file.
     const age = (Date.now() - new Date(s.startedAt).getTime()) / 60000;
-    if (s.state === 'ended' || age > 361) {
+    if (s.state === 'ended' || age > 361) return null;
+    s._age = Math.round(age);
+    s._slot = slot || 'legacy';
+    return s;
+  } catch (e) { return null; }
+}
+
+async function loadCreds(preferSlot) {
+  const box = $('creds');
+  try {
+    const order = preferSlot
+      ? [preferSlot, 'agent', 'opencode', null, 'linux', 'windows']
+      : ['agent', 'opencode', null, 'linux', 'windows'];
+    const seen = new Set();
+    let s = null;
+    for (const slot of order) {
+      const key = slot || 'legacy';
+      if (seen.has(key)) continue;
+      seen.add(key);
+      s = await readSessionSlot(slot);
+      if (s) break;
+    }
+
+    if (!s) {
       box.innerHTML = '<span class="note">активных сессий нет</span>';
       LIVE = null; renderPreview();
+      if ($('creds-card')) $('creds-card').style.display = 'none';
       return null;
     }
+    const age = s._age;
     const left = Math.max(0, 360 - Math.round(age));
     const rows = [];
     const kv = (k, v, mono) => rows.push(

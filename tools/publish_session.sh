@@ -42,10 +42,11 @@ FILE="session.json"
 ARGS=()
 for arg in "$@"; do
   case "$arg" in
-    slot=linux)   FILE="session-linux.json" ;;
-    slot=windows) FILE="session-windows.json" ;;
-    slot=agent)   FILE="session-agent.json" ;;
-    slot=*)       ;;   # unknown slot: ignore rather than write a stray file
+    slot=linux)    FILE="session-linux.json" ;;
+    slot=windows)  FILE="session-windows.json" ;;
+    slot=agent)    FILE="session-agent.json" ;;
+    slot=opencode) FILE="session-opencode.json" ;;
+    slot=*)        ;;   # unknown slot: ignore rather than write a stray file
     *)            ARGS+=("$arg") ;;
   esac
 done

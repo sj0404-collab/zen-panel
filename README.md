@@ -1,17 +1,23 @@
 # Zen Panel
 
-Android control panel for Zen Agent and remote Linux/Windows desktops.
+Android-панель и GitHub Actions для Zen Agent, OpenCode и удалённых столов Linux/Windows.
 
-This repository intentionally contains only the Android panel and its UI. The runner, agent service, and desktop workflows remain in `sj0404-collab/symbiosis` for now; the panel controls that backend through GitHub Actions.
+Репозиторий самодостаточный: панель, агент (`agent/zen-agent.js`), хаб и workflow живут здесь. Панель поднимает сессии через `workflow_dispatch` в этом репозитории (или в вашем форке).
 
-## Included
+## Что внутри
 
-- Android WebView shell
-- panel home screen
-- Linux and Windows desktop screen
-- Zen Agent launch/open controls
-- APK build workflow
+- Android WebView-оболочка и панель в `app/src/main/assets/panel/`
+- CLI-агент и веб-хаб (`agent/`)
+- Workflow:
+  - `agent.yml` — CLI-агент на Linux/Windows, туннель, чат в оверлее
+  - `opencode.yml` — OpenCode web на Linux/Windows, туннель, чат в оверлее
+  - `desks.yml` — столы Linux (noVNC) и Windows (MJPEG)
+  - `panel-apk.yml` — сборка APK панели
 
-## Excluded
+## Как пользоваться
 
-No Symbiosis emulator/application source, website, library page, or unrelated HTML is copied here.
+1. Добавьте GitHub-токен с правами `repo` и `workflow`.
+2. На вкладке «Сессии» запустите стол, CLI-агент или OpenCode.
+3. После старта панель сама откроет веб-чат в оверлее. Поле «Первая команда» уходит в чат сразу (`?q=` у CLI, `opencode run --attach` у OpenCode).
+
+Адрес сессии публикуется в ветке `session-state` (`session-agent.json`, `session-opencode.json`, `session-linux.json`, `session-windows.json`).
