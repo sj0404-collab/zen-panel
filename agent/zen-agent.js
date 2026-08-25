@@ -3105,6 +3105,15 @@ function startEmbeddedServer() {
       });
     }
 
+    const trConfigured = !!tokenraKey();
+    add('stealth/ox-alpha', 'Ox Alpha', 'tokenra', 'Tokenra', '🟠', {
+      free: true, ctx: 1048576, out: 131072,
+      desc: trConfigured ? 'Tokenra · Ox Alpha' : 'Tokenra — нужен TOKENRA_API_KEY', configured: trConfigured
+    });
+    const orcaConfigured = !!orcaRouterKey();
+    add('orcarouter/auto', 'Auto Router', 'orcarouter', 'OrcaRouter', '🐋', {
+      ctx: 128000, desc: orcaConfigured ? 'OrcaRouter adaptive routing' : 'OrcaRouter — нужен ORCAROUTER_API_KEY', configured: orcaConfigured
+    });
     const ghConfigured = !!githubModelsToken();
     for (const id of GITHUB_MODELS) {
       add(id, id, 'github', 'GitHub Models', '🐙', {
@@ -3698,8 +3707,13 @@ function startEmbeddedServer() {
       }
       if (url.pathname === '/api/fs/download' && req.method === 'GET') { const target = hubPath(url.searchParams.get('path')); if (target.error) { json(res, 400, { error: target.error }); return; } const fileName = path.basename(target.path).replace(/[\r\n"]/g, '_'); res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${fileName}"` }); fs.createReadStream(target.path).pipe(res); return; }
       if (url.pathname === '/api/models' && req.method === 'GET') { json(res, 200, { success: true, models: getHubModels(), selected: currentModel, provider: currentProvider }); return; }
-      if (url.pathname === '/api/models/full' && req.method === 'GET') { const allModels = getHubModels(); json(res, 200, { success: true, models: allModels, providers: [{ id: 'zen', name: 'OpenCode Zen', icon: '🟢', free: true, configured: true, modelCount: allModels.filter(m => m.providerId === 'zen').length }, { id: 'openrouter', name: 'OpenRouter', icon: '🟣', free: false, configured: !!openRouterKey(), modelCount: allModels.filter(m => m.providerId === 'openrouter').length }], selected: currentModel, provider: currentProvider }); return; }
-      if (url.pathname === '/api/models/select' && req.method === 'POST') { const body = await readJson(req); const model = safeWebModel(body.modelId); if (!model) { json(res, 400, { error: 'Invalid model id' }); return; } currentModel = model; if (body.providerId === 'openrouter' || body.providerId === 'zen') currentProvider = body.providerId; saveHistory(); json(res, 200, { success: true, selected: currentModel, provider: currentProvider }); return; }
+      if (url.pathname === '/api/models/full' && req.method === 'GET') { const allModels = getHubModels(); const providers = [
+        { id: 'zen', name: 'OpenCode Zen', icon: '🟢', free: true, configured: true },
+        { id: 'openrouter', name: 'OpenRouter', icon: '🟣', free: false, configured: !!openRouterKey() },
+        { id: 'tokenra', name: 'Tokenra', icon: '🟠', free: true, configured: !!tokenraKey() },
+        { id: 'orcarouter', name: 'OrcaRouter', icon: '🐋', free: false, configured: !!orcaRouterKey() }
+      ].map(x => ({ ...x, modelCount: allModels.filter(m => m.providerId === x.id).length })); json(res, 200, { success: true, models: allModels, providers, selected: currentModel, provider: currentProvider }); return; }
+      if (url.pathname === '/api/models/select' && req.method === 'POST') { const body = await readJson(req); const model = safeWebModel(body.modelId); const provider = safeWebProvider(body.providerId); if (!model || !provider) { json(res, 400, { error: 'Invalid model or provider id' }); return; } currentModel = model; currentProvider = provider; saveHistory(); json(res, 200, { success: true, selected: currentModel, provider: currentProvider }); return; }
       if (url.pathname === '/api/models/current' && req.method === 'GET') { json(res, 200, { success: true, model: currentModel, provider: currentProvider, apiKeyConfigured: !!openRouterKey() }); return; }
       if ((url.pathname === '/api/models/key' || url.pathname === '/api/models/apikey') && req.method === 'POST') { json(res, 400, { success: false, error: 'API keys are not accepted over the Hub web form. Use the local CLI command /key or a secure environment variable.' }); return; }
 
