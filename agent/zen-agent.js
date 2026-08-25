@@ -4607,6 +4607,24 @@ const HUGGINGFACE_MODELS = [
   'meta-llama/Llama-3.3-70B-Instruct:fastest'
 ];
 
+// Retry only transient failures. Authentication/schema errors must surface immediately.
+async function withProviderRetry(label, operation, attempts = 3) {
+  let last;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try { return await operation(); }
+    catch (error) {
+      last = error;
+      const text = String(error?.message || error);
+      const transient = /timeout|timed? ?out|dns|econnreset|enotfound|eai_again|socket|network|HTTP (408|425|429|500|502|503|504)/i.test(text);
+      if (!transient || attempt === attempts || abortRequested) throw error;
+      const wait = Math.min(8000, 500 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 250);
+      webRunEvent('provider_retry', { provider: label, attempt: String(attempt), waitMs: String(wait), reason: text.slice(0, 180) });
+      await new Promise(resolve => setTimeout(resolve, wait));
+    }
+  }
+  throw last;
+}
+
 const COMPATIBLE_PROVIDERS = {
   tokenra: { label: 'Tokenra', hostname: 'tokenra.io', path: '/v1/chat/completions', key: tokenraKey, defaultModel: 'stealth/ox-alpha', headers: {} },
   orcarouter: { label: 'OrcaRouter', hostname: 'api.orcarouter.ai', path: '/v1/chat/completions', key: orcaRouterKey, defaultModel: 'orcarouter/auto', headers: {} },
@@ -4619,7 +4637,7 @@ async function callCompatibleProvider(providerId, messages, model = currentModel
   const key = provider.key();
   if (!key) throw new Error(`${provider.label} token is not configured in Core environment.`);
   const payload = JSON.stringify({ model: model || provider.defaultModel, messages, tools: buildNativeToolDefinitions(), tool_choice: 'auto', max_tokens: CONFIG.maxTokens, temperature: CONFIG.temperature, stream: false });
-  return await new Promise((resolve, reject) => {
+  return await withProviderRetry(provider.label, () => new Promise((resolve, reject) => {
     const req = https.request({ hostname: provider.hostname, port: 443, path: provider.path, method: 'POST', timeout: 90000, headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), 'Authorization': `Bearer ${key}`, ...(provider.headers || {}) } }, res => {
       let body = ''; res.setEncoding('utf8'); res.on('data', chunk => body += chunk); res.on('end', () => {
         let json; try { json = JSON.parse(body); } catch { reject(new Error(`${provider.label} returned non-JSON: ${body.slice(0, 300)}`)); return; }
@@ -4629,7 +4647,7 @@ async function callCompatibleProvider(providerId, messages, model = currentModel
       });
     });
     req.on('error', reject); req.on('timeout', () => req.destroy(new Error(`${provider.label} timeout`))); req.write(payload); req.end();
-  });
+  }));
 }
 
 async function hfInferenceBinary(model, payload, contentType, accept) {
