@@ -139,8 +139,11 @@
   <div class="card">
     <h2>Добавить аккаунт</h2>
     <label>Токен GitHub</label>
-    <input id="tok" type="password" placeholder="ghp_…" autocomplete="off">
+    <input id="tok" type="password" placeholder="github_pat_… или ghp_…"
+      autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+      data-lpignore="true" data-1p-ignore="true" inputmode="text">
     <div class="row">
+      <button class="ghost" type="button" onclick="pasteToken()">Вставить из буфера</button>
       <button id="btn-add" onclick="addAccount()">Добавить</button>
       <button class="ghost" onclick="window.open('https://github.com/settings/tokens/new?scopes=repo,workflow&description=Symbiosis%20panel','_blank')">Создать токен</button>
     </div>
@@ -357,6 +360,20 @@ function hdr() {
 // Adding an account verifies the token before storing it. A token that is
 // expired or missing a scope otherwise turns into an empty panel with no
 // explanation, which is the failure this avoids.
+async function pasteToken() {
+  const field = $('tok');
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.readText) throw new Error('Clipboard API недоступен');
+    const value = (await navigator.clipboard.readText()).trim();
+    if (!value) throw new Error('Буфер обмена пуст');
+    field.value = value;
+    field.focus();
+  } catch (e) {
+    // Some Android WebViews deny clipboard reads. Keep the message actionable.
+    alert('Не удалось прочитать буфер: ' + e.message + '. Откройте буфер клавиатуры и выберите скопированный token.');
+  }
+}
+
 async function addAccount() {
   const value = $('tok').value.trim();
   if (!value) { alert('Вставьте токен.'); return; }
