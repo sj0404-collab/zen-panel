@@ -25,8 +25,27 @@ android {
         buildConfigField("String", "PANEL_VERSION", "\"1.$buildNumber.$buildSha\"")
     }
     buildFeatures { buildConfig = true }
+    // One keystore for every CI APK so "install over previous" works.
+    // Secrets ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD override this
+    // bundled sideload key if set.
+    val uploadStore = file("keystore/upload.jks")
+    val storePass = System.getenv("ANDROID_KEYSTORE_PASSWORD").orEmpty().ifBlank { "zenpanel-upload" }
+    val keyAlias = System.getenv("ANDROID_KEY_ALIAS").orEmpty().ifBlank { "zen-panel" }
+    val keyPass = System.getenv("ANDROID_KEY_PASSWORD").orEmpty().ifBlank { storePass }
+    if (uploadStore.exists()) {
+        signingConfigs.create("release") {
+            storeFile = uploadStore
+            storePassword = storePass
+            this.keyAlias = keyAlias
+            keyPassword = keyPass
+        }
+    }
     buildTypes {
-        release { isMinifyEnabled = false; signingConfig = signingConfigs.getByName("debug") }
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
+        }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }

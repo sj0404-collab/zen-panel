@@ -1087,10 +1087,11 @@ async function loadDesks() {
     deskOpen,
     lin && [lin.deskUrl || lin.url, lin.terminal || '', lin.runId || ''],
     win && [win.deskUrl || win.url, win.terminal || '', win.runId || ''],
-    agent && [agent.agentUrl || agent.url, agent.runId || '']
+    agent && [agent.agentUrl || agent.url, agent.runId || ''],
+    opencode && [opencode.agentUrl || opencode.url, opencode.runId || '']
   ]);
   if (sig === deskSig) {
-    for (const [slot, s] of [['linux', lin], ['windows', win], ['agent', agent]]) {
+    for (const [slot, s] of [['linux', lin], ['windows', win], ['agent', agent], ['opencode', opencode]]) {
       const el = $('desk-age-' + slot);
       if (el && s) el.textContent = ageLine(s);
     }
@@ -1170,6 +1171,7 @@ async function loadDesks() {
           <b style="flex:1;font-size:14px">${esc(title)}</b>
           <button class="ghost small" onclick="openChatInBrowser()">В браузере</button>
           <button class="ghost small" onclick="collapseDesks()">Закрыть</button>
+          ${deskOpen === 'opencode' ? '<span class="note">Если экран чёрный — OpenCode запретил iframe, откройте в браузере.</span>' : ''}
         </div>
         <iframe src="${esc(url)}" style="border:0;flex:1;width:100%;background:var(--bg)"
                 allow="clipboard-read; clipboard-write"
@@ -1194,22 +1196,22 @@ async function loadDesks() {
   } else {
     // The agent has no screen to show - it is a chat page - so it gets a row
     // of its own rather than an empty black thumbnail pretending to be a desk.
-    const agentRow = agent ? `
+    const chatRow = (slot, s, title) => !s ? '' : `
       <div style="margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:12px">
-        <b>CLI-агент</b>
-        <div class="note" style="margin:4px 0 8px" id="desk-age-agent">${esc(ageLine(agent))}</div>
+        <b>${esc(title)}</b>
+        <div class="note" style="margin:4px 0 8px" id="desk-age-${slot}">${esc(ageLine(s))}</div>
         <div class="row">
-          <button class="small" onclick="expandDesk('agent')">Открыть чат</button>
+          <button class="small" onclick="expandDesk('${slot}')">Открыть чат</button>
           <button class="ghost small"
-                  onclick="window.open('${esc(agent.agentUrl || agent.url)}','_blank')">
+                  onclick="window.open('${esc(s.agentUrl || s.url)}','_blank')">
             В браузере</button>
-          ${agent.runId && tok() ? `<button class="ghost small" onclick="stopRun(${agent.runId})">Выключить</button>` : ''}
+          ${s.runId && tok() ? `<button class="ghost small" onclick="stopRun(${s.runId})">Выключить</button>` : ''}
         </div>
-      </div>` : '';
+      </div>`;
     box.innerHTML = `<div class="row" style="gap:10px;align-items:stretch">
       ${tile('linux', lin, 'Linux')}
       ${tile('windows', win, 'Windows')}
-    </div>` + agentRow;
+    </div>` + chatRow('agent', agent, 'CLI-агент') + chatRow('opencode', opencode, 'OpenCode');
   }
 }
 
@@ -1755,7 +1757,10 @@ async function refresh() {
   $('live').innerHTML = live.length
     ? '<table>' + live.map(r => {
         const used = mins(r.created_at), left = Math.max(0, 360 - used);
-        const kind = r.name === 'Zen agent' ? 'CLI-агент' : 'Рабочий стол';
+        const kind = r.name === 'Zen agent' ? 'CLI-агент'
+          : (r.name === 'OpenCode' || r.name === 'opencode') ? 'OpenCode'
+          : r.name === 'Desks' ? 'Столы'
+          : 'Рабочий стол';
         return `<tr><td>#${r.run_number}</td>
           <td><b>${esc(kind)}</b> ${pill(r)}
             <div class="note">идёт ${used} мин · осталось ~${left} мин ·

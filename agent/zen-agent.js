@@ -33,16 +33,9 @@ try { ({ GitHubApi } = require('../lib/github-api')); } catch {}
 let LocalAiManager = null;
 try { ({ LocalAiManager } = require('../lib/local-ai')); } catch {}
 if (!LocalAiManager) {
-  const BUILTIN_LOCAL_CATALOG = [
-    { id: 'qwen2.5-1.5b-instruct-q4', name: 'Qwen2.5 1.5B Q4', sizeMb: 1100, ctx: 32768, downloaded: false,
-      repo: 'Qwen/Qwen2.5-1.5B-Instruct-GGUF', file: 'qwen2.5-1.5b-instruct-q4_k_m.gguf' },
-    { id: 'qwen2.5-3b-instruct-q4', name: 'Qwen2.5 3B Q4', sizeMb: 2000, ctx: 32768, downloaded: false,
-      repo: 'Qwen/Qwen2.5-3B-Instruct-GGUF', file: 'qwen2.5-3b-instruct-q4_k_m.gguf' },
-    { id: 'llama-3.2-3b-instruct-q4', name: 'Llama 3.2 3B Q4', sizeMb: 2000, ctx: 131072, downloaded: false,
-      repo: 'bartowski/Llama-3.2-3B-Instruct-GGUF', file: 'Llama-3.2-3B-Instruct-Q4_K_M.gguf' },
-    { id: 'gemma-3-1b-it-q4', name: 'Gemma 3 1B IT Q4', sizeMb: 800, ctx: 32768, downloaded: false,
-      repo: 'unsloth/gemma-3-1b-it-GGUF', file: 'gemma-3-1b-it-Q4_K_M.gguf' }
-  ];
+  try { ({ LocalAiManager } = require('./local-models')); } catch {}
+}
+if (!LocalAiManager) {
   const unavailable = () => ({ success: false, error: 'local-ai module not installed' });
   // Every method the agent calls has to exist here, or the fallback is worse
   // than no fallback: /api/local-ai/models called listModels() and threw a

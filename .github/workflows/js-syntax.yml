@@ -1,0 +1,32 @@
+name: JS syntax
+
+on:
+  push:
+    branches: [main]
+    paths: ["agent/**"]
+  pull_request:
+    paths: ["agent/**"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: Syntax-check the agent and hub
+        run: |
+          node --check agent/zen-agent.js
+          node --check agent/local-models.js
+          node --check agent/capabilities.js
+          python3 - <<'PY'
+          import pathlib, re, subprocess, sys
+          html = pathlib.Path("agent/hub/index.html").read_text()
+          m = re.search(r"<script>\s*(.*?)\s*</script>\s*</body>", html, re.S)
+          if not m:
+              sys.exit("hub/index.html: no inline script")
+          pathlib.Path("/tmp/hub.js").write_text(m.group(1))
+          subprocess.check_call(["node", "--check", "/tmp/hub.js"])
+          print("ok")
+          PY

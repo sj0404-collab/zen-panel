@@ -41,11 +41,28 @@ jobs:
           unzip -q /tmp/gradle.zip -d /opt
           echo "/opt/gradle-8.9/bin" >> "$GITHUB_PATH"
 
+      - name: Optional release keystore from secrets
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p app/keystore
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/keystore/upload.jks
+          echo "using ANDROID_KEYSTORE_BASE64"
+
       - name: Build release APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -o pipefail
           ( /opt/gradle-8.9/bin/gradle wrapper --gradle-version 8.9 --no-daemon &&
             ./gradlew assembleRelease --no-daemon --stacktrace ) 2>&1 | tee /tmp/gradle-build.log
+          # Record how it was signed so a debug-signed APK is obvious.
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
+          if command -v apksigner >/dev/null; then apksigner verify --print-certs "$APK" || true
+          else echo "apksigner not on PATH (ok)"; fi
 
       - name: Publish failed Gradle log for diagnosis
         if: failure()
