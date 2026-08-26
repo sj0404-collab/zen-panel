@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d12">
+<title>OpenCode</title>
+<style>
+  :root{
+    --bg:#0d0d12; --panel:#16161f; --line:#262633; --text:#e8e8f0; --dim:#8a8a9e;
+    --cyan:#22e0d6; --pink:#ff2d78; --ok:#3fd17a; --warn:#ffb020; --bad:#ff4d4d;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--text);display:flex;flex-direction:column;
+       font:15px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif;
+       padding-bottom:env(safe-area-inset-bottom)}
+  header{display:flex;align-items:center;gap:8px;padding:8px 10px;
+         padding-top:calc(8px + env(safe-area-inset-top));
+         border-bottom:1px solid var(--line);background:var(--panel)}
+  header b{flex:1;font-size:14px}
+  header b span{color:var(--cyan)}
+  select,button,textarea{font:inherit;border-radius:10px}
+  select{background:#101015;color:var(--text);border:1px solid var(--line);padding:6px 8px;max-width:46vw}
+  button{background:var(--cyan);color:#04202a;border:0;font-weight:700;padding:8px 12px;min-height:40px}
+  button.ghost{background:transparent;color:var(--dim);border:1px solid var(--line);font-weight:600}
+  button:disabled{opacity:.45}
+  #log{flex:1;overflow:auto;padding:12px;-webkit-overflow-scrolling:touch}
+  .msg{margin:0 0 12px;max-width:92%}
+  .msg.user{margin-left:auto;background:#1a1220;border:1px solid #3a2438;border-radius:12px 12px 4px 12px;padding:8px 10px}
+  .msg.bot{background:var(--panel);border:1px solid var(--line);border-radius:12px 12px 12px 4px;padding:8px 10px;white-space:pre-wrap;word-break:break-word}
+  .tool{font-size:12px;color:var(--dim);padding:4px 0}
+  .tool.ok{color:var(--ok)} .tool.run{color:var(--warn)}
+  .err{color:var(--bad);font-size:13px;padding:8px}
+  form{display:flex;gap:8px;padding:8px 10px;border-top:1px solid var(--line);background:var(--panel)}
+  textarea{flex:1;background:#101015;color:var(--text);border:1px solid var(--line);
+           padding:10px;min-height:44px;max-height:120px;resize:none}
+  .note{color:var(--dim);font-size:12px;padding:8px 12px}
+</style>
+</head>
+<body>
+<header>
+  <b>Open<span>Code</span></b>
+  <select id="model" title="модель"></select>
+  <button class="ghost" type="button" id="abort" hidden>Стоп</button>
+</header>
+<div id="log"><div class="note">Подключаюсь к серверу…</div></div>
+<form id="f">
+  <textarea id="q" rows="1" placeholder="Сообщение" autocomplete="off"></textarea>
+  <button type="submit" id="send">Отправить</button>
+</form>
+<script>
+'use strict';
+const log = document.getElementById('log');
+const modelEl = document.getElementById('model');
+const abortBtn = document.getElementById('abort');
+const qEl = document.getElementById('q');
+let sessionId = '';
+let busy = false;
+
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function add(html) {
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  while (d.firstChild) log.appendChild(d.firstChild);
+  log.scrollTop = log.scrollHeight;
+}
+function setBusy(on) {
+  busy = on;
+  document.getElementById('send').disabled = on;
+  abortBtn.hidden = !on;
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, Object.assign({ headers: { 'content-type': 'application/json' } }, opts||{}));
+  const text = await r.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = text; }
+  if (!r.ok) throw new Error((data && (data.message || data.error)) || ('HTTP ' + r.status));
+  return data;
+}
+
+function partText(p) {
+  if (!p) return '';
+  if (typeof p === 'string') return p;
+  if (p.type === 'text' || p.type === 'reasoning') return p.text || p.content || '';
+  return '';
+}
+function renderParts(parts) {
+  let html = '';
+  for (const p of parts || []) {
+    if (p.type === 'tool' || p.type === 'tool-invocation' || p.tool) {
+      const name = p.tool || (p.call && p.call.name) || p.name || 'tool';
+      const st = (p.state && p.state.status) || p.status || '';
+      const cls = st === 'completed' || st === 'success' ? 'ok' : 'run';
+      html += `<div class="tool ${cls}">▸ ${esc(name)}${st ? ' · ' + esc(st) : ''}</div>`;
+    } else {
+      const t = partText(p);
+      if (t) html += esc(t);
+    }
+  }
+  return html || '<span class="note">…</span>';
+}
+
+function paintMessages(list) {
+  log.innerHTML = '';
+  if (!list || !list.length) { add('<div class="note">Напишите задачу. Это лёгкий чат, не веб OpenCode.</div>'); return; }
+  for (const m of list) {
+    const info = m.info || m;
+    const parts = m.parts || info.parts || [];
+    const role = info.role || info.type || '';
+    if (role === 'user' || info.role === 'user') {
+      const t = parts.map(partText).filter(Boolean).join('\n') || info.body || '';
+      add(`<div class="msg user">${esc(t)}</div>`);
+    } else {
+      add(`<div class="msg bot">${renderParts(parts)}</div>`);
+    }
+  }
+}
+
+async function loadModels() {
+  try {
+    const d = await api('/config/providers');
+    const providers = d.providers || d.all || [];
+    const opts = [];
+    for (const p of providers) {
+      const models = p.models || {};
+      const ids = Array.isArray(models) ? models : Object.keys(models);
+      for (const id of ids) {
+        const rec = Array.isArray(models) ? id : (models[id] || {});
+        const mid = rec.id || rec.modelID || id;
+        const name = rec.name || mid;
+        const pid = p.id || rec.providerID || 'opencode';
+        opts.push({ v: pid + '/' + mid, n: (p.name || pid) + ' · ' + name });
+      }
+    }
+    if (!opts.length) opts.push({ v: 'opencode/big-pickle', n: 'OpenCode · Big Pickle' });
+    modelEl.innerHTML = opts.slice(0, 80).map(o => `<option value="${esc(o.v)}">${esc(o.n)}</option>`).join('');
+    const prefer = opts.find(o => /free|big-pickle|nemotron|ox-alpha|mimo/i.test(o.v+o.n));
+    if (prefer) modelEl.value = prefer.v;
+  } catch (e) {
+    modelEl.innerHTML = '<option value="opencode/big-pickle">OpenCode · default</option>';
+  }
+}
+
+async function ensureSession() {
+  if (sessionId) return sessionId;
+  const listed = await api('/session').catch(() => []);
+  const arr = Array.isArray(listed) ? listed : [];
+  if (arr.length) { sessionId = arr[0].id; return sessionId; }
+  const s = await api('/session', { method: 'POST', body: JSON.stringify({ title: 'телефон' }) });
+  sessionId = s.id || s.sessionID;
+  return sessionId;
+}
+
+async function refresh() {
+  if (!sessionId) return;
+  const list = await api('/session/' + encodeURIComponent(sessionId) + '/message');
+  paintMessages(Array.isArray(list) ? list : []);
+}
+
+async function send(text) {
+  await ensureSession();
+  add(`<div class="msg user">${esc(text)}</div>`);
+  setBusy(true);
+  const [providerID, modelID] = (modelEl.value || 'opencode/big-pickle').split('/');
+  const body = {
+    parts: [{ type: 'text', text }],
+    model: { providerID, modelID }
+  };
+  try {
+    let r = await fetch('/session/' + encodeURIComponent(sessionId) + '/prompt_async', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (r.status === 404) {
+      r = await fetch('/session/' + encodeURIComponent(sessionId) + '/message', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+      });
+    }
+    if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
+    if (r.status !== 204) {
+      try {
+        const data = await r.json();
+        if (data && (data.parts || (data.info && data.parts))) {
+          add(`<div class="msg bot">${renderParts(data.parts)}</div>`);
+          setBusy(false);
+          return;
+        }
+      } catch (e) {}
+    }
+    for (let i = 0; i < 90; i++) {
+      await new Promise(res => setTimeout(res, 1200));
+      await refresh();
+      const st = await api('/session/status').catch(() => null);
+      const one = st && (st[sessionId] || st[sessionId] === undefined && st);
+      const busyNow = one && (one.type === 'busy' || one.status === 'busy' || one === 'busy');
+      if (!busyNow && i > 1) break;
+    }
+  } catch (e) {
+    add(`<div class="err">${esc(e.message)}</div>`);
+  } finally { setBusy(false); }
+}
+
+abortBtn.onclick = async () => {
+  if (!sessionId) return;
+  await fetch('/session/' + encodeURIComponent(sessionId) + '/abort', { method: 'POST' }).catch(() => {});
+  setBusy(false);
+};
+
+document.getElementById('f').onsubmit = e => {
+  e.preventDefault();
+  const t = qEl.value.trim();
+  if (!t || busy) return;
+  qEl.value = '';
+  send(t);
+};
+
+qEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('f').requestSubmit(); }
+});
+
+(async () => {
+  try {
+    const h = await api('/global/health');
+    log.innerHTML = '';
+    add(`<div class="note">Сервер ${esc(h.version || 'ok')}. Лёгкий чат для телефона.</div>`);
+    await loadModels();
+    await ensureSession();
+    await refresh();
+    const q = new URLSearchParams(location.search).get('q');
+    if (q) send(q);
+  } catch (e) {
+    log.innerHTML = `<div class="err">Нет связи с OpenCode: ${esc(e.message)}</div>`;
+  }
+})();
+</script>
+</body>
+</html>

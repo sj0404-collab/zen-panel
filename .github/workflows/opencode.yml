@@ -1,7 +1,7 @@
 name: OpenCode
 
-# OpenCode's own web UI on a GitHub runner, published through a cloudflared
-# quick tunnel so the panel can open it in the same overlay as CLI-агент.
+# OpenCode serve + a mobile chat on a GitHub runner, published through a
+# cloudflared quick tunnel. Official web UI is too heavy for a phone.
 #
 # Why a separate workflow: the Zen agent is this fork's own loop. OpenCode is
 # a different product with its own models, tools and web client. Users pick
@@ -85,36 +85,52 @@ jobs:
           export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
           cd "$GITHUB_WORKSPACE/fork"
 
-          # No basic-auth password: the panel opens this in an iframe, and a
-          # credentialed URL is stripped by many WebViews. The trycloudflare
-          # hostname is the secret, same as the desks.
-          nohup opencode web --port 4096 --hostname 0.0.0.0 \
+          # Headless serve + a one-file mobile chat. Official `opencode web`
+          # is a heavy SPA that janks a phone WebView; the panel opens the
+          # gateway at :4100 instead.
+          cat > /tmp/opencode.json <<'JSON'
+          { "permission": { "*": "allow" } }
+          JSON
+          cp /tmp/opencode.json "$GITHUB_WORKSPACE/fork/opencode.json" 2>/dev/null || true
+
+          nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
             > /tmp/opencode.log 2>&1 &
           echo $! > /tmp/opencode.pid
 
           up=0
           for i in $(seq 1 40); do
-            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:4096/" \
-              || curl -sf -o /dev/null -m 4 "http://127.0.0.1:4096/global/health" \
+            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:4096/global/health" \
               || curl -sf -o /dev/null -m 4 "http://127.0.0.1:4096/session"; then
               up=1; break
             fi
             sleep 2
           done
           if [ "$up" != 1 ]; then
-            echo "::error::OpenCode web did not start."
+            echo "::error::OpenCode serve did not start."
             tail -50 /tmp/opencode.log
             exit 1
           fi
-          echo "OpenCode is up on 4096"
+          echo "OpenCode serve is up on 4096"
 
-          if [ -n "$FIRST_PROMPT" ]; then
-            opencode run --attach http://127.0.0.1:4096 --auto "$FIRST_PROMPT" \
-              > /tmp/opencode-first.log 2>&1 || \
-              echo "::warning::first prompt failed; the web UI is still up"
+          node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > /tmp/oc-gateway.log 2>&1 &
+          echo $! > /tmp/oc-gateway.pid
+          gw=0
+          for i in $(seq 1 20); do
+            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:4100/"; then gw=1; break; fi
+            sleep 1
+          done
+          if [ "$gw" != 1 ]; then
+            echo "::error::oc-gateway did not start."
+            tail -40 /tmp/oc-gateway.log
+            exit 1
           fi
 
-          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 4096 /tmp/oc-tunnel.log)
+          if [ -n "$FIRST_PROMPT" ]; then
+            python3 "$GITHUB_WORKSPACE/fork/tools/oc_first_prompt.py" \
+              || echo "::warning::first prompt failed; the chat is still up"
+          fi
+
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 4100 /tmp/oc-tunnel.log)
           if [ -z "$URL" ]; then
             echo "::error::no tunnel came up."
             tail -25 /tmp/oc-tunnel.log
@@ -132,7 +148,7 @@ jobs:
             echo "| Branch | \`$WORK_BRANCH\` |"
             echo "| Runner | ubuntu-latest |"
             echo ""
-            echo "The web UI is the official OpenCode client. Treat the link as a password."
+            echo "Mobile chat (not the official web UI). Treat the link as a password."
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "=================================================="
@@ -151,13 +167,16 @@ jobs:
           export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
           for i in $(seq 1 1400); do
             sleep 15
-            if curl -sf -o /dev/null -m 8 "http://127.0.0.1:4096/"; then
+            if curl -sf -o /dev/null -m 8 "http://127.0.0.1:4096/global/health" \
+              && curl -sf -o /dev/null -m 8 "http://127.0.0.1:4100/"; then
               continue
             fi
-            echo "::warning::OpenCode stopped answering; restarting it."
-            nohup opencode web --port 4096 --hostname 0.0.0.0 \
+            echo "::warning::OpenCode stopped answering; restarting serve + gateway."
+            nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
               > /tmp/opencode2.log 2>&1 &
-            sleep 8
+            sleep 4
+            node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > /tmp/oc-gateway2.log 2>&1 &
+            sleep 6
           done
 
       - name: Clear the published session
@@ -231,28 +250,44 @@ jobs:
 
           # cmd /c start, not Start-Process: a process started with
           # Start-Process is killed when its step ends.
-          cmd /c start "" /b opencode web --port 4096 --hostname 0.0.0.0 `
+          cmd /c start "" /b opencode serve --port 4096 --hostname 127.0.0.1 --cors * `
             "1>$env:TEMP\opencode.log" "2>$env:TEMP\opencode.err"
 
           $up = $false
           foreach ($i in 1..40) {
             Start-Sleep -Seconds 2
             try {
-              Invoke-WebRequest -Uri "http://127.0.0.1:4096/" -TimeoutSec 4 -UseBasicParsing | Out-Null
+              Invoke-WebRequest -Uri "http://127.0.0.1:4096/global/health" -TimeoutSec 4 -UseBasicParsing | Out-Null
               $up = $true; break
             } catch { }
           }
           if (-not $up) {
-            Write-Host "::error::OpenCode web did not start."
+            Write-Host "::error::OpenCode serve did not start."
             Get-Content "$env:TEMP\opencode.log", "$env:TEMP\opencode.err" -Tail 50 -ErrorAction SilentlyContinue
             exit 1
           }
-          Write-Host "OpenCode is up on 4096"
+          Write-Host "OpenCode serve is up on 4096"
+
+          cmd /c start "" /b node "$env:GITHUB_WORKSPACE\fork\agent\oc-gateway.js" `
+            "1>$env:TEMP\oc-gateway.log" "2>$env:TEMP\oc-gateway.err"
+          $gw = $false
+          foreach ($i in 1..20) {
+            Start-Sleep -Seconds 1
+            try {
+              Invoke-WebRequest -Uri "http://127.0.0.1:4100/" -TimeoutSec 4 -UseBasicParsing | Out-Null
+              $gw = $true; break
+            } catch { }
+          }
+          if (-not $gw) {
+            Write-Host "::error::oc-gateway did not start."
+            Get-Content "$env:TEMP\oc-gateway.log", "$env:TEMP\oc-gateway.err" -Tail 40 -ErrorAction SilentlyContinue
+            exit 1
+          }
 
           if ($env:FIRST_PROMPT) {
-            cmd /c "opencode run --attach http://127.0.0.1:4096 --auto `"$env:FIRST_PROMPT`""
+            python "$env:GITHUB_WORKSPACE\fork\tools\oc_first_prompt.py"
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "::warning::first prompt failed; the web UI is still up"
+              Write-Host "::warning::first prompt failed; the chat is still up"
             }
           }
 
@@ -262,7 +297,7 @@ jobs:
           if (-not (Test-Path $cf)) { throw "could not download cloudflared" }
 
           $log = "$env:TEMP\cf-oc.log"
-          cmd /c start "" /b "$cf" tunnel --url http://localhost:4096 --no-autoupdate --loglevel info `
+          cmd /c start "" /b "$cf" tunnel --url http://localhost:4100 --no-autoupdate --loglevel info `
             "1>$log" "2>$env:TEMP\cf-oc.err"
 
           $url = $null
@@ -293,7 +328,7 @@ jobs:
             "| Branch | ``$env:WORK_BRANCH`` |",
             "| Runner | windows-latest, 4 cores, 16 GB |",
             "",
-            "The web UI is the official OpenCode client. Treat the link as a password."
+            "Mobile chat (not the official web UI). Treat the link as a password."
           ) -join "`n"
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           Write-Host "=================================================="
@@ -312,11 +347,15 @@ jobs:
           Write-Host "Running until cancelled, or for six hours."
           for ($i = 0; $i -lt 1400; $i++) {
             Start-Sleep -Seconds 15
-            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:4096/")
-            if ($code -match "^[234]") { continue }
-            Write-Host "::warning::OpenCode stopped answering ($code); restarting it."
-            cmd /c start "" /b opencode web --port 4096 --hostname 0.0.0.0 `
+            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:4096/global/health")
+            $gcode = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:4100/")
+            if ($code -match "^[234]" -and $gcode -match "^[234]") { continue }
+            Write-Host "::warning::OpenCode stopped answering ($code/$gcode); restarting serve + gateway."
+            cmd /c start "" /b opencode serve --port 4096 --hostname 127.0.0.1 --cors * `
               "1>$env:TEMP\opencode2.log" "2>$env:TEMP\opencode2.err"
+            Start-Sleep -Seconds 4
+            cmd /c start "" /b node "$env:GITHUB_WORKSPACE\fork\agent\oc-gateway.js" `
+              "1>$env:TEMP\oc-gateway2.log" "2>$env:TEMP\oc-gateway2.err"
             Start-Sleep -Seconds 10
           }
 
