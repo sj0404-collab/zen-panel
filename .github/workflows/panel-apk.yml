@@ -41,14 +41,19 @@ jobs:
           unzip -q /tmp/gradle.zip -d /opt
           echo "/opt/gradle-8.9/bin" >> "$GITHUB_PATH"
 
+      # Do not use `secrets.*` in `if:` — GitHub rejects the whole workflow
+      # ("Unrecognized named-value: 'secrets'") and the job never starts.
       - name: Optional release keystore from secrets
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          mkdir -p app/keystore
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/keystore/upload.jks
-          echo "using ANDROID_KEYSTORE_BASE64"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            mkdir -p app/keystore
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/keystore/upload.jks
+            echo "using ANDROID_KEYSTORE_BASE64"
+          else
+            echo "using bundled app/keystore/upload.jks"
+          fi
 
       - name: Build release APK
         env:
@@ -59,21 +64,9 @@ jobs:
           set -o pipefail
           ( /opt/gradle-8.9/bin/gradle wrapper --gradle-version 8.9 --no-daemon &&
             ./gradlew assembleRelease --no-daemon --stacktrace ) 2>&1 | tee /tmp/gradle-build.log
-          # Record how it was signed so a debug-signed APK is obvious.
           APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
           if command -v apksigner >/dev/null; then apksigner verify --print-certs "$APK" || true
           else echo "apksigner not on PATH (ok)"; fi
-
-      - name: Publish failed Gradle log for diagnosis
-        if: failure()
-        run: |
-          mkdir -p ci
-          cp /tmp/gradle-build.log ci/last-build-failure.log
-          git config user.name "Zen Panel CI"
-          git config user.email "ci@zen-panel"
-          git add ci/last-build-failure.log
-          git commit -m "ci: capture failed APK build log" || exit 0
-          git push
 
       - name: Package APK
         run: |
