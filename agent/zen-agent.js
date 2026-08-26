@@ -29,6 +29,9 @@ catch (e) { capabilitiesModule = null; }
 // touch. Absent it, the local-AI endpoints report that it is unavailable.
 let GitHubApi = null;
 try { ({ GitHubApi } = require('../lib/github-api')); } catch {}
+if (!GitHubApi) {
+  try { ({ GitHubApi } = require('./github-api')); } catch {}
+}
 
 let LocalAiManager = null;
 try { ({ LocalAiManager } = require('../lib/local-ai')); } catch {}
@@ -1346,11 +1349,22 @@ function termuxInfoTool() {
   return { platform: PLATFORM, workspace: WORKSPACE_ROOT, storage, node: process.version, npm: npmVersion, shell: process.env.SHELL || null, curl: curlPath(), proxy: proxyStatus() };
 }
 function networkCheckTool() {
-  const args = ['-s', '--connect-timeout', '5', '--max-time', '10', '-o', '/dev/null', '-w', '%{http_code}', ...(CONFIG.proxy ? ['-x', CONFIG.proxy] : []), 'https://opencode.ai/zen/v1/models'];
-  try {
-    const code = execFileSync(curlPath(), args, { encoding: 'utf8', timeout: 12000 }).trim();
-    return { reachable: /^2|^3|^4/.test(code), httpStatus: code, proxy: proxyStatus(), hint: 'Проверка выполнена через текущую системную сеть Android/VPN.' };
-  } catch (e) { return { reachable: false, error: (e.stderr || e.message || '').toString().slice(0, 500), proxy: proxyStatus(), hint: 'Если Wi‑Fi блокирует сервер моделей, включи Android VPN и убедись, что Termux не исключён из VPN.' }; }
+  // Node https — not curl. On Windows GHA, curl -o /dev/null fails (no /dev/null)
+  // and %{http_code} is eaten by cmd.exe, which the model then reports as
+  // "сеть недоступна" while api.github.com is fine.
+  return new Promise(resolve => {
+    const req = https.get('https://opencode.ai/zen/v1/models', { timeout: 10000, headers: { 'User-Agent': 'zen-panel-agent' } }, res => {
+      res.resume();
+      resolve({
+        reachable: res.statusCode >= 200 && res.statusCode < 500,
+        httpStatus: res.statusCode,
+        proxy: proxyStatus(),
+        hint: 'Проверка через Node https, без curl.'
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolve({ reachable: false, error: 'timeout', proxy: proxyStatus() }); });
+    req.on('error', err => resolve({ reachable: false, error: String(err.message || err).slice(0, 300), proxy: proxyStatus() }));
+  });
 }
 function normalizeHttpUrl(value) {
   let raw = String(value || '').trim();
@@ -2677,7 +2691,8 @@ async function handleMCPTool(tool, args = {}) {
     case 'github_pr': case 'github_repo': case 'github_my_repos':
     case 'github_runs': case 'github_run_workflow': {
       const api = githubApi();
-      if (!api) return { error: 'Модуль GitHub API недоступен (lib/github-api.js).' };
+      if (!api) return { error: 'GitHub-модуль не загрузился. Перезапустите CLI-агент с свежего main.' };
+      if (!api.token()) return { error: 'Нет GITHUB_TOKEN. На раннере Actions он задаётся сам — не вставляйте PAT в чат.' };
       const map = {
         github_read: 'readFile', github_write: 'writeFile', github_list: 'list',
         github_delete: 'deleteFile', github_commit_files: 'commitFiles',
@@ -4006,7 +4021,7 @@ TOOL_JSON:{"tool":"workspace_info","args":{}}
 "что в папке", "покажи файлы"      -> list_dir
 "какой репозиторий", "что в гите"  -> git_status, затем git_log
 "какая ветка"                      -> git_branch
-"что на гитхабе", "какие репо"     -> git_status; для чужого репо git_clone
+"что на гитхабе", "какие репо", "по токену" -> github_my_repos (GITHUB_TOKEN уже есть на раннере)
 "что ты видишь", "что тут есть"    -> workspace_info + list_dir
 "это запущено?", "сервер работает?"-> process_status, затем health_check
 
@@ -4050,6 +4065,7 @@ TOOL_JSON:{"tool":"health_check","args":{"url":"http://127.0.0.1:3000/","timeout
 - Если путь не существует, не продолжай команду через && и не утверждай, что запуск удался.
 - Если существующего инструмента действительно недостаточно, сначала вызови custom_tool_list. Затем создай local tool только через custom_tool_create. Код tool должен экспортировать module.exports = async (args, api) => ({...}) и использовать только api.readText/api.writeText/api.list/api.httpGet/api.imageInfo; require/process/import/eval запрещены. После создания вызови custom_tool_run и проверь результат.
 - Для lifecycle поведения используй plugin_create. Plugin экспортирует синхронную factory module.exports = (context) => ({ systemPrompt, beforeModel, afterModel, beforeTool, afterTool, permission, event, tools, providers }). Hooks могут быть async, но factory — нет. Plugin не имеет require/process/import/eval. Не создавай plugin, если есть подходящий built-in tool.
+- На GitHub Actions GITHUB_TOKEN уже задан. Для списка репозиториев вызывай github_my_repos. Не проси пользователя вставить PAT в чат и не утверждай, что GitHub/сеть недоступны, пока инструмент не вернул ошибку. Сбой curl на Windows — это не отсутствие сети.
 - Для больших проектов создавай реальные законченные файлы; не оставляй заглушки, TODO, "реализовать позже" или оборванный код.
 - Сначала inspect/read существующий файл. Для изменения используй точечный edit_file; не переписывай весь проект или весь файл без явной необходимости (новый файл, повреждённый файл или прямое требование пользователя).
 - В web-console показывай только публичный краткий план, todo, блоки инструментов и финальный отчёт. Не выводи скрытые рассуждения.
@@ -4307,12 +4323,72 @@ const OPENROUTER_FREE_FALLBACK = [
 let openRouterFreeModels = [...OPENROUTER_FREE_FALLBACK];
 
 const OPENROUTER_KEY_FILE = path.join(os.homedir(), '.zen_openrouter_key.json');
+const PROVIDER_KEYS_FILE = path.join(os.homedir(), '.zen_provider_keys.json');
+const CUSTOM_PROVIDERS_FILE = path.join(os.homedir(), '.zen_custom_providers.json');
+let providerKeyStore = {};
+let customProviderStore = {};
+function loadProviderStores() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(PROVIDER_KEYS_FILE, 'utf8'));
+    if (raw && typeof raw === 'object') providerKeyStore = raw;
+  } catch { providerKeyStore = {}; }
+  try {
+    const raw = JSON.parse(fs.readFileSync(CUSTOM_PROVIDERS_FILE, 'utf8'));
+    if (raw && typeof raw === 'object') customProviderStore = raw;
+  } catch { customProviderStore = {}; }
+}
+function persistProviderKeys() {
+  try { fs.writeFileSync(PROVIDER_KEYS_FILE, JSON.stringify(providerKeyStore, null, 2), { mode: 0o600 }); } catch {}
+}
+function persistCustomProviders() {
+  try { fs.writeFileSync(CUSTOM_PROVIDERS_FILE, JSON.stringify(customProviderStore, null, 2), { mode: 0o600 }); } catch {}
+}
+function saveProviderKey(kind, key) {
+  const k = String(kind || '').toLowerCase().replace(/[^a-z0-9_]/g, '');
+  if (!k) return { error: 'Не указан провайдер' };
+  const value = String(key || '').trim();
+  if (!value) {
+    delete providerKeyStore[k];
+    persistProviderKeys();
+    return { success: true, cleared: true, provider: k };
+  }
+  providerKeyStore[k] = value;
+  persistProviderKeys();
+  if (k === 'openrouter') {
+    try { saveOpenRouterKey(value); } catch {}
+  }
+  return { success: true, provider: k, masked: maskOpenRouterKey(value) };
+}
+function saveCustomProvider(body) {
+  const id = String((body && (body.id || body.name)) || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  if (!id) return { error: 'Нужен id агента' };
+  customProviderStore[id] = {
+    id,
+    name: (body && body.name) || id,
+    hostname: (body && (body.hostname || body.host)) || '',
+    path: (body && body.path) || '/v1/chat/completions',
+    defaultModel: (body && (body.defaultModel || body.model)) || 'default',
+    models: Array.isArray(body && body.models) ? body.models : []
+  };
+  if (body && body.key) {
+    providerKeyStore['custom_' + id] = String(body.key);
+    persistProviderKeys();
+  }
+  persistCustomProviders();
+  return { success: true, agent: customProviderStore[id] };
+}
 function looksLikeOpenRouterKey(value) {
   return /^sk-or-(?:v1-)?[A-Za-z0-9_-]{16,}$/i.test(String(value || '').trim());
 }
+function looksLikeGithubToken(value) {
+  return /^(ghp_|gho_|ghu_|ghs_|github_pat_)[A-Za-z0-9_]{8,}$/i.test(String(value || '').trim());
+}
 function redactSecrets(value) {
   if (typeof value !== 'string') return value;
-  return value.replace(/sk-or-(?:v1-)?[A-Za-z0-9_-]{16,}/gi, '[OPENROUTER_KEY_REDACTED]');
+  return value
+    .replace(/sk-or-(?:v1-)?[A-Za-z0-9_-]{16,}/gi, '[OPENROUTER_KEY_REDACTED]')
+    .replace(/github_pat_[A-Za-z0-9_]{10,}/gi, '[GITHUB_TOKEN_REDACTED]')
+    .replace(/gh[pous]_[A-Za-z0-9_]{10,}/gi, '[GITHUB_TOKEN_REDACTED]');
 }
 function scrubHistorySecrets() {
   for (const message of history || []) {
@@ -5896,7 +5972,11 @@ async function agentLoop(userInput) {
   auditEvent('task_started', { inputChars: String(userInput || '').length, model: currentModel });
   await pluginHook('event', { type: 'task.started', provider: currentProvider, model: currentModel, mode: CONFIG.agentMode, inputChars: String(userInput || '').length });
 
-  history.push({ role: 'user', content: userInput });
+  if (looksLikeGithubToken(userInput) || /(?:ghp_|gho_|ghu_|ghs_|github_pat_)[A-Za-z0-9_]{10,}/.test(String(userInput || ''))) {
+    userInput = 'Пользователь прислал секрет в чат. Не повторяй его. Сразу вызови github_my_repos — на раннере уже есть GITHUB_TOKEN — и покажи список репозиториев.';
+  }
+  const safeInput = redactSecrets(String(userInput || ''));
+  history.push({ role: 'user', content: safeInput });
 
   let finalAnswer = '';
   let lastRes = null;
@@ -6023,6 +6103,17 @@ ${correction}` });
       // and name the model, since the usual cause is a free model that has
       // stopped serving this session.
       if (!text.trim()) {
+        if (currentProvider === 'zen' && CONFIG.autoSwitchModel !== false) {
+          const order = zenFallbackOrder();
+          const idx = order.indexOf(currentModel);
+          const nxt = order[(idx + 1) % Math.max(1, order.length)];
+          if (nxt && nxt !== currentModel) {
+            webRunEvent('empty_reply_switch', { from: currentModel, to: nxt });
+            currentModel = nxt;
+            setRunPhase('model', 'смена после пустого · ' + nxt);
+            continue;
+          }
+        }
         finalAnswer = `Модель ${currentModel} вернула пустой ответ дважды подряд. ` +
           'Обычно это исчерпанный лимит бесплатной модели или слишком длинный контекст. ' +
           'Смените модель или начните новую сессию — /clear.';
@@ -6267,7 +6358,8 @@ function drawSessions() {
 
 async function main() {
   loadOpenRouterKey();
-loadPresets();
+  loadProviderStores();
+  loadPresets();
   loadHistory();
   rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   let inputClosed = false;
@@ -6288,6 +6380,10 @@ loadPresets();
 
   async function handleIdleInput(text) {
     const lower = text.toLowerCase();
+    if (looksLikeGithubToken(text)) {
+      console.log(c('✗ Не вставляйте GitHub-токен в чат. На раннере уже есть GITHUB_TOKEN — вызовите github_my_repos. Вставленный PAT отзовите в настройках GitHub.', 'red'));
+      finishCommand(); return;
+    }
     if (looksLikeOpenRouterKey(text)) {
       const result = saveKeyFromCommand(text);
       console.log(result.error ? c('✗ ' + result.error, 'red') : c(`✓ OpenRouter key сохранён: ${result.masked}. Не отправляю ключ модели.`, 'green'));
@@ -6588,6 +6684,10 @@ loadPresets();
         if (result.success) correctionQueue.push('OpenRouter key теперь настроен. При необходимости повтори vision_analyze, не выводи и не записывай ключ.');
         return;
       }
+      if (looksLikeGithubToken(text)) {
+        console.log(c('✗ Не вставляйте GitHub-токен в чат. На раннере уже есть GITHUB_TOKEN.', 'red'));
+        return;
+      }
       if (looksLikeOpenRouterKey(text)) {
         const result = saveKeyFromCommand(text);
         console.log(result.error ? c('✗ ' + result.error, 'red') : c(`✓ OpenRouter key сохранён: ${result.masked}. Не отправляю ключ модели.`, 'green'));
@@ -6632,6 +6732,7 @@ for (let i = 0; i < args.length; i++) {
 
 // Нужен и в одноразовом режиме: node cli-agent-termux-mcp.js "...".
 loadOpenRouterKey();
+loadProviderStores();
 
 if (args.length === 0 || (args.length >= 1 && args[0].startsWith('--'))) {
   main();
