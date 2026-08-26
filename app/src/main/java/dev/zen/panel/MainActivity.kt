@@ -228,7 +228,7 @@ class MainActivity : ComponentActivity() {
     fun showSessionNotification(title: String, body: String, slot: String, url: String) {
         ensureNotificationChannel()
         if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED) {
             ensureNotificationPermission()
             return
