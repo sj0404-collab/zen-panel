@@ -1,0 +1,357 @@
+CREATE TABLE dictionaries (
+    _id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    revision TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    author TEXT,
+    url TEXT,
+    description TEXT,
+    attribution TEXT,
+    styles TEXT,
+    source_language TEXT,
+    target_language TEXT,
+    is_enabled INTEGER NOT NULL DEFAULT 1, -- 1 for true, 0 for false
+    priority INTEGER NOT NULL DEFAULT 0,
+    date_added INTEGER NOT NULL,
+    backend TEXT NOT NULL DEFAULT 'legacy_db',
+    storage_path TEXT,
+    storage_ready INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(title, revision)
+);
+
+CREATE INDEX dictionaries_title ON dictionaries(title);
+CREATE INDEX dictionaries_is_enabled ON dictionaries(is_enabled);
+CREATE INDEX dictionaries_backend ON dictionaries(backend);
+
+CREATE TABLE dictionary_migration_status (
+    dictionary_id INTEGER NOT NULL PRIMARY KEY,
+    state TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    progress_text TEXT,
+    completed_dicts INTEGER NOT NULL DEFAULT 0,
+    total_dicts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(dictionary_id) REFERENCES dictionaries(_id) ON DELETE CASCADE
+);
+
+CREATE INDEX dictionary_migration_status_updated_at ON dictionary_migration_status(updated_at);
+
+CREATE TABLE dictionary_tags (
+    _id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dictionary_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    tag_order INTEGER NOT NULL,
+    notes TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    FOREIGN KEY(dictionary_id) REFERENCES dictionaries(_id) ON DELETE CASCADE,
+    UNIQUE(dictionary_id, name)
+);
+
+CREATE INDEX dictionary_tags_dictionary_id ON dictionary_tags(dictionary_id);
+CREATE INDEX dictionary_tags_name ON dictionary_tags(name);
+
+CREATE TABLE dictionary_terms (
+    _id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dictionary_id INTEGER NOT NULL,
+    expression TEXT NOT NULL,
+    reading TEXT NOT NULL,
+    definition_tags TEXT,
+    rules TEXT,
+    score INTEGER NOT NULL,
+    glossary TEXT NOT NULL,
+    sequence INTEGER,
+    term_tags TEXT,
+    FOREIGN KEY(dictionary_id) REFERENCES dictionaries(_id) ON DELETE CASCADE
+);
+
+CREATE INDEX dictionary_terms_dictionary_id ON dictionary_terms(dictionary_id);
+CREATE INDEX dictionary_terms_expression ON dictionary_terms(expression);
+CREATE INDEX dictionary_terms_reading ON dictionary_terms(reading);
+CREATE INDEX dictionary_terms_sequence ON dictionary_terms(sequence);
+
+-- Compound indexes for better search performance
+CREATE INDEX dictionary_terms_dict_expr_score ON dictionary_terms(dictionary_id, expression, score DESC);
+CREATE INDEX dictionary_terms_dict_read_score ON dictionary_terms(dictionary_id, reading, score DESC);
+
+CREATE TABLE dictionary_kanji (
+    _id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dictionary_id INTEGER NOT NULL,
+    character TEXT NOT NULL,
+    onyomi TEXT NOT NULL,
+    kunyomi TEXT NOT NULL,
+    tags TEXT,
+    meanings TEXT NOT NULL,
+    stats TEXT,
+    FOREIGN KEY(dictionary_id) REFERENCES dictionaries(_id) ON DELETE CASCADE,
+    UNIQUE(dictionary_id, character)
+);
+
+CREATE INDEX dictionary_kanji_dictionary_id ON dictionary_kanji(dictionary_id);
+CREATE INDEX dictionary_kanji_character ON dictionary_kanji(character);
+
+CREATE TABLE dictionary_term_meta (
+    _id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dictionary_id INTEGER NOT NULL,
+    expression TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    data TEXT NOT NULL,
+    FOREIGN KEY(dictionary_id) REFERENCES dictionaries(_id) ON DELETE CASCADE
+);
+
+CREATE INDEX dictionary_term_meta_dictionary_id ON dictionary_term_meta(dictionary_id);
+CREATE INDEX dictionary_term_meta_expression ON dictionary_term_meta(expression);
+
+CREATE TABLE dictionary_kanji_meta (
+    _id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dictionary_id INTEGER NOT NULL,
+    character TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    data TEXT NOT NULL,
+    FOREIGN KEY(dictionary_id) REFERENCES dictionaries(_id) ON DELETE CASCADE
+);
+
+CREATE INDEX dictionary_kanji_meta_dictionary_id ON dictionary_kanji_meta(dictionary_id);
+CREATE INDEX dictionary_kanji_meta_character ON dictionary_kanji_meta(character);
+
+-- Dictionary queries
+
+getDictionary:
+SELECT *
+FROM dictionaries
+WHERE _id = :id;
+
+getAllDictionaries:
+SELECT *
+FROM dictionaries
+ORDER BY priority ASC, title ASC;
+
+getLegacyDictionaries:
+SELECT *
+FROM dictionaries
+WHERE backend = 'legacy_db'
+ORDER BY priority ASC, title ASC;
+
+getFreqDictionaryIds:
+SELECT _id
+FROM dictionaries
+WHERE is_enabled = 1
+  AND (
+    SELECT COUNT(*) 
+    FROM (
+      SELECT 1 
+      FROM dictionary_term_meta 
+      WHERE dictionary_term_meta.dictionary_id = dictionaries._id 
+        AND dictionary_term_meta.mode = 'freq' 
+      LIMIT 5
+    )
+  ) = 5;
+
+selectLastInsertedRowId:
+SELECT last_insert_rowid();
+
+insertDictionary:
+INSERT INTO dictionaries(title, revision, version, author, url, description, attribution, styles, source_language, target_language, is_enabled, priority, date_added, backend, storage_path, storage_ready)
+VALUES (:title, :revision, :version, :author, :url, :description, :attribution, :styles, :source_language, :target_language, :is_enabled, :priority, :date_added, :backend, :storage_path, :storage_ready);
+
+updateDictionary:
+UPDATE dictionaries
+SET title = :title,
+    revision = :revision,
+    version = :version,
+    author = :author,
+    url = :url,
+    description = :description,
+    attribution = :attribution,
+    styles = :styles,
+    source_language = :source_language,
+    target_language = :target_language,
+    is_enabled = :is_enabled,
+    priority = :priority,
+    backend = :backend,
+    storage_path = :storage_path,
+    storage_ready = :storage_ready
+WHERE _id = :id;
+
+updateDictionaryStorage:
+UPDATE dictionaries
+SET backend = :backend,
+    storage_path = :storage_path,
+    storage_ready = :storage_ready
+WHERE _id = :id;
+
+bumpAllPrioritiesUp:
+UPDATE dictionaries
+SET priority = priority + 1;
+
+bumpDownPrioritiesAbove:
+UPDATE dictionaries
+SET priority = priority - 1
+WHERE priority > :priority;
+
+deleteDictionary:
+DELETE FROM dictionaries
+WHERE _id = :id;
+
+-- Tag queries
+
+getTagsForDictionary:
+SELECT *
+FROM dictionary_tags
+WHERE dictionary_id = :dictionaryId
+ORDER BY tag_order ASC;
+
+getTagCountForDictionary:
+SELECT COUNT(*)
+FROM dictionary_tags
+WHERE dictionary_id = :dictionaryId;
+
+deleteTagsForDictionary:
+DELETE FROM dictionary_tags
+WHERE dictionary_id = :dictionaryId;
+
+-- Term queries
+
+searchTerms:
+SELECT _id, dictionary_id, expression, reading, definition_tags, rules, score, glossary, sequence, term_tags
+FROM (
+  -- Exact expression match (highest priority)
+  SELECT T.*, 0 AS match_priority, D.priority AS dict_priority
+  FROM dictionary_terms AS T
+  JOIN dictionaries AS D ON T.dictionary_id = D._id
+  WHERE T.expression = :query
+    AND T.dictionary_id IN :dictionaryIds
+    AND D.is_enabled = 1
+
+  UNION
+
+  -- Exact reading match (second priority)
+  SELECT T.*, 1 AS match_priority, D.priority AS dict_priority
+  FROM dictionary_terms AS T
+  JOIN dictionaries AS D ON T.dictionary_id = D._id
+  WHERE T.reading = :query
+    AND T.dictionary_id IN :dictionaryIds
+    AND D.is_enabled = 1
+    AND T.expression != :query
+
+  ORDER BY match_priority ASC, dict_priority ASC, score DESC
+  LIMIT :limit
+);
+
+getTermsExportForDictionary:
+SELECT expression, reading, definition_tags, rules, score, glossary, sequence, term_tags
+FROM dictionary_terms
+WHERE dictionary_id = :dictionaryId
+ORDER BY _id ASC
+LIMIT :limit OFFSET :offset;
+
+getTermCountForDictionary:
+SELECT COUNT(*)
+FROM dictionary_terms
+WHERE dictionary_id = :dictionaryId;
+
+deleteTermsForDictionary:
+DELETE FROM dictionary_terms
+WHERE dictionary_id = :dictionaryId;
+
+-- Kanji queries
+
+getKanjiExportForDictionary:
+SELECT character, onyomi, kunyomi, tags, meanings, stats
+FROM dictionary_kanji
+WHERE dictionary_id = :dictionaryId
+ORDER BY _id ASC
+LIMIT :limit OFFSET :offset;
+
+getKanjiCountForDictionary:
+SELECT COUNT(*)
+FROM dictionary_kanji
+WHERE dictionary_id = :dictionaryId;
+
+deleteKanjiForDictionary:
+DELETE FROM dictionary_kanji
+WHERE dictionary_id = :dictionaryId;
+
+-- Term meta queries
+
+getTermMetaForExpression:
+SELECT M.*
+FROM dictionary_term_meta AS M
+JOIN dictionaries AS D ON M.dictionary_id = D._id
+WHERE M.expression = :expression
+  AND M.dictionary_id IN :dictionaryIds
+  AND D.is_enabled = 1;
+
+getTermMetaExportForDictionary:
+SELECT expression, mode, data
+FROM dictionary_term_meta
+WHERE dictionary_id = :dictionaryId
+ORDER BY _id ASC
+LIMIT :limit OFFSET :offset;
+
+getTermMetaCountForDictionary:
+SELECT COUNT(*)
+FROM dictionary_term_meta
+WHERE dictionary_id = :dictionaryId;
+
+deleteTermMetaForDictionary:
+DELETE FROM dictionary_term_meta
+WHERE dictionary_id = :dictionaryId;
+
+getKanjiMetaExportForDictionary:
+SELECT character, mode, data
+FROM dictionary_kanji_meta
+WHERE dictionary_id = :dictionaryId
+ORDER BY _id ASC
+LIMIT :limit OFFSET :offset;
+
+getKanjiMetaCountForDictionary:
+SELECT COUNT(*)
+FROM dictionary_kanji_meta
+WHERE dictionary_id = :dictionaryId;
+
+deleteKanjiMetaForDictionary:
+DELETE FROM dictionary_kanji_meta
+WHERE dictionary_id = :dictionaryId;
+
+-- Migration status queries
+
+getAllDictionaryMigrationStatuses:
+SELECT *
+FROM dictionary_migration_status
+ORDER BY updated_at DESC, dictionary_id ASC;
+
+upsertDictionaryMigrationStatus:
+INSERT INTO dictionary_migration_status(
+    dictionary_id,
+    state,
+    stage,
+    progress_text,
+    completed_dicts,
+    total_dicts,
+    last_error,
+    updated_at
+)
+VALUES (
+    :dictionary_id,
+    :state,
+    :stage,
+    :progress_text,
+    :completed_dicts,
+    :total_dicts,
+    :last_error,
+    :updated_at
+)
+ON CONFLICT(dictionary_id) DO UPDATE SET
+    state = excluded.state,
+    stage = excluded.stage,
+    progress_text = excluded.progress_text,
+    completed_dicts = excluded.completed_dicts,
+    total_dicts = excluded.total_dicts,
+    last_error = excluded.last_error,
+    updated_at = excluded.updated_at;
+
+deleteDictionaryMigrationStatus:
+DELETE FROM dictionary_migration_status
+WHERE dictionary_id = :dictionaryId;

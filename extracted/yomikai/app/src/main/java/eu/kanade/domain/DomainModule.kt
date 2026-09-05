@@ -1,0 +1,325 @@
+package eu.kanade.domain
+
+import android.app.Application
+import eu.kanade.domain.chapter.interactor.GetAvailableScanlators
+import eu.kanade.domain.chapter.interactor.SetReadStatus
+import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
+import eu.kanade.domain.download.interactor.DeleteDownload
+import eu.kanade.domain.extension.interactor.GetExtensionLanguages
+import eu.kanade.domain.extension.interactor.GetExtensionSources
+import eu.kanade.domain.extension.interactor.GetExtensionsByType
+import eu.kanade.domain.extension.interactor.TrustExtension
+import eu.kanade.domain.manga.interactor.GetExcludedScanlators
+import eu.kanade.domain.manga.interactor.SetExcludedScanlators
+import eu.kanade.domain.manga.interactor.SetMangaViewerFlags
+import eu.kanade.domain.manga.interactor.UpdateManga
+import eu.kanade.domain.source.interactor.GetEnabledSources
+import eu.kanade.domain.source.interactor.GetIncognitoState
+import eu.kanade.domain.source.interactor.GetLanguagesWithSources
+import eu.kanade.domain.source.interactor.GetSourcesWithFavoriteCount
+import eu.kanade.domain.source.interactor.SetMigrateSorting
+import eu.kanade.domain.source.interactor.ToggleIncognito
+import eu.kanade.domain.source.interactor.ToggleLanguage
+import eu.kanade.domain.source.interactor.ToggleSource
+import eu.kanade.domain.source.interactor.ToggleSourcePin
+import eu.kanade.domain.track.interactor.AddTracks
+import eu.kanade.domain.track.interactor.RefreshTracks
+import eu.kanade.domain.track.interactor.SyncChapterProgressWithTrack
+import eu.kanade.domain.track.interactor.TrackChapter
+import eu.kanade.tachiyomi.data.dictionary.audio.DictionaryAudioPlayerImpl
+import eu.kanade.tachiyomi.data.dictionary.audio.DictionaryAudioRepositoryImpl
+import eu.kanade.tachiyomi.data.ocr.OcrChapterScanner
+import eu.kanade.tachiyomi.data.ocr.OcrPageSourceGateway
+import eu.kanade.tachiyomi.data.ocr.OcrPageSourceGatewayImpl
+import eu.kanade.tachiyomi.data.ocr.OcrPageSourceResolver
+import eu.kanade.tachiyomi.data.ocr.OcrQueueActions
+import eu.kanade.tachiyomi.data.ocr.OcrScanManager
+import eu.kanade.tachiyomi.data.ocr.OcrScanNotifier
+import eu.kanade.tachiyomi.data.ocr.OcrScanStore
+import eu.kanade.tachiyomi.ui.reader.ReaderSelectionCropper
+import mihon.data.ankidroid.AnkiDroidRepositoryImpl
+import mihon.data.dictionary.DictionaryParserImpl
+import mihon.data.dictionary.DictionaryRepositoryImpl
+import mihon.data.dictionary.DictionarySearchGatewayImpl
+import mihon.data.dictionary.HoshiDictionaryStore
+import mihon.data.dictionary.LegacyDictionaryArchiveBuilder
+import mihon.data.extension.repository.ExtensionStoreRepositoryImpl
+import mihon.data.extension.service.ExtensionStoreService
+import mihon.data.ocr.OcrRepositoryImpl
+import mihon.data.panel.PanelDetectionRepositoryImpl
+import mihon.domain.ankidroid.interactor.AddDictionaryCard
+import mihon.domain.ankidroid.interactor.FindExistingAnkiNotes
+import mihon.domain.ankidroid.repository.AnkiDroidRepository
+import mihon.domain.chapter.interactor.FilterChaptersForDownload
+import mihon.domain.dictionary.audio.DictionaryAudioPlayer
+import mihon.domain.dictionary.audio.DictionaryAudioRepository
+import mihon.domain.dictionary.interactor.DictionaryInteractor
+import mihon.domain.dictionary.interactor.SearchDictionaryTerms
+import mihon.domain.dictionary.repository.DictionaryLegacyRepository
+import mihon.domain.dictionary.repository.DictionaryMigrationStatusRepository
+import mihon.domain.dictionary.repository.DictionaryRepository
+import mihon.domain.dictionary.service.DictionaryArchiveBuilder
+import mihon.domain.dictionary.service.DictionaryParser
+import mihon.domain.dictionary.service.DictionarySearchBackend
+import mihon.domain.dictionary.service.DictionarySearchGateway
+import mihon.domain.dictionary.service.DictionaryStorageGateway
+import mihon.domain.extension.interactor.AddExtensionStore
+import mihon.domain.extension.interactor.GetExtensionStoreCountAsFlow
+import mihon.domain.extension.interactor.GetExtensionStores
+import mihon.domain.extension.interactor.RemoveExtensionStore
+import mihon.domain.extension.interactor.UpdateExtensionStores
+import mihon.domain.extension.repository.ExtensionStoreRepository
+import mihon.domain.migration.usecases.MigrateMangaUseCase
+import mihon.domain.ocr.interactor.ClearCachedChapterOcr
+import mihon.domain.ocr.interactor.ClearOcrCache
+import mihon.domain.ocr.interactor.GetCachedChapterIdsOcr
+import mihon.domain.ocr.interactor.GetCachedPageOcr
+import mihon.domain.ocr.interactor.GetOcrCacheSize
+import mihon.domain.ocr.interactor.OcrProcessor
+import mihon.domain.ocr.interactor.ScanPageOcr
+import mihon.domain.ocr.interactor.WithOcrScanSession
+import mihon.domain.ocr.repository.OcrRepository
+import mihon.domain.panel.interactor.DetectPanels
+import mihon.domain.panel.repository.PanelDetectionRepository
+import mihon.domain.source.interactor.UpdateMangaFromRemote
+import mihon.domain.upcoming.interactor.GetUpcomingManga
+import tachiyomi.data.category.CategoryRepositoryImpl
+import tachiyomi.data.chapter.ChapterRepositoryImpl
+import tachiyomi.data.history.HistoryRepositoryImpl
+import tachiyomi.data.manga.MangaRepositoryImpl
+import tachiyomi.data.release.ReleaseServiceImpl
+import tachiyomi.data.source.SavedSearchRepositoryImpl
+import tachiyomi.data.source.SourceRepositoryImpl
+import tachiyomi.data.source.StubSourceRepositoryImpl
+import tachiyomi.data.track.TrackRepositoryImpl
+import tachiyomi.data.updates.UpdatesRepositoryImpl
+import tachiyomi.domain.ankidroid.service.AnkiDroidPreferences
+import tachiyomi.domain.category.interactor.CreateCategoryWithName
+import tachiyomi.domain.category.interactor.DeleteCategory
+import tachiyomi.domain.category.interactor.GetCategories
+import tachiyomi.domain.category.interactor.RenameCategory
+import tachiyomi.domain.category.interactor.ReorderCategory
+import tachiyomi.domain.category.interactor.ResetCategoryFlags
+import tachiyomi.domain.category.interactor.SetDisplayMode
+import tachiyomi.domain.category.interactor.SetMangaCategories
+import tachiyomi.domain.category.interactor.SetSortModeForCategory
+import tachiyomi.domain.category.interactor.UpdateCategory
+import tachiyomi.domain.category.repository.CategoryRepository
+import tachiyomi.domain.chapter.interactor.GetBookmarkedChaptersByMangaId
+import tachiyomi.domain.chapter.interactor.GetChapter
+import tachiyomi.domain.chapter.interactor.GetChapterByUrlAndMangaId
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
+import tachiyomi.domain.chapter.interactor.SetMangaDefaultChapterFlags
+import tachiyomi.domain.chapter.interactor.ShouldUpdateDbChapter
+import tachiyomi.domain.chapter.interactor.UpdateChapter
+import tachiyomi.domain.chapter.repository.ChapterRepository
+import tachiyomi.domain.history.interactor.GetHistory
+import tachiyomi.domain.history.interactor.GetNextChapters
+import tachiyomi.domain.history.interactor.GetTotalReadDuration
+import tachiyomi.domain.history.interactor.RemoveHistory
+import tachiyomi.domain.history.interactor.UpsertHistory
+import tachiyomi.domain.history.repository.HistoryRepository
+import tachiyomi.domain.manga.interactor.FetchInterval
+import tachiyomi.domain.manga.interactor.GetDuplicateLibraryManga
+import tachiyomi.domain.manga.interactor.GetFavorites
+import tachiyomi.domain.manga.interactor.GetLibraryManga
+import tachiyomi.domain.manga.interactor.GetManga
+import tachiyomi.domain.manga.interactor.GetMangaByUrlAndSourceId
+import tachiyomi.domain.manga.interactor.GetMangaWithChapters
+import tachiyomi.domain.manga.interactor.NetworkToLocalManga
+import tachiyomi.domain.manga.interactor.ResetViewerFlags
+import tachiyomi.domain.manga.interactor.SetMangaChapterFlags
+import tachiyomi.domain.manga.interactor.UpdateMangaNotes
+import tachiyomi.domain.manga.repository.MangaRepository
+import tachiyomi.domain.release.interactor.GetApplicationRelease
+import tachiyomi.domain.release.service.ReleaseService
+import tachiyomi.domain.source.interactor.DeleteSavedSearchById
+import tachiyomi.domain.source.interactor.GetRemoteManga
+import tachiyomi.domain.source.interactor.GetSavedSearchById
+import tachiyomi.domain.source.interactor.GetSavedSearchBySourceId
+import tachiyomi.domain.source.interactor.GetSourcesWithNonLibraryManga
+import tachiyomi.domain.source.interactor.InsertSavedSearch
+import tachiyomi.domain.source.repository.SavedSearchRepository
+import tachiyomi.domain.source.repository.SourceRepository
+import tachiyomi.domain.source.repository.StubSourceRepository
+import tachiyomi.domain.track.interactor.DeleteTrack
+import tachiyomi.domain.track.interactor.GetTracks
+import tachiyomi.domain.track.interactor.GetTracksPerManga
+import tachiyomi.domain.track.interactor.InsertTrack
+import tachiyomi.domain.track.repository.TrackRepository
+import tachiyomi.domain.updates.interactor.GetUpdates
+import tachiyomi.domain.updates.repository.UpdatesRepository
+import uy.kohesive.injekt.api.InjektModule
+import uy.kohesive.injekt.api.InjektRegistrar
+import uy.kohesive.injekt.api.addFactory
+import uy.kohesive.injekt.api.addSingletonFactory
+import uy.kohesive.injekt.api.get
+
+class DomainModule : InjektModule {
+
+    override fun InjektRegistrar.registerInjectables() {
+        addSingletonFactory<CategoryRepository> { CategoryRepositoryImpl(get()) }
+        addFactory { GetCategories(get()) }
+        addFactory { ResetCategoryFlags(get(), get()) }
+        addFactory { SetDisplayMode(get()) }
+        addFactory { SetSortModeForCategory(get(), get()) }
+        addFactory { CreateCategoryWithName(get(), get()) }
+        addFactory { RenameCategory(get()) }
+        addFactory { ReorderCategory(get()) }
+        addFactory { UpdateCategory(get()) }
+        addFactory { DeleteCategory(get(), get(), get()) }
+
+        addSingletonFactory<MangaRepository> { MangaRepositoryImpl(get()) }
+        addFactory { GetDuplicateLibraryManga(get()) }
+        addFactory { GetFavorites(get()) }
+        addFactory { GetLibraryManga(get()) }
+        addFactory { GetMangaWithChapters(get(), get()) }
+        addFactory { GetMangaByUrlAndSourceId(get()) }
+        addFactory { GetManga(get()) }
+        addFactory { GetNextChapters(get(), get(), get()) }
+        addFactory { GetUpcomingManga(get()) }
+        addFactory { ResetViewerFlags(get()) }
+        addFactory { SetMangaChapterFlags(get()) }
+        addFactory { FetchInterval(get()) }
+        addFactory { SetMangaDefaultChapterFlags(get(), get(), get()) }
+        addFactory { SetMangaViewerFlags(get()) }
+        addFactory { NetworkToLocalManga(get()) }
+        addFactory { UpdateManga(get(), get()) }
+        addFactory { UpdateMangaNotes(get()) }
+        addFactory { SetMangaCategories(get()) }
+        addFactory { GetExcludedScanlators(get()) }
+        addFactory { SetExcludedScanlators(get()) }
+        addFactory {
+            MigrateMangaUseCase(
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+            )
+        }
+
+        addSingletonFactory<ReleaseService> { ReleaseServiceImpl(get(), get()) }
+        addFactory { GetApplicationRelease(get(), get()) }
+
+        addSingletonFactory<TrackRepository> { TrackRepositoryImpl(get()) }
+        addFactory { TrackChapter(get(), get(), get(), get()) }
+        addFactory { AddTracks(get(), get(), get(), get()) }
+        addFactory { RefreshTracks(get(), get(), get(), get()) }
+        addFactory { DeleteTrack(get()) }
+        addFactory { GetTracksPerManga(get()) }
+        addFactory { GetTracks(get()) }
+        addFactory { InsertTrack(get()) }
+        addFactory { SyncChapterProgressWithTrack(get(), get(), get()) }
+
+        addSingletonFactory<ChapterRepository> { ChapterRepositoryImpl(get()) }
+        addFactory { GetChapter(get()) }
+        addFactory { GetChaptersByMangaId(get()) }
+        addFactory { GetBookmarkedChaptersByMangaId(get()) }
+        addFactory { GetChapterByUrlAndMangaId(get()) }
+        addFactory { UpdateChapter(get()) }
+        addFactory { SetReadStatus(get(), get(), get(), get()) }
+        addFactory { ShouldUpdateDbChapter() }
+        addFactory { SyncChaptersWithSource(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        addFactory { GetAvailableScanlators(get()) }
+        addFactory { FilterChaptersForDownload(get(), get(), get()) }
+
+        addSingletonFactory<HistoryRepository> { HistoryRepositoryImpl(get()) }
+        addFactory { GetHistory(get()) }
+        addFactory { UpsertHistory(get()) }
+        addFactory { RemoveHistory(get()) }
+        addFactory { GetTotalReadDuration(get()) }
+
+        addFactory { DeleteDownload(get(), get()) }
+
+        addFactory { GetExtensionsByType(get(), get()) }
+        addFactory { GetExtensionSources(get()) }
+        addFactory { GetExtensionLanguages(get(), get()) }
+
+        addSingletonFactory<UpdatesRepository> { UpdatesRepositoryImpl(get()) }
+        addFactory { GetUpdates(get()) }
+
+        addSingletonFactory<SourceRepository> { SourceRepositoryImpl(get(), get()) }
+        addSingletonFactory<StubSourceRepository> { StubSourceRepositoryImpl(get()) }
+        addSingletonFactory<SavedSearchRepository> { SavedSearchRepositoryImpl(get()) }
+        addFactory { GetEnabledSources(get(), get()) }
+        addFactory { GetLanguagesWithSources(get(), get()) }
+        addFactory { GetRemoteManga(get()) }
+        addFactory { GetSavedSearchById(get()) }
+        addFactory { GetSavedSearchBySourceId(get()) }
+        addFactory { InsertSavedSearch(get()) }
+        addFactory { DeleteSavedSearchById(get()) }
+        addFactory { GetSourcesWithFavoriteCount(get(), get()) }
+        addFactory { GetSourcesWithNonLibraryManga(get()) }
+        addFactory { SetMigrateSorting(get()) }
+        addFactory { ToggleLanguage(get()) }
+        addFactory { ToggleSource(get()) }
+        addFactory { ToggleSourcePin(get()) }
+        addFactory { TrustExtension(get(), get()) }
+
+        addSingletonFactory { ExtensionStoreService(get(), get(), get()) }
+        addSingletonFactory<ExtensionStoreRepository> { ExtensionStoreRepositoryImpl(get(), get()) }
+        addFactory { AddExtensionStore(get()) }
+        addFactory { GetExtensionStoreCountAsFlow(get()) }
+        addFactory { GetExtensionStores(get()) }
+        addFactory { RemoveExtensionStore(get()) }
+        addFactory { UpdateExtensionStores(get()) }
+
+        addFactory { ToggleIncognito(get()) }
+        addFactory { GetIncognitoState(get(), get(), get()) }
+
+        addSingletonFactory { DictionaryRepositoryImpl(get()) }
+        addSingletonFactory<DictionaryRepository> { get<DictionaryRepositoryImpl>() }
+        addSingletonFactory<DictionaryLegacyRepository> { get<DictionaryRepositoryImpl>() }
+        addSingletonFactory<DictionaryMigrationStatusRepository> { get<DictionaryRepositoryImpl>() }
+        addSingletonFactory<DictionaryParser> { DictionaryParserImpl() }
+        addSingletonFactory { HoshiDictionaryStore(get<Application>(), get(), get()) }
+        addSingletonFactory<DictionarySearchBackend> { get<HoshiDictionaryStore>() }
+        addSingletonFactory<DictionaryStorageGateway> { get<HoshiDictionaryStore>() }
+        addSingletonFactory { DictionarySearchGatewayImpl(get(), get()) }
+        addSingletonFactory<DictionarySearchGateway> { get<DictionarySearchGatewayImpl>() }
+        addSingletonFactory { LegacyDictionaryArchiveBuilder(get(), get()) }
+        addSingletonFactory<DictionaryArchiveBuilder> { get<LegacyDictionaryArchiveBuilder>() }
+        addFactory { DictionaryInteractor(get()) }
+        addFactory { SearchDictionaryTerms(get(), get()) }
+        addSingletonFactory<DictionaryAudioRepository> { DictionaryAudioRepositoryImpl(get<Application>(), get()) }
+        addSingletonFactory<DictionaryAudioPlayer> { DictionaryAudioPlayerImpl() }
+
+        addSingletonFactory { AnkiDroidPreferences(get()) }
+        addSingletonFactory<AnkiDroidRepository> { AnkiDroidRepositoryImpl(get<Application>(), get()) }
+        addFactory { AddDictionaryCard(get()) }
+        addFactory { FindExistingAnkiNotes(get()) }
+
+        addSingletonFactory<OcrRepository> {
+            OcrRepositoryImpl(context = get<Application>())
+        }
+        addSingletonFactory { OcrScanStore(get<Application>(), get()) }
+        addSingletonFactory<OcrPageSourceGateway> { OcrPageSourceGatewayImpl(get<Application>(), get(), get()) }
+        addSingletonFactory { OcrPageSourceResolver(get(), get(), get()) }
+        addSingletonFactory { ReaderSelectionCropper(get()) }
+        addSingletonFactory { OcrScanNotifier(get<Application>()) }
+        addSingletonFactory { OcrChapterScanner(get<Application>(), get(), get(), get(), get(), get(), get(), get()) }
+        addSingletonFactory { OcrScanManager(get<Application>(), get(), get(), get()) }
+        addFactory { OcrQueueActions(get(), get()) }
+        addFactory { OcrProcessor(get()) }
+        addFactory { WithOcrScanSession(get()) }
+        addFactory { ScanPageOcr(get()) }
+        addFactory { GetCachedChapterIdsOcr(get()) }
+        addFactory { GetCachedPageOcr(get()) }
+        addFactory { ClearCachedChapterOcr(get()) }
+        addFactory { ClearOcrCache(get()) }
+        addFactory { GetOcrCacheSize(get()) }
+
+        addSingletonFactory<PanelDetectionRepository> {
+            PanelDetectionRepositoryImpl(
+                context = get<Application>(),
+                // Фолбэк: YOLO-модель из встроенного в APK tar.xz —
+                // детектор панелей/баллонов работает без скачивания
+                embeddedModelProvider = {
+                    // YOLO вынесен из APK (вес): при первом использовании
+                    // докачивается 6МБ пак panel_detector
+                    val app = get<Application>()
+                    eu.kanade.tachiyomi.data.ocr.OcrModelDownloader.ensurePanelDetector(app)
+                },
+            )
+        }
+        addFactory { DetectPanels(get()) }
+        addFactory { UpdateMangaFromRemote(get(), get(), get(), get(), get(), get(), get()) }
+    }
+}

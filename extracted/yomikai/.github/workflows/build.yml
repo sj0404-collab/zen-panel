@@ -1,0 +1,71 @@
+name: Tests
+# Тестовый гейт. APK здесь НЕ собирается намеренно: единственный подписанный
+# APK делает workflow Release по тегу v* (см. release.yml). Так push в main не
+# плодит промежуточные сборки и не расходует минуты раннера.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '**'
+      - '!**.md'
+      - '!i18n/src/commonMain/moko-resources/**/strings.xml'
+      - '!i18n/src/commonMain/moko-resources/**/plurals.xml'
+      - 'i18n/src/commonMain/moko-resources/base/strings.xml'
+      - 'i18n/src/commonMain/moko-resources/base/plurals.xml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: OCR & unit tests (no APK)
+    runs-on: windows-2025
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # Неблокирующая проверка: в репозитории выключен Dependency graph
+      # (Settings -> Advanced Security), и без него действие завершает job
+      # ошибкой ещё до Gradle. Тестовый гейт не должен падать из-за настроек
+      # репозитория; включение Dependency graph вернёт проверке силу.
+      - name: Dependency Review
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+
+      - name: Set up JDK
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
+        with:
+          java-version-file: .github/.java-version
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+
+      - name: Verify SQLDelight migrations
+        shell: bash
+        run: ./gradlew verifySqlDelightMigration
+
+      - name: Run local Cyrillic OCR regression tests
+        shell: bash
+        run: ./gradlew :data:testDebugUnitTest --tests mihon.data.ocr.OcrTextCleanerTest
+
+      - name: Run unit tests
+        shell: bash
+        run: ./gradlew test
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-report-${{ github.sha }}
+          path: |
+            app/build/reports/tests
+            data/build/reports/tests
+            domain/build/reports/tests

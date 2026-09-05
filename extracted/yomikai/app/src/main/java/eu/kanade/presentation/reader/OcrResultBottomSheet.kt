@@ -1,0 +1,97 @@
+package eu.kanade.presentation.reader
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.dictionary.components.DictionaryResults
+import eu.kanade.presentation.dictionary.components.SearchBar
+import eu.kanade.tachiyomi.ui.dictionary.DictionarySearchScreenModel
+import mihon.domain.dictionary.model.DictionaryTerm
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.ResizableSheet
+import tachiyomi.presentation.core.components.SheetValue
+import tachiyomi.presentation.core.components.material.padding
+
+private const val SHEET_EXPANSION_THRESHOLD = 0.80f
+
+@Composable
+fun OcrResultBottomSheet(
+    onDismissRequest: () -> Unit,
+    onCopyText: () -> Unit,
+    searchState: DictionarySearchScreenModel.State,
+    onQueryChange: (String) -> Unit,
+    onSearch: (String) -> Unit,
+    onTermGroupClick: (List<DictionaryTerm>) -> Unit,
+    onPlayAudioClick: (List<DictionaryTerm>) -> Unit,
+) {
+    // Use BoxWithConstraints to measure the actual available space for the sheet content
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        val useSideSheet = maxWidth >= 600.dp
+
+        ResizableSheet(
+            onDismissRequest = onDismissRequest,
+            initialValue = SheetValue.PartiallyExpanded,
+            contentAlignment = if (useSideSheet) Alignment.BottomEnd else Alignment.BottomCenter,
+            sheetModifier = if (useSideSheet) Modifier.width(400.dp) else Modifier.fillMaxWidth(),
+        ) { expansionFraction ->
+            val isSheetExpanded = expansionFraction >= SHEET_EXPANSION_THRESHOLD
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 16.dp, top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+            ) {
+                if (isSheetExpanded) {
+                    SearchBar(
+                        query = searchState.query,
+                        onQueryChange = onQueryChange,
+                        onSearch = { onSearch(searchState.query) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    HorizontalDivider()
+                }
+
+                if (searchState.query.isNotBlank()) {
+                    TranslationCard(originalText = searchState.query)
+                }
+
+                DictionaryResults(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    query = searchState.results?.query ?: "",
+                    highlightRange = searchState.results?.highlightRange,
+                    isLoading = searchState.isLoading,
+                    isSearching = searchState.isSearching,
+                    hasSearched = searchState.hasSearched,
+                    searchResults = searchState.results?.items ?: emptyList(),
+                    dictionaries = searchState.dictionaries,
+                    enabledDictionaryIds = searchState.enabledDictionaryIds.toSet(),
+                    termMetaMap = searchState.results?.termMetaMap ?: emptyMap(),
+                    existingTermExpressions = searchState.existingTermExpressions,
+                    audioStates = searchState.audioStates,
+                    onTermGroupClick = onTermGroupClick,
+                    onPlayAudioClick = onPlayAudioClick,
+                    onQueryChange = onQueryChange,
+                    onSearch = onSearch,
+                    onCopyText = onCopyText,
+                    contentPadding = PaddingValues(bottom = 8.dp),
+                )
+            }
+        }
+    }
+}

@@ -1,0 +1,362 @@
+name: LLM Runner
+
+# A GGUF model runs on a GitHub-hosted runner. llama.cpp exposes an
+# OpenAI-compatible API through a Cloudflare quick tunnel; the Android app
+# discovers the endpoint from a run-scoped artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "GGUF model key"
+        required: true
+        default: "qwen2.5-1.5b"
+        type: choice
+        options:
+          - qwen2.5-0.5b
+          - qwen2.5-1.5b
+          - llama3.2-1b
+          - gemma3-1b
+          - custom
+      session:
+        description: "Session id (random, from the app)"
+        required: true
+        type: string
+      custom_url:
+        description: "Custom GGUF direct URL (used when model=custom)"
+        required: false
+        default: ""
+        type: string
+      os:
+        description: "Runner OS"
+        required: false
+        default: "linux"
+        type: choice
+        options:
+          - linux
+          - windows
+
+run-name: "LLM ${{ inputs.model }} @${{ inputs.os }} (${{ inputs.session }})"
+
+permissions:
+  contents: read
+
+env:
+  # Pin a known-good release. `/releases/latest` can point to a metadata-only
+  # release (v0.2.0 currently does), which made both jobs fail immediately.
+  LLAMA_CPP_TAG: b10549
+
+jobs:
+  serve-linux:
+    if: inputs.os == 'linux'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    steps:
+      - name: Download llama.cpp server (Linux)
+        env:
+          ASSET: llama-b10549-bin-ubuntu-x64.tar.gz
+        run: |
+          set -euo pipefail
+          URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/${ASSET}"
+          echo "Downloading pinned llama.cpp ${LLAMA_CPP_TAG}: ${ASSET}"
+          curl --fail --location --retry 5 --retry-all-errors --connect-timeout 20 \
+            --progress-bar "$URL" -o llama.tar.gz
+          mkdir llama
+          tar -xzf llama.tar.gz -C llama
+          SERVER=$(find llama -name llama-server -type f | head -1)
+          test -n "$SERVER" || { echo "llama-server not found"; find llama -maxdepth 3 -type f | head -50; exit 1; }
+          chmod +x "$SERVER"
+          echo "SERVER_BIN=$SERVER" >> "$GITHUB_ENV"
+          echo "SERVER_DIR=$(dirname "$SERVER")" >> "$GITHUB_ENV"
+          echo "Found $SERVER"
+
+      - name: Restore model cache
+        if: inputs.model != 'custom'
+        id: model-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: model.gguf
+          key: llm-model-${{ runner.os }}-${{ inputs.model }}-q4-v1
+
+      - name: Download GGUF model
+        env:
+          MODEL_KEY: ${{ inputs.model }}
+          CUSTOM_URL: ${{ inputs.custom_url }}
+        run: |
+          set -euo pipefail
+          if [ -s model.gguf ]; then
+            echo "Model restored from cache"
+          else
+            case "$MODEL_KEY" in
+              qwen2.5-0.5b) URL="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf" ;;
+              qwen2.5-1.5b) URL="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf" ;;
+              llama3.2-1b)  URL="https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf" ;;
+              gemma3-1b)    URL="https://huggingface.co/ggml-org/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf" ;;
+              custom)       URL="$CUSTOM_URL" ;;
+              *) echo "Unknown model: $MODEL_KEY"; exit 1 ;;
+            esac
+            test -n "$URL" || { echo "Custom model URL is empty"; exit 1; }
+            echo "Downloading $MODEL_KEY"
+            curl --fail --location --retry 5 --retry-all-errors --connect-timeout 20 \
+              --progress-bar "$URL" -o model.gguf.part
+            mv model.gguf.part model.gguf
+          fi
+          SIZE=$(stat -c%s model.gguf)
+          test "$SIZE" -gt 52428800 || { echo "Downloaded model is too small: $SIZE bytes"; exit 1; }
+          echo "Model ready: $(( SIZE / 1048576 )) MB"
+
+      - name: Save model cache
+        if: inputs.model != 'custom' && steps.model-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: model.gguf
+          key: llm-model-${{ runner.os }}-${{ inputs.model }}-q4-v1
+
+      - name: Start server, terminal and tunnels (Linux)
+        env:
+          MODEL_KEY: ${{ inputs.model }}
+          SESSION_ID: ${{ inputs.session }}
+        run: |
+          set -euo pipefail
+          API_KEY=$(openssl rand -hex 24)
+          LD_LIBRARY_PATH="$SERVER_DIR" "$SERVER_BIN" -m model.gguf \
+            --host 127.0.0.1 --port 8080 --api-key "$API_KEY" \
+            -c 4096 --threads "$(nproc)" > llama.log 2>&1 &
+          echo $! > llama.pid
+
+          echo "Waiting for llama-server (pid $(cat llama.pid))"
+          for i in $(seq 1 90); do
+            if curl -fsS -m 3 http://127.0.0.1:8080/health > /dev/null; then break; fi
+            kill -0 "$(cat llama.pid)" 2>/dev/null || { echo "llama-server exited"; tail -100 llama.log; exit 1; }
+            [ $((i % 5)) -eq 0 ] && echo "Still loading model: $((i * 2))s"
+            sleep 2
+          done
+          curl -fsS -m 5 http://127.0.0.1:8080/health || { tail -100 llama.log; exit 1; }
+          echo "llama-server is ready"
+
+          curl --fail --location --retry 5 --retry-all-errors --progress-bar \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o cloudflared
+          chmod +x cloudflared
+          ./cloudflared tunnel --url http://127.0.0.1:8080 --no-autoupdate > api-tunnel.log 2>&1 &
+          echo $! > api-tunnel.pid
+          TUNNEL=""
+          for i in $(seq 1 40); do
+            TUNNEL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' api-tunnel.log | head -1 || true)
+            [ -n "$TUNNEL" ] && break
+            kill -0 "$(cat api-tunnel.pid)" 2>/dev/null || { cat api-tunnel.log; exit 1; }
+            sleep 2
+          done
+          test -n "$TUNNEL" || { echo "API tunnel did not start"; cat api-tunnel.log; exit 1; }
+          echo "API tunnel: $TUNNEL"
+
+          # Terminal is optional: an unavailable second quick tunnel must not
+          # delay or break the model API endpoint.
+          TERMURL=""
+          if curl --fail --location --retry 3 --retry-all-errors --silent --show-error \
+            https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64 -o ttyd; then
+            chmod +x ttyd
+            ./ttyd -p 7681 -c "yomikai:$API_KEY" -W bash > ttyd.log 2>&1 &
+            echo $! > ttyd.pid
+            ./cloudflared tunnel --url http://127.0.0.1:7681 --no-autoupdate > terminal-tunnel.log 2>&1 &
+            echo $! > terminal-tunnel.pid
+            for i in $(seq 1 15); do
+              TERMURL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' terminal-tunnel.log | head -1 || true)
+              [ -n "$TERMURL" ] && break
+              sleep 2
+            done
+          fi
+          echo "Terminal tunnel: ${TERMURL:-unavailable}"
+
+          API_KEY="$API_KEY" TUNNEL="$TUNNEL" TERMURL="$TERMURL" \
+            MODEL_KEY="$MODEL_KEY" SESSION_ID="$SESSION_ID" python3 - <<'PY'
+          import json, os
+          with open("endpoint.json", "w", encoding="utf-8") as f:
+              json.dump({
+                  "url": os.environ["TUNNEL"],
+                  "api_key": os.environ["API_KEY"],
+                  "model": os.environ["MODEL_KEY"],
+                  "session": os.environ["SESSION_ID"],
+                  "terminal": os.environ.get("TERMURL", ""),
+                  "terminal_user": "yomikai",
+                  "os": "linux",
+              }, f)
+          PY
+          # Do not print the API key. A public probe may need a few seconds to
+          # propagate, but endpoint publication must not be blocked by it.
+          curl -fsS -m 20 "$TUNNEL/health" -H "Authorization: Bearer $API_KEY" > /dev/null || true
+          echo "Endpoint file created"
+
+      - name: Upload endpoint artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: endpoint-${{ inputs.session }}
+          path: endpoint.json
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Keep session alive (heartbeat every minute)
+        run: |
+          set -u
+          while true; do
+            sleep 60
+            kill -0 "$(cat llama.pid)" 2>/dev/null || { echo "llama-server died"; tail -100 llama.log; exit 1; }
+            kill -0 "$(cat api-tunnel.pid)" 2>/dev/null || { echo "API tunnel died"; tail -100 api-tunnel.log; exit 1; }
+            curl -fsS -m 10 http://127.0.0.1:8080/health > /dev/null || { echo "health check failed"; tail -100 llama.log; exit 1; }
+            echo "--- healthy $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"
+          done
+
+  serve-windows:
+    if: inputs.os == 'windows'
+    runs-on: windows-2025
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download llama.cpp server (Windows)
+        env:
+          ASSET: llama-b10549-bin-win-cpu-x64.zip
+        run: |
+          set -euo pipefail
+          URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_TAG}/${ASSET}"
+          echo "Downloading pinned llama.cpp ${LLAMA_CPP_TAG}: ${ASSET}"
+          curl --fail --location --retry 5 --retry-all-errors --connect-timeout 20 \
+            --progress-bar "$URL" -o llama.zip
+          mkdir llama
+          unzip -q llama.zip -d llama
+          SERVER=$(find llama -iname llama-server.exe -type f | head -1)
+          test -n "$SERVER" || { echo "llama-server.exe not found"; find llama -maxdepth 3 -type f | head -50; exit 1; }
+          echo "SERVER_BIN=$(pwd)/${SERVER#./}" >> "$GITHUB_ENV"
+          echo "Found $SERVER"
+
+      - name: Restore model cache
+        if: inputs.model != 'custom'
+        id: model-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: model.gguf
+          key: llm-model-${{ runner.os }}-${{ inputs.model }}-q4-v1
+
+      - name: Download GGUF model
+        env:
+          MODEL_KEY: ${{ inputs.model }}
+          CUSTOM_URL: ${{ inputs.custom_url }}
+        run: |
+          set -euo pipefail
+          if [ -s model.gguf ]; then
+            echo "Model restored from cache"
+          else
+            case "$MODEL_KEY" in
+              qwen2.5-0.5b) URL="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf" ;;
+              qwen2.5-1.5b) URL="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf" ;;
+              llama3.2-1b)  URL="https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf" ;;
+              gemma3-1b)    URL="https://huggingface.co/ggml-org/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf" ;;
+              custom)       URL="$CUSTOM_URL" ;;
+              *) echo "Unknown model: $MODEL_KEY"; exit 1 ;;
+            esac
+            test -n "$URL" || { echo "Custom model URL is empty"; exit 1; }
+            echo "Downloading $MODEL_KEY"
+            curl --fail --location --retry 5 --retry-all-errors --connect-timeout 20 \
+              --progress-bar "$URL" -o model.gguf.part
+            mv model.gguf.part model.gguf
+          fi
+          SIZE=$(stat -c%s model.gguf)
+          test "$SIZE" -gt 52428800 || { echo "Downloaded model is too small: $SIZE bytes"; exit 1; }
+          echo "Model ready: $(( SIZE / 1048576 )) MB"
+
+      - name: Save model cache
+        if: inputs.model != 'custom' && steps.model-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: model.gguf
+          key: llm-model-${{ runner.os }}-${{ inputs.model }}-q4-v1
+
+      - name: Start server, terminal and tunnels (Windows)
+        env:
+          MODEL_KEY: ${{ inputs.model }}
+          SESSION_ID: ${{ inputs.session }}
+        run: |
+          set -euo pipefail
+          API_KEY=$(openssl rand -hex 24)
+          "$SERVER_BIN" -m model.gguf --host 127.0.0.1 --port 8080 \
+            --api-key "$API_KEY" -c 4096 --threads "$(nproc)" > llama.log 2>&1 &
+          echo $! > llama.pid
+
+          echo "Waiting for llama-server (pid $(cat llama.pid))"
+          for i in $(seq 1 90); do
+            if curl -fsS -m 3 http://127.0.0.1:8080/health > /dev/null; then break; fi
+            kill -0 "$(cat llama.pid)" 2>/dev/null || { echo "llama-server exited"; tail -100 llama.log; exit 1; }
+            [ $((i % 5)) -eq 0 ] && echo "Still loading model: $((i * 2))s"
+            sleep 2
+          done
+          curl -fsS -m 5 http://127.0.0.1:8080/health || { tail -100 llama.log; exit 1; }
+          echo "llama-server is ready"
+
+          curl --fail --location --retry 5 --retry-all-errors --progress-bar \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe \
+            -o cloudflared.exe
+          ./cloudflared.exe tunnel --url http://127.0.0.1:8080 --no-autoupdate > api-tunnel.log 2>&1 &
+          echo $! > api-tunnel.pid
+          TUNNEL=""
+          for i in $(seq 1 40); do
+            TUNNEL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' api-tunnel.log | head -1 || true)
+            [ -n "$TUNNEL" ] && break
+            kill -0 "$(cat api-tunnel.pid)" 2>/dev/null || { cat api-tunnel.log; exit 1; }
+            sleep 2
+          done
+          test -n "$TUNNEL" || { echo "API tunnel did not start"; cat api-tunnel.log; exit 1; }
+          echo "API tunnel: $TUNNEL"
+
+          TERMURL=""
+          if curl --fail --location --retry 3 --retry-all-errors --silent --show-error \
+            https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.win32.exe -o ttyd.exe; then
+            ./ttyd.exe -p 7681 -c "yomikai:$API_KEY" -W cmd > ttyd.log 2>&1 &
+            echo $! > ttyd.pid
+            ./cloudflared.exe tunnel --url http://127.0.0.1:7681 --no-autoupdate > terminal-tunnel.log 2>&1 &
+            echo $! > terminal-tunnel.pid
+            for i in $(seq 1 15); do
+              TERMURL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' terminal-tunnel.log | head -1 || true)
+              [ -n "$TERMURL" ] && break
+              sleep 2
+            done
+          fi
+          echo "Terminal tunnel: ${TERMURL:-unavailable}"
+
+          API_KEY="$API_KEY" TUNNEL="$TUNNEL" TERMURL="$TERMURL" \
+            MODEL_KEY="$MODEL_KEY" SESSION_ID="$SESSION_ID" python3 - <<'PY'
+          import json, os
+          with open("endpoint.json", "w", encoding="utf-8") as f:
+              json.dump({
+                  "url": os.environ["TUNNEL"],
+                  "api_key": os.environ["API_KEY"],
+                  "model": os.environ["MODEL_KEY"],
+                  "session": os.environ["SESSION_ID"],
+                  "terminal": os.environ.get("TERMURL", ""),
+                  "terminal_user": "yomikai",
+                  "os": "windows",
+              }, f)
+          PY
+          curl -fsS -m 20 "$TUNNEL/health" -H "Authorization: Bearer $API_KEY" > /dev/null || true
+          echo "Endpoint file created"
+
+      - name: Upload endpoint artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: endpoint-${{ inputs.session }}
+          path: endpoint.json
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Keep session alive (heartbeat every minute)
+        run: |
+          set -u
+          while true; do
+            sleep 60
+            kill -0 "$(cat llama.pid)" 2>/dev/null || { echo "llama-server died"; tail -100 llama.log; exit 1; }
+            kill -0 "$(cat api-tunnel.pid)" 2>/dev/null || { echo "API tunnel died"; tail -100 api-tunnel.log; exit 1; }
+            curl -fsS -m 10 http://127.0.0.1:8080/health > /dev/null || { echo "health check failed"; tail -100 llama.log; exit 1; }
+            echo "--- healthy $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"
+          done
