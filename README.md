@@ -22,19 +22,25 @@ Android-панель и GitHub Actions для Zen Agent, OpenCode и удалё�
 
 Адрес сессии публикуется в ветке `session-state` (`session-agent.json`, `session-opencode.json`, `session-linux.json`, `session-windows.json`).
 
-## OpenCode Mobile `<Client>` не коннектится — какой адрес вводить
+## OpenCode — какой адрес открывать и как выбрать веб-интерфейс
 
-`opencode serve` в workflow запускается с `--hostname 127.0.0.1`, поэтому **порт 4096 доступен только на самом раннере** и с телефона по LAN не открывается. Телефону нужен **gateway** (`agent/oc-gateway.js`), который слушает `0.0.0.0` и отдаёт мобильный чат на `/`, проксируя API OpenCode.
+`opencode serve` в workflow запускается с `--hostname 127.0.0.1`, поэтому **порт 4096 доступен только на самом раннере** и по сети не открывается. Снаружи нужен **gateway** (`agent/oc-gateway.js`), который слушает `0.0.0.0` и отдаёт один origin (интерфейс + API), проксируя на сервер.
 
-Как подключить телефон:
+Gateway умеет **два режима** (переменная `OC_UI`):
 
-- **Через GitHub Actions (туннель).** Открой сессию OpenCode на вкладке «Сессии»; в панели появится адрес вида `https://…trycloudflare.com/`. Это и есть адрес gateway — вставь именно его (и `agentUrl` из `session-opencode.json`).
+- `OC_UI=web` (**по умолчанию**) — **оригинальный веб OpenCode**. Сам `opencode serve` уже отдаёт настоящий веб-SPA на `/`, поэтому gateway просто обрабатывает `/` как обычно. Это полный веб-интерфейс, как в браузере.
+- `OC_UI=mobile` — **лёгкий мобильный чат** (`agent/oc-mobile.html`, «Это лёгкий чат, не веб OpenCode»). Раньше был по умолчанию; оставлен как опция для слабых телефонов.
+
+Как открыть:
+
+- **Через GitHub Actions (туннель).** На вкладке «Сессии» для OpenCode задай `UI: web` (по умолчанию `web`) или `mobile` — выбор есть в `workflow_dispatch`. После старта в панели появится адрес вида `https://…trycloudflare.com/`. Это адрес gateway — открой его в браузере (web) или вставь в OpenCode Mobile `<Client>` (mobile). `agentUrl` из `session-opencode.json` — тот же адрес.
 - **По LAN (свой сервер/ПК в домашней сети).** Запусти стек скриптом:
   ```bash
-  PATH="$HOME/.local/node_modules/.bin:$PATH" tools/oc_lan_start.sh
-  # он поднимет opencode serve на 127.0.0.1 и gateway на 0.0.0.0,
-  # затем напечатает адрес для телефона:  http://<LAN-IP>:4100/
+  PATH="$HOME/.local/node_modules/.bin:$PATH" tools/oc_lan_start.sh          # оригинальный веб
+  PATH="$HOME/.local/node_modules/.bin:$PATH" OC_UI=mobile tools/oc_lan_start.sh   # мобильный чат
+  # поднимет opencode serve на 127.0.0.1 и gateway на 0.0.0.0,
+  # затем напечатает адрес:  http://<LAN-IP>:4100/
   ```
-  Вставить именно адрес **gateway** (`http://<LAN-IP>:4100/`), **не** `…:4096`.
+  Открой `http://<LAN-IP>:4100/` в браузере (web) или вставь в OpenCode Mobile `<Client>` (mobile). **НЕ** порт `4096` — он только localhost.
 
-Остановить — `tools/oc_lan_stop.sh`. Порт `4096` (`opencode serve`) со скриншота «Сервер#1 / http://192.168.1.xxx:4096» — неверный для телефона: он слушает только localhost. Учти, что gateway на LAN работает без пароля (`OPENCODE_SERVER_PASSWORD` не задан) — держи сеть доверенной или запускай через туннель.
+Остановить — `tools/oc_lan_stop.sh`. Gateway на LAN работает без пароля (`OPENCODE_SERVER_PASSWORD` не задан) — держи сеть доверенной или запускай через туннель.

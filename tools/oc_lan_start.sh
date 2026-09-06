@@ -1,25 +1,33 @@
 #!/usr/bin/env bash
-# Start the OpenCode stack so a PHONE on the same LAN can connect to it.
+# Start the OpenCode stack so a PHONE (or any device) on the same LAN can
+# connect to it.
 #
 # Why this exists: `opencode serve` is started on 127.0.0.1 in the workflow,
-# so its port (4096) is localhost-only and unreachable from the phone. The
-# phone endpoint must be the oc-gateway (agent/oc-gateway.js), which binds
-# 0.0.0.0 and serves the mobile chat at / while proxying the OpenCode API.
+# so its port (4096) is localhost-only and unreachable from a phone on the
+# LAN. The gateway (agent/oc-gateway.js) binds 0.0.0.0 and proxies to the
+# server, exposing ONE origin (UI + API) that is reachable on the network.
+#
+# UI mode:
+#   OC_UI=web     (default) — the ORIGINAL OpenCode web SPA. `opencode serve`
+#                  already serves it at /, so this is the real web UI.
+#   OC_UI=mobile  — the lightweight one-file mobile chat (oc-mobile.html).
 #
 # Usage:
-#   tools/oc_lan_start.sh            # starts serve (localhost) + gateway (0.0.0.0)
+#   tools/oc_lan_start.sh                    # serve(localhost) + gateway(0.0.0.0), web UI
+#   OC_UI=mobile tools/oc_lan_start.sh       # lightweight mobile chat instead
 #   OC_LAN_PORT=4101 tools/oc_lan_start.sh   # custom gateway port
-#   tools/oc_lan_stop.sh             # stop both
+#   tools/oc_lan_stop.sh                     # stop both
 #
-# Then in the OpenCode Mobile client, add a server with the GATEWAY URL:
-#   http://<LAN-IP>:4100/
-# Do NOT use port 4096 — that is the localhost-only opencode serve.
+# Then open the printed URL in a browser (original web) or paste it into the
+# OpenCode Mobile <Client> (mobile). Do NOT use port 4096 — that is the
+# localhost-only opencode serve.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$HOME/bin:$PATH"
 
 SERVE_PORT="${OC_SERVE_PORT:-4096}"
 GW_PORT="${OC_LAN_PORT:-4100}"
+UI="${OC_UI:-web}"
 if [ -n "${OPENCODE_SERVER_PASSWORD:-}" ]; then
   export OPENCODE_SERVER_PASSWORD
 fi
@@ -39,8 +47,8 @@ fi
 if curl -sf -o /dev/null -m 3 "http://127.0.0.1:${GW_PORT}/" 2>/dev/null; then
   echo "oc-gateway already up on :${GW_PORT}"
 else
-  echo "Starting oc-gateway (0.0.0.0:${GW_PORT}) -> 127.0.0.1:${SERVE_PORT} ..."
-  OC_PORT="${GW_PORT}" OC_UP_PORT="${SERVE_PORT}" \
+  echo "Starting oc-gateway (0.0.0.0:${GW_PORT}, UI=${UI}) -> 127.0.0.1:${SERVE_PORT} ..."
+  OC_PORT="${GW_PORT}" OC_UP_PORT="${SERVE_PORT}" OC_UI="${UI}" \
     nohup node "${HERE}/agent/oc-gateway.js" >/tmp/oc-gateway.log 2>&1 &
   echo $! >/tmp/oc-gateway.pid
 fi
@@ -55,17 +63,22 @@ for i in $(seq 1 20); do
 done
 
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+if [ "${UI}" = "mobile" ]; then
+  UI_LABEL="лёгкий мобильный чат"
+else
+  UI_LABEL="оригинальный веб OpenCode"
+fi
 echo
-echo "================================================================"
-echo "  OpenCode для телефона"
-echo "  ------------------------------------------------------------"
-echo "  Вставь ЭТОТ адрес в OpenCode Mobile <Client> (Добавить сервер):"
+echo "=================================================================="
+echo "  OpenCode (${UI_LABEL})"
+echo "  ---------------------------------------------------------------"
+echo "  Открой на устройстве в ТОЙ ЖЕ сети:"
 echo "      http://${IP}:${GW_PORT}/"
 echo "  НЕ используй порт ${SERVE_PORT} (opencode serve) — он слушает"
-echo "  только 127.0.0.1 и с телефона не доступен."
-echo "  ------------------------------------------------------------"
+echo "  только 127.0.0.1 и по сети недоступен."
+echo "  ---------------------------------------------------------------"
 echo "  Остановить: tools/oc_lan_stop.sh"
-echo "================================================================"
+echo "=================================================================="
 if ! curl -sf -o /dev/null -m 3 "http://127.0.0.1:${GW_PORT}/" 2>/dev/null; then
   echo "::error:: oc-gateway не отвечает."; tail -20 /tmp/oc-gateway.log
 fi
