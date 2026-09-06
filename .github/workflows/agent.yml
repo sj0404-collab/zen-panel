@@ -172,10 +172,18 @@ jobs:
           # and it lifts the anonymous rate limit when pulling a GGUF for the
           # local runtime, which is what makes a multi-gigabyte download
           # finish reliably.
+          #
+          # ZEN_GH_TOKEN is your own PAT (ghp_/github_pat_/) used by the
+          # github_* tools for user-scoped calls such as github_my_repos and
+          # for reaching other repositories. The default Actions GITHUB_TOKEN
+          # is a repo-installation token and cannot list /user/repos, so if
+          # you do not set ZEN_GH_TOKEN the agent still runs but that call
+          # returns "Resource not accessible by integration".
           ZEN_BIND_HOST=0.0.0.0 ZEN_REMOTE_TOKEN="$TOKEN" MCP_PORT=8765 \
             ZEN_LONG_TASKS=1 ZEN_LONG_MAX_STEPS=250 \
             SESSION_STARTED_MS="$(date +%s000)" SESSION_LIMIT_MS=21600000 \
             GITHUB_TOKEN="$GH_TOKEN" \
+            ZEN_GH_TOKEN="${{ secrets.ZEN_GH_TOKEN }}" \
             SYMBIOSIS_KEY="${{ secrets.SYMBIOSIS_KEY }}" \
             HF_TOKEN="${{ secrets.HF_TOKEN }}" \
             OPENROUTER_API_KEY="${{ secrets.OPENROUTER_API_KEY }}" \
@@ -370,6 +378,7 @@ jobs:
       - name: Start the agent and open the tunnel
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ZEN_GH_TOKEN: ${{ secrets.ZEN_GH_TOKEN }}
         shell: pwsh
         run: |
           $token = "zen-" + [guid]::NewGuid().ToString("N").Substring(0, 24)

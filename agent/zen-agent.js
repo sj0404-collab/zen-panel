@@ -3146,8 +3146,18 @@ async function handleMCPTool(tool, args = {}) {
       } catch (e) {
         // The API's own message names the cause - a missing scope, a bad
         // path, a protected branch - so it is passed through rather than
-        // flattened into "request failed".
-        return { error: String(e && e.message || e) };
+        // flattened into "request failed". The one confusing case is the
+        // default Actions token on user-scoped endpoints (github_my_repos):
+        // that installation token returns "Resource not accessible by
+        // integration", which reads like the repo is hidden when in fact the
+        // agent needs a real PAT named ZEN_GH_TOKEN.
+        let msg = String(e && e.message || e);
+        if (/not accessible by integration/i.test(msg)) {
+          msg += '\nЭто дефолтный Actions-токен, а не ваш PAT: он не может перечислить /user/repos. Задайте GITHUB_MODELS_TOKEN или ZEN_GH_TOKEN (ваш ghp_/github_pat_) в секретах, чтобы github_* мог работать с другими репозиториями.';
+        } else if (/Bad credentials|401/i.test(msg)) {
+          msg += '\nТокен не подошёл (bad credentials). Проверьте ZEN_GH_TOKEN/GITHUB_TOKEN в секретах.';
+        }
+        return { error: msg };
       }
     }
 
@@ -5005,7 +5015,7 @@ function githubApi() {
   if (!GitHubApi) return null;
   if (!GITHUB_API_CACHE) {
     GITHUB_API_CACHE = new GitHubApi(
-      () => githubModelsToken(),
+      () => githubApiToken(),
       () => process.env.SYMBIOSIS_REPO || detectSessionRepo()
     );
   }
@@ -5202,6 +5212,19 @@ function symbiosisKeyReport() {
     },
     unrecognised: k.unknown
   };
+}
+
+// Token for the github_* API tools. A user PAT (ghp_/github_pat_/) must win
+// over the default Actions GITHUB_TOKEN: Actions' token is a repo-installation
+// token and cannot call GET /user/repos ("Resource not accessible by
+// integration"), which is exactly what github_my_repos needs. We prefer an
+// explicit PAT (ZEN_GH_TOKEN, the key store, or a ghp_ token in SYMBIOSIS_KEY)
+// and only fall back to the default GITHUB_TOKEN for repo-scoped calls on the
+// current repo.
+function githubApiToken() {
+  const pat = process.env.ZEN_GH_TOKEN || providerKeyStore.github || symbiosisKeys().github || '';
+  if (pat) return String(pat).trim();
+  return process.env.GITHUB_TOKEN || process.env.GITHUB_MODELS_TOKEN || '';
 }
 
 function githubModelsToken() {
