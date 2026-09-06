@@ -44,3 +44,29 @@ Gateway умеет **два режима** (переменная `OC_UI`):
   Открой `http://<LAN-IP>:4100/` в браузере (web) или вставь в OpenCode Mobile `<Client>` (mobile). **НЕ** порт `4096` — он только localhost.
 
 Остановить — `tools/oc_lan_stop.sh`. Gateway на LAN работает без пароля (`OPENCODE_SERVER_PASSWORD` не задан) — держи сеть доверенной или запускай через туннель.
+
+## OpenCode и GitHub через токен (доступ к репозиторию)
+
+Чтобы OpenCode-агент **сам подключался к GitHub по токену** и работал с твоим репозиторием (клон, чтение, запись, push):
+
+- **Модели GitHub** появляются автоматически, как только в окружении `opencode serve` есть `GITHUB_TOKEN`/`GH_TOKEN` (провайдер `github-copilot`, ~30 моделей). Ручной логин не нужен.
+- **Доступ к репозиторию** — агент должен работать внутри клона репо, а git должен авторизоваться токеном.
+
+**По LAN / локально** — запусти стек так, чтобы он поднял агента в твоём репо и дал ему git-авторизацию:
+```bash
+export ZEN_GH_TOKEN=ghp_xxxx           # твой GitHub-токен (repo + workflow)
+OC_REPO="sj0404-collab/zen-panel" \
+  PATH="$HOME/.local/node_modules/.bin:$PATH" tools/oc_lan_start.sh
+# скрипт: поднимет opencode serve в .zen-open/<repo> (склонирует его),
+# настроит git через http.extraheader (token не хранится и не печатается),
+# и агент сможет clone/push — без ручного входа в GitHub.
+```
+
+**В GitHub Actions** это уже работает из коробки: `opencode.yml` запускает `opencode serve` из клона репо (`fork`) и передаёт `GH_TOKEN`, а `actions/checkout` настраивает git-авторизацию. Агент сразу видит и пишет в репозиторий.
+
+Проверка, что git-авторизация токеном работает (без вставки токена в URL):
+```bash
+git ls-remote https://github.com/<owner>/<repo>.git main   # должен вернуть SHA, не просить логин
+```
+
+`tools/oc_gh_auth.sh` — переиспользуемый хелпер: экспортирует `GITHUB_TOKEN`/`GH_TOKEN`, настраивает `http.https://github.com/.extraheader`, и опционально клонирует `OC_REPO` в заданную папку. Токен в конфиг не пишется (только base64 basic) и не выводится в лог.

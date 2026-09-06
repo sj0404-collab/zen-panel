@@ -32,14 +32,41 @@ if [ -n "${OPENCODE_SERVER_PASSWORD:-}" ]; then
   export OPENCODE_SERVER_PASSWORD
 fi
 
+# Make any provided GitHub token available to the agent: it exports
+# GITHUB_TOKEN/GH_TOKEN (which auto-registers GitHub providers in opencode) and
+# configures git so the agent can clone/push the repo. Set ZEN_GH_TOKEN (or
+# GITHUB_TOKEN/GH_TOKEN) before running.
+if [ -n "${ZEN_GH_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}" ]; then
+  bash "${HERE}/tools/oc_gh_auth.sh" 2>&1 | sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g' || true
+fi
+
+# If OC_REPO=owner/repo is given, work inside that repo: clone it (or reuse it)
+# into OC_WORKSPACE (default $HERE/.zen-open/<repo>) and start the server from
+# there, so the agent actually operates on your repository.
+WORKSPACE_DIR="${OC_WORKSPACE:-$HERE}"
+if [ -n "${OC_REPO:-}" ]; then
+  REPO_NAME="$(echo "${OC_REPO}" | tr '/' '_')"
+  WORKSPACE_DIR="${OC_WORKSPACE:-$HERE/.zen-open/${REPO_NAME}}"
+  if [ ! -d "$WORKSPACE_DIR/.git" ]; then
+    mkdir -p "$WORKSPACE_DIR"
+    git clone -q --depth 1 "https://github.com/${OC_REPO}.git" "$WORKSPACE_DIR" \
+      && echo "oc_lan_start: cloned ${OC_REPO} into ${WORKSPACE_DIR}" \
+      || echo "oc_lan_start: clone failed; continuing in ${WORKSPACE_DIR}"
+  else
+    echo "oc_lan_start: using existing repo at ${WORKSPACE_DIR}"
+  fi
+fi
+mkdir -p "$WORKSPACE_DIR" 2>/dev/null || true
+
 # opencode serve: localhost only, we expose it through the gateway.
 if curl -sf -o /dev/null -m 4 "http://127.0.0.1:${SERVE_PORT}/global/health" 2>/dev/null; then
   echo "opencode serve already up on :${SERVE_PORT}"
 else
-  echo "Starting opencode serve (127.0.0.1:${SERVE_PORT}) ..."
-  nohup opencode serve --port "${SERVE_PORT}" --hostname 127.0.0.1 --cors '*' \
-    >/tmp/oc-serve.log 2>&1 &
-  echo $! >/tmp/oc-serve.pid
+  echo "Starting opencode serve (127.0.0.1:${SERVE_PORT}, workdir ${WORKSPACE_DIR}) ..."
+  (cd "${WORKSPACE_DIR}" && nohup opencode serve --port "${SERVE_PORT}" --hostname 127.0.0.1 --cors '*' \
+    >/tmp/oc-serve.log 2>&1 & echo $! >/tmp/oc-serve.pid)
+  # If the server was already running, record that it may not use our workdir.
+  [ -s /tmp/oc-serve.pid ] || echo "$$" >/tmp/oc-serve.pid
 fi
 
 # oc-gateway: 0.0.0.0 so the phone can reach it on the LAN. Prefer an existing
