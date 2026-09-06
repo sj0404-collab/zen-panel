@@ -2363,6 +2363,24 @@ function subagentParseToolCall(text) {
   if (jc) return jc;
   const t = String(text || '').trim();
   if (!t) return null;
+  // Free Zen models sometimes fake a tool response in prose ("⟨awaiting tool
+  // response⟩⟨read_file output: ...⟩"). Treat that as a real call so we read
+  // the actual file instead of publishing the model's invented content.
+  const FILE_TOKEN = /[\w./~-]+\.(?:txt|md|json|js|ts|tsx|jsx|py|rb|go|rs|c|cpp|h|java|xml|yml|yaml|toml|ini|cfg|env|sh|html|css|scss|sql|docx|doc|pdf|epub|rtf|odt|xlsx|csv|png|jpg|jpeg|gif|webp|bmp|mp3|mp4|wav|ogg|flac|aac|mov|mkv|webm|zip|tar|gz)\b/i;
+  const pseudo = (t.match(/⟨\s*awaiting\s+tool\s+response\s*⟩|⟨\s*([a-z][a-z0-9_]{2,63})\s+output\s*:/i) || [])[0];
+  if (pseudo) {
+    const nameFromMarker = (t.match(/⟨\s*([a-z][a-z0-9_]{2,63})\s+output\s*:/i) || [])[1];
+    const nameFromPlain = (t.match(/(\b[a-z][a-z0-9_]{2,63})\s+output\s*:/i) || [])[1];
+    const tool = (nameFromMarker || nameFromPlain || '').toLowerCase();
+    if (tool && SUBAGENT_READONLY_TOOLS.has(tool)) {
+      const args = {};
+      const fp = t.match(FILE_TOKEN);
+      if (fp) args.path = fp[0];
+      const kv = t.match(/(?:path|file|dir|query|url|pattern)\s*[:=]\s*["']([^"']+)["']/i);
+      if (kv && !args.path) args.path = kv[1];
+      return { tool, args };
+    }
+  }
   const PATH_EXT = /\.(txt|md|json|js|ts|tsx|jsx|py|rb|go|rs|c|cpp|h|java|xml|yml|yaml|toml|ini|cfg|env|sh|html|css|scss|sql|docx|doc|pdf|epub|rtf|odt|xlsx|csv|png|jpg|jpeg|gif|webp|bmp|mp3|mp4|wav|ogg|flac|aac|mov|mkv|webm|zip|tar|gz)$/i;
   const pathLike = v => /^[^\s]{1,200}$/.test(v) && (v.includes('/') || v.startsWith('.') || v.startsWith('~') || PATH_EXT.test(v));
   const queryTools = new Set(['web_search', 'web_fetch', 'search_text', 'github_search', 'find_files']);
@@ -2410,6 +2428,31 @@ function subagentParseToolCall(text) {
 }
 
 
+
+// Ask the model with an empty-reply guard. Free Zen models frequently return an
+// empty first completion; rather than report that as a successful "read", retry
+// a couple of times and switch to a sibling Zen model (a local switch, never
+// the primary agent's currentModel). Returns a result whose text is non-empty,
+// or a marker result so the caller can say so honestly.
+async function subagentAsk(messages, model) {
+  let used = model;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const result = await subagentModelCall(messages, used);
+    const text = String(result.text || '').trim();
+    if (text.length >= 2 || (currentProvider !== 'zen' && Array.isArray(result.toolCalls) && result.toolCalls.length)) {
+      return { ...result, model: result.model || used };
+    }
+    if (currentProvider === 'zen') {
+      const order = zenFallbackOrder();
+      const idx = order.indexOf(used);
+      const nxt = order[(idx + 1) % Math.max(1, order.length)];
+      if (nxt && nxt !== used) used = nxt;
+    }
+    await zenSleep(Math.min(4000, 800 * attempt));
+  }
+  return { text: '', model: used, usage: {}, toolCalls: [], reasoning: null, outputShown: false, provider: currentProvider };
+}
+
 async function subagentTaskTool(args) {
   const name = String(args.agent || args.name || 'explore'); const agent = resolveSubagent(name);
   if (!agent) return { error: `Subagent '${name}' не найден. Используй subagent_list.` };
@@ -2430,9 +2473,11 @@ async function subagentTaskTool(args) {
   const MAX_STEPS = 6;
   let step = 0, lastText = '', usedTools = [];
   try {
+    let subModel = model;
     while (step < MAX_STEPS) {
       step++;
-      const result = await subagentModelCall(messages, model);
+      const result = await subagentAsk(messages, subModel);
+      subModel = result.model || subModel;
       const text = String(result.text || '').trim();
       const nativeCalls = (currentProvider !== 'zen' && Array.isArray(result.toolCalls) && result.toolCalls.length) ? result.toolCalls : [];
       if (nativeCalls.length) {
@@ -3716,7 +3761,7 @@ function startEmbeddedServer() {
       try {
         run.status = 'running';
         run.events.push({ id: 'evt_start', type: 'task_started', at: new Date().toISOString(), input: redactSecrets(String(input)).slice(0, 500) });
-        const switched = switchSession(sessionName);
+        const switched = switchSession(sessionName, { force: true });
         if (switched.error) throw new Error(switched.error);
         if (requestedProvider) currentProvider = requestedProvider;
         if (requestedModel) currentModel = requestedModel;
@@ -5896,13 +5941,13 @@ function listSessions() {
   loadSessionStore();
   return Object.entries(sessionStore.sessions).map(([name, data]) => ({ name, active: name === activeSession, messages: Array.isArray(data.history) ? data.history.length : 0, updatedAt: data.updatedAt || data.createdAt || null, provider: data.provider || 'zen', model: data.model || CONFIG.defaultModel })).sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
 }
-function switchSession(name) {
+function switchSession(name, opts = {}) {
   const valid = safeSessionName(name); if (!valid) return { error: 'Имя сессии: до 48 букв/цифр, _, -, . .' };
   // Never switch mid-run: switchSession reassigns the shared module-level
   // `history`, so the active agentLoop would start writing its tool/message
   // results into the *new* session and corrupt it (sessions "mix up"). Refuse
   // while a run is live and let the caller handle it as a busy conflict.
-  if (agentBusy) return { error: 'Сессия не переключается, пока идёт задача. Дождись её завершения (или нажми «Стоп»), затем переключись.' };
+  if (agentBusy && !opts.force) return { error: 'Сессия не переключается, пока идёт задача. Дождись её завершения (или нажми «Стоп»), затем переключись.' };
   saveHistory(); loadSessionStore();
   if (!sessionStore.sessions[valid]) sessionStore.sessions[valid] = { history: [], createdAt: new Date().toISOString(), provider: currentProvider, model: currentModel, workspace: WORKSPACE_ROOT };
   activeSession = valid; sessionStore.active = valid;
