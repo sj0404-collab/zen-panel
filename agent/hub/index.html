@@ -1122,27 +1122,77 @@ async function saveAgent(){
 
 function rewriteLast(){
   if (!lastInput || runId) return;
-  $('q').value = lastInput + '\\n\\nПредыдущий подход не сработал. Не повторяй ту же команду. Смени инструмент, путь или аргументы и сделай иначе.';
+  $('q').value = lastInput + '\n\nПредыдущий подход не сработал. Не повторяй ту же команду. Смени инструмент, путь или аргументы и сделай иначе.';
   send();
 }
 
-/* Stall watchdog: 5 minutes thinking without a tool → abort and rewrite on next model. */
-setInterval(async () => {
+/* Stall watchdog: a model "thinking" for 5 minutes without a tool is usually a
+   slow or small model, not a crash. Auto-aborting and jumping to whatever model
+   is next on the list dropped the task's context mid-flight — and because runId
+   was still set when the resend ran, send() bailed out early, so the retry did
+   nothing either. Now we only surface a notice and put recovery in the user's
+   hands. The session history is kept either way, so nothing already done is lost. */
+setInterval(() => {
   if (!runId) return;
   const phase = $('phase') && $('phase').textContent;
   if (phase !== 'думает') { lastThinkAt = Date.now(); return; }
   if (!lastThinkAt) lastThinkAt = Date.now();
   if (Date.now() - lastThinkAt < 300000) return;
-  say('_5 минут «думает» без инструмента — останавливаю и прошу другую модель._');
-  lastThinkAt = Date.now();
-  await abortRun();
+  lastThinkAt = Date.now();          // don't re-offer on every tick
+  offerStallRecovery();
+}, 15000);
+
+function offerStallRecovery(){
+  if (document.getElementById('stall')) return;
+  const stick = atBottom();
+  const box = document.createElement('div');
+  box.className = 'say'; box.id = 'stall';
+  box.style.cssText = 'border:1px solid #d29922;background:#2b2412';
+  const note = document.createElement('span');
+  note.textContent = '_Модель думает уже 5 минут без инструмента. Жду дальше — или смени модель и повтори. Контекст сохранится._';
+  const btn = document.createElement('button');
+  btn.textContent = 'Сменить модель и повторить';
+  btn.style.cssText = 'margin-left:10px;background:#d29922;color:#111;border:0;border-radius:6px;padding:7px 12px;font:inherit;font-weight:600;cursor:pointer';
+  btn.onclick = () => { box.remove(); stallRecover(); };
+  box.appendChild(note); box.appendChild(btn);
+  stream.appendChild(box); if (stick) scroll();
+}
+
+async function stallRecover(){
+  // Switch model within the SAME provider group so the follow-up model keeps
+  // the same tooling and context handling; fall back to the next option if only
+  // one model of that provider is selectable.
   const sel = $('model');
   const opts = [...sel.options];
-  const i = opts.findIndex(o => o.selected);
-  const next = opts[(i+1) % Math.max(opts.length,1)];
-  if (next) { sel.value = next.value; sel.dispatchEvent(new Event('change')); }
-  if (lastInput) { $('q').value = lastInput; send(); }
-}, 15000);
+  const cur = sel.selectedOptions && sel.selectedOptions[0];
+  const group = opts.filter(o => o.dataset.provider === (cur && cur.dataset.provider));
+  const pool = (group.length > 1 ? group : opts);
+  let idx = pool.findIndex(o => o.value === sel.value);
+  if (idx < 0) idx = -1;
+  const next = pool[(idx + 1) % pool.length];
+  if (next){ sel.value = next.value; sel.dispatchEvent(new Event('change')); }
+
+  // Abort the stuck run and wait until the agent has actually freed up before
+  // resending. send() returns early while runId is still set. The session
+  // history already built is kept, so the new model continues from where the
+  // task stopped instead of starting over from a blank page.
+  if (runId){
+    $('phase').textContent = 'останавливаю';
+    try{ await apiFetch('/api/agent/run/' + runId + '/abort', { method:'POST' }); }
+    catch(e){ say('**Не удалось остановить:** ' + e.message); }
+    await waitUntil(() => !runId, 9000);
+  }
+  if (lastInput){ $('q').value = lastInput; send(); }
+}
+
+function waitUntil(cond, ms){
+  return new Promise(resolve => {
+    const t0 = Date.now();
+    const id = setInterval(() => {
+      if (cond() || Date.now() - t0 > ms){ clearInterval(id); resolve(); }
+    }, 250);
+  });
+}
 
 /* Rewrite control next to send */
 (function(){
