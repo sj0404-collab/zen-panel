@@ -513,6 +513,11 @@ function formatToolResult(name, result, args) {
       (items.length ? items.map(t => `  ${t.done ? c('✓', 'green') : c('○', 'gray')} #${t.id} ${t.text}`).join('\n') : c('  Нет задач', 'gray'));
   } else if (name === 'read_file' || name === 'process_logs' || name === 'monitor_logs' || name === 'terminal_read') {
     content = frag(result, 30, 15);
+  } else if (name === 'github_read') {
+    // Показываем голову и хвост, чтобы была видна пометка «файл длиннее»,
+    // а не просто первые 900 символов без сигнала, что это кусок.
+    content = redactSecrets(result).slice(0, 900) +
+      (/файл длиннее/i.test(result) ? '\n' + c('… файл длиннее, дочитай через offset', 'yellow') : '');
   } else if (name === 'write_file' || name === 'append_file') {
     const lines = (args.content || '').split('\n');
     content = `${c('Результат:', 'gray')} ${redactSecrets(result)}\n${c(lines.length + ' строк передано', 'gray')}\n` + frag(redactSecrets(args.content || ''), 8, 4);
@@ -983,9 +988,9 @@ const MCP_TOOLS = {
   run_lint: 'Запустить npm lint или указанный lint script',
   code_check: 'Проверить синтаксис JavaScript-файла',
   dependency_audit: 'Выполнить npm audit без автоматических исправлений',
-  github_read: 'Прочитать файл прямо из GitHub, без клонирования',
+  github_read: 'Прочитать файл из GitHub без клонирования. Большие файлы: если в ответе есть «файл длиннее», вызов повторяй с offset (и optional max_chars), чтобы дочитать по кускам.',
   github_write: 'Записать файл прямо в GitHub — это сразу коммит',
-  github_list: 'Список файлов в папке репозитория на GitHub',
+  github_list: 'Список файлов в папке. С recursive:true возвращает ВСЁ дерево (или поддерево по path) одним вызовом — осмотри репозиторий сразу, не спускайся по одному уровню за вызов.',
   github_delete: 'Удалить файл в GitHub одним коммитом',
   github_commit_files: 'Несколько файлов одним коммитом через GitHub API',
   github_search: 'Поиск кода в репозитории на GitHub',
@@ -5053,10 +5058,15 @@ const BUILT_IN_PRESETS = {
       'соответствующий github_* и покажи данные с GitHub.',
       '',
       'Используй github_*:',
-      '  github_read / github_list      — посмотреть файл или папку',
+      '  github_search                  — СНАЧАЛА ищи код по ключевым словам (ocr, tts, speech,',
+      '                                  readAloud). Один запрос находит файлы во всём репо.',
+      '  github_list {recursive:true}   — затем осмотри ВСЁ дерево одним вызовом (или поддерево',
+      '                                  по path). Не спускайся по директории по одному уровню за',
+      '                                  вызов: это 10+ бесполезных запросов.',
+      '  github_read                    — читай файл. Если ответ начинается/заканчивается «файл',
+      '                                  длиннее», дочитай остаток: github_read {path, offset:N}.',
       '  github_write                   — записать файл (это сразу коммит)',
       '  github_commit_files            — несколько файлов одним коммитом',
-      '  github_search                  — найти код в репозитории',
       '  github_commits / github_branches — история и ветки',
       '  github_run_workflow / github_runs — запустить сборку и посмотреть её',
       '',
