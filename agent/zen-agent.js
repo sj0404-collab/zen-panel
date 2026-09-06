@@ -470,7 +470,7 @@ function formatToolResult(name, result, args) {
     list_dir: '📂', read_file: '📖', write_file: '✏️',
     edit_file: '📝', delete_file: '🗑️', append_file: '➕',
     execute_command: '⚙️', web_search: '🔍', download_file: '⬇️',
-    image_info: '🖼️', ocr_image: '🔤', vision_analyze: '👁️', analyze_image: '👁️', vision_ui_audit: '🧩', vision_compare: '🆚', custom_tool_list: '🧰', custom_tool_create: '🛠️', custom_tool_inspect: '🔎', custom_tool_run: '▶️', custom_tool_delete: '🗑️', subagent_list: '👥', subagent_create: '👤', subagent_task: '🤝', subagent_delete: '🗑️', plugin_list: '🧩', plugin_create: '🧩', plugin_inspect: '🔎', plugin_delete: '🗑️', plugin_tool_list: '🧰', plugin_tool_run: '▶️', plugin_provider_list: '🔌',
+    image_info: '🖼️', document_extract: '📄', media_info: '🎞️', audio_transcribe: '🎙️', ocr_image: '🔤', vision_analyze: '👁️', analyze_image: '👁️', vision_ui_audit: '🧩', vision_compare: '🆚', custom_tool_list: '🧰', custom_tool_create: '🛠️', custom_tool_inspect: '🔎', custom_tool_run: '▶️', custom_tool_delete: '🗑️', subagent_list: '👥', subagent_create: '👤', subagent_task: '🤝', subagent_delete: '🗑️', plugin_list: '🧩', plugin_create: '🧩', plugin_inspect: '🔎', plugin_delete: '🗑️', plugin_tool_list: '🧰', plugin_tool_run: '▶️', plugin_provider_list: '🔌',
     ...(capabilitiesModule ? capabilitiesModule.CAPABILITY_ICONS : {}),
     workspace_info: '📍', set_workspace: '📍', project_inspect: '🧭', termux_info: '📱', network_check: '🌐', tree_dir: '🌳', search_text: '🔎', file_info: 'ℹ️', find_files: '🔎',
     file_backup: '💾', file_diff: '🧩', mkdir: '📁', copy_file: '📋', move_file: '🚚', archive_create: '🗜️', archive_extract: '📦',
@@ -1027,7 +1027,10 @@ const MCP_TOOLS = {
   web_search: 'Поиск по Wikipedia (энциклопедический)',
   web_fetch: 'Открыть страницу по URL и прочитать её как текст',
   image_info: 'Локальные metadata, размер, dimensions и SHA-256 изображения',
-  ocr_image: 'Локально распознать текст на изображении через Tesseract',
+  ocr_image: 'Распознать текст на изображении (engine: local через Tesseract или google через Google Cloud Vision)',
+  document_extract: 'Извлечь текст из документов: docx, odt, epub, pdf, rtf и любых текстовых файлов',
+  media_info: 'Метаданные медиафайла: длительность, кодек, разрешение, битрейт (нужен ffprobe)',
+  audio_transcribe: 'Расшифровать речь из аудио/видео в текст (ffmpeg + Whisper, нужен HF-токен)',
   vision_analyze: 'Vision-анализ одного изображения через выбранную OpenRouter vision-модель',
   analyze_image: 'Псевдоним vision_analyze для совместимости',
   vision_ui_audit: 'Найти UI/UX-проблемы на скриншоте',
@@ -1780,12 +1783,175 @@ function resolveImageFile(rawPath) {
     return { path: image.path, buffer, mime, stat, dimensions: imageDimensions(buffer, mime) };
   } catch (e) { return { error: 'Не удалось прочитать изображение: ' + e.message }; }
 }
+// ── RICH FILE INGESTION ────────────────────────────────────────────
+// The model must read the user's real documents: docx, odt, epub, pdf, rtf and
+// plain text. read_file used to return binary garbage for a .docx. These pull
+// actual text out. Media goes through media_info / audio_transcribe.
+function hasTool(binary) {
+  try { execFileSync(process.platform === 'win32' ? 'where' : 'which', [binary], { stdio: 'ignore', timeout: 2500 }); return true; }
+  catch { return false; }
+}
+function extractTextViaPython(filePath, kind) {
+  const script = `import sys,zipfile,re,xml.etree.ElementTree as ET,posixpath
+kind=sys.argv[1]; f=sys.argv[2]
+def dxp(xml,u):
+    root=ET.fromstring(xml); ns='{%s}'%u; out=[]
+    for p in root.iter(ns+'p'):
+        line=''.join((t.text or '') for t in p.iter(ns+'t')).strip()
+        if line: out.append(line)
+    return '\\n'.join(out)
+z=zipfile.ZipFile(f)
+if kind=='docx':
+    print(dxp(z.read('word/document.xml'),'http://schemas.openxmlformats.org/wordprocessingml/2006/main'))
+elif kind=='odt':
+    root=ET.fromstring(z.read('content.xml').decode('utf-8','ignore')); ns='{urn:oasis:names:tc:opendocument:xmlns:text:1.0}'; out=[]
+    for p in root.iter(ns+'p'):
+        line=''.join((t.text or '') for t in p.iter(ns+'span')).strip()
+        if line: out.append(line)
+    print('\\n'.join(out))
+elif kind=='epub':
+    ct=z.read('META-INF/container.xml').decode('utf-8','ignore')
+    m=re.search(r'full-path="([^"]+)"',ct); opf=m.group(1) if m else 'content.opf'
+    data=z.read(opf).decode('utf-8','ignore')
+    spine=re.findall(r'<itemref[^>]*idref="([^"]+)"',data)
+    idmap=dict(re.findall(r'<item[^>]*id="([^"]+)"[^>]*href="([^"]+)"',data))
+    pages=[]
+    for i in spine:
+        href=idmap.get(i)
+        if not href: continue
+        full=posixpath.normpath(posixpath.join(posixpath.dirname(opf),href))
+        try: html=z.read(full).decode('utf-8','ignore')
+        except: continue
+        text=re.sub(r'<script.*?</script>','',html,flags=re.S)
+        text=re.sub(r'<style.*?</style>','',text,flags=re.S)
+        text=re.sub(r'<[^>]+>','',text)
+        text=re.sub(r'\\s+',' ',text).strip()
+        if text: pages.append(text)
+    print('\\n\\n==== PAGE BREAK ====\\n\\n'.join(pages))
+`;
+  try {
+    const out = execFileSync('python3', ['-c', script, kind, filePath], { encoding: 'utf8', timeout: 90000, maxBuffer: 40 * 1024 * 1024 });
+    return { ok: true, text: out.trim(), encoding: kind };
+  } catch (e) {
+    const msg = String((e.stderr || e.message || '')).slice(0, 220);
+    return { error: (kind + ': не удалось извлечь текст. ' + msg) };
+  }
+}
+const TEXT_EXTS = new Set(['.txt', '.md', '.markdown', '.csv', '.tsv', '.json', '.xml', '.html', '.htm', '.log', '.yml', '.yaml', '.toml', '.ini', '.properties', '.conf', '.cfg', '.env', '.css', '.js', '.mjs', '.cjs', '.ts', '.jsx', '.tsx', '.kt', '.java', '.py', '.rs', '.go', '.sh', '.bat', '.ps1', '.sql', '.diff', '.patch', '.svg']);
+const ZIP_DOCS = new Set(['.docx', '.odt', '.epub']);
+function extractDocumentText(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (TEXT_EXTS.has(ext)) {
+    const buf = fs.readFileSync(filePath);
+    const s = buf.toString('utf8').replace(/^\uFEFF/, '');
+    return { ok: true, text: s, encoding: 'utf8', lines: s.split('\n').length };
+  }
+  if (ZIP_DOCS.has(ext)) return extractTextViaPython(filePath, ext.slice(1));
+  if (ext === '.pdf') {
+    if (hasTool('pdftotext')) {
+      const out = execFileSync('pdftotext', ['-layout', filePath, '-'], { encoding: 'utf8', timeout: 120000, maxBuffer: 40 * 1024 * 1024 });
+      return { ok: true, text: out, encoding: 'pdf', lines: out.split('\n').length };
+    }
+    return { error: 'PDF: нужен poppler-utils (pdftotext). Поставь его в окружении (apt-get install poppler-utils) или пришли текст отдельно.' };
+  }
+  if (ext === '.rtf') {
+    const s = fs.readFileSync(filePath, 'utf8');
+    const text = s.replace(/\\pard?\b/g, '\n').replace(/\\\{\\\[^}]*\}\}/g, '').replace(/\\[a-zA-Z]+-?\d*\s?/g, '').replace(/\{\\?[a-zA-Z]*\}/g, '').trim();
+    return { ok: true, text, encoding: 'rtf' };
+  }
+  return null; // binary / image / media — handled by the caller with a hint
+}
+async function documentTextTool(args) {
+  const resolved = mcpPathOrError(args.path, 'path', true);
+  if (resolved.error) return resolved;
+  try {
+    const r = extractDocumentText(resolved.path);
+    if (r === null) {
+      const ext = path.extname(resolved.path).toLowerCase();
+      if (['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext)) return { error: 'Это изображение. Для фото/скриншота используй image_info / ocr_image / vision_analyze.' };
+      if (['.mp4', '.webm', '.mov', '.mkv', '.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac', '.opus'].includes(ext)) return { error: 'Это медиафайл. Используй media_info для метаданных или audio_transcribe для расшифровки речи.' };
+      return { error: 'Не разобрал формат файла: ' + resolved.path + '. Пришли текст либо конвертируй в поддерживаемый формат.' };
+    }
+    if (r.error) return { path: resolved.path, error: r.error };
+    return { path: resolved.path, encoding: r.encoding, lines: r.lines, content: r.text };
+  } catch (e) { return { error: 'Не удалось прочитать файл: ' + e.message }; }
+}
+async function mediaInfoTool(args) {
+  const resolved = mcpPathOrError(args.path, 'path', true);
+  if (resolved.error) return resolved;
+  if (!hasTool('ffprobe')) return { error: 'Медиа-метаданные требуют ffmpeg/ffprobe. Поставь в окружении (apt-get install ffmpeg).' };
+  try {
+    const out = execFileSync('ffprobe', ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', resolved.path], { encoding: 'utf8', timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
+    const j = JSON.parse(out);
+    const fmt = j.format || {};
+    const video = (j.streams || []).find(s => s.codec_type === 'video');
+    const audio = (j.streams || []).find(s => s.codec_type === 'audio');
+    return {
+      path: resolved.path, duration: fmt.duration ? Number(fmt.duration).toFixed(2) : null, bitrate: fmt.bit_rate ? Number(fmt.bit_rate) : null,
+      container: fmt.format_name || null, size: fmt.size ? Number(fmt.size) : null,
+      video: video ? { codec: video.codec_name, width: video.width, height: video.height, fps: video.avg_frame_rate } : null,
+      audio: audio ? { codec: audio.codec_name, channels: audio.channels, sample_rate: audio.sample_rate } : null
+    };
+  } catch (e) { return { error: 'ffprobe не смог прочитать: ' + String(e.stderr || e.message || '').slice(0, 220) }; }
+}
+async function audioTranscribeTool(args) {
+  const resolved = mcpPathOrError(args.path, 'path', true);
+  if (resolved.error) return resolved;
+  if (!hasTool('ffmpeg')) return { error: 'Расшифровка аудио требует ffmpeg. Поставь в окружении (apt-get install ffmpeg).' };
+  const wav = path.join(os.tmpdir(), 'zen_audio_' + Date.now() + '.wav');
+  try {
+    execFileSync('ffmpeg', ['-y', '-i', resolved.path, '-ar', '16000', '-ac', '1', wav], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 120000 });
+    const audio = fs.readFileSync(wav);
+    const result = await huggingFaceStt(audio, 'audio/wav', 'openai/whisper-large-v3');
+    return { path: resolved.path, transcript: result.text, model: result.model };
+  } catch (e) {
+    return { error: 'Не удалось расшифровать: ' + String(e.message || e.stderr || '').slice(0, 220) };
+  } finally { try { fs.unlinkSync(wav); } catch {} }
+}
+
+
 function imageInfoTool(args) {
   const image = resolveImageFile(args.path); if (image.error) return image;
   return { path: image.path, mime: image.mime, size: image.stat.size, modified: image.stat.mtime.toISOString(), dimensions: image.dimensions, sha256: crypto.createHash('sha256').update(image.buffer).digest('hex') };
 }
-function ocrImageTool(args) {
+function googleVisionKey() {
+  return String(process.env.GOOGLE_VISION_API_KEY || process.env.GOOGLE_LENS_API_KEY || '').trim();
+}
+async function googleVisionOcr(image) {
+  const key = googleVisionKey();
+  if (!key) return { error: 'Для Google Lens/OCR нужен ключ. Задай GOOGLE_VISION_API_KEY (или GOOGLE_LENS_API_KEY) в окружении/настройках — потом я смогу распознавать фото и скриншоты через Google Cloud Vision.' };
+  const body = { requests: [{ image: { content: image.buffer.toString('base64') }, features: [{ type: 'TEXT_DETECTION' }] }] };
+  const payload = Buffer.from(JSON.stringify(body));
+  return await new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'vision.googleapis.com', path: '/v1/images:annotate?key=' + encodeURIComponent(key),
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length }, timeout: 30000
+    }, res => {
+      const chunks = []; res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8'); let j = null; try { j = JSON.parse(raw); } catch {}
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          const err = (j && (j.error && j.error.message)) || raw.slice(0, 200) || ('HTTP ' + res.statusCode);
+          return resolve({ error: 'Google Vision: ' + err });
+        }
+        const ann = (j && j.responses && j.responses[0]) || {};
+        if (ann.error) return resolve({ error: 'Google Vision: ' + (ann.error.message || 'ошибка распознавания') });
+        const text = (ann.textAnnotations || []).length ? ann.textAnnotations[0].description : (ann.fullTextAnnotation && ann.fullTextAnnotation.text || '');
+        resolve({ text: String(text || '').trim() });
+      });
+    });
+    req.on('error', e => resolve({ error: 'Google Vision: ' + e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ error: 'Google Vision: timeout' }); });
+    req.write(payload); req.end();
+  });
+}
+async function ocrImageTool(args) {
   const image = resolveImageFile(args.path); if (image.error) return image;
+  if (String(args.engine || '').toLowerCase() === 'google') {
+    const r = await googleVisionOcr(image);
+    if (r.error) return { path: image.path, error: r.error };
+    return { path: image.path, engine: 'google', text: r.text };
+  }
   const language = String(args.language || 'eng+rus').replace(/[^a-zA-Z+_]/g, '') || 'eng';
   const psm = Math.min(Math.max(Number(args.psm || 6), 3), 13);
   try {
@@ -2375,10 +2541,19 @@ async function handleMCPTool(tool, args = {}) {
     }
 
     case 'read_file': {
-      const resolved = mcpPathOrError(args.path, 'path', true);
-      if (resolved.error) return resolved;
-      try { return { path: resolved.path, content: fs.readFileSync(resolved.path, 'utf8') }; }
-      catch (e) { return { error: 'Не удалось прочитать файл: ' + e.message }; }
+      return await documentTextTool(args);
+    }
+
+    case 'document_extract': {
+      return await documentTextTool(args);
+    }
+
+    case 'media_info': {
+      return await mediaInfoTool(args);
+    }
+
+    case 'audio_transcribe': {
+      return await audioTranscribeTool(args);
     }
 
     case 'write_file': {
@@ -2390,8 +2565,23 @@ async function handleMCPTool(tool, args = {}) {
         if (/OPENROUTER_API_KEY\s*=|sk-or-(?:v1-)?[A-Za-z0-9_-]{16,}/i.test(content)) {
           return { error: 'OpenRouter key нельзя записывать в проектный файл или .env. Используй интерфейсную команду /key.' };
         }
+        // Safe write: never silently destroy a file the model is about to
+        // replace. Keep a timestamped backup so an accidental overwrite is
+        // recoverable, and tell the model it happened. Point edits should go
+        // through edit_file (no backup needed, only the block changes).
+        let backedUp = null;
+        if (fs.existsSync(resolved.path) && args.overwrite !== false && args.backup !== false) {
+          try {
+            const prev = fs.readFileSync(resolved.path, 'utf8');
+            const bdir = path.join(WORKSPACE_ROOT, '.zen-agent', 'backups');
+            fs.mkdirSync(bdir, { recursive: true });
+            const bak = path.join(bdir, path.basename(resolved.path) + '.' + Date.now() + '.bak');
+            fs.writeFileSync(bak, prev, 'utf8');
+            backedUp = bak;
+          } catch {}
+        }
         fs.writeFileSync(resolved.path, content, 'utf8');
-        return { success: true, path: resolved.path, size: Buffer.byteLength(content, 'utf8'), lines: content.split('\n').length, workspace: WORKSPACE_ROOT };
+        return { success: true, path: resolved.path, backedUp, size: Buffer.byteLength(content, 'utf8'), lines: content.split('\n').length, workspace: WORKSPACE_ROOT };
       } catch (e) { return { error: 'Не удалось записать файл: ' + e.message }; }
     }
 
@@ -4012,7 +4202,10 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент с доступом к ф�
   Ты НЕ ограничен текущей папкой: git_clone({"repo":"owner/name"}) кладёт репозиторий
   в work/<name>, затем set_workspace({"path":"<путь из ответа>"}) делает его рабочим.
   Учётные данные уже настроены — доступно всё, что видит токен. После правок: git_commit и git_push.
-- image_info(path), ocr_image(path), vision_analyze(path, prompt, model), vision_ui_audit(path), vision_compare(path, path2) — изображения и скриншоты
+- image_info(path), ocr_image(path, engine:local|google), vision_analyze(path, prompt, model), vision_ui_audit(path), vision_compare(path, path2) — изображения и скриншоты
+- document_extract(path) — извлечь текст из docx/odt/epub/pdf/rtf и текстовых файлов (read_file сам это делает без явного вызова)
+- media_info(path) — метаданные mp4/mp3: длительность, кодек, разрешение (нужен ffprobe)
+- audio_transcribe(path) — расшифровка речи из видео/аудио в текст (ffmpeg + Whisper)
 - custom_tool_list(), custom_tool_create(name, description, code), custom_tool_inspect(name), custom_tool_run(name, tool_args), custom_tool_delete(name) — локальные само-созданные plugins
 - subagent_list(), subagent_create(name, description, prompt), subagent_task(agent, prompt), subagent_delete(name) — isolated second-opinion subagents
 - plugin_list(), plugin_create(name, description, code), plugin_inspect(name), plugin_tool_list(), plugin_tool_run(plugin, name, tool_args), plugin_provider_list(), plugin_delete(name) — lifecycle plugins
@@ -5158,10 +5351,11 @@ async function useTool(name, args) {
     }
     if (r.content !== undefined) return `Файл: ${r.path || args.path || ''}\n\n${r.content}`;
     if (name === 'ocr_image' && r.text !== undefined) return `OCR: ${r.path || args.path || ''}\n\n${r.text}`;
+    if (r.transcript !== undefined) return `Транскрипт: ${r.path || args.path || ''}\n\n${r.transcript}`;
     if (r.analysis !== undefined) return `VISION • ${r.model || 'model'}\n\n${r.analysis}`;
     if (r.diff !== undefined) return r.diff;
     if (r.output !== undefined) return r.output || 'OK';
-    if (['process_start', 'process_status', 'process_stop', 'monitor_start', 'monitor_list', 'monitor_stop', 'terminal_create', 'terminal_write', 'terminal_list', 'terminal_close', 'file_backup', 'termux_info', 'network_check', 'http_request', 'health_check', 'websocket_test', 'project_inspect', 'tree_dir', 'search_text', 'file_info', 'copy_file', 'move_file', 'mkdir', 'archive_create', 'archive_extract', 'sqlite_info', 'sqlite_query', 'sqlite_schema', 'sqlite_backup', 'env_list', 'env_set', 'env_delete', 'image_info', 'vision_compare', 'vision_ui_audit', 'custom_tool_list', 'custom_tool_create', 'custom_tool_inspect', 'custom_tool_run', 'custom_tool_delete', 'subagent_list', 'subagent_create', 'subagent_task', 'subagent_delete', 'plugin_list', 'plugin_create', 'plugin_inspect', 'plugin_delete', 'plugin_tool_list', 'plugin_tool_run', 'plugin_provider_list', 'web_search', 'web_fetch'].includes(name)
+    if (['process_start', 'process_status', 'process_stop', 'monitor_start', 'monitor_list', 'monitor_stop', 'terminal_create', 'terminal_write', 'terminal_list', 'terminal_close', 'file_backup', 'termux_info', 'network_check', 'http_request', 'health_check', 'websocket_test', 'project_inspect', 'tree_dir', 'search_text', 'file_info', 'copy_file', 'move_file', 'mkdir', 'archive_create', 'archive_extract', 'sqlite_info', 'sqlite_query', 'sqlite_schema', 'sqlite_backup', 'env_list', 'env_set', 'env_delete', 'image_info', 'media_info', 'audio_transcribe', 'document_extract', 'vision_compare', 'vision_ui_audit', 'custom_tool_list', 'custom_tool_create', 'custom_tool_inspect', 'custom_tool_run', 'custom_tool_delete', 'subagent_list', 'subagent_create', 'subagent_task', 'subagent_delete', 'plugin_list', 'plugin_create', 'plugin_inspect', 'plugin_delete', 'plugin_tool_list', 'plugin_tool_run', 'plugin_provider_list', 'web_search', 'web_fetch'].includes(name)
       || (capabilities && capabilities.handles(name))) {
       return JSON.stringify(r, null, 2);
     }
@@ -5654,7 +5848,7 @@ const TOOL_REQUIRED_ARGS = {
   http_request: ['url'], health_check: ['url'], websocket_test: ['url'], npm_install: ['packages'], npm_run: ['script'],
   sqlite_query: ['database', 'sql'], sqlite_backup: ['database', 'destination'], env_set: ['key', 'value'], env_delete: ['key'],
   code_check: ['path'], git_commit: ['message'], git_clone: ['repo'], open_url: ['url'], clipboard_write: ['text'], notify: ['content'], todo_add: ['text'], todo_done: ['id'], todo_remove: ['id'], web_search: ['query'], web_fetch: ['url'], search_text: ['query'],
-  image_info: ['path'], ocr_image: ['path'], vision_analyze: ['path'], analyze_image: ['path'], vision_ui_audit: ['path'], vision_compare: ['path', 'path2'],
+  image_info: ['path'], ocr_image: ['path'], document_extract: ['path'], media_info: ['path'], audio_transcribe: ['path'], vision_analyze: ['path'], analyze_image: ['path'], vision_ui_audit: ['path'], vision_compare: ['path', 'path2'],
   custom_tool_create: ['name', 'description', 'code'], custom_tool_inspect: ['name'], custom_tool_run: ['name'], custom_tool_delete: ['name'],
   subagent_create: ['name', 'description', 'prompt'], subagent_task: ['agent', 'prompt'], subagent_delete: ['name'],
   plugin_create: ['name', 'description', 'code'], plugin_inspect: ['name'], plugin_delete: ['name'], plugin_tool_run: ['plugin', 'name'],
@@ -6346,7 +6540,7 @@ function showTools() {
     ['Рабочая папка и файлы', ['workspace_info','set_workspace','project_inspect','tree_dir','list_dir','find_files','search_text','file_info','read_file','write_file','edit_file','append_file','delete_file','mkdir','copy_file','move_file','file_backup','file_diff','archive_create','archive_extract']],
     ['Процессы, мониторинг и терминал', ['process_start','process_status','process_logs','process_stop','monitor_start','monitor_list','monitor_logs','monitor_stop','terminal_create','terminal_write','terminal_read','terminal_list','terminal_close','http_request','health_check','websocket_test']],
     ['Код, npm, SQLite и Git', ['npm_install','npm_run','run_tests','run_lint','code_check','dependency_audit','sqlite_info','sqlite_query','sqlite_schema','sqlite_backup','env_list','env_set','env_delete','git_status','git_diff','git_branch','git_log','git_init','git_commit']],
-    ['Vision и изображения', ['image_info','ocr_image','vision_analyze','vision_ui_audit','vision_compare','read_image']],
+    ['Vision, изображения и файлы', ['image_info','ocr_image','document_extract','media_info','audio_transcribe','vision_analyze','vision_ui_audit','vision_compare','read_image']],
     ['Саморасширение (песочница vm)', ['custom_tool_list','custom_tool_create','custom_tool_inspect','custom_tool_run','custom_tool_delete']],
     ['Capabilities (реальные процессы: adb, RDP, GUI, Python)', ['capability_templates','capability_list','capability_create','capability_install','capability_run','capability_logs','capability_stop','capability_inspect','capability_delete']],
     ['Subagents', ['subagent_list','subagent_create','subagent_task','subagent_delete']],
