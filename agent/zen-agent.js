@@ -149,6 +149,40 @@ function safeCommandTimeout(value, defaultValue = 18000) {
   const max = CONFIG.longTaskMode ? CONFIG.longCommandTimeoutMs : 120000;
   return Math.min(Math.max(requested, 1000), max);
 }
+// Destructive, irreversible commands are refused from execute_command. These
+// rewrite history / drop refs / mass-kill processes and are not recoverable;
+// when the model conflates the target repo with the local checkout this is what
+// "reset the branches". Override per-run with ZEN_ALLOW_DANGEROUS=1 for a
+// deliberate user request.
+function dangerousCommandRejected(commandText) {
+  if (process.env.ZEN_ALLOW_DANGEROUS === '1') return null;
+  const raw = String(commandText || '');
+  const lower = raw.toLowerCase();
+  // Git flags are case-sensitive: `git branch -D` (force-delete) is dangerous,
+  // `git branch -d` (delete merged only) is not. So git patterns run against the
+  // original text; the process-kill and rm patterns run against the lowercased one.
+  const gitPatterns = [
+    /\bgit\s+reset\s+--hard\b/,
+    /\bgit\s+push\b[^\n;&|\r]*\s-f\b/,
+    /\bgit\s+push\b[^\n;&|\r]*--force\b/,
+    /\bgit\s+clean\s+-[a-z-]*f/,
+    /\bgit\s+branch\s+-D\b/,
+    /\bgit\s+branch\s+--delete\s+--force\b/,
+    /\bgit\s+stash\s+drop\b/,
+    /\bgit\s+update-ref\s+-d\b/,
+    /\bgit\s+filter-branch\b/
+  ];
+  const genericPatterns = [
+    /\bpkill\b|\bkillall\b/,
+    /\brm\s+-r[f]{0,2}\s+['"]?(?:\/|\/[*]|\$home|\~)(?:\/|\s|$)/
+  ];
+  if (gitPatterns.some(re => re.test(raw)) ||
+      genericPatterns.some(re => re.test(lower))) {
+    return 'Отменено для безопасности: команда стирает историю/ветки или убивает процессы массово (' +
+      String(commandText).slice(0, 120) + '). Если это намеренно, попроси пользователя включить ZEN_ALLOW_DANGEROUS=1 и повторить, либо используй более безопасный инструмент (например, только указанный файл через write_file вместо git reset --hard).';
+  }
+  return null;
+}
 function setAgentMode(mode) {
   CONFIG.agentMode = normalizedAgentMode(mode);
   saveHistory();
@@ -2454,6 +2488,11 @@ async function handleMCPTool(tool, args = {}) {
       if (/(^|[^&])&\s*$/.test(commandText) || /\bnohup\b|\bdisown\b/.test(commandText)) {
         return { error: 'Не запускай фоновые процессы через execute_command. Используй process_start с name, command и cwd — тогда будут PID, process_logs и безопасный process_stop.' };
       }
+      // Защита от необратимых git-операций и массового убийства процессов:
+      // переписывает историю/ветки и не восстанавливается. Такое «сбрасывало»
+      // ветки, когда модель путала целевой репозиторий с локальным чек-аутом.
+      const danger = dangerousCommandRejected(commandText);
+      if (danger) return { error: danger };
       const opts = {
         cwd: runCwd,
         timeout: safeCommandTimeout(args.timeout, 18000),
@@ -4155,7 +4194,20 @@ function buildSystemPrompt() {
   const longRule = CONFIG.longTaskMode
     ? `Долгая задача включена: разрешено до ${agentStepLimit()} шагов и длительные команды. Для серверов используй process_start/process_logs, регулярно давай checkpoint и принимай /correct или /abort.`
     : 'Обычный лимит задачи: используй короткие безопасные шаги; для многочасовой работы пользователь включает /long on.';
-  return SYSTEM_PROMPT + `\n\nТЕКУЩИЙ КОНТЕКСТ MCP:\n- Платформа: ${PLATFORM.name}\n- Провайдер: ${currentProvider}\n- Модель: ${currentModel}\n- Режим: ${CONFIG.agentMode}\n- Активная AI-сессия: ${activeSession}\n- Активная рабочая папка: ${WORKSPACE_ROOT}\n- ${providerRule}\n- ${clarifyRule}\n- ${modeRule}\n- ${longRule}\n- Относительные пути разрешаются от неё; внутренняя папка Termux не используется.${repoFact}${envFacts}${presetPrompt()}${pluginPrompt ? `\n\nPLUGIN SYSTEM INSTRUCTIONS:\n${pluginPrompt}` : ''}`;
+  // The base prompt is written for the Termux/Android build. When the agent is
+  // actually running on a Linux/Windows runner (the panel's cloud sessions, the
+  // desktops) that text is actively misleading: the model reaches for termux_*
+  // and "searches the phone" although it is on an ordinary machine. Prepend a
+  // hard platform directive so the environment is unambiguous up front.
+  const platformHeader = PLATFORM.isTermux
+    ? ''
+    : `ВАЖНО — ГДЕ ТЫ ЗАПУЩЕН:\n` +
+      `- Ты запущен на ${PLATFORM.name}${PLATFORM.type === 'pc' ? ' (Linux/Windows-раннер)' : ''}: это обычная машина, а НЕ Termux/Android и НЕ эмулятор. Значит, у тебя нет ни настоящего устройства Android, ни «телефона» — все инструменты работают только с этим хостом.\n` +
+      `- Рабочая папка — это каталог на ЭТОЙ машине (${WORKSPACE_ROOT}), а не общая память телефона. Не ищи файлы «на телефоне», не используй /storage/emulated/0 и пути Android.\n` +
+      `- Инструменты Termux/Android здесь НЕДОСТУПНЫ и не нужны: termux_info, termux_api_status, termux_battery, termux_wifi, termux_toast, termux_vibrate, termux_share, termux_volume, termux_location, открытие URL как Termux:API, clipboard_* как Android. Если пользователь пишет «сделай на телефоне / в Termux» — скажи, что эта сессия работает на машине, а не на устройстве; используй локальные инструменты этой машины.\n` +
+      `- Все указания ниже про «общую память Android / /storage/emulated/0 / Android VPN» относятся ТОЛЬКО к Termux-сборке и к этому запуску не применяются. Локальный git в рабочей папке — это реальный git этой машины. GitHub-доступ — через github_* (API) с GITHUB_TOKEN и отдельно от локального git в папке.\n` +
+      `- Для файлов/процессов/команд используй локальные инструменты этой машины: list_dir, find_files, search_text, read_file, write_file, edit_file, append_file, execute_command, terminal_*, process_*, monitor_*, npm_*, run_tests, run_lint, code_check, sqlite_*.\n`;
+  return platformHeader + SYSTEM_PROMPT + `\n\nТЕКУЩИЙ КОНТЕКСТ MCP:\n- Платформа: ${PLATFORM.name}\n- Провайдер: ${currentProvider}\n- Модель: ${currentModel}\n- Режим: ${CONFIG.agentMode}\n- Активная AI-сессия: ${activeSession}\n- Активная рабочая папка: ${WORKSPACE_ROOT}\n- ${providerRule}\n- ${clarifyRule}\n- ${modeRule}\n- ${longRule}\n- Относительные пути разрешаются от неё; внутренняя папка Termux не используется.${repoFact}${envFacts}${presetPrompt()}${pluginPrompt ? `\n\nPLUGIN SYSTEM INSTRUCTIONS:\n${pluginPrompt}` : ''}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════
