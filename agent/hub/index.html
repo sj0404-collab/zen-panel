@@ -1065,8 +1065,13 @@ async function createSession(){
   await switchSession(name);
 }
 async function switchSession(name){
+  if (runId){ say('_Сессию нельзя переключить, пока идёт задача. Дождись её или нажми «Стоп»._'); return; }
   currentSession = name;
-  try { await apiFetch('/api/agent/sessions/' + encodeURIComponent(name), {method:'POST', body:'{}'}); } catch(e) {}
+  try {
+    const r = await apiFetch('/api/agent/sessions/' + encodeURIComponent(name), {method:'POST', body:'{}'});
+    const dr = await r.json();
+    if (!r.ok){ say('**Не удалось переключить:** ' + (dr.error || r.status)); loadSessions(); return; }
+  } catch(e) { say('**Не удалось переключить:** ' + e.message); loadSessions(); return; }
   try {
     const d = await (await apiFetch('/api/agent/sessions/' + encodeURIComponent(name))).json();
     const msgs = (d.session && d.session.messages) || [];

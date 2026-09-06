@@ -21,6 +21,7 @@ const vm = require('vm');
 // NOT sandboxed - adb, RDP and GUI screenshots cannot exist without spawn().
 // Optional require: a missing file must not stop the agent from starting.
 let capabilitiesModule = null;
+let cloudStore = null; try { cloudStore = require('./cloud-store.js'); } catch {}
 try { capabilitiesModule = require('./capabilities.js'); }
 catch (e) { capabilitiesModule = null; }
 // Optional: this ships as a single file, and ../lib/local-ai is not part of
@@ -2278,24 +2279,189 @@ function subagentDeleteTool(args) {
   delete registry[name]; writeSubagentRegistry(registry); return { success: true, name };
 }
 function resolveSubagent(name) { return BUILTIN_SUBAGENTS[name] ? { name, ...BUILTIN_SUBAGENTS[name], builtin: true } : readSubagentRegistry()[name] || null; }
+// Read-only tool set a subagent may actually call. Writes, shells, Git pushes,
+// process/monitor spawns, github writes and plugin tools are excluded: a
+// subagent is a bounded, isolated second opinion, not the primary agent. The
+// loop in subagentTaskTool runs through the real `useTool` executor, so a
+// subagent reads the actual file/system contents and can never invent them.
+const SUBAGENT_READONLY_TOOLS = new Set([
+  'workspace_info', 'project_inspect', 'tree_dir', 'search_text', 'file_info', 'list_dir',
+  'find_files', 'read_file', 'file_diff', 'terminal_read', 'terminal_list', 'process_status',
+  'process_logs', 'monitor_list', 'monitor_logs', 'http_request', 'health_check', 'websocket_test',
+  'sqlite_info', 'sqlite_query', 'sqlite_schema', 'env_list', 'code_check', 'dependency_audit',
+  'github_read', 'github_list', 'github_search', 'github_commits', 'github_branches', 'github_repo',
+  'github_my_repos', 'github_runs', 'git_status', 'git_diff', 'git_branch', 'git_log',
+  'web_search', 'web_fetch', 'image_info', 'ocr_image', 'document_extract', 'media_info',
+  'audio_transcribe', 'vision_analyze', 'analyze_image', 'vision_ui_audit', 'vision_compare',
+  'custom_tool_list', 'custom_tool_inspect', 'subagent_list', 'plugin_list', 'plugin_inspect', 'plugin_provider_list'
+]);
+// Call the current provider with the subagent's own message array (never the
+// primary agent's `history`), so the subagent is a genuinely isolated context.
+async function subagentModelCall(messages, model) {
+  const provider = currentProvider;
+  if (provider === 'openrouter') return callOpenRouter(messages, model);
+  if (provider === 'github' || provider === 'huggingface' || provider === 'tokenra' || provider === 'orcarouter') return callCompatibleProvider(provider, messages, model);
+  if (provider === 'local') {
+    const localConfig = localAi.publicConfig();
+    const localModel = localConfig.engines?.[localConfig.activeEngine]?.model || '';
+    const answer = await localAi.chat({ messages, model: localModel, temperature: CONFIG.temperature, max_tokens: CONFIG.maxTokens });
+    return { text: answer.text, toolCalls: [], model: answer.model || localModel, usage: answer.usage || {}, reasoning: null, outputShown: false, provider: 'local' };
+  }
+  if (provider !== 'zen') { const customProvider = findPluginProvider(provider); if (customProvider) return callPluginProvider(messages, model, customProvider); }
+  return callZenDirect(messages, model, false);
+}
+// Execute a single subagent tool call, honoring the read-only allowlist.
+async function subagentRunTool(toolName, args) {
+  const name = String(toolName || '').toLowerCase().trim();
+  if (!SUBAGENT_READONLY_TOOLS.has(name)) {
+    return `Инструмент '${name}' недоступен subagent (read-only-режим). Доступны: ${[...SUBAGENT_READONLY_TOOLS].slice(0, 24).join(', ')}… Выбери доступный инструмент или дай вывод напрямую.`;
+  }
+  try { return await useTool(name, args || {}); }
+  catch (e) { return `Ошибка вызова ${name}: ${e.message || e}`; }
+}
+
+
+// Arg-key aliases: free models use inconsistent key names; normalise to the
+// canonical key each tool understands.
+const SUBAGENT_ARG_ALIASES = {
+  query: ['query', 'text', 'pattern', 'search', 'q', 'term', 'needle', 'name'],
+  path: ['path', 'dir', 'directory', 'file', 'filename', 'folder'],
+  content: ['content', 'body'],
+  url: ['url', 'link', 'uri'],
+  sql: ['sql', 'statement']
+};
+function subagentCanonKey(key) {
+  const k = String(key || '').toLowerCase();
+  for (const [canonical, aliases] of Object.entries(SUBAGENT_ARG_ALIASES)) if (aliases.includes(k)) return canonical;
+  return k;
+}
+function subagentStripQuotes(value) {
+  const v = String(value == null ? '' : value).trim();
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) return v.slice(1, -1);
+  return v;
+}
+function subagentSplitArgs(inside) {
+  const out = []; let cur = '', quote = null, esc = false;
+  for (const ch of String(inside || '')) {
+    if (esc) { cur += ch; esc = false; continue; }
+    if (ch === '\\') { cur += ch; esc = true; continue; }
+    if (quote) { cur += ch; if (ch === quote) quote = null; continue; }
+    if (ch === '"' || ch === "'") { quote = ch; cur += ch; continue; }
+    if (ch === ',') { out.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+// Lenient parser for the subagent: accepts TOOL_JSON, ```json, <tool_call>
+// (bare name / JSON), `name(arg=val)` call-style, `key: value` lines, and a
+// bare `tool path`. The bare-path fallback fires only when the token is
+// path-like, so prose that merely starts with a tool name ("read_file is…")
+// is never mistaken for a real call.
+function subagentParseToolCall(text) {
+  const jc = parseJsonToolCall(text);
+  if (jc) return jc;
+  const t = String(text || '').trim();
+  if (!t) return null;
+  const PATH_EXT = /\.(txt|md|json|js|ts|tsx|jsx|py|rb|go|rs|c|cpp|h|java|xml|yml|yaml|toml|ini|cfg|env|sh|html|css|scss|sql|docx|doc|pdf|epub|rtf|odt|xlsx|csv|png|jpg|jpeg|gif|webp|bmp|mp3|mp4|wav|ogg|flac|aac|mov|mkv|webm|zip|tar|gz)$/i;
+  const pathLike = v => /^[^\s]{1,200}$/.test(v) && (v.includes('/') || v.startsWith('.') || v.startsWith('~') || PATH_EXT.test(v));
+  const queryTools = new Set(['web_search', 'web_fetch', 'search_text', 'github_search', 'find_files']);
+  // name(arg=val, ...) call-style
+  const paren = t.match(/^([a-z][a-z0-9_]{2,63})\s*\(\s*([\s\S]*?)\s*\)\s*$/i);
+  if (paren) {
+    const tool = paren[1].toLowerCase();
+    if (!SUBAGENT_READONLY_TOOLS.has(tool)) return null;
+    const args = {};
+    const inside = paren[2];
+    if (inside.trim()) {
+      for (const pair of subagentSplitArgs(inside)) {
+        const kv = pair.match(/^\s*([a-z_][a-z0-9_]*)\s*[:=]\s*(.*?)\s*$/i);
+        if (kv) args[subagentCanonKey(kv[1])] = subagentStripQuotes(kv[2]);
+      }
+    }
+    return { tool, args };
+  }
+  // key:value / key=value lines and bare `tool path`
+  const lines = t.split('\n');
+  const mm = (lines[0] || '').trim().match(/^([a-z][a-z0-9_]{2,63})\b/i);
+  if (!mm) return null;
+  const tool = mm[1].toLowerCase();
+  if (!SUBAGENT_READONLY_TOOLS.has(tool)) return null;
+  const args = {};
+  const positionals = [];
+  const kvRe = /^([a-z_][a-z0-9_]*)\s*[:=]\s*(.*)$/i;
+  const restOfHead = (lines[0].slice(mm[0].length)).trim();
+  if (restOfHead) positionals.push(restOfHead);
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const kv = line.match(kvRe);
+    if (kv) args[subagentCanonKey(kv[1])] = subagentStripQuotes(kv[2]);
+    else positionals.push(line);
+  }
+  const noArg = new Set(['workspace_info', 'list_dir', 'tree_dir', 'subagent_list', 'sqlite_schema', 'process_status', 'monitor_list', 'terminal_list', 'plugin_list', 'custom_tool_list', 'image_info', 'media_info']);
+  if (positionals.length) {
+    const p0 = positionals[0];
+    if (p0 && pathLike(p0)) { if (queryTools.has(tool)) args.query = p0; else args.path = p0; }
+    else if (p0) { if (queryTools.has(tool)) args.query = p0; else return null; }
+  }
+  if (Object.keys(args).length === 0 && !noArg.has(tool)) return null;
+  return { tool, args };
+}
+
+
 async function subagentTaskTool(args) {
   const name = String(args.agent || args.name || 'explore'); const agent = resolveSubagent(name);
   if (!agent) return { error: `Subagent '${name}' не найден. Используй subagent_list.` };
   const task = String(args.prompt || args.task || '').trim(); if (!task) return { error: 'Для subagent_task нужен prompt или task.' };
   const model = args.model || agent.model || currentModel;
+  const toolGuide = [...SUBAGENT_READONLY_TOOLS].sort().join(', ');
   const system = [
-    'Ты — изолированный subagent. Не выполняй изменения и не утверждай, что что-то изменил.',
+    'Ты — изолированный subagent. Ты НЕ выполняешь изменения и НЕ утверждаешь, что что-то изменил.',
     `Роль: ${agent.description}`,
     `Режим: ${agent.mode}.`,
     agent.prompt || '',
     `Рабочая папка: ${WORKSPACE_ROOT}.`,
-    'Дай краткий проверяемый отчёт: факты, неопределённости, следующий безопасный шаг.'
+    'Чтобы ответить, действительно проверь данные: читай реальные файлы/структуру через доступные инструменты, а не угадывай их содержимое.',
+    `Доступные инструменты (read-only): ${toolGuide}.`,
+    'Дай краткий проверяемый отчёт: факты (что реально прочитано), неопределённости, следующий безопасный шаг.'
   ].join('\n');
   const messages = [{ role: 'system', content: system }, { role: 'user', content: task }];
+  const MAX_STEPS = 6;
+  let step = 0, lastText = '', usedTools = [];
   try {
-    // Subagent intentionally has no tool loop: it is an isolated second opinion.
-    const result = currentProvider === 'openrouter' ? await callOpenRouter(messages, model) : await callZenDirect(messages, model, false);
-    return { success: true, agent: name, model: result.model || model, output: result.text || '', usage: result.usage || {}, mode: agent.mode };
+    while (step < MAX_STEPS) {
+      step++;
+      const result = await subagentModelCall(messages, model);
+      const text = String(result.text || '').trim();
+      const nativeCalls = (currentProvider !== 'zen' && Array.isArray(result.toolCalls) && result.toolCalls.length) ? result.toolCalls : [];
+      if (nativeCalls.length) {
+        messages.push({ role: 'assistant', content: result.text || '', tool_calls: result.toolCalls });
+        for (const call of result.toolCalls) {
+          let tArgs = {};
+          try { tArgs = JSON.parse(call?.function?.arguments || '{}'); } catch { tArgs = {}; }
+          const tName = String(call?.function?.name || '').toLowerCase().trim();
+          usedTools.push(tName);
+          const content = await subagentRunTool(tName, tArgs);
+          messages.push({ role: 'tool', tool_call_id: call.id, name: tName, content: String(content || '') });
+        }
+        continue;
+      }
+      const call = subagentParseToolCall(text);
+      if (call) {
+        const tName = String(call.tool || '').toLowerCase().trim();
+        const tArgs = call.args || {};
+        usedTools.push(tName);
+        const content = await subagentRunTool(tName, tArgs);
+        messages.push({ role: 'assistant', content: text });
+        messages.push({ role: 'user', content: String(content || '') });
+        continue;
+      }
+      lastText = text;
+      break;
+    }
+    if (!lastText) lastText = `Subagent '${name}' не дал текстовый ответ после ${step} шаг(ов). Обычно это исчерпанный лимит бесплатной модели; попробуй другой model/agent.`;
+    return { success: true, agent: name, model, output: lastText, mode: agent.mode, steps: step, tools: usedTools, readOnly: true };
   } catch (e) { return { error: `Subagent '${name}' failed: ${e.message || e}` }; }
 }
 
@@ -3497,7 +3663,8 @@ function startEmbeddedServer() {
   const sessionView = name => {
     const valid = safeSessionName(name); const data = valid && sessionStore.sessions[valid];
     if (!data) return null;
-    return { id: valid, title: data.title || valid, active: valid === activeSession, ts: Date.parse(data.updatedAt || data.createdAt || '') || Date.now(), model: data.model || currentModel, provider: data.provider || currentProvider, messages: displayHistory(data) };
+    const messages = displayHistory(data);
+    return { id: valid, name: valid, title: data.title || valid, active: valid === activeSession, ts: Date.parse(data.updatedAt || data.createdAt || '') || Date.now(), model: data.model || currentModel, provider: data.provider || currentProvider, messages, msgs: messages.length, webMessages: messages.length };
   };
   const ensureSession = name => {
     const valid = safeSessionName(name); if (!valid) return { error: 'Session name may contain up to 48 letters, digits, _, - and .' };
@@ -5380,6 +5547,9 @@ let currentModel = CONFIG.defaultModel;
 let history = [];
 let agentBusy = false;
 let abortRequested = false;
+// Count consecutive empty replies within one task so the auto-switch loop
+// cannot spin forever through every model (the 'hangs, then answers nothing' bug).
+let emptyReplyTries = 0;
 const RECENT_FAILED_TOOLS = [];
 const MODEL_STALL_MS = Math.max(30000, parseInt(process.env.ZEN_STALL_MS || '300000', 10) || 300000);
 async function callCurrentProviderWithStall() {
@@ -5676,6 +5846,31 @@ function saveSessionStore() {
     try { fs.chmodSync(SESSIONS_FILE, 0o600); } catch {}
   } catch {}
 }
+  cloudBackupSessions();
+let __cloudBackupTimer = null;
+function cloudRestoreSessions() {
+  if (!cloudStore || !cloudStore.enabled('ZEN_CLOUD_SYNC')) return;
+  cloudStore.restoreSessions().then(stored => {
+    if (!stored || !stored.sessions) return;
+    // Keep local settings but overlay remote sessions/settings so a new runner
+    // picks up the state it last backed up.
+    try {
+      for (const [name, data] of Object.entries(stored.sessions)) sessionStore.sessions[name] = data;
+      if (stored.settings) sessionStore.settings = { ...(sessionStore.settings || {}), ...stored.settings };
+      if (stored.active) activeSession = safeSessionName(stored.active) || activeSession;
+      sessionStore.active = activeSession;
+      console.log('[cloud-store] restored ' + Object.keys(stored.sessions).length + ' session(s) from ' + (stored.active || 'default'));
+    } catch (e) { console.log('[cloud-store] restore merge: ' + (e && e.message || e)); }
+  });
+}
+function cloudBackupSessions() {
+  if (!cloudStore || !cloudStore.enabled('ZEN_CLOUD_SYNC')) return;
+  if (__cloudBackupTimer) clearTimeout(__cloudBackupTimer);
+  __cloudBackupTimer = setTimeout(() => {
+    __cloudBackupTimer = null;
+    try { cloudStore.backupSessions(sessionStore); } catch (e) { console.log('[cloud-store] backup: ' + (e && e.message || e)); }
+  }, 1500);
+}
 function saveHistory() {
   scrubHistorySecrets();
   if (!sessionStore.sessions) loadSessionStore();
@@ -5703,6 +5898,11 @@ function listSessions() {
 }
 function switchSession(name) {
   const valid = safeSessionName(name); if (!valid) return { error: 'Имя сессии: до 48 букв/цифр, _, -, . .' };
+  // Never switch mid-run: switchSession reassigns the shared module-level
+  // `history`, so the active agentLoop would start writing its tool/message
+  // results into the *new* session and corrupt it (sessions "mix up"). Refuse
+  // while a run is live and let the caller handle it as a busy conflict.
+  if (agentBusy) return { error: 'Сессия не переключается, пока идёт задача. Дождись её завершения (или нажми «Стоп»), затем переключись.' };
   saveHistory(); loadSessionStore();
   if (!sessionStore.sessions[valid]) sessionStore.sessions[valid] = { history: [], createdAt: new Date().toISOString(), provider: currentProvider, model: currentModel, workspace: WORKSPACE_ROOT };
   activeSession = valid; sessionStore.active = valid;
@@ -6214,6 +6414,7 @@ async function agentLoop(userInput) {
   agentBusy = true;
   abortRequested = false;
   activeProviderAbort = null;
+  emptyReplyTries = 0;
   beginAgentTelemetry(userInput);
   auditEvent('task_started', { inputChars: String(userInput || '').length, model: currentModel });
   await pluginHook('event', { type: 'task.started', provider: currentProvider, model: currentModel, mode: CONFIG.agentMode, inputChars: String(userInput || '').length });
@@ -6349,22 +6550,30 @@ ${correction}` });
       // and name the model, since the usual cause is a free model that has
       // stopped serving this session.
       if (!text.trim()) {
-        if (currentProvider === 'zen' && CONFIG.autoSwitchModel !== false) {
+        emptyReplyTries++;
+        const MAX_EMPTY_TRIES = 3;
+        // Try a sibling model ONCE per empty reply, but never spin forever: a
+        // free model that has stopped serving leaves the loop here with a clear
+        // answer instead of cycling models and appearing frozen.
+        if (currentProvider === 'zen' && CONFIG.autoSwitchModel !== false &&
+            emptyReplyTries <= MAX_EMPTY_TRIES) {
           const order = zenFallbackOrder();
           const idx = order.indexOf(currentModel);
           const nxt = order[(idx + 1) % Math.max(1, order.length)];
           if (nxt && nxt !== currentModel) {
-            webRunEvent('empty_reply_switch', { from: currentModel, to: nxt });
+            webRunEvent('empty_reply_switch', { from: currentModel, to: nxt, try: String(emptyReplyTries) });
             currentModel = nxt;
             setRunPhase('model', 'смена после пустого · ' + nxt);
+            // A tiny pause so a rate-limited free model is not asked instantly again.
+            await zenSleep(Math.min(4000, 800 * emptyReplyTries));
             continue;
           }
         }
-        finalAnswer = `Модель ${currentModel} вернула пустой ответ дважды подряд. ` +
+        finalAnswer = `Модель ${currentModel} вернула пустой ответ (${emptyReplyTries} раз подряд). ` +
           'Обычно это исчерпанный лимит бесплатной модели или слишком длинный контекст. ' +
-          'Смените модель или начните новую сессию — /clear.';
+          'Смените модель или начните новую сессию — /clear. При необходимости повторите запрос.';
         setRunPhase('error', 'пустой ответ модели');
-        webRunEvent('empty_reply', { step: String(TELEMETRY.step), model: String(currentModel) });
+        webRunEvent('empty_reply', { step: String(TELEMETRY.step), model: String(currentModel), tries: String(emptyReplyTries) });
         history.push({ role: 'assistant', content: finalAnswer });
         break;
       }
@@ -6607,6 +6816,7 @@ async function main() {
   loadProviderStores();
   loadPresets();
   loadHistory();
+  cloudRestoreSessions();
   rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   let inputClosed = false;
   rl.on('close', () => { inputClosed = true; });
@@ -6979,6 +7189,7 @@ for (let i = 0; i < args.length; i++) {
 // Нужен и в одноразовом режиме: node cli-agent-termux-mcp.js "...".
 loadOpenRouterKey();
 loadProviderStores();
+cloudRestoreSessions();
 
 if (args.length === 0 || (args.length >= 1 && args[0].startsWith('--'))) {
   main();
