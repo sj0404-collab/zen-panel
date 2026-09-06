@@ -58,6 +58,16 @@
   #studio{display:none;width:42%;min-width:220px;border-left:1px solid var(--line);
           background:#101014;overflow-y:auto;padding:10px;}
   body.studio-on #studio{display:block;}
+  #agents{display:none;width:30%;min-width:200px;border-left:1px solid var(--line);
+          background:#0f1114;overflow-y:auto;padding:10px;font-size:13px;}
+  body.agents-on #agents{display:block;}
+  #agents .t-row{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:0 0 8px;background:#131318;}
+  #agents .t-row .t-name{font-weight:700;display:flex;align-items:center;gap:6px;}
+  #agents .t-row .t-status{color:var(--dim);font-size:12px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  #agents .t-row .t-step{font-size:12px;color:var(--text);}
+  #agents .t-row .t-prog{height:4px;background:#26262f;border-radius:4px;overflow:hidden;margin-top:6px;}
+  #agents .t-row .t-prog>i{display:block;height:100%;background:var(--accent);}
+  #agents .t-empty{color:var(--dim);font-size:12.5px;padding:6px 2px;}
   .studio-h{font-size:11px;letter-spacing:.8px;text-transform:uppercase;color:var(--dim);margin:0 0 8px;}
   .studio-item{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:0 0 8px;background:var(--panel);}
   .studio-item pre{margin:6px 0 0;white-space:pre-wrap;word-break:break-word;font:12px ui-monospace,Menlo,monospace;max-height:240px;overflow:auto;}
@@ -139,7 +149,7 @@
     <button class="ghost" onclick="togglePresets()" title="Пресеты">☰</button>
     <button class="ghost" onclick="toggleLocal()" title="Локальные модели">⤓</button>
     <button class="ghost" onclick="toggleTerm()" title="Терминал">▣</button>
-  </div>
+  </div><button class="ghost" id="btn-agents" onclick="toggleAgents()" title="Агенты и задачи">🧭</button>
 </header>
 
 <div id="sessions" class="sheet">
@@ -234,6 +244,10 @@
 <aside id="studio">
   <div class="studio-h">VS Studio · инструменты и вывод</div>
   <div id="studio-body" class="hint">Здесь появляются команды и файлы, чтобы не крутить чат вниз.</div>
+</aside>
+<aside id="agents">
+  <div class="studio-h">Агенты · задачи</div>
+  <div id="agents-body"><div class="t-empty">Пока нет активных задач. Запусти задачу — здесь появится живой статус шага и инструмента.</div></div>
 </aside>
 </div>
 
@@ -703,6 +717,7 @@ function applyEvent(ev){
     }
     case 'approval_required': askApproval(ev.tool, ev.args); break;
     case 'tool_denied': say('_Отклонено: ' + ev.tool + '_'); break;
+    updateAgentPanel(ev);
     case 'task_started': lastThinkAt = Date.now(); break;
     case 'model_switched':
       say('_Модель зависла — переключено на **' + (ev.to||'') + '**_');
@@ -1207,6 +1222,41 @@ function waitUntil(cond, ms){
 
 loadSessions();
 loadKeys();
+
+/* Live "Агенты · задачи" panel: driven by the same run events the chat uses. */
+let agentState = { phase:'—', step:'—', limit:'?', tool:null, steps:0, activity:[], startedAt:null };
+function toggleAgents(){ document.body.classList.toggle('agents-on'); renderAgentPanel(); }
+function updateAgentPanel(ev){
+  if(!ev) return;
+  if(ev.type==='task_started'){ agentState={phase:'запуск',step:'—',limit:'?',tool:null,steps:0,activity:[],startedAt:ev.at||Date.now()}; }
+  else if(ev.type==='round_started'){ agentState.phase='думает'; agentState.step=ev.step===''?'—':ev.step; agentState.limit=ev.limit||'?'; agentState.steps=parseInt(ev.step||agentState.steps,10)||0; agentState.tool=null; }
+  else if(ev.type==='model_reply'){ agentState.phase='думает'; if(agentState.steps===0) agentState.steps=1; }
+  else if(ev.type==='tool_started'){ agentState.phase=ev.tool||'инструмент'; agentState.tool=ev.tool||null; }
+  else if(ev.type==='tool_finished'){ agentState.phase=ev.tool||'инструмент'; }
+  else if(ev.type==='report'||ev.type==='error'){ agentState.phase=ev.type==='report'?'готово':'ошибка'; }
+  agentState.activity.unshift(ev.type);
+  agentState.activity = agentState.activity.slice(0,8);
+  renderAgentPanel();
+}
+function renderAgentPanel(){
+  const body = document.getElementById('agents-body');
+  if(!body) return;
+  const row = document.createElement('div');
+  row.className='t-row';
+  const steps = agentState.step==='—'?'—':(agentState.step+'/'+agentState.limit);
+  row.innerHTML = '<div class="t-name"><span class="dot '+(agentState.phase==='готово'?'ok':(agentState.phase==='ошибка'?'bad':'run'))+'"></span> Основной агент</div>'
+    + '<div class="t-status">'+escapeHtml(agentState.phase)+'</div>'
+    + '<div class="t-step">шаг '+escapeHtml(steps)+(agentState.tool?' · '+escapeHtml(String(agentState.tool)):'')+'</div>'
+    + '<div class="t-prog"><i style="width:'+Math.min(100,Math.round((agentState.steps/ (parseInt(agentState.limit,10)||10))*100))+'%"></i></div>';
+  body.replaceChildren(row);
+  if(agentState.activity.length){
+    const hist = document.createElement('div');
+    hist.style.cssText='margin-top:8px;color:var(--dim);font-size:11.5px';
+    hist.textContent = 'события: ' + agentState.activity.slice(0,6).join(' · ');
+    body.appendChild(hist);
+  }
+}
+function escapeHtml(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 /* First command from the panel (?q=) is sent once the hub is ready. */
 (function autoSendQuery(){
