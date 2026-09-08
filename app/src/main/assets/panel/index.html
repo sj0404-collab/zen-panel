@@ -1774,8 +1774,40 @@ async function stopRun(id, repo) {
   if (!tok()) { alert('Нужен токен, чтобы останавливать.'); return; }
   if (!confirm('Остановить сессию? Автосейв уже отправил работу в ветку.')) return;
   const ok = await cancelRun(id, repo);
+  if (ok) await markSessionEnded(id);
   alert(ok ? 'Остановлено. Раннер сворачивается ~полминуты.' : 'Не вышло.');
   setTimeout(() => { refresh(); if (page === 'act') loadActions(true); }, 4000);
+}
+
+/**
+ * Stamp the session file ended the moment the user stops the run.
+ *
+ * GitHub can take minutes to actually kill the runner (measured: a cancel
+ * accepted at once, the run dead 17 minutes later), and until the runner's
+ * own always() step publishes state=ended the panel would keep advertising
+ * a live session. So the panel writes it itself - but only the entry this
+ * run owns (same runId rule as publish_session.sh), and failures are
+ * silent: with a read-only token the runner's step stays the backstop.
+ */
+async function markSessionEnded(id) {
+  try {
+    const slot = ['linux', 'windows', 'agent', 'opencode', 'hub']
+      .find(s => DESKS[s] && String(DESKS[s].runId) === String(id));
+    if (!slot) return;
+    const path = `session-${slot}.json`;
+    const f = await api(`${CTL()}/contents/${path}?ref=session-state`);
+    const cur = JSON.parse(decodeURIComponent(escape(
+      atob((f.content || '').replace(/\n/g, '')))));
+    if (String(cur.runId) !== String(id)) return; // a newer run already owns it
+    cur.state = 'ended';
+    const content = btoa(unescape(encodeURIComponent(JSON.stringify(cur, null, 2))));
+    await api(`${CTL()}/contents/${path}`, {
+      method: 'PUT',
+      headers: Object.assign(hdr(), { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ message: `stop ${slot} ${id}`, content,
+        branch: 'session-state', sha: f.sha })
+    });
+  } catch (e) { /* the runner's always() step is the backstop */ }
 }
 
 // ── session credentials ─────────────────────────────────────────────

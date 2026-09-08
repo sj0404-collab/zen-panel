@@ -57,18 +57,18 @@ jobs:
 
       - name: Install the CLI agents
         run: |
-          # Best effort, one by one: a renamed package must not cancel the
-          # rest. Whatever lands on PATH the hub picks up; the summary below
-          # lists what actually made it.
-          for p in opencode-ai @anthropic-ai/claude-code @google/gemini-cli \
-                   @openai/codex @github/copilot @qwen-code/qwen-code http-server; do
-            npm install -g "$p" >/tmp/npm-i.log 2>&1 \
-              && echo "installed $p" || echo "skipped $p"
-          done
-          for p in aider-chat goose-ai; do
-            pip install --quiet "$p" >/tmp/pip-i.log 2>&1 \
-              && echo "installed $p" || echo "skipped $p"
-          done
+          # One npm call: its downloads run concurrently, so this is minutes
+          # faster than installing one by one. If it fails, fall back to
+          # per-package attempts so a renamed package cannot cancel the
+          # rest. Whatever lands on PATH the hub picks up; anything missing
+          # still launches through `npx -y` at click time.
+          PKGS="opencode-ai @anthropic-ai/claude-code @google/gemini-cli @openai/codex @github/copilot @qwen-code/qwen-code http-server"
+          npm install -g $PKGS >/tmp/npm-i.log 2>&1 || \
+            for p in $PKGS; do npm install -g "$p" >/tmp/npm-i.log 2>&1 \
+              && echo "installed $p" || echo "skipped $p"; done
+          pip install --quiet aider-chat goose-ai >/tmp/pip-i.log 2>&1 || \
+            for p in aider-chat goose-ai; do pip install --quiet "$p" >/tmp/pip-i.log 2>&1 \
+              && echo "installed $p" || echo "skipped $p"; done
           echo "--- on PATH now ---"
           for c in opencode claude gemini codex copilot qwen aider goose http-server; do
             command -v "$c" >/dev/null 2>&1 && echo "  $c: $(command -v $c)" || echo "  $c: -"
@@ -99,6 +99,7 @@ jobs:
             tail -25 /tmp/tunnel.log
             exit 1
           fi
+          echo "$URL" > /tmp/hub-url
 
           TOOLS=$(python3 -c "
           import json, urllib.request
@@ -148,8 +149,44 @@ jobs:
 
       - name: Keep the session alive
         run: |
-          echo "Running until cancelled, or for six hours."
-          sleep 21000
+          # Watch the hub and the tunnel instead of sleeping blindly: a dead
+          # hub behind a live tunnel answers 502, and a dead tunnel keeps
+          # resolving - both look like "the address is there but nothing
+          # opens". Either one is restarted here; a new tunnel address is
+          # republished so the panel never points at a corpse.
+          HUBDIR="$GITHUB_WORKSPACE/fork/npm-hub"
+          PIDFILE=/tmp/cloudflared-8090.pid
+          for i in $(seq 1 1400); do
+            sleep 15
+            if ! curl -sf -o /dev/null -m 10 http://127.0.0.1:8090/api/tools; then
+              echo "::warning::hub stopped answering; restarting it."
+              # Brackets, not a plain string: pkill -f matches its own
+              # parent shell's command line too, and a plain pattern is
+              # suicide - measured the hard way.
+              pkill -f "src/server[.]js" 2>/dev/null || true
+              cd "$HUBDIR"
+              PORT=8090 nohup node src/server.js >> /tmp/hub.log 2>&1 &
+              sleep 5
+            fi
+            CUR=$(cat /tmp/hub-url 2>/dev/null || echo)
+            PID=$(cat "$PIDFILE" 2>/dev/null || echo)
+            EDGE=""
+            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ]; then
+              code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$CUR/" 2>/dev/null || true)
+              case "$code" in 2*|3*|4*) EDGE=1 ;; esac
+            fi
+            if [ -n "$EDGE" ]; then continue; fi
+            echo "::warning::tunnel dead; reopening."
+            URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 /tmp/tunnel2.log) || continue
+            [ -n "$URL" ] || continue
+            echo "$URL" > /tmp/hub-url
+            echo "back up on $URL"
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+                "slot=hub" "kind=NPM-Hub" "os=linux" \
+                "url=$URL" "hubUrl=$URL" "desktop=$URL/d" "mobile=$URL/m" \
+                "auth=без пароля" "label=${{ inputs.label }}"
+          done
 
       - name: Clear the published session
         if: always()
@@ -203,11 +240,22 @@ jobs:
       - name: Install the CLI agents
         shell: pwsh
         run: |
-          # Failures ignored: npm's exit code does not stop pwsh, so every
-          # package gets its own attempt and the summary shows what landed.
-          $pkgs = @('opencode-ai', '@anthropic-ai/claude-code', '@google/gemini-cli',
-                    '@openai/codex', '@github/copilot', '@qwen-code/qwen-code', 'http-server')
-          foreach ($p in $pkgs) { npm install -g $p 2>&1 | Out-Null }
+          # One npm call first (concurrent downloads, minutes faster), then
+          # single retries only for commands still missing - a renamed
+          # package cannot cancel the rest. Anything missing still launches
+          # through `npx -y` at click time.
+          $want = @(
+            @('opencode-ai', 'opencode'), @('@anthropic-ai/claude-code', 'claude'),
+            @('@google/gemini-cli', 'gemini'), @('@openai/codex', 'codex'),
+            @('@github/copilot', 'copilot'), @('@qwen-code/qwen-code', 'qwen'),
+            @('http-server', 'http-server')
+          )
+          npm install -g ($want | ForEach-Object { $_[0] }) 2>&1 | Out-Null
+          foreach ($pair in $want) {
+            if (-not (Get-Command $pair[1] -ErrorAction SilentlyContinue)) {
+              npm install -g $pair[0] 2>&1 | Out-Null
+            }
+          }
           pip install aider-chat goose-ai 2>&1 | Out-Null
           foreach ($c in @('opencode', 'claude', 'gemini', 'codex', 'copilot', 'qwen', 'aider', 'goose', 'http-server')) {
             $hit = Get-Command $c -ErrorAction SilentlyContinue
@@ -273,6 +321,7 @@ jobs:
             if ((curl.exe -s -o NUL -w '%{http_code}' -m 15 "$url/api/tools") -match '^[234]') { break }
             Start-Sleep -Seconds 3
           }
+          $url | Out-File -FilePath "$env:TEMP\hub-url.txt" -Encoding utf8 -NoNewline
 
           try {
             $tools = (Invoke-RestMethod -Uri 'http://127.0.0.1:8090/api/tools' -TimeoutSec 10).tools `
@@ -310,8 +359,55 @@ jobs:
       - name: Keep the session alive
         shell: pwsh
         run: |
-          Write-Host 'Running until cancelled, or for six hours.'
-          Start-Sleep -Seconds 21000
+          # Same watchdog as the Linux job: restart a dead hub, reopen a
+          # dead tunnel, republish a changed address - so the panel never
+          # points at a corpse.
+          $hubDir = "$env:GITHUB_WORKSPACE\fork\npm-hub"
+          $cf = "$env:TEMP\cloudflared.exe"
+          for ($i = 1; $i -le 700; $i++) {
+            Start-Sleep -Seconds 30
+            $hubUp = $false
+            try {
+              Invoke-WebRequest -Uri 'http://127.0.0.1:8090/api/tools' -TimeoutSec 8 -UseBasicParsing | Out-Null
+              $hubUp = $true
+            } catch { }
+            if (-not $hubUp) {
+              Write-Host '::warning::hub stopped answering; restarting it.'
+              Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+              Set-Location $hubDir
+              $env:PORT = '8090'
+              cmd /c start "" /b node src/server.js "1>>$env:TEMP\hub.log" "2>>$env:TEMP\hub.err"
+              Start-Sleep -Seconds 5
+            }
+            $cur = ''
+            try { $cur = (Get-Content "$env:TEMP\hub-url.txt" -Raw -ErrorAction Stop).Trim() } catch { }
+            $edgeOk = $false
+            if ((Get-Process -Name cloudflared -ErrorAction SilentlyContinue) -and $cur) {
+              try {
+                if ((curl.exe -s -o NUL -w '%{http_code}' -m 10 "$cur/") -match '^[234]') { $edgeOk = $true }
+              } catch { }
+            }
+            if ($edgeOk) { continue }
+            Write-Host '::warning::tunnel dead; reopening.'
+            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            $log = "$env:TEMP\cf2.log"
+            cmd /c start "" /b "$cf" tunnel --url http://localhost:8090 --no-autoupdate --loglevel info `
+              "1>$log" "2>$env:TEMP\cf2.err"
+            $url = $null
+            foreach ($k in 1..40) {
+              Start-Sleep -Seconds 2
+              $text = (Get-Content $log, "$env:TEMP\cf2.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+              if ($text -match 'https://[a-z0-9-]+\.trycloudflare\.com') { $url = $Matches[0]; break }
+            }
+            if (-not $url) { continue }
+            $url | Out-File -FilePath "$env:TEMP\hub-url.txt" -Encoding utf8 -NoNewline
+            Write-Host "back up on $url"
+            $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
+            bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+              'slot=hub' 'kind=NPM-Hub' 'os=windows' `
+              "url=$url" "hubUrl=$url" "desktop=$url/d" "mobile=$url/m" `
+              'auth=без пароля' 'label=${{ inputs.label }}'
+          }
 
       - name: Clear the published session
         if: always()
