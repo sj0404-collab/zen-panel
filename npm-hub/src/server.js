@@ -42,20 +42,24 @@ app.use((req, res, next) => {
   next();
 });
 
+// npx: the npm package to run through `npx -y` when the command is not on
+// PATH. A fresh runner has none of these CLIs pre-installed; the fallback
+// is what makes every listed tool launchable with zero pre-installs - the
+// first launch downloads it into the npm cache, later launches reuse it.
 const TOOLS = [
-  { id: 'opencode', name: 'OpenCode', cmd: 'opencode', color: '#00d4aa', icon: 'OC' },
+  { id: 'opencode', name: 'OpenCode', cmd: 'opencode', npx: 'opencode-ai', color: '#00d4aa', icon: 'OC' },
   { id: 'ccb', name: 'Claude Code', cmd: 'ccb', color: '#d97706', icon: 'CB' },
   { id: 'koda', name: 'Koda', cmd: 'koda', color: '#8b5cf6', icon: 'KD' },
   { id: 'openclaude', name: 'OpenClaude', cmd: 'openclaude', color: '#06b6d4', icon: 'OC' },
   { id: 'openrouter', name: 'OpenRouter', cmd: 'openrouter', color: '#6366f1', icon: 'OR' },
-  { id: 'qwen', name: 'Qwen Code', cmd: 'qwen', color: '#ef4444', icon: 'QW' },
-  { id: 'http-server', name: 'HTTP Server', cmd: 'http-server', color: '#22c55e', icon: 'HS' },
+  { id: 'qwen', name: 'Qwen Code', cmd: 'qwen', npx: '@qwen-code/qwen-code', color: '#ef4444', icon: 'QW' },
+  { id: 'http-server', name: 'HTTP Server', cmd: 'http-server', npx: 'http-server', color: '#22c55e', icon: 'HS' },
   { id: 'cli-agent', name: 'CLI Agent', cmd: 'agent', color: '#f59e0b', icon: 'CA' },
-  { id: 'claude-npm', name: 'Claude CLI', cmd: 'claude', color: '#c26138', icon: 'CC' },
-  { id: 'gemini', name: 'Gemini CLI', cmd: 'gemini', color: '#1a73e8', icon: 'GE' },
-  { id: 'codex', name: 'Codex CLI', cmd: 'codex', color: '#10a37f', icon: 'CX' },
+  { id: 'claude-npm', name: 'Claude CLI', cmd: 'claude', npx: '@anthropic-ai/claude-code', color: '#c26138', icon: 'CC' },
+  { id: 'gemini', name: 'Gemini CLI', cmd: 'gemini', npx: '@google/gemini-cli', color: '#1a73e8', icon: 'GE' },
+  { id: 'codex', name: 'Codex CLI', cmd: 'codex', npx: '@openai/codex', color: '#10a37f', icon: 'CX' },
   { id: 'crush', name: 'Crush', cmd: 'crush', color: '#e11d48', icon: 'CR' },
-  { id: 'copilot', name: 'Copilot CLI', cmd: 'copilot', color: '#6e40c9', icon: 'CP' },
+  { id: 'copilot', name: 'Copilot CLI', cmd: 'copilot', npx: '@github/copilot', color: '#6e40c9', icon: 'CP' },
   { id: 'aider', name: 'Aider', cmd: 'aider', color: '#fbbf24', icon: 'AD' },
   { id: 'goose', name: 'Goose', cmd: 'goose', color: '#14b8a6', icon: 'GO' }
 ];
@@ -80,6 +84,16 @@ function getVersion(cmd) {
   try { return require('child_process').execSync(`${cmd} --version`, { stdio: 'pipe', timeout: 5000 }).toString().trim().split('\n')[0]; }
   catch { return null; }
 }
+// What to actually type into the fresh terminal for a tool: the command
+// itself when it is on PATH, otherwise `npx -y <package>` when the tool
+// declares one. `-y` never prompts, and the npm cache makes the second
+// launch instant.
+function resolveToolCmd(tool) {
+  if (!tool || !tool.cmd || tool.cmd === '_terminal') return null;
+  if (isInstalled(tool.cmd)) return tool.cmd;
+  if (tool.npx) return `npx -y ${tool.npx}`;
+  return tool.cmd;
+}
 
 function getAccessInfo(req) {
   const addr = req.socket.remoteAddress || '';
@@ -89,7 +103,7 @@ function getAccessInfo(req) {
 
 // ─── TOOLS ───
 app.get('/api/tools', (req, res) => {
-  const tools = TOOLS.map(t => ({ ...t, installed: isInstalled(t.cmd), version: null }));
+  const tools = TOOLS.map(t => ({ ...t, installed: isInstalled(t.cmd), launchable: isInstalled(t.cmd) || !!t.npx, version: null }));
   for (const t of tools) if (t.installed) t.version = getVersion(t.cmd);
   res.json({ success: true, tools });
 });
@@ -373,12 +387,20 @@ wss.on('connection', (ws) => {
         const cwd = msg.cwd || HOME;
 
         try {
+          // The hub's own PORT must not leak into terminals: servers honor
+          // it (http-server binds $PORT), and the hub already owns that
+          // port - the tool would die with EADDRINUSE on the hub itself.
+          const { PORT: _hubPort, ...ptyEnv } = process.env;
+          ptyEnv.TERM = 'xterm-256color';
+          ptyEnv.OPENROUTER_API_KEY = modelManager.getKeyForProvider('openrouter');
+          ptyEnv.MODEL = modelManager.getSelectedModel();
+          ptyEnv.OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
           const p = pty.spawn(shell, [], {
             name: 'xterm-256color',
             cols: msg.cols || 120,
             rows: msg.rows || 30,
             cwd: cwd,
-            env: { ...process.env, TERM: 'xterm-256color', OPENROUTER_API_KEY: modelManager.getKeyForProvider('openrouter'), MODEL: modelManager.getSelectedModel(), OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1' }
+            env: ptyEnv,
           });
           currentId = msg.sessionId || ('term_' + Date.now());
           currentPty = p;
@@ -386,8 +408,9 @@ wss.on('connection', (ws) => {
 
           const cdCmd = isWin ? `cd /d "${cwd}"` : `cd "${cwd}"`;
           p.write(cdCmd + '\r');
-          if (tool && tool.cmd && tool.cmd !== '_terminal') {
-            setTimeout(() => { p.write(tool.cmd + '\r'); }, 200);
+          const launch = tool ? resolveToolCmd(tool) : null;
+          if (launch) {
+            setTimeout(() => { p.write(launch + '\r'); }, 200);
           }
 
           p.onData((data) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'output', id: currentId, data })); });
