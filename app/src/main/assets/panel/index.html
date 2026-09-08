@@ -1248,7 +1248,17 @@ function deskSlotUrl(slot) {
   const s = DESKS[slot];
   if (!s) return '';
   if (slot === 'agent' || slot === 'opencode') return chatUrlWithQ(s.agentUrl || s.url || '');
+  if (slot === 'hub') return hubUrlWithToken(s.hubUrl || s.deskUrl || s.url || '');
   return s.hubUrl || s.deskUrl || s.url || '';
+}
+// The hub lists the account's repos from the browser (api.github.com
+// answers cross-origin); the token rides the URL fragment so it never
+// touches the hub server or its logs - fragments stay in the browser.
+function hubUrlWithToken(url) {
+  if (!url) return url;
+  const t = tok();
+  if (!t) return url;
+  return url.split('#')[0] + '#gh=' + encodeURIComponent(t);
 }
 
 /**

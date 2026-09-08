@@ -293,6 +293,25 @@
         <div class="fm-info" id="fm-info"></div>
       </div>
 
+      <!-- REPOS -->
+      <div class="page" id="p-repos">
+        <div class="ph"><h1>🐙 Repos</h1><p>Репозитории аккаунта — смотреть файлы или клонировать на раннер</p></div>
+        <div id="repos-auth" style="background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:14px;margin-bottom:10px">
+          <label style="font-size:12px;color:var(--t2)">GitHub token</label>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <input type="password" id="repos-token" placeholder="ghp_..." style="flex:1;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;outline:none">
+            <button class="btn btn-ok" onclick="saveReposToken()">OK</button>
+          </div>
+          <div style="font-size:10px;color:var(--t3);margin-top:6px">Из панели подставляется сам; токен живёт только в браузере</div>
+        </div>
+        <div class="models-full-actions">
+          <input type="text" id="repos-search" placeholder="Поиск..." oninput="filterRepos(this.value)" style="flex:1;min-width:120px;padding:8px 12px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;outline:none">
+          <button class="btn" onclick="loadRepos()">⟳</button>
+          <span id="repos-info"></span>
+        </div>
+        <div id="repos-list"></div>
+      </div>
+
       <!-- MODELS FULL -->
       <div class="page" id="p-models-full">
         <div class="ph"><h1>🔧 Models</h1><p>Все модели всех CLI инструментов</p></div>
@@ -323,6 +342,10 @@
     <button class="nav-btn on" id="nav-files" onclick="showPage('files')">
       <span class="nav-ico">📁</span>
       <span class="nav-label">Файлы</span>
+    </button>
+    <button class="nav-btn" id="nav-repos" onclick="showPage('repos')">
+      <span class="nav-ico">🐙</span>
+      <span class="nav-label">Repos</span>
     </button>
     <button class="nav-btn" id="nav-models-full" onclick="showPage('models-full')">
       <span class="nav-ico">🔧</span>
