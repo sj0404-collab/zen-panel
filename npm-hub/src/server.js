@@ -101,11 +101,29 @@ function getAccessInfo(req) {
   return { ip: addr.replace('::ffff:', ''), isLocal, mode: isLocal ? 'local' : 'remote', hostname: os.hostname() };
 }
 
+// Tool presence is expensive to probe: two process spawns per tool plus a
+// `--version` boot (a whole Node runtime for the JS CLIs) for every hit.
+// On Windows that totals past the runner's 3-second health-check budget,
+// so every check timed out and a healthy hub was declared dead. Detect
+// once in the background, serve the cache instantly, re-sweep every
+// 15 minutes so mid-session installs show up.
+let toolsCache = TOOLS.map(t => ({ ...t, installed: false, launchable: !!t.npx, version: null }));
+let toolsWarming = true;
+function refreshTools() {
+  try {
+    toolsCache = TOOLS.map(t => {
+      const installed = isInstalled(t.cmd);
+      return { ...t, installed, launchable: installed || !!t.npx, version: installed ? getVersion(t.cmd) : null };
+    });
+  } catch { /* keep the last good cache */ }
+  toolsWarming = false;
+}
+setImmediate(refreshTools);
+setInterval(refreshTools, 15 * 60 * 1000);
+
 // ─── TOOLS ───
 app.get('/api/tools', (req, res) => {
-  const tools = TOOLS.map(t => ({ ...t, installed: isInstalled(t.cmd), launchable: isInstalled(t.cmd) || !!t.npx, version: null }));
-  for (const t of tools) if (t.installed) t.version = getVersion(t.cmd);
-  res.json({ success: true, tools });
+  res.json({ success: true, warming: toolsWarming, tools: toolsCache });
 });
 
 // ─── INFO ───
