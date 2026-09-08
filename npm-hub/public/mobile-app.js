@@ -872,6 +872,34 @@ function filterRepos(q) {
   q = (q || '').toLowerCase();
   renderRepos(ghReposCache.filter(r => r.full_name.toLowerCase().includes(q) || (r.description || '').toLowerCase().includes(q)));
 }
+let gitAuthState = null;
+async function ensureGitAuth(loud) {
+  const t = ghToken();
+  if (!t) { if (loud) alert('Сначала нужен GitHub-токен'); return false; }
+  try {
+    const u = await fetch('https://api.github.com/user', { headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + t } }).then(r => {
+      if (!r.ok) throw new Error('GitHub: ' + r.status);
+      return r.json();
+    });
+    const r = await fetch('/api/git/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: t, login: u.login, name: u.name, email: u.email }) }).then(r => r.json());
+    if (!r.success) throw new Error(r.error || 'git auth failed');
+    gitAuthState = u.login;
+    updateGitAuthBtn();
+    if (loud) alert(`✓ Push включён (${u.login}) — агенты могут коммитить и пушить`);
+    return true;
+  } catch (e) {
+    if (loud) alert('Ошибка: ' + e.message);
+    return false;
+  }
+}
+function updateGitAuthBtn() {
+  const b = document.getElementById('git-auth-btn');
+  if (b) {
+    b.textContent = gitAuthState ? `🔑 ${gitAuthState}` : '🔑 Push';
+    b.classList.toggle('btn-ok', !!gitAuthState);
+  }
+}
 async function repoBrowse(fullName, branch) {
   const parts = fullName.split('/');
   const r = await fetch('/api/storages/add', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -895,6 +923,7 @@ async function repoClone(fullName, isPrivate) {
     const r = await fetch('/api/git/clone', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ repo: fullName, token: isPrivate ? ghToken() : undefined }) }).then(r => r.json());
     if (!r.success) { alert('Ошибка: ' + (r.error || 'неизвестная')); return; }
+    if (ghToken()) ensureGitAuth(false);
     showPage('files');
     fmSwitchBackend('local', r.path);
   } finally {

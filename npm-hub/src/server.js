@@ -164,12 +164,53 @@ app.post('/api/storages/remove', (req, res) => {
 // need no token; private ones take it transiently - the stored remote
 // is scrubbed back to the clean URL right after, and the token never
 // hits a log (errors are scrubbed too).
-const runGit = (args, opts) => new Promise((resolve, reject) => {
-  require('child_process').execFile('git', args, opts, (err, stdout, stderr) => {
+const runCmd = (cmd, args, opts, stdin) => new Promise((resolve, reject) => {
+  const p = require('child_process').execFile(cmd, args, opts, (err, stdout, stderr) => {
     if (err) reject(Object.assign(err, { stderr: String(stderr || '') }));
-    else resolve(stdout);
+    else resolve(String(stdout || ''));
   });
+  if (stdin) { p.stdin.write(stdin); p.stdin.end(); }
 });
+const runGit = (args, opts) => runCmd('git', args, opts);
+// One tap that makes every terminal on this machine push-ready: the token
+// goes to a hub-only credentials file (0600), git learns a github.com-only
+// helper pointing at it, and commits get an identity. Existing user.name,
+// user.email and helpers are respected - anything already set is kept.
+// `gh` gets logged in too when it is around. Nothing here ever echoes the
+// token back or logs it.
+app.post('/api/git/auth', async (req, res) => {
+  const t = String((req.body || {}).token || '');
+  if (t.length < 10) return res.json({ success: false, error: 'bad token' });
+  const login = String((req.body || {}).login || '').trim();
+  const getCfg = async (k) => {
+    try { return (await runGit(['config', '--global', '--get', k], { timeout: 8000 })).trim(); }
+    catch { return ''; }
+  };
+  try {
+    const credFile = path.join(HOME, '.git-credentials-hub');
+    fs.writeFileSync(credFile, `https://x-access-token:${t}@github.com\n`, { mode: 0o600 });
+    if (!await getCfg('credential.https://github.com.helper')) {
+      await runGit(['config', '--global', 'credential.https://github.com.helper', `store --file ${credFile}`], { timeout: 8000 });
+    }
+    if (login) {
+      if (!await getCfg('user.name')) {
+        await runGit(['config', '--global', 'user.name', String((req.body || {}).name || login)], { timeout: 8000 });
+      }
+      if (!await getCfg('user.email')) {
+        await runGit(['config', '--global', 'user.email', String((req.body || {}).email || `${login}@users.noreply.github.com`)], { timeout: 8000 });
+      }
+    }
+    try {
+      await runCmd('gh', ['auth', 'status', '--hostname', 'github.com'], { timeout: 10000 });
+    } catch {
+      try { await runCmd('gh', ['auth', 'login', '--hostname', 'github.com', '--with-token'], { timeout: 20000 }, t); } catch {}
+    }
+    res.json({ success: true, login: login || null });
+  } catch (e) {
+    res.json({ success: false, error: 'git auth failed' });
+  }
+});
+
 app.post('/api/git/clone', async (req, res) => {
   const m = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(String((req.body || {}).repo || '').trim());
   if (!m) return res.json({ success: false, error: 'need "owner/name"' });
