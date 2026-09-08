@@ -90,9 +90,12 @@ jobs:
         working-directory: desktop
         run: npx electron-builder --linux --publish never
 
+      # Bare ls: this step runs under pwsh on Windows, where ls is an alias
+      # for Get-ChildItem and -la is not a parameter (exit 1 after a green
+      # build). Plain ls works in both shells.
       - name: List outputs
         working-directory: desktop
-        run: ls -la dist/
+        run: ls dist
 
       - uses: actions/upload-artifact@v4
         with:
