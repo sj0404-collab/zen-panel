@@ -1,0 +1,344 @@
+name: NPM Hub
+
+# The third agent: npm-hub on a runner, in a browser tab of the panel.
+#
+# WHAT IT IS
+#   npm-hub/ is a tools dashboard with xterm terminal tabs: it detects the
+#   installed AI CLI agents (claude, gemini, codex, copilot, opencode and
+#   friends) and opens each in its own terminal session, with a file manager
+#   and a live model registry on top. All of that logic already lives in the
+#   repo - this workflow just installs the CLIs, starts the server and
+#   publishes the address, the same way the desks and the other agents do.
+#
+#   No work branch, no autosave: the hub edits nothing by itself, it is a
+#   launcher. What outlives the runner is the models snapshot
+#   (models-hub.json) and whatever the user saves through the panel.
+#
+# AUTH
+#   None on the hub itself: whoever holds the tunnel address drives it. Same
+#   trade as the passwordless desks - the address is an unguessable
+#   trycloudflare.com hostname, it dies with the run (six hours at most),
+#   and on a public repository it is public. Private repo if that trade is
+#   not acceptable.
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "Runner OS"
+        type: choice
+        options: [linux, windows]
+        default: linux
+      label:
+        description: "Name for this session"
+        type: string
+        default: "hub"
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Hub on Linux ───────────────────────────────────────────────────
+  hub:
+    if: inputs.os == 'linux'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: fork/npm-hub/package-lock.json
+
+      - name: Install the CLI agents
+        run: |
+          # Best effort, one by one: a renamed package must not cancel the
+          # rest. Whatever lands on PATH the hub picks up; the summary below
+          # lists what actually made it.
+          for p in opencode-ai @anthropic-ai/claude-code @google/gemini-cli \
+                   @openai/codex @github/copilot @qwen-code/qwen-code http-server; do
+            npm install -g "$p" >/tmp/npm-i.log 2>&1 \
+              && echo "installed $p" || echo "skipped $p"
+          done
+          for p in aider-chat goose-ai; do
+            pip install --quiet "$p" >/tmp/pip-i.log 2>&1 \
+              && echo "installed $p" || echo "skipped $p"
+          done
+          echo "--- on PATH now ---"
+          for c in opencode claude gemini codex copilot qwen aider goose http-server; do
+            command -v "$c" >/dev/null 2>&1 && echo "  $c: $(command -v $c)" || echo "  $c: -"
+          done
+
+      - name: Install the hub dependencies
+        working-directory: fork/npm-hub
+        run: npm ci
+
+      - name: Start the hub and open the tunnel
+        run: |
+          cd "$GITHUB_WORKSPACE/fork/npm-hub"
+          PORT=8090 nohup node src/server.js > /tmp/hub.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null "http://127.0.0.1:8090/api/tools" && break
+            sleep 2
+          done
+          if ! curl -sf -o /dev/null "http://127.0.0.1:8090/api/tools"; then
+            echo "::error::the hub did not start."
+            tail -40 /tmp/hub.log
+            exit 1
+          fi
+          echo "hub is up on 8090"
+
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 /tmp/tunnel.log)
+          if [ -z "$URL" ]; then
+            echo "::error::no tunnel came up."
+            tail -25 /tmp/tunnel.log
+            exit 1
+          fi
+
+          TOOLS=$(python3 -c "
+          import json, urllib.request
+          try:
+              d = json.load(urllib.request.urlopen('http://127.0.0.1:8090/api/tools', timeout=10))
+              names = [t['name'] for t in d.get('tools', []) if t.get('installed')]
+          except Exception:
+              names = []
+          print(', '.join(names) if names else 'none detected')
+          ")
+          MODELS=$(python3 -c "
+          import json, urllib.request
+          try:
+              d = json.load(urllib.request.urlopen('http://127.0.0.1:8090/api/models/full', timeout=20))
+              ms = d.get('models', [])
+              print('%d (%d free)' % (len(ms), sum(1 for m in ms if m.get('free'))))
+          except Exception:
+              print('n/a')
+          ")
+
+          {
+            echo "## NPM Hub"
+            echo ""
+            echo "**[Open the hub]($URL)** - no password, pick Desktop or Mobile."
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Address | \`$URL\` |"
+            echo "| Desktop | \`$URL/d\` |"
+            echo "| Mobile | \`$URL/m\` |"
+            echo "| CLI agents | $TOOLS |"
+            echo "| Models | $MODELS |"
+            echo "| Label | \`${{ inputs.label }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "=================================================="
+          echo " Hub: $URL"
+          echo " Tools: $TOOLS"
+          echo "=================================================="
+
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "slot=hub" "kind=NPM-Hub" "os=linux" \
+              "url=$URL" "hubUrl=$URL" "desktop=$URL/d" "mobile=$URL/m" \
+              "auth=без пароля" "tools=$TOOLS" \
+              "label=${{ inputs.label }}"
+
+      - name: Keep the session alive
+        run: |
+          echo "Running until cancelled, or for six hours."
+          sleep 21000
+
+      - name: Clear the published session
+        if: always()
+        run: |
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=hub" "state=ended" || true
+
+      - name: Save the models snapshot
+        if: always()
+        run: |
+          # Whatever the live registry learned before shutdown, in one small
+          # object the panel renders as a line. The hub may already be dead
+          # here (cancelled mid-run) - then the file stays empty and json=
+          # is skipped with a warning.
+          python3 - > /tmp/hub-models.json <<'PY' || true
+          import json, urllib.request
+          d = json.load(urllib.request.urlopen('http://127.0.0.1:8090/api/models/full', timeout=20))
+          ms = d.get('models', [])
+          free = [m for m in ms if m.get('free')]
+          print(json.dumps({
+              'kind': 'NPM-Hub',
+              'hubCount': len(ms),
+              'hubFree': len(free),
+              'hubTop': [(m.get('fullId') or m.get('id')) for m in free[:8]],
+              'hubSelected': d.get('selected') or '',
+          }))
+          PY
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "slot=hub" "file=models-hub.json" \
+              "kind=NPM-Hub" "os=linux" \
+              "json=/tmp/hub-models.json" || true
+
+  # ── Hub on Windows ─────────────────────────────────────────────────
+  hub-windows:
+    if: inputs.os == 'windows'
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: fork/npm-hub/package-lock.json
+
+      - name: Install the CLI agents
+        shell: pwsh
+        run: |
+          # Failures ignored: npm's exit code does not stop pwsh, so every
+          # package gets its own attempt and the summary shows what landed.
+          $pkgs = @('opencode-ai', '@anthropic-ai/claude-code', '@google/gemini-cli',
+                    '@openai/codex', '@github/copilot', '@qwen-code/qwen-code', 'http-server')
+          foreach ($p in $pkgs) { npm install -g $p 2>&1 | Out-Null }
+          pip install aider-chat goose-ai 2>&1 | Out-Null
+          foreach ($c in @('opencode', 'claude', 'gemini', 'codex', 'copilot', 'qwen', 'aider', 'goose', 'http-server')) {
+            $hit = Get-Command $c -ErrorAction SilentlyContinue
+            Write-Host ("  {0}: {1}" -f $c, ($(if ($hit) { $hit.Source } else { '-' })))
+          }
+
+      - name: Install the hub dependencies
+        working-directory: fork/npm-hub
+        run: npm ci
+
+      - name: Start the hub and open the tunnel
+        shell: pwsh
+        run: |
+          Set-Location "$env:GITHUB_WORKSPACE\fork\npm-hub"
+
+          # cmd /c start, NOT Start-Process: a process started with
+          # Start-Process is killed when its step ends (measured on a live
+          # runner with the agent). Redirects are not optional either:
+          # without them pwsh waits on the child's stdout forever.
+          $env:PORT = '8090'
+          cmd /c start "" /b node src/server.js `
+            "1>$env:TEMP\hub.log" "2>$env:TEMP\hub.err"
+
+          $up = $false
+          foreach ($i in 1..30) {
+            Start-Sleep -Seconds 2
+            try {
+              Invoke-WebRequest -Uri 'http://127.0.0.1:8090/api/tools' -TimeoutSec 3 -UseBasicParsing | Out-Null
+              $up = $true; break
+            } catch { }
+          }
+          if (-not $up) {
+            Write-Host '::error::the hub did not start.'
+            Get-Content "$env:TEMP\hub.log", "$env:TEMP\hub.err" -Tail 40 -ErrorAction SilentlyContinue
+            exit 1
+          }
+          Write-Host 'hub is up on 8090'
+
+          # curl.exe, not Invoke-WebRequest: the .NET stack fails GitHub's
+          # redirect with RemoteCertificateNameMismatch (measured before).
+          $cf = "$env:TEMP\cloudflared.exe"
+          curl.exe -sL --retry 3 -o $cf `
+            'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe'
+          if (-not (Test-Path $cf)) { throw 'could not download cloudflared' }
+
+          $log = "$env:TEMP\cf.log"
+          cmd /c start "" /b "$cf" tunnel --url http://localhost:8090 --no-autoupdate --loglevel info `
+            "1>$log" "2>$env:TEMP\cf.err"
+
+          $url = $null
+          foreach ($i in 1..40) {
+            Start-Sleep -Seconds 2
+            $text = (Get-Content $log, "$env:TEMP\cf.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+            if ($text -match 'https://[a-z0-9-]+\.trycloudflare\.com') { $url = $Matches[0]; break }
+          }
+          if (-not $url) {
+            Write-Host '::error::no tunnel came up.'
+            Get-Content $log, "$env:TEMP\cf.err" -Tail 25 -ErrorAction SilentlyContinue
+            exit 1
+          }
+
+          foreach ($i in 1..20) {
+            if ((curl.exe -s -o NUL -w '%{http_code}' -m 15 "$url/api/tools") -match '^[234]') { break }
+            Start-Sleep -Seconds 3
+          }
+
+          try {
+            $tools = (Invoke-RestMethod -Uri 'http://127.0.0.1:8090/api/tools' -TimeoutSec 10).tools `
+              | Where-Object { $_.installed } | ForEach-Object { $_.name }
+            $toolsLine = $tools -join ', '
+          } catch { $toolsLine = 'n/a' }
+          if (-not $toolsLine) { $toolsLine = 'none detected' }
+
+          $summary = @(
+            '## NPM Hub (Windows)',
+            '',
+            "**[Open the hub]($url)** - no password, pick Desktop or Mobile.",
+            '',
+            '| | |',
+            '|---|---|',
+            "| Address | ``$url`` |",
+            "| Desktop | ``$url/d`` |",
+            "| Mobile | ``$url/m`` |",
+            "| CLI agents | $toolsLine |",
+            '| Runner | windows-latest, 4 cores, 16 GB |'
+          ) -join "`n"
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host '=================================================='
+          Write-Host " Hub: $url"
+          Write-Host " Tools: $toolsLine"
+          Write-Host '=================================================='
+
+          $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            'slot=hub' 'kind=NPM-Hub' 'os=windows' `
+            "url=$url" "hubUrl=$url" "desktop=$url/d" "mobile=$url/m" `
+            'auth=без пароля' "tools=$toolsLine" `
+            'label=${{ inputs.label }}'
+
+      - name: Keep the session alive
+        shell: pwsh
+        run: |
+          Write-Host 'Running until cancelled, or for six hours.'
+          Start-Sleep -Seconds 21000
+
+      - name: Clear the published session
+        if: always()
+        shell: pwsh
+        run: |
+          $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" 'slot=hub' 'state=ended'
+
+      - name: Save the models snapshot
+        if: always()
+        shell: pwsh
+        run: |
+          try {
+            $d = Invoke-RestMethod -Uri 'http://127.0.0.1:8090/api/models/full' -TimeoutSec 20
+            $ms = @($d.models)
+            $free = @($ms | Where-Object { $_.free })
+            $obj = [ordered]@{
+              kind = 'NPM-Hub'
+              hubCount = $ms.Count
+              hubFree = $free.Count
+              hubTop = @($free | Select-Object -First 8 | ForEach-Object { $_.fullId })
+              hubSelected = $d.selected
+            }
+            ($obj | ConvertTo-Json -Depth 4) | Out-File -FilePath "$env:TEMP\hub-models.json" -Encoding utf8
+          } catch { }
+          $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            'slot=hub' 'file=models-hub.json' `
+            'kind=NPM-Hub' 'os=windows' `
+            "json=$env:TEMP\hub-models.json"
