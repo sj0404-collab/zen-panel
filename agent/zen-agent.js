@@ -4647,7 +4647,7 @@ async function callZenDirect(messages, model = currentModel, stream = false) {
 
   if (stream) {
     return new Promise((resolve, reject) => {
-      let outputShown = false, fullText = '', usage = {}, thinking = '', sseBuffer = '', settled = false;
+      let outputShown = false, fullText = '', usage = {}, thinking = '', sseBuffer = '', settled = false, rawHead = '';
       const tmpFile = path.join(os.tmpdir(), 'zen_cli_req_' + Date.now() + '.json');
       fs.writeFileSync(tmpFile, data, 'utf8');
       startAiStream('Zen', model);
@@ -4664,7 +4664,18 @@ async function callZenDirect(messages, model = currentModel, stream = false) {
         if (activeProviderAbort === abortThis) activeProviderAbort = null;
         try { fs.unlinkSync(tmpFile); } catch {}
         if (error) { finishAiStream('error'); reject(error); }
-        else { finishAiStream('completed'); resolve({ text: fullText || 'Модель вернула пустой ответ.', model, usage, thinking, outputShown, provider: 'zen' }); }
+        else {
+          // An HTTP error page carries no SSE data: frames, so without this
+          // check the run resolved as a plain "empty reply" and the task loop
+          // rotated models until the step limit. Surface the API error instead.
+          if (!fullText && !Object.keys(usage).length && rawHead.trim().startsWith('{')) {
+            try {
+              const jerr = JSON.parse(rawHead);
+              if (jerr && jerr.error) { finishAiStream('error'); reject(new Error('Zen stream HTTP error: ' + String(jerr.error.message || jerr.error.code || rawHead).slice(0, 280))); return; }
+            } catch {}
+          }
+          finishAiStream('completed'); resolve({ text: fullText || 'Модель вернула пустой ответ.', model, usage, thinking, outputShown, provider: 'zen', diag: { httpStatus: 0, finishReason: '', rawChars: rawHead.length, hadChoices: fullText.length > 0 } });
+        }
       };
       const consumeEvent = event => {
         for (const line of event.replace(/\r/g, '').split('\n')) {
@@ -4680,7 +4691,11 @@ async function callZenDirect(messages, model = currentModel, stream = false) {
         }
       };
       curlProc.stdout.on('data', chunk => {
-        sseBuffer += chunk.toString();
+        const piece = chunk.toString();
+        // Keep the head of the raw stream: if no SSE frame ever arrives, this
+        // is usually a JSON error page, and finish() below will say so.
+        if (rawHead.length < 4000) rawHead += piece.slice(0, 4000 - rawHead.length);
+        sseBuffer += piece;
         const events = sseBuffer.split(/\r?\n\r?\n/); sseBuffer = events.pop() || '';
         events.forEach(consumeEvent);
       });
@@ -4696,6 +4711,10 @@ async function callZenDirect(messages, model = currentModel, stream = false) {
     return await new Promise((resolve, reject) => {
       const curlArgs = [
         '-s', '--connect-timeout', '10', '--max-time', '60',
+        // The HTTP status rides on stdout after the body, so a 4xx/5xx with an
+        // empty-or-error JSON body is diagnosed instead of being mistaken for
+        // an empty 200. %{http_code} exists in every curl this agent can meet.
+        '-w', '\n__ZEN_HTTP_CODE__:%{http_code}',
         ...(CONFIG.proxy ? ['-x', CONFIG.proxy] : []),
         ...(CONFIG.curlIpv4 ? ['--ipv4'] : []),
         '-X', 'POST', 'https://opencode.ai/zen/v1/chat/completions',
@@ -4718,19 +4737,35 @@ async function callZenDirect(messages, model = currentModel, stream = false) {
       proc.on('close', code => {
         if (settled) return;
         if (code !== 0) { finish(new Error('Zen request failed: ' + (stderr || `curl exit ${code}`).slice(0, 300))); return; }
-        if (isRateLimit(output)) { finish(new Error('Rate limit: ' + output.slice(0, 200))); return; }
+        // Split the -w trailer off the body. Its absence just means
+        // "status unknown" - nothing else ever sent it.
+        let body = output, httpStatus = 0;
+        const wm = output.match(/\n__ZEN_HTTP_CODE__:(\d{3})\s*$/);
+        if (wm) { httpStatus = parseInt(wm[1], 10) || 0; body = output.slice(0, wm.index); }
+        if (isRateLimit(body)) { finish(new Error('Rate limit: ' + body.slice(0, 200))); return; }
         try {
-          const json = JSON.parse(output);
+          const json = JSON.parse(body);
           const choice = json.choices?.[0] || {};
           const msg = choice.message || {};
           let text = msg.content || '';
           const reasoning = msg.reasoning_content || msg.reasoning || '';
           if (!text && reasoning) text = reasoning;
-          finish(null, { text, reasoning: reasoning || null, model: json.model || model, usage: json.usage || {}, thinking: '', outputShown: false, provider: 'zen' });
+          const finishReason = choice.finish_reason || '';
+          const diag = { httpStatus, finishReason, rawChars: body.length, hadChoices: Array.isArray(json.choices) && json.choices.length > 0 };
+          // An HTTP/API error that still parses as JSON ({"error": {...}} with
+          // no usable choice) used to resolve as a silent empty reply, and the
+          // task loop then burned all 250 steps rotating models. Throw instead.
+          if (!text && json.error) {
+            const em = String((json.error && (json.error.message || json.error.code)) || body.slice(0, 200));
+            finish(new Error(`Zen HTTP ${httpStatus || '?'}: ${em}`.slice(0, 300)));
+            return;
+          }
+          finish(null, { text, reasoning: reasoning || null, model: json.model || model, usage: json.usage || {}, thinking: '', outputShown: false, provider: 'zen', diag });
         } catch (e) {
-          const cm = output.match(/"content"\s*:\s*"([\s\S]*?)"\s*,\s*"refusal"/);
-          if (cm) finish(null, { text: cm[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'), reasoning: null, model, usage: {}, outputShown: false, provider: 'zen' });
-          else finish(new Error('Zen parse error: ' + output.slice(0, 300)));
+          if (e && /^Zen HTTP /.test(String(e.message || ''))) { finish(e); return; }
+          const cm = body.match(/"content"\s*:\s*"([\s\S]*?)"\s*,\s*"refusal"/);
+          if (cm) finish(null, { text: cm[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'), reasoning: null, model, usage: {}, outputShown: false, provider: 'zen', diag: { httpStatus, finishReason: '', rawChars: body.length, hadChoices: false } });
+          else finish(new Error('Zen parse error: ' + body.slice(0, 300)));
         }
       });
     });
@@ -5677,7 +5712,9 @@ let rl = null;
 const TELEMETRY = {
   phase: 'user-control', detail: 'Ожидание ввода', startedAt: null, phaseStartedAt: Date.now(),
   inputChars: 0, outputChars: 0, toolCalls: 0, step: 0, usage: null, requestChars: 0,
-  estimatedInputTokens: 0, provider: 'zen', model: CONFIG.defaultModel, stalled: false
+  estimatedInputTokens: 0, provider: 'zen', model: CONFIG.defaultModel, stalled: false,
+  // Last provider-side diagnosis ({httpStatus, finishReason, ...}) for dead-end messages.
+  lastDiag: null
 };
 let ACTIVE_STREAM = null;
 function startAiStream(provider, model) {
@@ -5733,12 +5770,26 @@ function beginAgentTelemetry(input) {
   TELEMETRY.startedAt = Date.now(); TELEMETRY.inputChars = String(input || '').length; TELEMETRY.outputChars = 0;
   TELEMETRY.toolCalls = 0; TELEMETRY.step = 0; TELEMETRY.usage = null; TELEMETRY.provider = currentProvider; TELEMETRY.model = currentModel;
   TELEMETRY.requestChars = 0; TELEMETRY.estimatedInputTokens = estimateTokens(TELEMETRY.inputChars);
+  TELEMETRY.lastDiag = null;
   setRunPhase('model', providerDisplayName());
 }
 function recordProviderResult(res) {
   if (!res) return;
   TELEMETRY.outputChars += String(res.text || '').length;
   if (res.usage && Object.keys(res.usage).length) TELEMETRY.usage = res.usage;
+  if (res.diag) TELEMETRY.lastDiag = res.diag;
+}
+// One-line API diagnosis for the "empty reply" dead ends: the HTTP status and
+// finish_reason tell an exhausted quota from a merely silent model.
+function zenEmptyDiagSuffix() {
+  const d = TELEMETRY.lastDiag;
+  if (!d) return '';
+  const parts = [];
+  if (d.httpStatus) parts.push('HTTP ' + d.httpStatus);
+  if (d.finishReason) parts.push('finish=' + d.finishReason);
+  if (d.hadChoices === false) parts.push('без choices');
+  if (!parts.length) return '';
+  return ' Последний ответ API: ' + parts.join(', ') + '. Проверьте связь — /net.';
 }
 function startTelemetryTicker(spinner) {
   if (!spinner) return null;
@@ -6504,6 +6555,7 @@ async function agentLoop(userInput) {
   history.push({ role: 'user', content: safeInput });
 
   let finalAnswer = '';
+  let runConcluded = false;
   let lastRes = null;
 
   // agentBusy used to be cleared only by the successful path at the very
@@ -6584,6 +6636,7 @@ ${correction}` });
         printPublicAssistantNote(text);
         history.push({ role: 'assistant', content: text || '', tool_calls: res.toolCalls });
         await handleNativeToolCalls(res.toolCalls, writtenFiles);
+        emptyReplyTries = 0; // progress: tools ran, the empty streak is over
         continue;
       }
 
@@ -6609,6 +6662,7 @@ ${correction}` });
             const at = history.indexOf(nudge); if (at !== -1) history.splice(at, 1);
             history.push({ role: 'assistant', content: r2.text || '', tool_calls: r2.toolCalls });
             await handleNativeToolCalls(r2.toolCalls, writtenFiles);
+            emptyReplyTries = 0; // progress: tools ran, the empty streak is over
             continue;
           }
         } catch (e) {
@@ -6619,6 +6673,7 @@ ${correction}` });
       }
 
       if (CONFIG.autoUseTools && await handleToolCall(text, writtenFiles)) {
+        emptyReplyTries = 0; // progress: a tool ran, the empty streak is over
         continue;
       }
 
@@ -6649,16 +6704,21 @@ ${correction}` });
         }
         finalAnswer = `Модель ${currentModel} вернула пустой ответ (${emptyReplyTries} раз подряд). ` +
           'Обычно это исчерпанный лимит бесплатной модели или слишком длинный контекст. ' +
-          'Смените модель или начните новую сессию — /clear. При необходимости повторите запрос.';
+          'Смените модель или начните новую сессию — /clear. При необходимости повторите запрос.' +
+          zenEmptyDiagSuffix();
         setRunPhase('error', 'пустой ответ модели');
         webRunEvent('empty_reply', { step: String(TELEMETRY.step), model: String(currentModel), tries: String(emptyReplyTries) });
+        auditEvent('empty_reply_terminal', { step: TELEMETRY.step, model: currentModel, tries: emptyReplyTries, diag: TELEMETRY.lastDiag || {} });
         history.push({ role: 'assistant', content: finalAnswer });
+        runConcluded = true;
         break;
       }
 
       finalAnswer = text;
       if (CONFIG.streamMode && res.outputShown) finalAnswer = '';
       history.push({ role: 'assistant', content: text });
+      emptyReplyTries = 0;
+      runConcluded = true;
       break;
     } catch (err) {
       if (abortRequested) { finalAnswer = 'Задача остановлена пользователем.'; setRunPhase('stopped', 'пользователь'); break; }
@@ -6722,6 +6782,29 @@ ${correction}` });
           CONFIG.autoApprove = prevAuto;
         }
       }
+    }
+  }
+
+  // The step loop above can only exit with an answer, an error, a stop — or by
+  // running out of steps. That last case used to fall through with an empty
+  // finalAnswer and was still reported as phase=complete: the 250-round run
+  // that "used no tool and said no word" looked like a success. Never again:
+  // exhaustion without any tool work is an error with a clear message.
+  if (!runConcluded && TELEMETRY.phase !== 'error' && TELEMETRY.phase !== 'stopped') {
+    if (TELEMETRY.toolCalls === 0) {
+      finalAnswer = `Агент исчерпал лимит шагов (${TELEMETRY.step}/${agentStepLimit()}), но модели не прислали ни слова и не вызвали ни одного инструмента. ` +
+        'Похоже, API моделей недоступен или бесплатные квоты исчерпаны. Проверьте связь — /net, подождите и повторите, либо смените модель/провайдера.' +
+        zenEmptyDiagSuffix();
+      setRunPhase('error', 'шаги исчерпаны без результата');
+      auditEvent('steps_exhausted', { steps: TELEMETRY.step, limit: agentStepLimit(), toolCalls: 0, model: currentModel, diag: TELEMETRY.lastDiag || {} });
+      webRunEvent('steps_exhausted', { steps: String(TELEMETRY.step), limit: String(agentStepLimit()), toolCalls: '0' });
+      history.push({ role: 'assistant', content: finalAnswer });
+    } else {
+      finalAnswer = `Достигнут лимит шагов (${TELEMETRY.step}/${agentStepLimit()}) после ${TELEMETRY.toolCalls} вызовов инструментов. ` +
+        'Проделанная работа показана выше; сузьте задачу или продолжите — /continue.';
+      auditEvent('steps_exhausted', { steps: TELEMETRY.step, limit: agentStepLimit(), toolCalls: TELEMETRY.toolCalls, model: currentModel });
+      webRunEvent('steps_exhausted', { steps: String(TELEMETRY.step), limit: String(agentStepLimit()), toolCalls: String(TELEMETRY.toolCalls) });
+      history.push({ role: 'assistant', content: finalAnswer });
     }
   }
 
