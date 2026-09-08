@@ -93,7 +93,7 @@
     .tab-add{padding:10px 12px;color:var(--t3);cursor:pointer;font-size:18px;flex-shrink:0}.tab-add:active{color:var(--acc)}
     .term-controls{display:flex;align-items:center;gap:6px;padding:0 10px;border-left:1px solid var(--bdr);flex-shrink:0}
     .tc-btn{width:36px;height:36px;border-radius:8px;border:1px solid var(--bdr);background:var(--bg3);color:var(--t2);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent}
-    .tc-btn:active{background:var(--bdr);color:var(--t1)}
+    .tc-btn:active{background:var(--bdr);color:var(--t1)}.tc-btn,.arr-btn{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
     .tc-btn:focus{outline:none;-webkit-tap-highlight-color:transparent}
     .zoom-label{font-size:12px;color:var(--t3);min-width:44px;text-align:center;font-family:monospace}
     .term-container{flex:1;display:flex;overflow:hidden;background:#000;flex-direction:column;flex-wrap:nowrap;position:relative}
@@ -112,7 +112,7 @@
     .term-info{font-size:10px;color:var(--t3);font-family:monospace}
     .term{flex:1;background:#000;padding:2px;overflow:hidden}
     .term .xterm{height:100%}
-    .term .xterm-viewport{overflow-y:auto!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch!important}
+    .term .xterm-viewport{overflow-y:auto!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch!important}.term .xterm-viewport{touch-action:pan-x pan-y!important}
     .term .xterm-viewport::-webkit-scrollbar{width:6px}
     .term .xterm-viewport::-webkit-scrollbar-track{background:transparent}
     .term .xterm-viewport::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:3px}
@@ -232,29 +232,30 @@
         <div class="term-topbar">
           <div class="tabs-row" id="tabs"></div>
           <div class="term-controls">
-            <button class="tc-btn" onclick="killTerm()" ontouchend="event.preventDefault()" title="Стоп">⏹</button>
-            <button class="tc-btn" onclick="sendEscape()" ontouchend="event.preventDefault()" title="Escape">Esc</button>
-            <button class="tc-btn" onclick="pasteClipboard()" ontouchend="event.preventDefault()" title="Вставить">📋</button>
-            <button class="tc-btn" onclick="restartTerm()" ontouchend="event.preventDefault()" title="Перезапустить">⟲</button>
-            <button class="tc-btn" onclick="zoomTerm(-1)" ontouchend="event.preventDefault()">−</button>
+            <button class="tc-btn" onclick="killTerm()" ontouchend="event.preventDefault();killTerm()" oncontextmenu="event.preventDefault()" title="Стоп">⏹</button>
+            <button class="tc-btn" onclick="sendEscape()" ontouchend="event.preventDefault();sendEscape()" oncontextmenu="event.preventDefault()" title="Escape">Esc</button>
+            <button class="tc-btn" onclick="pasteClipboard()" ontouchend="event.preventDefault();pasteClipboard()" oncontextmenu="event.preventDefault()" title="Вставить">📋</button>
+            <button class="tc-btn" onclick="restartTerm()" ontouchend="event.preventDefault();restartTerm()" oncontextmenu="event.preventDefault()" title="Перезапустить">⟲</button>
+            <button class="tc-btn" onclick="zoomTerm(-1)" ontouchend="event.preventDefault();zoomTerm(-1)" oncontextmenu="event.preventDefault()">−</button>
             <span class="zoom-label" id="zoom-label">100%</span>
-            <button class="tc-btn" onclick="zoomTerm(1)" ontouchend="event.preventDefault()">+</button>
-            <button class="tc-btn" onclick="zoomTerm(0)" ontouchend="event.preventDefault()">⟲</button>
-            <button class="tc-btn" onclick="toggleFullscreen()" ontouchend="event.preventDefault()">⛶</button>
+            <button class="tc-btn" onclick="zoomTerm(1)" ontouchend="event.preventDefault();zoomTerm(1)" oncontextmenu="event.preventDefault()">+</button>
+            <button class="tc-btn" onclick="zoomTerm(0)" ontouchend="event.preventDefault();zoomTerm(0)" oncontextmenu="event.preventDefault()">⟲</button>
+            <button class="tc-btn" onclick="toggleFullscreen()" ontouchend="event.preventDefault();toggleFullscreen()" oncontextmenu="event.preventDefault()">⛶</button>
           </div>
         </div>
         <div class="term-container" id="term-container">
+          <div class="apply-menu" id="term-apply-menu"></div>
           <div class="term-arrows" id="term-arrows">
-            <button class="arr-btn" onclick="sendKey('\x1b[A')" ontouchend="event.preventDefault()">▲</button>
+            <button class="arr-btn" onclick="sendKey('\x1b[A')" ontouchend="event.preventDefault();sendKey('\x1b[A')" oncontextmenu="event.preventDefault()">▲</button>
             <div class="arr-row">
-              <button class="arr-btn" onclick="sendKey('\x1b[D')" ontouchend="event.preventDefault()">◀</button>
-              <button class="arr-btn arr-center" onclick="sendKey('\t')" ontouchend="event.preventDefault()">Tab</button>
-              <button class="arr-btn" onclick="sendKey('\x1b[C')" ontouchend="event.preventDefault()">▶</button>
+              <button class="arr-btn" onclick="sendKey('\x1b[D')" ontouchend="event.preventDefault();sendKey('\x1b[D')" oncontextmenu="event.preventDefault()">◀</button>
+              <button class="arr-btn arr-center" onclick="sendKey('\t')" ontouchend="event.preventDefault();sendKey('\t')" oncontextmenu="event.preventDefault()">Tab</button>
+              <button class="arr-btn" onclick="sendKey('\x1b[C')" ontouchend="event.preventDefault();sendKey('\x1b[C')" oncontextmenu="event.preventDefault()">▶</button>
             </div>
-            <button class="arr-btn" onclick="sendKey('\x1b[B')" ontouchend="event.preventDefault()">▼</button>
+            <button class="arr-btn" onclick="sendKey('\x1b[B')" ontouchend="event.preventDefault();sendKey('\x1b[B')" oncontextmenu="event.preventDefault()">▼</button>
             <div class="arr-extra">
-              <button class="arr-btn arr-wide" onclick="sendKey('\r')" ontouchend="event.preventDefault()">Enter</button>
-              <button class="arr-btn arr-wide" onclick="sendKey('/')" ontouchend="event.preventDefault()">/</button>
+              <button class="arr-btn arr-wide" onclick="sendKey('\r')" ontouchend="event.preventDefault();sendKey('\r')" oncontextmenu="event.preventDefault()">Enter</button>
+              <button class="arr-btn arr-wide" onclick="sendKey('/')" ontouchend="event.preventDefault();sendKey('/')" oncontextmenu="event.preventDefault()">/</button>
             </div>
           </div>
         </div>

@@ -4,6 +4,11 @@ let fmCurrentPath = '', fmSelected = null, fmBackend = 'local';
 let recentPaths = [], toolDirs = {};
 let storages = [];
 let models = [], selectedModel = 'openrouter/owl-alpha';
+// A tool is tappable when the server can launch it - directly installed,
+// or on-demand through `npx -y`. Old servers report no `launchable`,
+// which falls back to the previous behaviour.
+function toolUsable(t) { return !!(t && (t.launchable || t.installed)); }
+
 
 document.addEventListener('DOMContentLoaded', init);
 
@@ -187,7 +192,7 @@ function renderDashboard() {
         <input type="text" id="cdir-${t.id}" class="card-dir" value="${escHtml(dir)}" placeholder="путь к папке..."
           onclick="event.stopPropagation()" onfocus="this.select()">
         <div style="position:relative">
-          <button class="btn btn-sm btn-p" onclick="toggleApplyMenu(event,'${t.id}')" ${!t.installed ? 'disabled style="opacity:.4"' : ''}>▶</button>
+          <button class="btn btn-sm btn-p" onclick="toggleApplyMenu(event,'${t.id}')" ${!toolUsable(t) ? 'disabled style="opacity:.4"' : ''}>▶</button>
           <div class="apply-menu" id="amenu-${t.id}"></div>
         </div>
       </div>
@@ -202,7 +207,7 @@ function toggleApplyMenu(e, toolId) {
   if (!menu) return;
   const dir = document.getElementById('cdir-' + toolId)?.value?.trim() || homeDir;
   menu.innerHTML = `<div class="apply-menu-title">Запустить в</div>` +
-    tools.filter(t => t.installed).map(t => `
+    tools.filter(toolUsable).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();openFromCard('${toolId}','${escAttr(dir)}','${t.id}')">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div>
       <span>${t.name}</span>
@@ -226,7 +231,7 @@ async function openFromCard(fromToolId, dir, launchToolId) {
 
 // ===== SIDEBAR (in drawer) =====
 function renderSidebar() {
-  document.getElementById('tool-list').innerHTML = tools.filter(t => t.installed).map(t => {
+  document.getElementById('tool-list').innerHTML = tools.filter(toolUsable).map(t => {
     const dir = toolDirs[t.id] || homeDir;
     const short = dir.replace(homeDir, '~').split('\\').pop();
     return `<div class="sb-i" onclick="launchTool('${t.id}');toggleDrawer()">
@@ -249,7 +254,7 @@ function showNewTermModal() {
       <div class="sb-ico" style="background:rgba(88,166,255,.15);color:var(--acc);width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px">&gt;_</div>
       <div><div style="font-size:13px;font-weight:500">Terminal</div><div style="font-size:10px;color:var(--t3)">Пустой терминал</div></div>
     </div>
-  ` + tools.filter(t => t.installed).map(t => `
+  ` + tools.filter(toolUsable).map(t => `
     <div class="newterm-tool" onclick="createTerm('${t.id}')">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px">${t.icon}</div>
       <div><div style="font-size:13px;font-weight:500">${t.name}</div></div>
@@ -352,6 +357,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   });
 
   new ResizeObserver(() => { if (activeTab?.id === id) fitAddon.fit(); }).observe(panel);
+  bindTermHold(panel, id);
 
   switchTab(id);
 }
@@ -458,6 +464,48 @@ function sendKey(key) {
   }
 }
 
+// ===== HOLD-TO-OPEN TOOL MENU =====
+// Long-press (touch) or right-click (mouse) on a terminal opens the same
+// tool menu the ▶ buttons show elsewhere: launch anything in this tab's
+// folder without typing the path.
+let lastTermMenuAt = 0;
+function bindTermHold(panel, tabId) {
+  let timer = null, sx = 0, sy = 0;
+  panel.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    timer = setTimeout(() => { timer = null; openTermApplyMenu(tabId); }, 550);
+  }, { passive: true });
+  panel.addEventListener('touchmove', (e) => {
+    if (!timer) return;
+    const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
+    if (dx * dx + dy * dy > 100) { clearTimeout(timer); timer = null; }
+  }, { passive: true });
+  panel.addEventListener('touchend', () => { if (timer) { clearTimeout(timer); timer = null; } });
+  panel.addEventListener('contextmenu', (e) => { e.preventDefault(); openTermApplyMenu(tabId); });
+}
+function openTermApplyMenu(tabId) {
+  const now = Date.now();
+  if (now - lastTermMenuAt < 800) return; // timer + contextmenu both fire on a hold
+  lastTermMenuAt = now;
+  const tab = tabs.find(t => t.id === tabId);
+  if (!tab) return;
+  document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));
+  const menu = document.getElementById('term-apply-menu');
+  if (!menu) return;
+  const dir = tab.cwd || homeDir;
+  menu.innerHTML = `<div class="apply-menu-title">Запустить в ${escHtml(String(dir).replace(homeDir, '~'))}</div>` +
+    tools.filter(toolUsable).map(t => `
+    <div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','${t.id}')">
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div>
+      <span>${t.name}</span>
+    </div>`).join('') + `<div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','_terminal')">
+      <div class="sb-ico" style="background:rgba(88,166,255,.15);color:var(--acc);width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">&gt;_</div>
+      <span>Terminal</span>
+    </div>`;
+  menu.classList.add('on');
+}
+
 // ===== FILE MANAGER =====
 async function initFM() {
   const devR = await fetch('/api/devices').then(r => r.json());
@@ -518,7 +566,7 @@ function toggleFmMenu(e) {
   if (!menu) return;
   const dir = fmCurrentPath || homeDir;
   menu.innerHTML = `<div class="apply-menu-title">Открыть в</div>` +
-    tools.filter(t => t.installed).map(t => `
+    tools.filter(toolUsable).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','${t.id}')">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div>
       <span>${t.name}</span>
