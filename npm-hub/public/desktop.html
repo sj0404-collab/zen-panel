@@ -147,6 +147,7 @@
       <button class="tb on" onclick="showPage('dashboard')">Dashboard</button>
       <button class="tb" onclick="showPage('terminal')">Терминал</button>
       <button class="tb" onclick="showPage('files')">Файлы</button>
+      <button class="tb" onclick="showPage('repos')">🐙 Repos</button>
       <button class="tb" onclick="showPage('models-full')">🔧 Models</button>
     </div>
     <div class="topbar-right">
@@ -230,6 +231,23 @@
             <div style="padding:4px 0;font-size:10px;color:var(--t3)" id="fm-info"></div>
           </div>
         </div>
+      </div>
+      <div class="page" id="p-repos">
+        <div class="ph"><h1>🐙 Repos</h1><p>Репозитории аккаунта — смотреть файлы или клонировать на раннер</p></div>
+        <div id="repos-auth" style="background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:14px;margin-bottom:12px;max-width:520px">
+          <label style="font-size:11px;color:var(--t2)">GitHub token</label>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <input type="password" id="repos-token" placeholder="ghp_..." style="flex:1;padding:8px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none">
+            <button class="btn btn-ok" onclick="saveReposToken()">OK</button>
+          </div>
+          <div style="font-size:10px;color:var(--t3);margin-top:6px">Из панели подставляется сам; токен живёт только в браузере</div>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:16px;align-items:center">
+          <input type="text" id="repos-search" placeholder="Поиск..." oninput="filterRepos(this.value)" style="width:240px;padding:8px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;outline:none">
+          <button class="btn" onclick="loadRepos()">⟳ Обновить</button>
+          <span id="repos-info" style="font-size:11px;color:var(--t3);display:flex;align-items:center"></span>
+        </div>
+        <div id="repos-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px"></div>
       </div>
       <div class="page" id="p-models-full">
         <div class="ph"><h1>🔧 Models Full</h1><p>Все модели всех CLI инструментов с ключами и настройками</p></div>

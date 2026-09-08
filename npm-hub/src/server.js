@@ -159,6 +159,40 @@ app.post('/api/storages/remove', (req, res) => {
   storage.removeStorage(req.body.id).then(r => res.json(r)).catch(e => res.json({ success: false, error: e.message }));
 });
 
+// ─── GIT ───
+// Clone an account repo onto the runner (~/repos/<name>). Public repos
+// need no token; private ones take it transiently - the stored remote
+// is scrubbed back to the clean URL right after, and the token never
+// hits a log (errors are scrubbed too).
+const runGit = (args, opts) => new Promise((resolve, reject) => {
+  require('child_process').execFile('git', args, opts, (err, stdout, stderr) => {
+    if (err) reject(Object.assign(err, { stderr: String(stderr || '') }));
+    else resolve(stdout);
+  });
+});
+app.post('/api/git/clone', async (req, res) => {
+  const m = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(String((req.body || {}).repo || '').trim());
+  if (!m) return res.json({ success: false, error: 'need "owner/name"' });
+  const token = String((req.body || {}).token || '');
+  const dest = path.join(HOME, 'repos', m[2]);
+  try {
+    if (fs.existsSync(path.join(dest, '.git'))) return res.json({ success: true, path: dest, existed: true });
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    const url = token
+      ? `https://x-access-token:${token}@github.com/${m[1]}/${m[2]}.git`
+      : `https://github.com/${m[1]}/${m[2]}.git`;
+    const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo' };
+    await runGit(['clone', url, dest], { timeout: 180000, env });
+    await runGit(['-C', dest, 'remote', 'set-url', 'origin', `https://github.com/${m[1]}/${m[2]}.git`], { timeout: 15000 });
+    res.json({ success: true, path: dest });
+  } catch (e) {
+    try { fs.rmSync(dest, { recursive: true, force: true }); } catch {}
+    let msg = String((e && (e.stderr || e.message)) || e).slice(0, 300);
+    if (token) msg = msg.split(token).join('***');
+    res.json({ success: false, error: msg || 'clone failed' });
+  }
+});
+
 // ─── DEVICES ───
 app.get('/api/devices', async (req, res) => {
   try {

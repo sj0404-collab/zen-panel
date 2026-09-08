@@ -795,8 +795,116 @@ async function syncAllModels() {
 }
 
 // Load models-full when page is shown
+// ===== GITHUB REPOS =====
+// The panel opens the hub with #gh=<account token>. A fragment never leaves
+// the browser, so the hub server never sees it - this page lists the
+// account's repos straight from api.github.com, then either browses one
+// through the existing github storage backend or clones it onto the runner.
+let ghReposCache = null;
+function ghToken() {
+  const h = (location.hash || '').match(/gh=([^&]+)/);
+  if (h) {
+    const t = decodeURIComponent(h[1]);
+    try { sessionStorage.setItem('gh_token', t); } catch {}
+    return t;
+  }
+  try { const s = sessionStorage.getItem('gh_token'); if (s) return s; } catch {}
+  const inp = document.getElementById('repos-token');
+  return (inp && inp.value.trim()) || '';
+}
+async function saveReposToken() {
+  const v = (document.getElementById('repos-token')?.value || '').trim();
+  if (!v) return;
+  try { sessionStorage.setItem('gh_token', v); } catch {}
+  loadRepos();
+}
+async function loadRepos() {
+  const listEl = document.getElementById('repos-list');
+  const infoEl = document.getElementById('repos-info');
+  const authEl = document.getElementById('repos-auth');
+  const t = ghToken();
+  if (authEl) authEl.style.display = t ? 'none' : '';
+  if (!t) {
+    if (listEl) listEl.innerHTML = '';
+    if (infoEl) infoEl.textContent = 'Нужен GitHub-токен';
+    return;
+  }
+  if (infoEl) infoEl.textContent = 'Загрузка…';
+  try {
+    const repos = [];
+    let url = 'https://api.github.com/user/repos?per_page=100&sort=updated';
+    for (let page = 0; page < 5 && url; page++) {
+      const r = await fetch(url, { headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + t } });
+      if (!r.ok) throw new Error('GitHub: ' + r.status);
+      repos.push(...(await r.json()));
+      const nx = (r.headers.get('Link') || '').match(/<([^>]+)>;\s*rel="next"/);
+      url = nx ? nx[1] : null;
+    }
+    ghReposCache = repos;
+    const q = document.getElementById('repos-search');
+    if (q) q.value = '';
+    renderRepos(repos);
+    if (infoEl) infoEl.textContent = `${repos.length} репозиториев`;
+  } catch (e) {
+    if (infoEl) infoEl.textContent = 'Ошибка: ' + e.message;
+  }
+}
+function renderRepos(repos) {
+  const el = document.getElementById('repos-list');
+  if (!el) return;
+  el.innerHTML = repos.map(r => `
+    <div class="model-card">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <div class="model-name">🐙 ${escHtml(r.full_name)}</div>
+        ${r.private ? '<span style="font-size:9px;color:var(--warn);background:rgba(210,153,34,.15);padding:2px 6px;border-radius:4px">PRIVATE</span>' : ''}
+        ${r.fork ? '<span style="font-size:9px;color:var(--t3);padding:2px 6px">fork</span>' : ''}
+      </div>
+      ${r.description ? `<div style="font-size:11px;color:var(--t2);margin-top:4px">${escHtml(r.description)}</div>` : ''}
+      <div style="font-size:10px;color:var(--t3);margin-top:4px">${escHtml(r.language || '—')} • ⭐ ${r.stargazers_count} • ${String(r.updated_at || '').slice(0, 10)}</div>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button class="btn btn-sm btn-ok" onclick="repoBrowse('${escAttr(r.full_name)}','${escAttr(r.default_branch || 'main')}')">📁 Смотреть</button>
+        <button class="btn btn-sm" onclick="repoClone('${escAttr(r.full_name)}',${r.private ? 'true' : 'false'})">⬇ Клонировать</button>
+      </div>
+    </div>`).join('') || '<div style="padding:20px;color:var(--t3);text-align:center">Пусто</div>';
+}
+function filterRepos(q) {
+  if (!ghReposCache) return;
+  q = (q || '').toLowerCase();
+  renderRepos(ghReposCache.filter(r => r.full_name.toLowerCase().includes(q) || (r.description || '').toLowerCase().includes(q)));
+}
+async function repoBrowse(fullName, branch) {
+  const parts = fullName.split('/');
+  const r = await fetch('/api/storages/add', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ storageType: 'github', owner: parts[0], repo: parts[1], token: ghToken(), branch: branch || 'main', name: 'GitHub: ' + fullName }) }).then(r => r.json());
+  if (!r.success) { alert('Ошибка: ' + (r.error || 'неизвестная')); return; }
+  try {
+    const storR = await fetch('/api/storages').then(r => r.json());
+    if (storR.success) storages = storR.storages || storages;
+  } catch {}
+  showPage('files');
+  initFM();
+  const s = (storages || []).find(x => x.name === 'GitHub: ' + fullName);
+  if (s) fmSwitchBackend(s.id, '/');
+}
+async function repoClone(fullName, isPrivate) {
+  if (isPrivate && !ghToken()) { alert('Приватный репозиторий: нужен токен'); return; }
+  if (!confirm(`Клонировать ${fullName} в ~/repos/?`)) return;
+  const infoEl = document.getElementById('repos-info');
+  if (infoEl) infoEl.textContent = 'Клонирование ' + fullName + '…';
+  try {
+    const r = await fetch('/api/git/clone', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo: fullName, token: isPrivate ? ghToken() : undefined }) }).then(r => r.json());
+    if (!r.success) { alert('Ошибка: ' + (r.error || 'неизвестная')); return; }
+    showPage('files');
+    fmSwitchBackend('local', r.path);
+  } finally {
+    if (infoEl && ghReposCache) infoEl.textContent = `${ghReposCache.length} репозиториев`;
+  }
+}
+
 const origShowPage = showPage;
 showPage = function(p) {
   origShowPage(p);
   if (p === 'models-full') loadModelsFull();
+  if (p === 'repos' && !ghReposCache) loadRepos();
 };
