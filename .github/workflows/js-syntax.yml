@@ -3,9 +3,9 @@ name: JS syntax
 on:
   push:
     branches: [main]
-    paths: ["agent/**", "desktop/**"]
+    paths: ["agent/**", "desktop/**", "npm-hub/**"]
   pull_request:
-    paths: ["agent/**", "desktop/**"]
+    paths: ["agent/**", "desktop/**", "npm-hub/**"]
 
 jobs:
   check:
@@ -39,3 +39,11 @@ jobs:
           node --check desktop/preload.js
           node --check desktop/panel-store.js
           node desktop/test-panel-store.js
+      - name: Syntax-check npm-hub
+        run: |
+          node --check npm-hub/src/server.js
+          node --check npm-hub/src/tunnel.js
+          node --check npm-hub/src/models/manager.js
+          for f in npm-hub/src/storage/*.js; do node --check "$f"; done
+          node --check npm-hub/public/desktop-app.js
+          node --check npm-hub/public/mobile-app.js
