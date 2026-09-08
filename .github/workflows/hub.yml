@@ -82,11 +82,13 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE/fork/npm-hub"
           PORT=8090 nohup node src/server.js > /tmp/hub.log 2>&1 &
-          for i in $(seq 1 30); do
-            curl -sf -o /dev/null "http://127.0.0.1:8090/api/tools" && break
+          for i in $(seq 1 60); do
+            body=$(curl -s -m 15 "http://127.0.0.1:8090/api/tools" || true)
+            echo "$body" | grep -q '"warming":false' && break
             sleep 2
           done
-          if ! curl -sf -o /dev/null "http://127.0.0.1:8090/api/tools"; then
+          body=$(curl -s -m 15 "http://127.0.0.1:8090/api/tools" || true)
+          if ! echo "$body" | grep -q '"warming":false'; then
             echo "::error::the hub did not start."
             tail -40 /tmp/hub.log
             exit 1
@@ -280,11 +282,11 @@ jobs:
             "1>$env:TEMP\hub.log" "2>$env:TEMP\hub.err"
 
           $up = $false
-          foreach ($i in 1..30) {
+          foreach ($i in 1..60) {
             Start-Sleep -Seconds 2
             try {
-              Invoke-WebRequest -Uri 'http://127.0.0.1:8090/api/tools' -TimeoutSec 3 -UseBasicParsing | Out-Null
-              $up = $true; break
+              $r = Invoke-RestMethod -Uri 'http://127.0.0.1:8090/api/tools' -TimeoutSec 15
+              if ($r.success -and -not $r.warming) { $up = $true; break }
             } catch { }
           }
           if (-not $up) {
