@@ -21,3 +21,52 @@ Android-панель и GitHub Actions для Zen Agent, OpenCode и удалё�
 3. После старта панель сама откроет веб-чат в оверлее. Поле «Первая команда» уходит в чат сразу (`?q=` у CLI, `opencode run --attach` у OpenCode).
 
 Адрес сессии публикуется в ветке `session-state` (`session-agent.json`, `session-opencode.json`, `session-linux.json`, `session-windows.json`).
+
+## OpenCode — какой адрес открывать и как выбрать веб-интерфейс
+
+`opencode serve` в workflow запускается с `--hostname 127.0.0.1`, поэтому **порт 4096 доступен только на самом раннере** и по сети не открывается. Снаружи нужен **gateway** (`agent/oc-gateway.js`), который слушает `0.0.0.0` и отдаёт один origin (интерфейс + API), проксируя на сервер.
+
+Gateway умеет **два режима** (переменная `OC_UI`):
+
+- `OC_UI=web` (**по умолчанию**) — **оригинальный веб OpenCode**. Сам `opencode serve` уже отдаёт настоящий веб-SPA на `/`, поэтому gateway просто обрабатывает `/` как обычно. Это полный веб-интерфейс, как в браузере.
+- `OC_UI=mobile` — **лёгкий мобильный чат** (`agent/oc-mobile.html`, «Это лёгкий чат, не веб OpenCode»). Раньше был по умолчанию; оставлен как опция для слабых телефонов.
+
+Как открыть:
+
+- **Через GitHub Actions (туннель).** На вкладке «Сессии» для OpenCode задай `UI: web` (по умолчанию `web`) или `mobile` — выбор есть в `workflow_dispatch`. После старта в панели появится адрес вида `https://…trycloudflare.com/`. Это адрес gateway — открой его в браузере (web) или вставь в OpenCode Mobile `<Client>` (mobile). `agentUrl` из `session-opencode.json` — тот же адрес.
+- **По LAN (свой сервер/ПК в домашней сети).** Запусти стек скриптом:
+  ```bash
+  PATH="$HOME/.local/node_modules/.bin:$PATH" tools/oc_lan_start.sh          # оригинальный веб
+  PATH="$HOME/.local/node_modules/.bin:$PATH" OC_UI=mobile tools/oc_lan_start.sh   # мобильный чат
+  # поднимет opencode serve на 127.0.0.1 и gateway на 0.0.0.0,
+  # затем напечатает адрес:  http://<LAN-IP>:4100/
+  ```
+  Открой `http://<LAN-IP>:4100/` в браузере (web) или вставь в OpenCode Mobile `<Client>` (mobile). **НЕ** порт `4096` — он только localhost.
+
+Остановить — `tools/oc_lan_stop.sh`. Gateway на LAN работает без пароля (`OPENCODE_SERVER_PASSWORD` не задан) — держи сеть доверенной или запускай через туннель.
+
+## OpenCode и GitHub через токен (доступ к репозиторию)
+
+Чтобы OpenCode-агент **сам подключался к GitHub по токену** и работал с твоим репозиторием (клон, чтение, запись, push):
+
+- **Модели GitHub** появляются автоматически, как только в окружении `opencode serve` есть `GITHUB_TOKEN`/`GH_TOKEN` (провайдер `github-copilot`, ~30 моделей). Ручной логин не нужен.
+- **Доступ к репозиторию** — агент должен работать внутри клона репо, а git должен авторизоваться токеном.
+
+**По LAN / локально** — запусти стек так, чтобы он поднял агента в твоём репо и дал ему git-авторизацию:
+```bash
+export ZEN_GH_TOKEN=ghp_xxxx           # твой GitHub-токен (repo + workflow)
+OC_REPO="sj0404-collab/zen-panel" \
+  PATH="$HOME/.local/node_modules/.bin:$PATH" tools/oc_lan_start.sh
+# скрипт: поднимет opencode serve в .zen-open/<repo> (склонирует его),
+# настроит git через http.extraheader (token не хранится и не печатается),
+# и агент сможет clone/push — без ручного входа в GitHub.
+```
+
+**В GitHub Actions** это уже работает из коробки: `opencode.yml` запускает `opencode serve` из клона репо (`fork`) и передаёт `GH_TOKEN`, а `actions/checkout` настраивает git-авторизацию. Агент сразу видит и пишет в репозиторий.
+
+Проверка, что git-авторизация токеном работает (без вставки токена в URL):
+```bash
+git ls-remote https://github.com/<owner>/<repo>.git main   # должен вернуть SHA, не просить логин
+```
+
+`tools/oc_gh_auth.sh` — переиспользуемый хелпер: экспортирует `GITHUB_TOKEN`/`GH_TOKEN`, настраивает `http.https://github.com/.extraheader`, и опционально клонирует `OC_REPO` в заданную папку. Токен в конфиг не пишется (только base64 basic) и не выводится в лог.

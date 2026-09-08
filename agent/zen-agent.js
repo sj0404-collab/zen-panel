@@ -21,6 +21,7 @@ const vm = require('vm');
 // NOT sandboxed - adb, RDP and GUI screenshots cannot exist without spawn().
 // Optional require: a missing file must not stop the agent from starting.
 let capabilitiesModule = null;
+let cloudStore = null; try { cloudStore = require('./cloud-store.js'); } catch {}
 try { capabilitiesModule = require('./capabilities.js'); }
 catch (e) { capabilitiesModule = null; }
 // Optional: this ships as a single file, and ../lib/local-ai is not part of
@@ -148,6 +149,40 @@ function safeCommandTimeout(value, defaultValue = 18000) {
   const requested = parseInt(value || String(defaultValue), 10) || defaultValue;
   const max = CONFIG.longTaskMode ? CONFIG.longCommandTimeoutMs : 120000;
   return Math.min(Math.max(requested, 1000), max);
+}
+// Destructive, irreversible commands are refused from execute_command. These
+// rewrite history / drop refs / mass-kill processes and are not recoverable;
+// when the model conflates the target repo with the local checkout this is what
+// "reset the branches". Override per-run with ZEN_ALLOW_DANGEROUS=1 for a
+// deliberate user request.
+function dangerousCommandRejected(commandText) {
+  if (process.env.ZEN_ALLOW_DANGEROUS === '1') return null;
+  const raw = String(commandText || '');
+  const lower = raw.toLowerCase();
+  // Git flags are case-sensitive: `git branch -D` (force-delete) is dangerous,
+  // `git branch -d` (delete merged only) is not. So git patterns run against the
+  // original text; the process-kill and rm patterns run against the lowercased one.
+  const gitPatterns = [
+    /\bgit\s+reset\s+--hard\b/,
+    /\bgit\s+push\b[^\n;&|\r]*\s-f\b/,
+    /\bgit\s+push\b[^\n;&|\r]*--force\b/,
+    /\bgit\s+clean\s+-[a-z-]*f/,
+    /\bgit\s+branch\s+-D\b/,
+    /\bgit\s+branch\s+--delete\s+--force\b/,
+    /\bgit\s+stash\s+drop\b/,
+    /\bgit\s+update-ref\s+-d\b/,
+    /\bgit\s+filter-branch\b/
+  ];
+  const genericPatterns = [
+    /\bpkill\b|\bkillall\b/,
+    /\brm\s+-r[f]{0,2}\s+['"]?(?:\/|\/[*]|\$home|\~)(?:\/|\s|$)/
+  ];
+  if (gitPatterns.some(re => re.test(raw)) ||
+      genericPatterns.some(re => re.test(lower))) {
+    return 'Отменено для безопасности: команда стирает историю/ветки или убивает процессы массово (' +
+      String(commandText).slice(0, 120) + '). Если это намеренно, попроси пользователя включить ZEN_ALLOW_DANGEROUS=1 и повторить, либо используй более безопасный инструмент (например, только указанный файл через write_file вместо git reset --hard).';
+  }
+  return null;
 }
 function setAgentMode(mode) {
   CONFIG.agentMode = normalizedAgentMode(mode);
@@ -436,7 +471,7 @@ function formatToolResult(name, result, args) {
     list_dir: '📂', read_file: '📖', write_file: '✏️',
     edit_file: '📝', delete_file: '🗑️', append_file: '➕',
     execute_command: '⚙️', web_search: '🔍', download_file: '⬇️',
-    image_info: '🖼️', ocr_image: '🔤', vision_analyze: '👁️', analyze_image: '👁️', vision_ui_audit: '🧩', vision_compare: '🆚', custom_tool_list: '🧰', custom_tool_create: '🛠️', custom_tool_inspect: '🔎', custom_tool_run: '▶️', custom_tool_delete: '🗑️', subagent_list: '👥', subagent_create: '👤', subagent_task: '🤝', subagent_delete: '🗑️', plugin_list: '🧩', plugin_create: '🧩', plugin_inspect: '🔎', plugin_delete: '🗑️', plugin_tool_list: '🧰', plugin_tool_run: '▶️', plugin_provider_list: '🔌',
+    image_info: '🖼️', document_extract: '📄', media_info: '🎞️', audio_transcribe: '🎙️', ocr_image: '🔤', vision_analyze: '👁️', analyze_image: '👁️', vision_ui_audit: '🧩', vision_compare: '🆚', custom_tool_list: '🧰', custom_tool_create: '🛠️', custom_tool_inspect: '🔎', custom_tool_run: '▶️', custom_tool_delete: '🗑️', subagent_list: '👥', subagent_create: '👤', subagent_task: '🤝', subagent_delete: '🗑️', plugin_list: '🧩', plugin_create: '🧩', plugin_inspect: '🔎', plugin_delete: '🗑️', plugin_tool_list: '🧰', plugin_tool_run: '▶️', plugin_provider_list: '🔌',
     ...(capabilitiesModule ? capabilitiesModule.CAPABILITY_ICONS : {}),
     workspace_info: '📍', set_workspace: '📍', project_inspect: '🧭', termux_info: '📱', network_check: '🌐', tree_dir: '🌳', search_text: '🔎', file_info: 'ℹ️', find_files: '🔎',
     file_backup: '💾', file_diff: '🧩', mkdir: '📁', copy_file: '📋', move_file: '🚚', archive_create: '🗜️', archive_extract: '📦',
@@ -478,6 +513,11 @@ function formatToolResult(name, result, args) {
       (items.length ? items.map(t => `  ${t.done ? c('✓', 'green') : c('○', 'gray')} #${t.id} ${t.text}`).join('\n') : c('  Нет задач', 'gray'));
   } else if (name === 'read_file' || name === 'process_logs' || name === 'monitor_logs' || name === 'terminal_read') {
     content = frag(result, 30, 15);
+  } else if (name === 'github_read') {
+    // Показываем голову и хвост, чтобы была видна пометка «файл длиннее»,
+    // а не просто первые 900 символов без сигнала, что это кусок.
+    content = redactSecrets(result).slice(0, 900) +
+      (/файл длиннее/i.test(result) ? '\n' + c('… файл длиннее, дочитай через offset', 'yellow') : '');
   } else if (name === 'write_file' || name === 'append_file') {
     const lines = (args.content || '').split('\n');
     content = `${c('Результат:', 'gray')} ${redactSecrets(result)}\n${c(lines.length + ' строк передано', 'gray')}\n` + frag(redactSecrets(args.content || ''), 8, 4);
@@ -948,9 +988,9 @@ const MCP_TOOLS = {
   run_lint: 'Запустить npm lint или указанный lint script',
   code_check: 'Проверить синтаксис JavaScript-файла',
   dependency_audit: 'Выполнить npm audit без автоматических исправлений',
-  github_read: 'Прочитать файл прямо из GitHub, без клонирования',
+  github_read: 'Прочитать файл из GitHub без клонирования. Большие файлы: если в ответе есть «файл длиннее», вызов повторяй с offset (и optional max_chars), чтобы дочитать по кускам.',
   github_write: 'Записать файл прямо в GitHub — это сразу коммит',
-  github_list: 'Список файлов в папке репозитория на GitHub',
+  github_list: 'Список файлов в папке. С recursive:true возвращает ВСЁ дерево (или поддерево по path) одним вызовом — осмотри репозиторий сразу, не спускайся по одному уровню за вызов.',
   github_delete: 'Удалить файл в GitHub одним коммитом',
   github_commit_files: 'Несколько файлов одним коммитом через GitHub API',
   github_search: 'Поиск кода в репозитории на GitHub',
@@ -993,7 +1033,10 @@ const MCP_TOOLS = {
   web_search: 'Поиск по Wikipedia (энциклопедический)',
   web_fetch: 'Открыть страницу по URL и прочитать её как текст',
   image_info: 'Локальные metadata, размер, dimensions и SHA-256 изображения',
-  ocr_image: 'Локально распознать текст на изображении через Tesseract',
+  ocr_image: 'Распознать текст на изображении (engine: local через Tesseract или google через Google Cloud Vision)',
+  document_extract: 'Извлечь текст из документов: docx, odt, epub, pdf, rtf и любых текстовых файлов',
+  media_info: 'Метаданные медиафайла: длительность, кодек, разрешение, битрейт (нужен ffprobe)',
+  audio_transcribe: 'Расшифровать речь из аудио/видео в текст (ffmpeg + Whisper, нужен HF-токен)',
   vision_analyze: 'Vision-анализ одного изображения через выбранную OpenRouter vision-модель',
   analyze_image: 'Псевдоним vision_analyze для совместимости',
   vision_ui_audit: 'Найти UI/UX-проблемы на скриншоте',
@@ -1746,12 +1789,175 @@ function resolveImageFile(rawPath) {
     return { path: image.path, buffer, mime, stat, dimensions: imageDimensions(buffer, mime) };
   } catch (e) { return { error: 'Не удалось прочитать изображение: ' + e.message }; }
 }
+// ── RICH FILE INGESTION ────────────────────────────────────────────
+// The model must read the user's real documents: docx, odt, epub, pdf, rtf and
+// plain text. read_file used to return binary garbage for a .docx. These pull
+// actual text out. Media goes through media_info / audio_transcribe.
+function hasTool(binary) {
+  try { execFileSync(process.platform === 'win32' ? 'where' : 'which', [binary], { stdio: 'ignore', timeout: 2500 }); return true; }
+  catch { return false; }
+}
+function extractTextViaPython(filePath, kind) {
+  const script = `import sys,zipfile,re,xml.etree.ElementTree as ET,posixpath
+kind=sys.argv[1]; f=sys.argv[2]
+def dxp(xml,u):
+    root=ET.fromstring(xml); ns='{%s}'%u; out=[]
+    for p in root.iter(ns+'p'):
+        line=''.join((t.text or '') for t in p.iter(ns+'t')).strip()
+        if line: out.append(line)
+    return '\\n'.join(out)
+z=zipfile.ZipFile(f)
+if kind=='docx':
+    print(dxp(z.read('word/document.xml'),'http://schemas.openxmlformats.org/wordprocessingml/2006/main'))
+elif kind=='odt':
+    root=ET.fromstring(z.read('content.xml').decode('utf-8','ignore')); ns='{urn:oasis:names:tc:opendocument:xmlns:text:1.0}'; out=[]
+    for p in root.iter(ns+'p'):
+        line=''.join((t.text or '') for t in p.iter(ns+'span')).strip()
+        if line: out.append(line)
+    print('\\n'.join(out))
+elif kind=='epub':
+    ct=z.read('META-INF/container.xml').decode('utf-8','ignore')
+    m=re.search(r'full-path="([^"]+)"',ct); opf=m.group(1) if m else 'content.opf'
+    data=z.read(opf).decode('utf-8','ignore')
+    spine=re.findall(r'<itemref[^>]*idref="([^"]+)"',data)
+    idmap=dict(re.findall(r'<item[^>]*id="([^"]+)"[^>]*href="([^"]+)"',data))
+    pages=[]
+    for i in spine:
+        href=idmap.get(i)
+        if not href: continue
+        full=posixpath.normpath(posixpath.join(posixpath.dirname(opf),href))
+        try: html=z.read(full).decode('utf-8','ignore')
+        except: continue
+        text=re.sub(r'<script.*?</script>','',html,flags=re.S)
+        text=re.sub(r'<style.*?</style>','',text,flags=re.S)
+        text=re.sub(r'<[^>]+>','',text)
+        text=re.sub(r'\\s+',' ',text).strip()
+        if text: pages.append(text)
+    print('\\n\\n==== PAGE BREAK ====\\n\\n'.join(pages))
+`;
+  try {
+    const out = execFileSync('python3', ['-c', script, kind, filePath], { encoding: 'utf8', timeout: 90000, maxBuffer: 40 * 1024 * 1024 });
+    return { ok: true, text: out.trim(), encoding: kind };
+  } catch (e) {
+    const msg = String((e.stderr || e.message || '')).slice(0, 220);
+    return { error: (kind + ': не удалось извлечь текст. ' + msg) };
+  }
+}
+const TEXT_EXTS = new Set(['.txt', '.md', '.markdown', '.csv', '.tsv', '.json', '.xml', '.html', '.htm', '.log', '.yml', '.yaml', '.toml', '.ini', '.properties', '.conf', '.cfg', '.env', '.css', '.js', '.mjs', '.cjs', '.ts', '.jsx', '.tsx', '.kt', '.java', '.py', '.rs', '.go', '.sh', '.bat', '.ps1', '.sql', '.diff', '.patch', '.svg']);
+const ZIP_DOCS = new Set(['.docx', '.odt', '.epub']);
+function extractDocumentText(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (TEXT_EXTS.has(ext)) {
+    const buf = fs.readFileSync(filePath);
+    const s = buf.toString('utf8').replace(/^\uFEFF/, '');
+    return { ok: true, text: s, encoding: 'utf8', lines: s.split('\n').length };
+  }
+  if (ZIP_DOCS.has(ext)) return extractTextViaPython(filePath, ext.slice(1));
+  if (ext === '.pdf') {
+    if (hasTool('pdftotext')) {
+      const out = execFileSync('pdftotext', ['-layout', filePath, '-'], { encoding: 'utf8', timeout: 120000, maxBuffer: 40 * 1024 * 1024 });
+      return { ok: true, text: out, encoding: 'pdf', lines: out.split('\n').length };
+    }
+    return { error: 'PDF: нужен poppler-utils (pdftotext). Поставь его в окружении (apt-get install poppler-utils) или пришли текст отдельно.' };
+  }
+  if (ext === '.rtf') {
+    const s = fs.readFileSync(filePath, 'utf8');
+    const text = s.replace(/\\pard?\b/g, '\n').replace(/\\\{\\\[^}]*\}\}/g, '').replace(/\\[a-zA-Z]+-?\d*\s?/g, '').replace(/\{\\?[a-zA-Z]*\}/g, '').trim();
+    return { ok: true, text, encoding: 'rtf' };
+  }
+  return null; // binary / image / media — handled by the caller with a hint
+}
+async function documentTextTool(args) {
+  const resolved = mcpPathOrError(args.path, 'path', true);
+  if (resolved.error) return resolved;
+  try {
+    const r = extractDocumentText(resolved.path);
+    if (r === null) {
+      const ext = path.extname(resolved.path).toLowerCase();
+      if (['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext)) return { error: 'Это изображение. Для фото/скриншота используй image_info / ocr_image / vision_analyze.' };
+      if (['.mp4', '.webm', '.mov', '.mkv', '.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac', '.opus'].includes(ext)) return { error: 'Это медиафайл. Используй media_info для метаданных или audio_transcribe для расшифровки речи.' };
+      return { error: 'Не разобрал формат файла: ' + resolved.path + '. Пришли текст либо конвертируй в поддерживаемый формат.' };
+    }
+    if (r.error) return { path: resolved.path, error: r.error };
+    return { path: resolved.path, encoding: r.encoding, lines: r.lines, content: r.text };
+  } catch (e) { return { error: 'Не удалось прочитать файл: ' + e.message }; }
+}
+async function mediaInfoTool(args) {
+  const resolved = mcpPathOrError(args.path, 'path', true);
+  if (resolved.error) return resolved;
+  if (!hasTool('ffprobe')) return { error: 'Медиа-метаданные требуют ffmpeg/ffprobe. Поставь в окружении (apt-get install ffmpeg).' };
+  try {
+    const out = execFileSync('ffprobe', ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', resolved.path], { encoding: 'utf8', timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
+    const j = JSON.parse(out);
+    const fmt = j.format || {};
+    const video = (j.streams || []).find(s => s.codec_type === 'video');
+    const audio = (j.streams || []).find(s => s.codec_type === 'audio');
+    return {
+      path: resolved.path, duration: fmt.duration ? Number(fmt.duration).toFixed(2) : null, bitrate: fmt.bit_rate ? Number(fmt.bit_rate) : null,
+      container: fmt.format_name || null, size: fmt.size ? Number(fmt.size) : null,
+      video: video ? { codec: video.codec_name, width: video.width, height: video.height, fps: video.avg_frame_rate } : null,
+      audio: audio ? { codec: audio.codec_name, channels: audio.channels, sample_rate: audio.sample_rate } : null
+    };
+  } catch (e) { return { error: 'ffprobe не смог прочитать: ' + String(e.stderr || e.message || '').slice(0, 220) }; }
+}
+async function audioTranscribeTool(args) {
+  const resolved = mcpPathOrError(args.path, 'path', true);
+  if (resolved.error) return resolved;
+  if (!hasTool('ffmpeg')) return { error: 'Расшифровка аудио требует ffmpeg. Поставь в окружении (apt-get install ffmpeg).' };
+  const wav = path.join(os.tmpdir(), 'zen_audio_' + Date.now() + '.wav');
+  try {
+    execFileSync('ffmpeg', ['-y', '-i', resolved.path, '-ar', '16000', '-ac', '1', wav], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 120000 });
+    const audio = fs.readFileSync(wav);
+    const result = await huggingFaceStt(audio, 'audio/wav', 'openai/whisper-large-v3');
+    return { path: resolved.path, transcript: result.text, model: result.model };
+  } catch (e) {
+    return { error: 'Не удалось расшифровать: ' + String(e.message || e.stderr || '').slice(0, 220) };
+  } finally { try { fs.unlinkSync(wav); } catch {} }
+}
+
+
 function imageInfoTool(args) {
   const image = resolveImageFile(args.path); if (image.error) return image;
   return { path: image.path, mime: image.mime, size: image.stat.size, modified: image.stat.mtime.toISOString(), dimensions: image.dimensions, sha256: crypto.createHash('sha256').update(image.buffer).digest('hex') };
 }
-function ocrImageTool(args) {
+function googleVisionKey() {
+  return String(process.env.GOOGLE_VISION_API_KEY || process.env.GOOGLE_LENS_API_KEY || '').trim();
+}
+async function googleVisionOcr(image) {
+  const key = googleVisionKey();
+  if (!key) return { error: 'Для Google Lens/OCR нужен ключ. Задай GOOGLE_VISION_API_KEY (или GOOGLE_LENS_API_KEY) в окружении/настройках — потом я смогу распознавать фото и скриншоты через Google Cloud Vision.' };
+  const body = { requests: [{ image: { content: image.buffer.toString('base64') }, features: [{ type: 'TEXT_DETECTION' }] }] };
+  const payload = Buffer.from(JSON.stringify(body));
+  return await new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'vision.googleapis.com', path: '/v1/images:annotate?key=' + encodeURIComponent(key),
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length }, timeout: 30000
+    }, res => {
+      const chunks = []; res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8'); let j = null; try { j = JSON.parse(raw); } catch {}
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          const err = (j && (j.error && j.error.message)) || raw.slice(0, 200) || ('HTTP ' + res.statusCode);
+          return resolve({ error: 'Google Vision: ' + err });
+        }
+        const ann = (j && j.responses && j.responses[0]) || {};
+        if (ann.error) return resolve({ error: 'Google Vision: ' + (ann.error.message || 'ошибка распознавания') });
+        const text = (ann.textAnnotations || []).length ? ann.textAnnotations[0].description : (ann.fullTextAnnotation && ann.fullTextAnnotation.text || '');
+        resolve({ text: String(text || '').trim() });
+      });
+    });
+    req.on('error', e => resolve({ error: 'Google Vision: ' + e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ error: 'Google Vision: timeout' }); });
+    req.write(payload); req.end();
+  });
+}
+async function ocrImageTool(args) {
   const image = resolveImageFile(args.path); if (image.error) return image;
+  if (String(args.engine || '').toLowerCase() === 'google') {
+    const r = await googleVisionOcr(image);
+    if (r.error) return { path: image.path, error: r.error };
+    return { path: image.path, engine: 'google', text: r.text };
+  }
   const language = String(args.language || 'eng+rus').replace(/[^a-zA-Z+_]/g, '') || 'eng';
   const psm = Math.min(Math.max(Number(args.psm || 6), 3), 13);
   try {
@@ -2078,24 +2284,234 @@ function subagentDeleteTool(args) {
   delete registry[name]; writeSubagentRegistry(registry); return { success: true, name };
 }
 function resolveSubagent(name) { return BUILTIN_SUBAGENTS[name] ? { name, ...BUILTIN_SUBAGENTS[name], builtin: true } : readSubagentRegistry()[name] || null; }
+// Read-only tool set a subagent may actually call. Writes, shells, Git pushes,
+// process/monitor spawns, github writes and plugin tools are excluded: a
+// subagent is a bounded, isolated second opinion, not the primary agent. The
+// loop in subagentTaskTool runs through the real `useTool` executor, so a
+// subagent reads the actual file/system contents and can never invent them.
+const SUBAGENT_READONLY_TOOLS = new Set([
+  'workspace_info', 'project_inspect', 'tree_dir', 'search_text', 'file_info', 'list_dir',
+  'find_files', 'read_file', 'file_diff', 'terminal_read', 'terminal_list', 'process_status',
+  'process_logs', 'monitor_list', 'monitor_logs', 'http_request', 'health_check', 'websocket_test',
+  'sqlite_info', 'sqlite_query', 'sqlite_schema', 'env_list', 'code_check', 'dependency_audit',
+  'github_read', 'github_list', 'github_search', 'github_commits', 'github_branches', 'github_repo',
+  'github_my_repos', 'github_runs', 'git_status', 'git_diff', 'git_branch', 'git_log',
+  'web_search', 'web_fetch', 'image_info', 'ocr_image', 'document_extract', 'media_info',
+  'audio_transcribe', 'vision_analyze', 'analyze_image', 'vision_ui_audit', 'vision_compare',
+  'custom_tool_list', 'custom_tool_inspect', 'subagent_list', 'plugin_list', 'plugin_inspect', 'plugin_provider_list'
+]);
+// Call the current provider with the subagent's own message array (never the
+// primary agent's `history`), so the subagent is a genuinely isolated context.
+async function subagentModelCall(messages, model) {
+  const provider = currentProvider;
+  if (provider === 'openrouter') return callOpenRouter(messages, model);
+  if (provider === 'github' || provider === 'huggingface' || provider === 'tokenra' || provider === 'orcarouter') return callCompatibleProvider(provider, messages, model);
+  if (provider === 'local') {
+    const localConfig = localAi.publicConfig();
+    const localModel = localConfig.engines?.[localConfig.activeEngine]?.model || '';
+    const answer = await localAi.chat({ messages, model: localModel, temperature: CONFIG.temperature, max_tokens: CONFIG.maxTokens });
+    return { text: answer.text, toolCalls: [], model: answer.model || localModel, usage: answer.usage || {}, reasoning: null, outputShown: false, provider: 'local' };
+  }
+  if (provider !== 'zen') { const customProvider = findPluginProvider(provider); if (customProvider) return callPluginProvider(messages, model, customProvider); }
+  return callZenDirect(messages, model, false);
+}
+// Execute a single subagent tool call, honoring the read-only allowlist.
+async function subagentRunTool(toolName, args) {
+  const name = String(toolName || '').toLowerCase().trim();
+  if (!SUBAGENT_READONLY_TOOLS.has(name)) {
+    return `Инструмент '${name}' недоступен subagent (read-only-режим). Доступны: ${[...SUBAGENT_READONLY_TOOLS].slice(0, 24).join(', ')}… Выбери доступный инструмент или дай вывод напрямую.`;
+  }
+  try { return await useTool(name, args || {}); }
+  catch (e) { return `Ошибка вызова ${name}: ${e.message || e}`; }
+}
+
+
+// Arg-key aliases: free models use inconsistent key names; normalise to the
+// canonical key each tool understands.
+const SUBAGENT_ARG_ALIASES = {
+  query: ['query', 'text', 'pattern', 'search', 'q', 'term', 'needle', 'name'],
+  path: ['path', 'dir', 'directory', 'file', 'filename', 'folder'],
+  content: ['content', 'body'],
+  url: ['url', 'link', 'uri'],
+  sql: ['sql', 'statement']
+};
+function subagentCanonKey(key) {
+  const k = String(key || '').toLowerCase();
+  for (const [canonical, aliases] of Object.entries(SUBAGENT_ARG_ALIASES)) if (aliases.includes(k)) return canonical;
+  return k;
+}
+function subagentStripQuotes(value) {
+  const v = String(value == null ? '' : value).trim();
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) return v.slice(1, -1);
+  return v;
+}
+function subagentSplitArgs(inside) {
+  const out = []; let cur = '', quote = null, esc = false;
+  for (const ch of String(inside || '')) {
+    if (esc) { cur += ch; esc = false; continue; }
+    if (ch === '\\') { cur += ch; esc = true; continue; }
+    if (quote) { cur += ch; if (ch === quote) quote = null; continue; }
+    if (ch === '"' || ch === "'") { quote = ch; cur += ch; continue; }
+    if (ch === ',') { out.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+// Lenient parser for the subagent: accepts TOOL_JSON, ```json, <tool_call>
+// (bare name / JSON), `name(arg=val)` call-style, `key: value` lines, and a
+// bare `tool path`. The bare-path fallback fires only when the token is
+// path-like, so prose that merely starts with a tool name ("read_file is…")
+// is never mistaken for a real call.
+function subagentParseToolCall(text) {
+  const jc = parseJsonToolCall(text);
+  if (jc) return jc;
+  const t = String(text || '').trim();
+  if (!t) return null;
+  // Free Zen models sometimes fake a tool response in prose ("⟨awaiting tool
+  // response⟩⟨read_file output: ...⟩"). Treat that as a real call so we read
+  // the actual file instead of publishing the model's invented content.
+  const FILE_TOKEN = /[\w./~-]+\.(?:txt|md|json|js|ts|tsx|jsx|py|rb|go|rs|c|cpp|h|java|xml|yml|yaml|toml|ini|cfg|env|sh|html|css|scss|sql|docx|doc|pdf|epub|rtf|odt|xlsx|csv|png|jpg|jpeg|gif|webp|bmp|mp3|mp4|wav|ogg|flac|aac|mov|mkv|webm|zip|tar|gz)\b/i;
+  const pseudo = (t.match(/⟨\s*awaiting\s+tool\s+response\s*⟩|⟨\s*([a-z][a-z0-9_]{2,63})\s+output\s*:/i) || [])[0];
+  if (pseudo) {
+    const nameFromMarker = (t.match(/⟨\s*([a-z][a-z0-9_]{2,63})\s+output\s*:/i) || [])[1];
+    const nameFromPlain = (t.match(/(\b[a-z][a-z0-9_]{2,63})\s+output\s*:/i) || [])[1];
+    const tool = (nameFromMarker || nameFromPlain || '').toLowerCase();
+    if (tool && SUBAGENT_READONLY_TOOLS.has(tool)) {
+      const args = {};
+      const fp = t.match(FILE_TOKEN);
+      if (fp) args.path = fp[0];
+      const kv = t.match(/(?:path|file|dir|query|url|pattern)\s*[:=]\s*["']([^"']+)["']/i);
+      if (kv && !args.path) args.path = kv[1];
+      return { tool, args };
+    }
+  }
+  const PATH_EXT = /\.(txt|md|json|js|ts|tsx|jsx|py|rb|go|rs|c|cpp|h|java|xml|yml|yaml|toml|ini|cfg|env|sh|html|css|scss|sql|docx|doc|pdf|epub|rtf|odt|xlsx|csv|png|jpg|jpeg|gif|webp|bmp|mp3|mp4|wav|ogg|flac|aac|mov|mkv|webm|zip|tar|gz)$/i;
+  const pathLike = v => /^[^\s]{1,200}$/.test(v) && (v.includes('/') || v.startsWith('.') || v.startsWith('~') || PATH_EXT.test(v));
+  const queryTools = new Set(['web_search', 'web_fetch', 'search_text', 'github_search', 'find_files']);
+  // name(arg=val, ...) call-style
+  const paren = t.match(/^([a-z][a-z0-9_]{2,63})\s*\(\s*([\s\S]*?)\s*\)\s*$/i);
+  if (paren) {
+    const tool = paren[1].toLowerCase();
+    if (!SUBAGENT_READONLY_TOOLS.has(tool)) return null;
+    const args = {};
+    const inside = paren[2];
+    if (inside.trim()) {
+      for (const pair of subagentSplitArgs(inside)) {
+        const kv = pair.match(/^\s*([a-z_][a-z0-9_]*)\s*[:=]\s*(.*?)\s*$/i);
+        if (kv) args[subagentCanonKey(kv[1])] = subagentStripQuotes(kv[2]);
+      }
+    }
+    return { tool, args };
+  }
+  // key:value / key=value lines and bare `tool path`
+  const lines = t.split('\n');
+  const mm = (lines[0] || '').trim().match(/^([a-z][a-z0-9_]{2,63})\b/i);
+  if (!mm) return null;
+  const tool = mm[1].toLowerCase();
+  if (!SUBAGENT_READONLY_TOOLS.has(tool)) return null;
+  const args = {};
+  const positionals = [];
+  const kvRe = /^([a-z_][a-z0-9_]*)\s*[:=]\s*(.*)$/i;
+  const restOfHead = (lines[0].slice(mm[0].length)).trim();
+  if (restOfHead) positionals.push(restOfHead);
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const kv = line.match(kvRe);
+    if (kv) args[subagentCanonKey(kv[1])] = subagentStripQuotes(kv[2]);
+    else positionals.push(line);
+  }
+  const noArg = new Set(['workspace_info', 'list_dir', 'tree_dir', 'subagent_list', 'sqlite_schema', 'process_status', 'monitor_list', 'terminal_list', 'plugin_list', 'custom_tool_list', 'image_info', 'media_info']);
+  if (positionals.length) {
+    const p0 = positionals[0];
+    if (p0 && pathLike(p0)) { if (queryTools.has(tool)) args.query = p0; else args.path = p0; }
+    else if (p0) { if (queryTools.has(tool)) args.query = p0; else return null; }
+  }
+  if (Object.keys(args).length === 0 && !noArg.has(tool)) return null;
+  return { tool, args };
+}
+
+
+
+// Ask the model with an empty-reply guard. Free Zen models frequently return an
+// empty first completion; rather than report that as a successful "read", retry
+// a couple of times and switch to a sibling Zen model (a local switch, never
+// the primary agent's currentModel). Returns a result whose text is non-empty,
+// or a marker result so the caller can say so honestly.
+async function subagentAsk(messages, model) {
+  let used = model;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const result = await subagentModelCall(messages, used);
+    const text = String(result.text || '').trim();
+    if (text.length >= 2 || (currentProvider !== 'zen' && Array.isArray(result.toolCalls) && result.toolCalls.length)) {
+      return { ...result, model: result.model || used };
+    }
+    if (currentProvider === 'zen') {
+      const order = zenFallbackOrder();
+      const idx = order.indexOf(used);
+      const nxt = order[(idx + 1) % Math.max(1, order.length)];
+      if (nxt && nxt !== used) used = nxt;
+    }
+    await zenSleep(Math.min(4000, 800 * attempt));
+  }
+  return { text: '', model: used, usage: {}, toolCalls: [], reasoning: null, outputShown: false, provider: currentProvider };
+}
+
 async function subagentTaskTool(args) {
   const name = String(args.agent || args.name || 'explore'); const agent = resolveSubagent(name);
   if (!agent) return { error: `Subagent '${name}' не найден. Используй subagent_list.` };
   const task = String(args.prompt || args.task || '').trim(); if (!task) return { error: 'Для subagent_task нужен prompt или task.' };
   const model = args.model || agent.model || currentModel;
+  const toolGuide = [...SUBAGENT_READONLY_TOOLS].sort().join(', ');
   const system = [
-    'Ты — изолированный subagent. Не выполняй изменения и не утверждай, что что-то изменил.',
+    'Ты — изолированный subagent. Ты НЕ выполняешь изменения и НЕ утверждаешь, что что-то изменил.',
     `Роль: ${agent.description}`,
     `Режим: ${agent.mode}.`,
     agent.prompt || '',
     `Рабочая папка: ${WORKSPACE_ROOT}.`,
-    'Дай краткий проверяемый отчёт: факты, неопределённости, следующий безопасный шаг.'
+    'Чтобы ответить, действительно проверь данные: читай реальные файлы/структуру через доступные инструменты, а не угадывай их содержимое.',
+    `Доступные инструменты (read-only): ${toolGuide}.`,
+    'Дай краткий проверяемый отчёт: факты (что реально прочитано), неопределённости, следующий безопасный шаг.'
   ].join('\n');
   const messages = [{ role: 'system', content: system }, { role: 'user', content: task }];
+  const MAX_STEPS = 6;
+  let step = 0, lastText = '', usedTools = [];
   try {
-    // Subagent intentionally has no tool loop: it is an isolated second opinion.
-    const result = currentProvider === 'openrouter' ? await callOpenRouter(messages, model) : await callZenDirect(messages, model, false);
-    return { success: true, agent: name, model: result.model || model, output: result.text || '', usage: result.usage || {}, mode: agent.mode };
+    let subModel = model;
+    while (step < MAX_STEPS) {
+      step++;
+      const result = await subagentAsk(messages, subModel);
+      subModel = result.model || subModel;
+      const text = String(result.text || '').trim();
+      const nativeCalls = (currentProvider !== 'zen' && Array.isArray(result.toolCalls) && result.toolCalls.length) ? result.toolCalls : [];
+      if (nativeCalls.length) {
+        messages.push({ role: 'assistant', content: result.text || '', tool_calls: result.toolCalls });
+        for (const call of result.toolCalls) {
+          let tArgs = {};
+          try { tArgs = JSON.parse(call?.function?.arguments || '{}'); } catch { tArgs = {}; }
+          const tName = String(call?.function?.name || '').toLowerCase().trim();
+          usedTools.push(tName);
+          const content = await subagentRunTool(tName, tArgs);
+          messages.push({ role: 'tool', tool_call_id: call.id, name: tName, content: String(content || '') });
+        }
+        continue;
+      }
+      const call = subagentParseToolCall(text);
+      if (call) {
+        const tName = String(call.tool || '').toLowerCase().trim();
+        const tArgs = call.args || {};
+        usedTools.push(tName);
+        const content = await subagentRunTool(tName, tArgs);
+        messages.push({ role: 'assistant', content: text });
+        messages.push({ role: 'user', content: String(content || '') });
+        continue;
+      }
+      lastText = text;
+      break;
+    }
+    if (!lastText) lastText = `Subagent '${name}' не дал текстовый ответ после ${step} шаг(ов). Обычно это исчерпанный лимит бесплатной модели; попробуй другой model/agent.`;
+    return { success: true, agent: name, model, output: lastText, mode: agent.mode, steps: step, tools: usedTools, readOnly: true };
   } catch (e) { return { error: `Subagent '${name}' failed: ${e.message || e}` }; }
 }
 
@@ -2341,10 +2757,19 @@ async function handleMCPTool(tool, args = {}) {
     }
 
     case 'read_file': {
-      const resolved = mcpPathOrError(args.path, 'path', true);
-      if (resolved.error) return resolved;
-      try { return { path: resolved.path, content: fs.readFileSync(resolved.path, 'utf8') }; }
-      catch (e) { return { error: 'Не удалось прочитать файл: ' + e.message }; }
+      return await documentTextTool(args);
+    }
+
+    case 'document_extract': {
+      return await documentTextTool(args);
+    }
+
+    case 'media_info': {
+      return await mediaInfoTool(args);
+    }
+
+    case 'audio_transcribe': {
+      return await audioTranscribeTool(args);
     }
 
     case 'write_file': {
@@ -2356,8 +2781,23 @@ async function handleMCPTool(tool, args = {}) {
         if (/OPENROUTER_API_KEY\s*=|sk-or-(?:v1-)?[A-Za-z0-9_-]{16,}/i.test(content)) {
           return { error: 'OpenRouter key нельзя записывать в проектный файл или .env. Используй интерфейсную команду /key.' };
         }
+        // Safe write: never silently destroy a file the model is about to
+        // replace. Keep a timestamped backup so an accidental overwrite is
+        // recoverable, and tell the model it happened. Point edits should go
+        // through edit_file (no backup needed, only the block changes).
+        let backedUp = null;
+        if (fs.existsSync(resolved.path) && args.overwrite !== false && args.backup !== false) {
+          try {
+            const prev = fs.readFileSync(resolved.path, 'utf8');
+            const bdir = path.join(WORKSPACE_ROOT, '.zen-agent', 'backups');
+            fs.mkdirSync(bdir, { recursive: true });
+            const bak = path.join(bdir, path.basename(resolved.path) + '.' + Date.now() + '.bak');
+            fs.writeFileSync(bak, prev, 'utf8');
+            backedUp = bak;
+          } catch {}
+        }
         fs.writeFileSync(resolved.path, content, 'utf8');
-        return { success: true, path: resolved.path, size: Buffer.byteLength(content, 'utf8'), lines: content.split('\n').length, workspace: WORKSPACE_ROOT };
+        return { success: true, path: resolved.path, backedUp, size: Buffer.byteLength(content, 'utf8'), lines: content.split('\n').length, workspace: WORKSPACE_ROOT };
       } catch (e) { return { error: 'Не удалось записать файл: ' + e.message }; }
     }
 
@@ -2454,6 +2894,11 @@ async function handleMCPTool(tool, args = {}) {
       if (/(^|[^&])&\s*$/.test(commandText) || /\bnohup\b|\bdisown\b/.test(commandText)) {
         return { error: 'Не запускай фоновые процессы через execute_command. Используй process_start с name, command и cwd — тогда будут PID, process_logs и безопасный process_stop.' };
       }
+      // Защита от необратимых git-операций и массового убийства процессов:
+      // переписывает историю/ветки и не восстанавливается. Такое «сбрасывало»
+      // ветки, когда модель путала целевой репозиторий с локальным чек-аутом.
+      const danger = dangerousCommandRejected(commandText);
+      if (danger) return { error: danger };
       const opts = {
         cwd: runCwd,
         timeout: safeCommandTimeout(args.timeout, 18000),
@@ -2706,8 +3151,18 @@ async function handleMCPTool(tool, args = {}) {
       } catch (e) {
         // The API's own message names the cause - a missing scope, a bad
         // path, a protected branch - so it is passed through rather than
-        // flattened into "request failed".
-        return { error: String(e && e.message || e) };
+        // flattened into "request failed". The one confusing case is the
+        // default Actions token on user-scoped endpoints (github_my_repos):
+        // that installation token returns "Resource not accessible by
+        // integration", which reads like the repo is hidden when in fact the
+        // agent needs a real PAT named ZEN_GH_TOKEN.
+        let msg = String(e && e.message || e);
+        if (/not accessible by integration/i.test(msg)) {
+          msg += '\nЭто дефолтный Actions-токен, а не ваш PAT: он не может перечислить /user/repos. Задайте GITHUB_MODELS_TOKEN или ZEN_GH_TOKEN (ваш ghp_/github_pat_) в секретах, чтобы github_* мог работать с другими репозиториями.';
+        } else if (/Bad credentials|401/i.test(msg)) {
+          msg += '\nТокен не подошёл (bad credentials). Проверьте ZEN_GH_TOKEN/GITHUB_TOKEN в секретах.';
+        }
+        return { error: msg };
       }
     }
 
@@ -3268,7 +3723,8 @@ function startEmbeddedServer() {
   const sessionView = name => {
     const valid = safeSessionName(name); const data = valid && sessionStore.sessions[valid];
     if (!data) return null;
-    return { id: valid, title: data.title || valid, active: valid === activeSession, ts: Date.parse(data.updatedAt || data.createdAt || '') || Date.now(), model: data.model || currentModel, provider: data.provider || currentProvider, messages: displayHistory(data) };
+    const messages = displayHistory(data);
+    return { id: valid, name: valid, title: data.title || valid, active: valid === activeSession, ts: Date.parse(data.updatedAt || data.createdAt || '') || Date.now(), model: data.model || currentModel, provider: data.provider || currentProvider, messages, msgs: messages.length, webMessages: messages.length };
   };
   const ensureSession = name => {
     const valid = safeSessionName(name); if (!valid) return { error: 'Session name may contain up to 48 letters, digits, _, - and .' };
@@ -3320,7 +3776,7 @@ function startEmbeddedServer() {
       try {
         run.status = 'running';
         run.events.push({ id: 'evt_start', type: 'task_started', at: new Date().toISOString(), input: redactSecrets(String(input)).slice(0, 500) });
-        const switched = switchSession(sessionName);
+        const switched = switchSession(sessionName, { force: true });
         if (switched.error) throw new Error(switched.error);
         if (requestedProvider) currentProvider = requestedProvider;
         if (requestedModel) currentModel = requestedModel;
@@ -3973,7 +4429,10 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент с доступом к ф�
   Ты НЕ ограничен текущей папкой: git_clone({"repo":"owner/name"}) кладёт репозиторий
   в work/<name>, затем set_workspace({"path":"<путь из ответа>"}) делает его рабочим.
   Учётные данные уже настроены — доступно всё, что видит токен. После правок: git_commit и git_push.
-- image_info(path), ocr_image(path), vision_analyze(path, prompt, model), vision_ui_audit(path), vision_compare(path, path2) — изображения и скриншоты
+- image_info(path), ocr_image(path, engine:local|google), vision_analyze(path, prompt, model), vision_ui_audit(path), vision_compare(path, path2) — изображения и скриншоты
+- document_extract(path) — извлечь текст из docx/odt/epub/pdf/rtf и текстовых файлов (read_file сам это делает без явного вызова)
+- media_info(path) — метаданные mp4/mp3: длительность, кодек, разрешение (нужен ffprobe)
+- audio_transcribe(path) — расшифровка речи из видео/аудио в текст (ffmpeg + Whisper)
 - custom_tool_list(), custom_tool_create(name, description, code), custom_tool_inspect(name), custom_tool_run(name, tool_args), custom_tool_delete(name) — локальные само-созданные plugins
 - subagent_list(), subagent_create(name, description, prompt), subagent_task(agent, prompt), subagent_delete(name) — isolated second-opinion subagents
 - plugin_list(), plugin_create(name, description, code), plugin_inspect(name), plugin_tool_list(), plugin_tool_run(plugin, name, tool_args), plugin_provider_list(), plugin_delete(name) — lifecycle plugins
@@ -4155,7 +4614,20 @@ function buildSystemPrompt() {
   const longRule = CONFIG.longTaskMode
     ? `Долгая задача включена: разрешено до ${agentStepLimit()} шагов и длительные команды. Для серверов используй process_start/process_logs, регулярно давай checkpoint и принимай /correct или /abort.`
     : 'Обычный лимит задачи: используй короткие безопасные шаги; для многочасовой работы пользователь включает /long on.';
-  return SYSTEM_PROMPT + `\n\nТЕКУЩИЙ КОНТЕКСТ MCP:\n- Платформа: ${PLATFORM.name}\n- Провайдер: ${currentProvider}\n- Модель: ${currentModel}\n- Режим: ${CONFIG.agentMode}\n- Активная AI-сессия: ${activeSession}\n- Активная рабочая папка: ${WORKSPACE_ROOT}\n- ${providerRule}\n- ${clarifyRule}\n- ${modeRule}\n- ${longRule}\n- Относительные пути разрешаются от неё; внутренняя папка Termux не используется.${repoFact}${envFacts}${presetPrompt()}${pluginPrompt ? `\n\nPLUGIN SYSTEM INSTRUCTIONS:\n${pluginPrompt}` : ''}`;
+  // The base prompt is written for the Termux/Android build. When the agent is
+  // actually running on a Linux/Windows runner (the panel's cloud sessions, the
+  // desktops) that text is actively misleading: the model reaches for termux_*
+  // and "searches the phone" although it is on an ordinary machine. Prepend a
+  // hard platform directive so the environment is unambiguous up front.
+  const platformHeader = PLATFORM.isTermux
+    ? ''
+    : `ВАЖНО — ГДЕ ТЫ ЗАПУЩЕН:\n` +
+      `- Ты запущен на ${PLATFORM.name}${PLATFORM.type === 'pc' ? ' (Linux/Windows-раннер)' : ''}: это обычная машина, а НЕ Termux/Android и НЕ эмулятор. Значит, у тебя нет ни настоящего устройства Android, ни «телефона» — все инструменты работают только с этим хостом.\n` +
+      `- Рабочая папка — это каталог на ЭТОЙ машине (${WORKSPACE_ROOT}), а не общая память телефона. Не ищи файлы «на телефоне», не используй /storage/emulated/0 и пути Android.\n` +
+      `- Инструменты Termux/Android здесь НЕДОСТУПНЫ и не нужны: termux_info, termux_api_status, termux_battery, termux_wifi, termux_toast, termux_vibrate, termux_share, termux_volume, termux_location, открытие URL как Termux:API, clipboard_* как Android. Если пользователь пишет «сделай на телефоне / в Termux» — скажи, что эта сессия работает на машине, а не на устройстве; используй локальные инструменты этой машины.\n` +
+      `- Все указания ниже про «общую память Android / /storage/emulated/0 / Android VPN» относятся ТОЛЬКО к Termux-сборке и к этому запуску не применяются. Локальный git в рабочей папке — это реальный git этой машины. GitHub-доступ — через github_* (API) с GITHUB_TOKEN и отдельно от локального git в папке.\n` +
+      `- Для файлов/процессов/команд используй локальные инструменты этой машины: list_dir, find_files, search_text, read_file, write_file, edit_file, append_file, execute_command, terminal_*, process_*, monitor_*, npm_*, run_tests, run_lint, code_check, sqlite_*.\n`;
+  return platformHeader + SYSTEM_PROMPT + `\n\nТЕКУЩИЙ КОНТЕКСТ MCP:\n- Платформа: ${PLATFORM.name}\n- Провайдер: ${currentProvider}\n- Модель: ${currentModel}\n- Режим: ${CONFIG.agentMode}\n- Активная AI-сессия: ${activeSession}\n- Активная рабочая папка: ${WORKSPACE_ROOT}\n- ${providerRule}\n- ${clarifyRule}\n- ${modeRule}\n- ${longRule}\n- Относительные пути разрешаются от неё; внутренняя папка Termux не используется.${repoFact}${envFacts}${presetPrompt()}${pluginPrompt ? `\n\nPLUGIN SYSTEM INSTRUCTIONS:\n${pluginPrompt}` : ''}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -4548,7 +5020,7 @@ function githubApi() {
   if (!GitHubApi) return null;
   if (!GITHUB_API_CACHE) {
     GITHUB_API_CACHE = new GitHubApi(
-      () => githubModelsToken(),
+      () => githubApiToken(),
       () => process.env.SYMBIOSIS_REPO || detectSessionRepo()
     );
   }
@@ -4586,10 +5058,15 @@ const BUILT_IN_PRESETS = {
       'соответствующий github_* и покажи данные с GitHub.',
       '',
       'Используй github_*:',
-      '  github_read / github_list      — посмотреть файл или папку',
+      '  github_search                  — СНАЧАЛА ищи код по ключевым словам (ocr, tts, speech,',
+      '                                  readAloud). Один запрос находит файлы во всём репо.',
+      '  github_list {recursive:true}   — затем осмотри ВСЁ дерево одним вызовом (или поддерево',
+      '                                  по path). Не спускайся по директории по одному уровню за',
+      '                                  вызов: это 10+ бесполезных запросов.',
+      '  github_read                    — читай файл. Если ответ начинается/заканчивается «файл',
+      '                                  длиннее», дочитай остаток: github_read {path, offset:N}.',
       '  github_write                   — записать файл (это сразу коммит)',
       '  github_commit_files            — несколько файлов одним коммитом',
-      '  github_search                  — найти код в репозитории',
       '  github_commits / github_branches — история и ветки',
       '  github_run_workflow / github_runs — запустить сборку и посмотреть её',
       '',
@@ -4745,6 +5222,19 @@ function symbiosisKeyReport() {
     },
     unrecognised: k.unknown
   };
+}
+
+// Token for the github_* API tools. A user PAT (ghp_/github_pat_/) must win
+// over the default Actions GITHUB_TOKEN: Actions' token is a repo-installation
+// token and cannot call GET /user/repos ("Resource not accessible by
+// integration"), which is exactly what github_my_repos needs. We prefer an
+// explicit PAT (ZEN_GH_TOKEN, the key store, or a ghp_ token in SYMBIOSIS_KEY)
+// and only fall back to the default GITHUB_TOKEN for repo-scoped calls on the
+// current repo.
+function githubApiToken() {
+  const pat = process.env.ZEN_GH_TOKEN || providerKeyStore.github || symbiosisKeys().github || '';
+  if (pat) return String(pat).trim();
+  return process.env.GITHUB_TOKEN || process.env.GITHUB_MODELS_TOKEN || '';
 }
 
 function githubModelsToken() {
@@ -5106,10 +5596,11 @@ async function useTool(name, args) {
     }
     if (r.content !== undefined) return `Файл: ${r.path || args.path || ''}\n\n${r.content}`;
     if (name === 'ocr_image' && r.text !== undefined) return `OCR: ${r.path || args.path || ''}\n\n${r.text}`;
+    if (r.transcript !== undefined) return `Транскрипт: ${r.path || args.path || ''}\n\n${r.transcript}`;
     if (r.analysis !== undefined) return `VISION • ${r.model || 'model'}\n\n${r.analysis}`;
     if (r.diff !== undefined) return r.diff;
     if (r.output !== undefined) return r.output || 'OK';
-    if (['process_start', 'process_status', 'process_stop', 'monitor_start', 'monitor_list', 'monitor_stop', 'terminal_create', 'terminal_write', 'terminal_list', 'terminal_close', 'file_backup', 'termux_info', 'network_check', 'http_request', 'health_check', 'websocket_test', 'project_inspect', 'tree_dir', 'search_text', 'file_info', 'copy_file', 'move_file', 'mkdir', 'archive_create', 'archive_extract', 'sqlite_info', 'sqlite_query', 'sqlite_schema', 'sqlite_backup', 'env_list', 'env_set', 'env_delete', 'image_info', 'vision_compare', 'vision_ui_audit', 'custom_tool_list', 'custom_tool_create', 'custom_tool_inspect', 'custom_tool_run', 'custom_tool_delete', 'subagent_list', 'subagent_create', 'subagent_task', 'subagent_delete', 'plugin_list', 'plugin_create', 'plugin_inspect', 'plugin_delete', 'plugin_tool_list', 'plugin_tool_run', 'plugin_provider_list', 'web_search', 'web_fetch'].includes(name)
+    if (['process_start', 'process_status', 'process_stop', 'monitor_start', 'monitor_list', 'monitor_stop', 'terminal_create', 'terminal_write', 'terminal_list', 'terminal_close', 'file_backup', 'termux_info', 'network_check', 'http_request', 'health_check', 'websocket_test', 'project_inspect', 'tree_dir', 'search_text', 'file_info', 'copy_file', 'move_file', 'mkdir', 'archive_create', 'archive_extract', 'sqlite_info', 'sqlite_query', 'sqlite_schema', 'sqlite_backup', 'env_list', 'env_set', 'env_delete', 'image_info', 'media_info', 'audio_transcribe', 'document_extract', 'vision_compare', 'vision_ui_audit', 'custom_tool_list', 'custom_tool_create', 'custom_tool_inspect', 'custom_tool_run', 'custom_tool_delete', 'subagent_list', 'subagent_create', 'subagent_task', 'subagent_delete', 'plugin_list', 'plugin_create', 'plugin_inspect', 'plugin_delete', 'plugin_tool_list', 'plugin_tool_run', 'plugin_provider_list', 'web_search', 'web_fetch'].includes(name)
       || (capabilities && capabilities.handles(name))) {
       return JSON.stringify(r, null, 2);
     }
@@ -5134,6 +5625,9 @@ let currentModel = CONFIG.defaultModel;
 let history = [];
 let agentBusy = false;
 let abortRequested = false;
+// Count consecutive empty replies within one task so the auto-switch loop
+// cannot spin forever through every model (the 'hangs, then answers nothing' bug).
+let emptyReplyTries = 0;
 const RECENT_FAILED_TOOLS = [];
 const MODEL_STALL_MS = Math.max(30000, parseInt(process.env.ZEN_STALL_MS || '300000', 10) || 300000);
 async function callCurrentProviderWithStall() {
@@ -5430,6 +5924,31 @@ function saveSessionStore() {
     try { fs.chmodSync(SESSIONS_FILE, 0o600); } catch {}
   } catch {}
 }
+  cloudBackupSessions();
+let __cloudBackupTimer = null;
+function cloudRestoreSessions() {
+  if (!cloudStore || !cloudStore.enabled('ZEN_CLOUD_SYNC')) return;
+  cloudStore.restoreSessions().then(stored => {
+    if (!stored || !stored.sessions) return;
+    // Keep local settings but overlay remote sessions/settings so a new runner
+    // picks up the state it last backed up.
+    try {
+      for (const [name, data] of Object.entries(stored.sessions)) sessionStore.sessions[name] = data;
+      if (stored.settings) sessionStore.settings = { ...(sessionStore.settings || {}), ...stored.settings };
+      if (stored.active) activeSession = safeSessionName(stored.active) || activeSession;
+      sessionStore.active = activeSession;
+      console.log('[cloud-store] restored ' + Object.keys(stored.sessions).length + ' session(s) from ' + (stored.active || 'default'));
+    } catch (e) { console.log('[cloud-store] restore merge: ' + (e && e.message || e)); }
+  });
+}
+function cloudBackupSessions() {
+  if (!cloudStore || !cloudStore.enabled('ZEN_CLOUD_SYNC')) return;
+  if (__cloudBackupTimer) clearTimeout(__cloudBackupTimer);
+  __cloudBackupTimer = setTimeout(() => {
+    __cloudBackupTimer = null;
+    try { cloudStore.backupSessions(sessionStore); } catch (e) { console.log('[cloud-store] backup: ' + (e && e.message || e)); }
+  }, 1500);
+}
 function saveHistory() {
   scrubHistorySecrets();
   if (!sessionStore.sessions) loadSessionStore();
@@ -5455,8 +5974,13 @@ function listSessions() {
   loadSessionStore();
   return Object.entries(sessionStore.sessions).map(([name, data]) => ({ name, active: name === activeSession, messages: Array.isArray(data.history) ? data.history.length : 0, updatedAt: data.updatedAt || data.createdAt || null, provider: data.provider || 'zen', model: data.model || CONFIG.defaultModel })).sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
 }
-function switchSession(name) {
+function switchSession(name, opts = {}) {
   const valid = safeSessionName(name); if (!valid) return { error: 'Имя сессии: до 48 букв/цифр, _, -, . .' };
+  // Never switch mid-run: switchSession reassigns the shared module-level
+  // `history`, so the active agentLoop would start writing its tool/message
+  // results into the *new* session and corrupt it (sessions "mix up"). Refuse
+  // while a run is live and let the caller handle it as a busy conflict.
+  if (agentBusy && !opts.force) return { error: 'Сессия не переключается, пока идёт задача. Дождись её завершения (или нажми «Стоп»), затем переключись.' };
   saveHistory(); loadSessionStore();
   if (!sessionStore.sessions[valid]) sessionStore.sessions[valid] = { history: [], createdAt: new Date().toISOString(), provider: currentProvider, model: currentModel, workspace: WORKSPACE_ROOT };
   activeSession = valid; sessionStore.active = valid;
@@ -5602,7 +6126,7 @@ const TOOL_REQUIRED_ARGS = {
   http_request: ['url'], health_check: ['url'], websocket_test: ['url'], npm_install: ['packages'], npm_run: ['script'],
   sqlite_query: ['database', 'sql'], sqlite_backup: ['database', 'destination'], env_set: ['key', 'value'], env_delete: ['key'],
   code_check: ['path'], git_commit: ['message'], git_clone: ['repo'], open_url: ['url'], clipboard_write: ['text'], notify: ['content'], todo_add: ['text'], todo_done: ['id'], todo_remove: ['id'], web_search: ['query'], web_fetch: ['url'], search_text: ['query'],
-  image_info: ['path'], ocr_image: ['path'], vision_analyze: ['path'], analyze_image: ['path'], vision_ui_audit: ['path'], vision_compare: ['path', 'path2'],
+  image_info: ['path'], ocr_image: ['path'], document_extract: ['path'], media_info: ['path'], audio_transcribe: ['path'], vision_analyze: ['path'], analyze_image: ['path'], vision_ui_audit: ['path'], vision_compare: ['path', 'path2'],
   custom_tool_create: ['name', 'description', 'code'], custom_tool_inspect: ['name'], custom_tool_run: ['name'], custom_tool_delete: ['name'],
   subagent_create: ['name', 'description', 'prompt'], subagent_task: ['agent', 'prompt'], subagent_delete: ['name'],
   plugin_create: ['name', 'description', 'code'], plugin_inspect: ['name'], plugin_delete: ['name'], plugin_tool_run: ['plugin', 'name'],
@@ -5968,6 +6492,7 @@ async function agentLoop(userInput) {
   agentBusy = true;
   abortRequested = false;
   activeProviderAbort = null;
+  emptyReplyTries = 0;
   beginAgentTelemetry(userInput);
   auditEvent('task_started', { inputChars: String(userInput || '').length, model: currentModel });
   await pluginHook('event', { type: 'task.started', provider: currentProvider, model: currentModel, mode: CONFIG.agentMode, inputChars: String(userInput || '').length });
@@ -6103,22 +6628,30 @@ ${correction}` });
       // and name the model, since the usual cause is a free model that has
       // stopped serving this session.
       if (!text.trim()) {
-        if (currentProvider === 'zen' && CONFIG.autoSwitchModel !== false) {
+        emptyReplyTries++;
+        const MAX_EMPTY_TRIES = 3;
+        // Try a sibling model ONCE per empty reply, but never spin forever: a
+        // free model that has stopped serving leaves the loop here with a clear
+        // answer instead of cycling models and appearing frozen.
+        if (currentProvider === 'zen' && CONFIG.autoSwitchModel !== false &&
+            emptyReplyTries <= MAX_EMPTY_TRIES) {
           const order = zenFallbackOrder();
           const idx = order.indexOf(currentModel);
           const nxt = order[(idx + 1) % Math.max(1, order.length)];
           if (nxt && nxt !== currentModel) {
-            webRunEvent('empty_reply_switch', { from: currentModel, to: nxt });
+            webRunEvent('empty_reply_switch', { from: currentModel, to: nxt, try: String(emptyReplyTries) });
             currentModel = nxt;
             setRunPhase('model', 'смена после пустого · ' + nxt);
+            // A tiny pause so a rate-limited free model is not asked instantly again.
+            await zenSleep(Math.min(4000, 800 * emptyReplyTries));
             continue;
           }
         }
-        finalAnswer = `Модель ${currentModel} вернула пустой ответ дважды подряд. ` +
+        finalAnswer = `Модель ${currentModel} вернула пустой ответ (${emptyReplyTries} раз подряд). ` +
           'Обычно это исчерпанный лимит бесплатной модели или слишком длинный контекст. ' +
-          'Смените модель или начните новую сессию — /clear.';
+          'Смените модель или начните новую сессию — /clear. При необходимости повторите запрос.';
         setRunPhase('error', 'пустой ответ модели');
-        webRunEvent('empty_reply', { step: String(TELEMETRY.step), model: String(currentModel) });
+        webRunEvent('empty_reply', { step: String(TELEMETRY.step), model: String(currentModel), tries: String(emptyReplyTries) });
         history.push({ role: 'assistant', content: finalAnswer });
         break;
       }
@@ -6294,7 +6827,7 @@ function showTools() {
     ['Рабочая папка и файлы', ['workspace_info','set_workspace','project_inspect','tree_dir','list_dir','find_files','search_text','file_info','read_file','write_file','edit_file','append_file','delete_file','mkdir','copy_file','move_file','file_backup','file_diff','archive_create','archive_extract']],
     ['Процессы, мониторинг и терминал', ['process_start','process_status','process_logs','process_stop','monitor_start','monitor_list','monitor_logs','monitor_stop','terminal_create','terminal_write','terminal_read','terminal_list','terminal_close','http_request','health_check','websocket_test']],
     ['Код, npm, SQLite и Git', ['npm_install','npm_run','run_tests','run_lint','code_check','dependency_audit','sqlite_info','sqlite_query','sqlite_schema','sqlite_backup','env_list','env_set','env_delete','git_status','git_diff','git_branch','git_log','git_init','git_commit']],
-    ['Vision и изображения', ['image_info','ocr_image','vision_analyze','vision_ui_audit','vision_compare','read_image']],
+    ['Vision, изображения и файлы', ['image_info','ocr_image','document_extract','media_info','audio_transcribe','vision_analyze','vision_ui_audit','vision_compare','read_image']],
     ['Саморасширение (песочница vm)', ['custom_tool_list','custom_tool_create','custom_tool_inspect','custom_tool_run','custom_tool_delete']],
     ['Capabilities (реальные процессы: adb, RDP, GUI, Python)', ['capability_templates','capability_list','capability_create','capability_install','capability_run','capability_logs','capability_stop','capability_inspect','capability_delete']],
     ['Subagents', ['subagent_list','subagent_create','subagent_task','subagent_delete']],
@@ -6361,6 +6894,7 @@ async function main() {
   loadProviderStores();
   loadPresets();
   loadHistory();
+  cloudRestoreSessions();
   rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   let inputClosed = false;
   rl.on('close', () => { inputClosed = true; });
@@ -6733,6 +7267,7 @@ for (let i = 0; i < args.length; i++) {
 // Нужен и в одноразовом режиме: node cli-agent-termux-mcp.js "...".
 loadOpenRouterKey();
 loadProviderStores();
+cloudRestoreSessions();
 
 if (args.length === 0 || (args.length >= 1 && args[0].startsWith('--'))) {
   main();

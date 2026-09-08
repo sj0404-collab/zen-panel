@@ -99,9 +99,39 @@ class GitHubApi {
     };
   }
 
+  /** Default branch of a repo, used by recursive listing when no ref is given. */
+  async defaultBranch(repo) {
+    try {
+      const info = await this.request('GET', '/repos/' + repo);
+      return info.default_branch || 'main';
+    } catch { return 'main'; }
+  }
+
   async list(args) {
     const repo = this.defaultRepo(args);
     if (!repo) throw new Error('Укажите repo как owner/name');
+
+    // Рекурсивный обзор всего дерева одним вызовом (git/trees?recursive=1).
+    // Это то, чего не хватало: старый список contents/ возвращал только один
+    // уровень, и агенту приходилось спускаться по директории вызовом на каждый
+    // уровень (в транскрипте — 17 подряд github_list). Теперь можно осмотреть
+    // весь репозиторий (или его поддерево по path) за один вызов.
+    if (args.recursive) {
+      const ref = args.ref || args.branch || (await this.defaultBranch(repo));
+      const data = await this.request('GET', `/repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
+      const tree = Array.isArray(data.tree) ? data.tree : [];
+      const prefix = String(args.path || args.dir || '').replace(/^\/+/, '');
+      const items = tree
+        .filter(t => !prefix || t.path === prefix || t.path.startsWith(prefix + '/'))
+        .map(t => ({ name: (t.path || '').split('/').pop(), path: t.path, type: t.type, size: t.size || 0 }))
+        .slice(0, 5000);
+      return {
+        repo, path: prefix, recursive: true,
+        count: items.length, truncated: !!data.truncated || tree.length > 5000,
+        items
+      };
+    }
+
     const p = encodeURI((args.path || args.dir || '').replace(/^\/+/, ''));
     const ref = args.ref || args.branch || '';
     const q = ref ? '?ref=' + encodeURIComponent(ref) : '';
@@ -122,7 +152,30 @@ class GitHubApi {
     const data = await this.request('GET', `/repos/${repo}/contents/${encodeURI(file)}${q}`);
     if (data.encoding === 'base64' && data.content) {
       const text = Buffer.from(String(data.content).replace(/\n/g, ''), 'base64').toString('utf8');
-      return { repo, path: data.path, sha: data.sha, size: data.size, content: text };
+      const out = { repo, path: data.path, sha: data.sha, size: data.size };
+      const totalChars = text.length;
+      const totalLines = text.split('\n').length;
+      // По-кусковое чтение: содержимое режется, а результат честно говорит,
+      // что файл длиннее и как дочитать остаток. Раньше модель получала весь
+      // массивный файл «как есть» и, когда вывод обрывался, не понимала,
+      // что видела только кусок.
+      const maxChars = Math.min(100000, Math.max(1000, parseInt(args.max_chars || args.maxChars || 20000, 10) || 20000));
+      const offset = Math.max(0, parseInt(args.offset ?? args.start ?? 0, 10) || 0);
+      const content = text.slice(offset, offset + maxChars);
+      const truncated = (offset + content.length) < totalChars;
+      out.totalChars = totalChars;
+      out.totalLines = totalLines;
+      out.offset = offset;
+      out.truncated = truncated;
+      let body = content;
+      if (offset > 0 || truncated) {
+        body = (offset > 0 ? `… [продолжение файла, символы ${offset}+]\n\n` : '') + content;
+        if (truncated) {
+          body += `\n\n… [файл длиннее: показаны символы ${offset}–${offset + content.length} из ${totalChars} (${totalLines} строк). Дочитать остаток: github_read {repo:"${repo}", path:"${file}", offset:${offset + content.length}, max_chars:${maxChars}} ]`;
+        }
+      }
+      out.content = body;
+      return out;
     }
     return { repo, path: data.path, sha: data.sha, download_url: data.download_url };
   }

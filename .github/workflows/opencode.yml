@@ -15,6 +15,11 @@ on:
         type: choice
         options: [linux, windows]
         default: linux
+      ui:
+        description: "Web interface: original SPA (web) or lightweight mobile chat (mobile)"
+        type: choice
+        options: [web, mobile]
+        default: web
       prompt:
         description: "Optional first prompt, sent once the web UI is up"
         type: string
@@ -80,6 +85,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OC_UI: ${{ inputs.ui }}
         run: |
           set -e
           export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
@@ -148,7 +154,11 @@ jobs:
             echo "| Branch | \`$WORK_BRANCH\` |"
             echo "| Runner | ubuntu-latest |"
             echo ""
-            echo "Mobile chat (not the official web UI). Treat the link as a password."
+            if [ "${OC_UI:-web}" = "web" ]; then
+              echo "Original OpenCode web UI. Treat the link as a password."
+            else
+              echo "Mobile chat (lightweight, not the full web UI). Treat the link as a password."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "=================================================="
@@ -162,6 +172,8 @@ jobs:
               "branch=$WORK_BRANCH"
 
       - name: Keep the session alive
+        env:
+          OC_UI: ${{ inputs.ui }}
         run: |
           echo "Running until cancelled, or for six hours."
           export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
@@ -243,6 +255,7 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           SYMBIOSIS_KEY: ${{ secrets.SYMBIOSIS_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          OC_UI: ${{ inputs.ui }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -328,7 +341,7 @@ jobs:
             "| Branch | ``$env:WORK_BRANCH`` |",
             "| Runner | windows-latest, 4 cores, 16 GB |",
             "",
-            "Mobile chat (not the official web UI). Treat the link as a password."
+            $(if ($env:OC_UI -eq "mobile") { "Mobile chat (lightweight, not the full web UI). Treat the link as a password." } else { "Original OpenCode web UI. Treat the link as a password." })
           ) -join "`n"
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           Write-Host "=================================================="
