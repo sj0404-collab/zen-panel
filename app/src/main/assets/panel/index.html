@@ -230,11 +230,12 @@
     <div class="row" style="margin-top:8px">
       <button class="ghost small" id="btn-agent" onclick="launchAgent()">CLI-агент</button>
       <button class="ghost small" id="btn-opencode" onclick="launchOpencode()">OpenCode</button>
+      <button class="ghost small" id="btn-hub" onclick="launchHub()">NPM-Hub</button>
     </div>
     <div class="note">
       Linux — XFCE и терминал. Windows — собственный рабочий стол раннера.
-      CLI-агент и OpenCode поднимаются в раннере (Linux или Windows) и
-      открываются здесь же, в оверлее. Первая команда, если её указать,
+      CLI-агент, OpenCode и NPM-Hub поднимаются в раннере (Linux или Windows)
+      и открываются здесь же, в оверлее. Первая команда, если её указать,
       отправится в чат автоматически.
     </div>
     <div id="agent-conflict" class="warn" style="display:none"></div>
@@ -950,6 +951,7 @@ async function dispatchWorkflow(wf, inputs) {
 const liveAgents   = rs => rs.filter(r => r.name === 'Zen agent' && r.status !== 'completed');
 const liveOpencode = rs => rs.filter(r => (r.name === 'OpenCode' || r.name === 'opencode')
                                           && r.status !== 'completed');
+const liveHub      = rs => rs.filter(r => r.name === 'NPM Hub' && r.status !== 'completed');
 const liveDesktops = rs => rs.filter(r => (r.name === 'Remote session' || r.name === 'Desks')
                                           && r.status !== 'completed');
 
@@ -1054,8 +1056,8 @@ function collapsePreview() { previewOpen = false; renderPreview(); }
 //
 // Neither has a password. There is nothing to copy and nothing to type: the
 // button opens the desk and it connects on its own.
-let DESKS = { linux: null, windows: null, agent: null, opencode: null };
-let MODELS = { linux: null, windows: null, agent: null, opencode: null };
+let DESKS = { linux: null, windows: null, agent: null, opencode: null, hub: null };
+let MODELS = { linux: null, windows: null, agent: null, opencode: null, hub: null };
 let deskOpen = null;   // 'linux' | 'windows' | 'agent' | 'opencode' | null
 
 // The signature of what is currently drawn. Rebuilding the card replaces the
@@ -1104,15 +1106,15 @@ async function loadDesks() {
   const read = async slot => readFile(`session-${slot}.json`, true);
   const readModels = async slot => readFile(`models-${slot}.json`, false);
 
-  const [lin, win, agent, opencode, mLin, mWin, mAgent, mOc] = await Promise.all(
-    [read('linux'), read('windows'), read('agent'), read('opencode'),
-     readModels('linux'), readModels('windows'), readModels('agent'), readModels('opencode')]);
-  DESKS = { linux: lin, windows: win, agent: agent, opencode: opencode };
-  MODELS = { linux: mLin, windows: mWin, agent: mAgent, opencode: mOc };
+  const [lin, win, agent, opencode, hub, mLin, mWin, mAgent, mOc, mHub] = await Promise.all(
+    [read('linux'), read('windows'), read('agent'), read('opencode'), read('hub'),
+     readModels('linux'), readModels('windows'), readModels('agent'), readModels('opencode'), readModels('hub')]);
+  DESKS = { linux: lin, windows: win, agent: agent, opencode: opencode, hub: hub };
+  MODELS = { linux: mLin, windows: mWin, agent: mAgent, opencode: mOc, hub: mHub };
 
   if (deskOpen && document.getElementById('desk-overlay')) { syncDeskOverlay(); return; }
 
-  if (!lin && !win && !agent && !opencode) {
+  if (!lin && !win && !agent && !opencode && !hub) {
     card.style.display = 'none';
     deskSig = '';
     collapseDesks();
@@ -1127,6 +1129,7 @@ async function loadDesks() {
   const modelText = slot => {
     const m = MODELS[slot];
     if (!m) return '';
+    if (m.hubCount != null) return `Модели: ${m.hubCount} (${m.hubFree | 0} бесплатных)`;
     const entries = Object.entries((m && m.models) || {});
     if (!entries.length) return m.ui ? `OpenCode · ${m.ui}` : (m.kind ? String(m.kind) : '');
     const live = entries.filter(([, e]) => e && e.state !== 'dead').length;
@@ -1141,10 +1144,11 @@ async function loadDesks() {
     lin && [lin.deskUrl || lin.url, lin.terminal || '', lin.runId || ''],
     win && [win.deskUrl || win.url, win.terminal || '', win.runId || ''],
     agent && [agent.agentUrl || agent.url, agent.runId || ''],
-    opencode && [opencode.agentUrl || opencode.url, opencode.runId || '']
+    opencode && [opencode.agentUrl || opencode.url, opencode.runId || ''],
+    hub && [hub.hubUrl || hub.url, hub.runId || '']
   ]);
   if (sig === deskSig) {
-    for (const [slot, s] of [['linux', lin], ['windows', win], ['agent', agent], ['opencode', opencode]]) {
+    for (const [slot, s] of [['linux', lin], ['windows', win], ['agent', agent], ['opencode', opencode], ['hub', hub]]) {
       const el = $('desk-age-' + slot);
       if (el && s) el.textContent = ageLine(s);
       const ml = $('desk-model-' + slot);
@@ -1206,7 +1210,7 @@ async function loadDesks() {
     box.innerHTML = `<div class="row" style="gap:10px;align-items:stretch">
       ${tile('linux', lin, 'Linux')}
       ${tile('windows', win, 'Windows')}
-    </div>` + chatRow('agent', agent, 'CLI-агент') + chatRow('opencode', opencode, 'OpenCode');
+    </div>` + chatRow('agent', agent, 'CLI-агент') + chatRow('opencode', opencode, 'OpenCode') + chatRow('hub', hub, 'NPM-Hub');
   }
 }
 
@@ -1237,14 +1241,14 @@ window.addEventListener('popstate', () => {
   if (document.getElementById('desk-overlay')) collapseDesks();
 });
 
-const DESK_SLOTS = ['linux', 'windows', 'agent', 'opencode'];
+const DESK_SLOTS = ['linux', 'windows', 'agent', 'opencode', 'hub'];
 
 /** Address of a slot; chat flavours go through the token query. */
 function deskSlotUrl(slot) {
   const s = DESKS[slot];
   if (!s) return '';
   if (slot === 'agent' || slot === 'opencode') return chatUrlWithQ(s.agentUrl || s.url || '');
-  return s.deskUrl || s.url || '';
+  return s.hubUrl || s.deskUrl || s.url || '';
 }
 
 /**
@@ -1388,10 +1392,10 @@ function openDeskInPanel(slot) {
 // concurrent session could never have been reachable - the old panel let you
 // start one regardless and then showed a blank page.
 
-const KIND_LABEL = { linux: 'Linux', windows: 'Windows', agent: 'CLI-агент', opencode: 'OpenCode' };
+const KIND_LABEL = { linux: 'Linux', windows: 'Windows', agent: 'CLI-агент', opencode: 'OpenCode', hub: 'NPM-Hub' };
 
 function busyButtons(on, which) {
-  for (const id of ['btn-linux', 'btn-windows', 'btn-agent', 'btn-opencode', 'btn-both']) {
+  for (const id of ['btn-linux', 'btn-windows', 'btn-agent', 'btn-opencode', 'btn-hub', 'btn-both']) {
     const b = $(id); if (!b) continue;
     b.disabled = on;
   }
@@ -1400,7 +1404,7 @@ function busyButtons(on, which) {
 
 // Chat sessions only. Desks use a different tunnel and can stay up.
 function anyLive(runs) {
-  return runs.filter(r => ['Zen agent', 'Remote session', 'OpenCode', 'opencode', 'Desks'].includes(r.name)
+  return runs.filter(r => ['Zen agent', 'Remote session', 'OpenCode', 'opencode', 'Desks', 'NPM Hub'].includes(r.name)
                           && r.status !== 'completed');
 }
 
@@ -1572,6 +1576,36 @@ async function launchOpencode() {
   }
 }
 
+async function launchHub() {
+  if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
+  try { if (window.ZenBridge && ZenBridge.requestNotifications) ZenBridge.requestNotifications(); } catch (e) {}
+  const where = confirm('Где поднять NPM-Hub?\n\nОК — Linux\nОтмена — Windows') ? 'linux' : 'windows';
+
+  const running = liveHub(await currentRuns());
+  if (running.length) {
+    if (!confirm(`NPM-Hub уже идёт (${mins(running[0].created_at)} мин).\n\n` +
+                 'ОК — остановить и поднять заново.\nОтмена — открыть текущий.')) {
+      await refresh(); openDeskInPanel('hub'); return;
+    }
+    for (const r of running) await cancelRun(r.id);
+    await new Promise(r => setTimeout(r, 8000));
+  }
+
+  const btn = $('btn-hub');
+  btn.dataset.label = btn.dataset.label || btn.textContent;
+  busyButtons(true, 'btn-hub');
+  try {
+    const r = await dispatchWorkflow('hub.yml', { os: where, label: 'hub' });
+    if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
+    await waitAndOpen('hub');
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  } finally {
+    busyButtons(false, 'btn-hub');
+    btn.textContent = btn.dataset.label;
+  }
+}
+
 // Poll until the session publishes an address, then go straight in. Waiting
 // for a link to appear in a log is the step people gave up at.
 function bootStamp() {
@@ -1596,7 +1630,7 @@ function bootLog(msg) {
 
 let READY = { slot: '', url: '', title: '' };
 function sessionReady(kind, s) {
-  const url = chatUrlWithQ((s && (s.agentUrl || s.deskUrl || s.url)) || '');
+  const url = chatUrlWithQ((s && (s.agentUrl || s.hubUrl || s.deskUrl || s.url)) || '');
   const title = kind === 'opencode' ? 'OpenCode' : kind === 'agent' ? 'CLI-агент' : (KIND_LABEL[kind] || 'Сессия');
   READY = { slot: kind, url, title };
   bootLog('готово · ' + (url ? 'адрес получен' : 'сессия жива'));
@@ -1614,14 +1648,14 @@ function sessionReady(kind, s) {
   } catch (e) {}
 }
 function openReadyChat() {
-  if (READY.slot === 'agent' || READY.slot === 'opencode') openDeskInPanel(READY.slot);
+  if (READY.slot === 'agent' || READY.slot === 'opencode' || READY.slot === 'hub') openDeskInPanel(READY.slot);
   else openLive();
 }
 window.zenOpenFromNotify = function (slot, url) {
   if (url) READY.url = url;
   READY.slot = slot || READY.slot;
   go('sess');
-  if (slot === 'agent' || slot === 'opencode') openDeskInPanel(slot);
+  if (slot === 'agent' || slot === 'opencode' || slot === 'hub') openDeskInPanel(slot);
   else openLive();
 };
 
@@ -1633,11 +1667,13 @@ async function waitAndOpen(kind) {
   const btnId = kind === 'windows' ? 'btn-windows'
     : kind === 'agent' ? 'btn-agent'
     : kind === 'opencode' ? 'btn-opencode'
+    : kind === 'hub' ? 'btn-hub'
     : 'btn-linux';
   const btn = $(btnId);
-  const budget = kind === 'windows' || kind === 'opencode' ? 90 : 70;
+  const budget = kind === 'windows' || kind === 'opencode' || kind === 'hub' ? 90 : 70;
   const wantName = kind === 'agent' ? 'Zen agent'
     : kind === 'opencode' ? 'OpenCode'
+    : kind === 'hub' ? 'NPM Hub'
     : 'Desks';
   let lastStep = '';
   for (let i = 0; i < budget; i++) {
@@ -1709,6 +1745,10 @@ function openLive() {
     openDeskInPanel(s._slot === 'opencode' || /opencode/i.test(s.kind || '') ? 'opencode' : 'agent');
     return;
   }
+  if (s._slot === 'hub' || s.hubUrl || /npm-hub/i.test(s.kind || '')) {
+    openDeskInPanel('hub');
+    return;
+  }
   if (s.vncUrl)   { openDeskInPanel(s.rdpHost ? 'windows' : 'linux'); return; }
   if (s.rdpHost) {
     // RDP is not HTTP: there is nothing to open in a browser, so hand over the
@@ -1763,8 +1803,8 @@ async function loadCreds(preferSlot) {
   const box = $('creds');
   try {
     const order = preferSlot
-      ? [preferSlot, 'agent', 'opencode', null, 'linux', 'windows']
-      : ['agent', 'opencode', null, 'linux', 'windows'];
+      ? [preferSlot, 'agent', 'opencode', 'hub', null, 'linux', 'windows']
+      : ['agent', 'opencode', 'hub', null, 'linux', 'windows'];
     const seen = new Set();
     const slots = [];
     for (const slot of order) {
