@@ -172,6 +172,66 @@ const runCmd = (cmd, args, opts, stdin) => new Promise((resolve, reject) => {
   if (stdin) { p.stdin.write(stdin); p.stdin.end(); }
 });
 const runGit = (args, opts) => runCmd('git', args, opts);
+// ─── GIT ───
+async function doGitAuth(t, { login = '', name = '', email = '' } = {}) {
+  const getCfg = async (k) => {
+    try { return (await runGit(['config', '--global', '--get', k], { timeout: 8000 })).trim(); }
+    catch { return ''; }
+  };
+  const credFile = path.join(HOME, '.git-credentials-hub');
+  fs.writeFileSync(credFile, `https://x-access-token:${t}@github.com\n`, { mode: 0o600 });
+  if (!await getCfg('credential.https://github.com.helper')) {
+    await runGit(['config', '--global', 'credential.https://github.com.helper', `store --file ${credFile}`], { timeout: 8000 });
+  }
+  login = String(login || '').trim();
+  if (login) {
+    if (!await getCfg('user.name')) {
+      await runGit(['config', '--global', 'user.name', String(name || login)], { timeout: 8000 });
+    }
+    if (!await getCfg('user.email')) {
+      await runGit(['config', '--global', 'user.email', String(email || `${login}@users.noreply.github.com`)], { timeout: 8000 });
+    }
+  }
+  try {
+    await runCmd('gh', ['auth', 'status', '--hostname', 'github.com'], { timeout: 10000 });
+  } catch {
+    try { await runCmd('gh', ['auth', 'login', '--hostname', 'github.com', '--with-token'], { timeout: 20000 }, t); } catch {}
+  }
+  return login || null;
+}
+
+async function doCloneRepo(owner, repo, { token = '', branch = '' } = {}) {
+  const dest = path.join(HOME, 'repos', repo);
+  if (fs.existsSync(path.join(dest, '.git'))) return { path: dest, existed: true };
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const url = token
+    ? `https://x-access-token:${token}@github.com/${owner}/${repo}.git`
+    : `https://github.com/${owner}/${repo}.git`;
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo' };
+  try {
+    const args = ['clone'];
+    if (branch && /^[A-Za-z0-9][A-Za-z0-9_.\/-]*$/.test(branch) && !branch.includes('..')) args.push('-b', branch);
+    args.push(url, dest);
+    await runGit(args, { timeout: 180000, env });
+    await runGit(['-C', dest, 'remote', 'set-url', 'origin', `https://github.com/${owner}/${repo}.git`], { timeout: 15000 });
+    return { path: dest, existed: false };
+  } catch (e) {
+    try { fs.rmSync(dest, { recursive: true, force: true }); } catch {}
+    let msg = String((e && (e.stderr || e.message)) || e).slice(0, 300);
+    if (token) msg = msg.split(token).join('***');
+    throw new Error(msg || 'clone failed');
+  }
+}
+
+async function fetchGhUser(t) {
+  try {
+    const r = await fetch('https://api.github.com/user', { headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + t } });
+    if (!r.ok) return {};
+    const u = await r.json();
+    return { login: u.login || '', name: u.name || '', email: u.email || '' };
+  } catch { return {}; }
+}
+
 // One tap that makes every terminal on this machine push-ready: the token
 // goes to a hub-only credentials file (0600), git learns a github.com-only
 // helper pointing at it, and commits get an identity. Existing user.name,
@@ -181,31 +241,9 @@ const runGit = (args, opts) => runCmd('git', args, opts);
 app.post('/api/git/auth', async (req, res) => {
   const t = String((req.body || {}).token || '');
   if (t.length < 10) return res.json({ success: false, error: 'bad token' });
-  const login = String((req.body || {}).login || '').trim();
-  const getCfg = async (k) => {
-    try { return (await runGit(['config', '--global', '--get', k], { timeout: 8000 })).trim(); }
-    catch { return ''; }
-  };
   try {
-    const credFile = path.join(HOME, '.git-credentials-hub');
-    fs.writeFileSync(credFile, `https://x-access-token:${t}@github.com\n`, { mode: 0o600 });
-    if (!await getCfg('credential.https://github.com.helper')) {
-      await runGit(['config', '--global', 'credential.https://github.com.helper', `store --file ${credFile}`], { timeout: 8000 });
-    }
-    if (login) {
-      if (!await getCfg('user.name')) {
-        await runGit(['config', '--global', 'user.name', String((req.body || {}).name || login)], { timeout: 8000 });
-      }
-      if (!await getCfg('user.email')) {
-        await runGit(['config', '--global', 'user.email', String((req.body || {}).email || `${login}@users.noreply.github.com`)], { timeout: 8000 });
-      }
-    }
-    try {
-      await runCmd('gh', ['auth', 'status', '--hostname', 'github.com'], { timeout: 10000 });
-    } catch {
-      try { await runCmd('gh', ['auth', 'login', '--hostname', 'github.com', '--with-token'], { timeout: 20000 }, t); } catch {}
-    }
-    res.json({ success: true, login: login || null });
+    const login = await doGitAuth(t, { login: (req.body || {}).login, name: (req.body || {}).name, email: (req.body || {}).email });
+    res.json({ success: true, login });
   } catch (e) {
     res.json({ success: false, error: 'git auth failed' });
   }
@@ -214,23 +252,31 @@ app.post('/api/git/auth', async (req, res) => {
 app.post('/api/git/clone', async (req, res) => {
   const m = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(String((req.body || {}).repo || '').trim());
   if (!m) return res.json({ success: false, error: 'need "owner/name"' });
-  const token = String((req.body || {}).token || '');
-  const dest = path.join(HOME, 'repos', m[2]);
   try {
-    if (fs.existsSync(path.join(dest, '.git'))) return res.json({ success: true, path: dest, existed: true });
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    const url = token
-      ? `https://x-access-token:${token}@github.com/${m[1]}/${m[2]}.git`
-      : `https://github.com/${m[1]}/${m[2]}.git`;
-    const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo' };
-    await runGit(['clone', url, dest], { timeout: 180000, env });
-    await runGit(['-C', dest, 'remote', 'set-url', 'origin', `https://github.com/${m[1]}/${m[2]}.git`], { timeout: 15000 });
-    res.json({ success: true, path: dest });
+    const r = await doCloneRepo(m[1], m[2], { token: String((req.body || {}).token || ''), branch: String((req.body || {}).branch || '') });
+    res.json({ success: true, ...r });
   } catch (e) {
-    try { fs.rmSync(dest, { recursive: true, force: true }); } catch {}
-    let msg = String((e && (e.stderr || e.message)) || e).slice(0, 300);
-    if (token) msg = msg.split(token).join('***');
-    res.json({ success: false, error: msg || 'clone failed' });
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// Clone the repo behind a github storage onto the runner and make the
+// workspace push-ready - the server already holds that storage's token,
+// so no secret crosses the wire for this.
+app.post('/api/storages/clone', async (req, res) => {
+  try {
+    const b = storage.exact(String((req.body || {}).id || ''));
+    const cfg = b && b.config;
+    if (!cfg || cfg.storageType !== 'github' || !cfg.owner || !cfg.repo) {
+      return res.json({ success: false, error: 'not a github storage' });
+    }
+    const r = await doCloneRepo(cfg.owner, cfg.repo, { token: cfg.token || '', branch: cfg.branch || '' });
+    if (cfg.token && String(cfg.token).length >= 10) {
+      try { await doGitAuth(cfg.token, await fetchGhUser(cfg.token)); } catch {}
+    }
+    res.json({ success: true, ...r });
+  } catch (e) {
+    res.json({ success: false, error: String((e && e.message) || e).slice(0, 300) });
   }
 });
 
