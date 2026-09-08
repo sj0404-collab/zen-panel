@@ -1,0 +1,127 @@
+name: Build Zen Panel Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "app/src/main/assets/panel/**"
+      - ".github/workflows/desktop.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.v.outputs.code }}
+      sha: ${{ steps.v.outputs.sha }}
+      name: ${{ steps.v.outputs.name }}
+      semver: ${{ steps.v.outputs.semver }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: v
+        run: |
+          CODE=$(git rev-list --count HEAD)
+          SHA=$(git rev-parse --short HEAD)
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "name=1.$CODE.$SHA" >> "$GITHUB_OUTPUT"
+          echo "semver=1.$CODE.0" >> "$GITHUB_OUTPUT"
+          echo "tag=desktop-v1.$CODE" >> "$GITHUB_OUTPUT"
+          echo "version 1.$CODE.$SHA (code $CODE)"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: desktop/package-lock.json }
+
+      - name: Self-test the panel store
+        working-directory: desktop
+        run: npm run check --if-present || (node --check main.js && node --check preload.js && node --check panel-store.js && node test-panel-store.js)
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm ci
+
+      # Must match the file list in desktop/package.json ("files") and the
+      # version.json shape the panel expects (versionCode/versionName).
+      - name: Bake build info
+        working-directory: desktop
+        run: |
+          node -e "require('fs').writeFileSync('build-info.json', JSON.stringify({versionCode: ${{ needs.version.outputs.code }}, versionName: '${{ needs.version.outputs.name }}', sha: '${{ needs.version.outputs.sha }}'}))"
+          cat build-info.json
+
+      - name: Build Windows installers
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: npx electron-builder --win --publish never -c.extraMetadata.version=${{ needs.version.outputs.semver }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Build Linux packages
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        run: npx electron-builder --linux --publish never -c.extraMetadata.version=${{ needs.version.outputs.semver }}
+
+      - name: List outputs
+        working-directory: desktop
+        run: ls -la dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zen-panel-desktop-${{ runner.os }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: zen-panel-desktop-*
+          merge-multiple: true
+          path: dist
+      - name: List release files
+        run: ls -la dist/
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Zen Panel Desktop ${{ needs.version.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          make_latest: false
+          files: dist/*
+          body: |
+            Автосборка ПК-версии (Windows + Linux).
+
+            | | |
+            |---|---|
+            | Версия | `${{ needs.version.outputs.name }}` |
+            | versionCode | `${{ needs.version.outputs.code }}` |
+            | Коммит | `${{ github.sha }}` |
+
+            Windows: установщик `*-setup-*.exe` или portable `*.exe`. Linux: `.AppImage` или `.deb`.
+            Установка поверх предыдущей сборки работает: `versionCode` растёт с каждым коммитом.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

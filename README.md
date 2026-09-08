@@ -8,11 +8,13 @@ Android-панель и GitHub Actions для Zen Agent, OpenCode и удалё�
 
 - Android WebView-оболочка и панель в `app/src/main/assets/panel/`
 - CLI-агент и веб-хаб (`agent/`)
+- Десктопная оболочка для Windows/Linux в `desktop/` (Electron, те же страницы панели)
 - Workflow:
   - `agent.yml` — CLI-агент на Linux/Windows, туннель, чат в оверлее
   - `opencode.yml` — OpenCode web на Linux/Windows, туннель, чат в оверлее
   - `desks.yml` — столы Linux (noVNC) и Windows (MJPEG)
   - `panel-apk.yml` — сборка APK и GitHub Release (`v1.{commits}`, versionCode растёт сам)
+  - `desktop.yml` — сборка ПК-версии и GitHub Release (`desktop-v1.{commits}`: `.exe` / `.AppImage` / `.deb`)
 
 ## Как пользоваться
 
@@ -70,3 +72,13 @@ git ls-remote https://github.com/<owner>/<repo>.git main   # должен вер
 ```
 
 `tools/oc_gh_auth.sh` — переиспользуемый хелпер: экспортирует `GITHUB_TOKEN`/`GH_TOKEN`, настраивает `http.https://github.com/.extraheader`, и опционально клонирует `OC_REPO` в заданную папку. Токен в конфиг не пишется (только base64 basic) и не выводится в лог.
+
+## Панель для ПК (Windows / Linux)
+
+Десктопный аналог Android-приложения — в `desktop/` (Electron). Показывает те же страницы из `app/src/main/assets/panel/`, дубликата интерфейса нет.
+
+```bash
+cd desktop && npm install && npm start
+```
+
+Сборка установщиков — `npm run dist:win` / `npm run dist:linux`, либо workflow `desktop.yml` (релизы `desktop-v1.N`). Панель сама предлагает нужный файл: на ПК вкладка обновлений ищет релиз `desktop-*` вместо APK.
