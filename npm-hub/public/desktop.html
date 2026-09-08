@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0a0e14">
+  <title>NPM Hub</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    :root{--bg0:#0a0e14;--bg1:#0d1117;--bg2:#161b22;--bg3:#1c2128;--bg4:#21262d;--bdr:#30363d;--t1:#e6edf3;--t2:#8b949e;--t3:#484f58;--acc:#58a6ff;--ok:#3fb950;--err:#f85149;--warn:#d29922;--pur:#bc8cff}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg0);color:var(--t1);height:100vh;height:100dvh;overflow:hidden;display:flex;flex-direction:column}
+    .topbar{height:40px;background:var(--bg2);display:flex;align-items:center;padding:0 12px;gap:8px;border-bottom:1px solid var(--bdr);flex-shrink:0}
+    .logo{font-size:14px;font-weight:800;background:linear-gradient(135deg,var(--acc),var(--pur));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .topbar-nav{display:flex;gap:2px;margin-left:12px}
+    .tb{padding:5px 12px;border-radius:6px;border:none;background:transparent;color:var(--t2);font-size:11px;font-weight:500;cursor:pointer;transition:all .12s}
+    .tb:hover{background:var(--bg4);color:var(--t1)}.tb.on{background:var(--bg4);color:var(--acc)}
+    .topbar-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+    .access-badge{font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600}
+    .access-local{color:var(--ok);background:rgba(63,185,80,.12)}
+    .access-remote{color:var(--warn);background:rgba(210,153,34,.12)}
+.tunnel-badge{color:#bc8cff;background:rgba(188,140,255,.12);font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600;cursor:pointer;text-decoration:none;transition:all .12s}
+.tunnel-badge:hover{background:rgba(188,140,255,.22)}
+.tunnel-url{font-size:10px;color:var(--pur);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.tunnel-url:hover{color:var(--acc)}
+    .btn{padding:5px 10px;border-radius:6px;border:1px solid var(--bdr);background:var(--bg4);color:var(--t1);font-size:11px;cursor:pointer;transition:all .12s;white-space:nowrap}
+    .btn:hover{background:var(--bdr)}.btn-p{background:var(--acc);color:#fff;border-color:var(--acc)}.btn-p:hover{opacity:.85}
+    .btn-ok{background:var(--ok);color:#fff;border-color:var(--ok)}.btn-er{background:var(--err);color:#fff;border-color:var(--err)}
+    .btn-sm{padding:3px 7px;font-size:10px}
+    .main{flex:1;display:flex;overflow:hidden}
+    .sidebar{width:180px;background:var(--bg1);border-right:1px solid var(--bdr);display:flex;flex-direction:column;flex-shrink:0}
+    .sb{flex:1;overflow-y:auto;padding:6px}
+    .sb-lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin:10px 0 4px;padding:0 6px}
+    .sb-i{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:11px;color:var(--t2);transition:all .1s;border:1px solid transparent}
+    .sb-i:hover{background:var(--bg3);color:var(--t1)}.sb-i.on{background:var(--bg3);color:var(--acc);border-color:var(--bdr)}
+    .sb-ico{width:20px;height:20px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:800;flex-shrink:0}
+    .sb-actions{padding:6px;border-top:1px solid var(--bdr);display:flex;gap:4px}
+    .sb-actions .btn{flex:1;text-align:center}
+    .content{flex:1;display:flex;flex-direction:column;overflow:hidden}
+    .page{display:none;flex:1;overflow-y:auto;padding:20px}.page.on{display:block}
+    .ph h1{font-size:20px;font-weight:700;margin-bottom:3px}.ph p{font-size:12px;color:var(--t2);margin-bottom:16px}
+    .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:20px}
+    .st{background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;padding:14px;text-align:center}
+    .st-v{font-size:28px;font-weight:800}.st-l{font-size:10px;color:var(--t2);margin-top:2px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+    .card{background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:16px;transition:all .15s}
+    .card:hover{border-color:var(--bdr)}
+    .card-h{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+    .card-ico{width:36px;height:36px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800}
+    .card-n{font-size:14px;font-weight:600}.card-v{font-size:9px;color:var(--t3);font-family:monospace}
+    .tag{font-size:9px;padding:2px 7px;border-radius:8px;display:inline-block;margin-right:3px}
+    .tag-on{color:var(--ok);background:rgba(63,185,80,.12)}.tag-off{color:var(--err);background:rgba(248,81,73,.12)}
+
+    /* Tool card with Apply button */
+    .card-foot{display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid var(--bdr)}
+    .card-dir{flex:1;font-size:10px;color:var(--t2);font-family:monospace;padding:4px 8px;background:var(--bg0);border:1px solid var(--bdr);border-radius:4px;outline:none;color:var(--t1);width:100%}
+    .card-dir:focus{border-color:var(--acc);color:var(--t1)}
+    .apply-menu{display:none;position:absolute;top:100%;right:0;background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;min-width:180px;z-index:50;margin-top:4px;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+    .apply-menu.on{display:block}
+    .apply-item{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;font-size:11px;color:var(--t2);border-bottom:1px solid var(--bdr);transition:background .08s}
+    .apply-item:last-child{border-bottom:none}
+    .apply-item:hover{background:var(--bg3);color:var(--t1)}
+
+    /* Terminal page */
+    .term-page{display:none;flex:1;flex-direction:column;overflow:hidden}.term-page.on{display:flex}
+    .term-topbar{display:flex;align-items:center;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0}
+    .tabs-row{display:flex;overflow-x:auto;flex:1}
+    .tab{display:flex;align-items:center;gap:5px;padding:7px 12px;font-size:11px;color:var(--t2);cursor:pointer;border-bottom:2px solid transparent;transition:all .1s;white-space:nowrap;flex-shrink:0}
+    .tab:hover{background:var(--bg3);color:var(--t1)}.tab.on{color:var(--acc);border-bottom-color:var(--acc);background:var(--bg2)}
+    .tab-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+    .tab-x{margin-left:3px;opacity:.3;font-size:13px}.tab-x:hover{opacity:1;color:var(--err)}
+    .tab-add{padding:7px 10px;color:var(--t3);cursor:pointer;font-size:15px;flex-shrink:0}.tab-add:hover{color:var(--acc)}
+    .term-controls{display:flex;align-items:center;gap:4px;padding:0 8px;border-left:1px solid var(--bdr);flex-shrink:0}
+    .tc-btn{width:26px;height:26px;border-radius:5px;border:1px solid var(--bdr);background:var(--bg3);color:var(--t2);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .1s}
+    .tc-btn:hover{background:var(--bdr);color:var(--t1)}
+    .zoom-label{font-size:10px;color:var(--t3);min-width:36px;text-align:center;font-family:monospace}
+    .term-container{flex:1;display:flex;overflow:hidden;background:#000;flex-wrap:wrap}
+    .term-panel{display:none;flex:1;min-width:300px;flex-direction:column;overflow:hidden;border:1px solid var(--bdr)}
+    .term-panel.on{display:flex}
+    .term-header{display:flex;align-items:center;justify-content:space-between;padding:4px 10px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0}
+    .term-header-title{font-size:10px;color:var(--t2);display:flex;align-items:center;gap:5px}
+    .term-info{font-size:9px;color:var(--t3);font-family:monospace}
+    .term{flex:1;background:#000;padding:2px;overflow:hidden}
+    .term .xterm{height:100%}
+    .term .xterm-viewport{overflow-y:auto!important;overflow-x:hidden!important}
+    .term .xterm-viewport::-webkit-scrollbar{width:8px}
+    .term .xterm-viewport::-webkit-scrollbar-track{background:transparent}
+    .term .xterm-viewport::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:4px}
+    .term .xterm-viewport::-webkit-scrollbar-thumb:hover{background:var(--t3)}
+
+    /* File manager */
+    .fm-item{display:flex;align-items:center;gap:8px;padding:7px 12px;cursor:pointer;border-bottom:1px solid var(--bdr);transition:background .08s}
+    .fm-item:hover{background:var(--bg3)}.fm-item.fm-sel{background:rgba(88,166,255,.1)}
+    .fm-ico{font-size:16px;flex-shrink:0;width:22px;text-align:center}
+    .fm-name{flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .fm-size{font-size:10px;color:var(--t3);flex-shrink:0;min-width:60px;text-align:right}
+
+    /* Path picker dropdown */
+    .path-picker{position:relative}
+    .path-dropdown{display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--bdr);border-radius:6px;max-height:200px;overflow-y:auto;z-index:50;margin-top:2px}
+    .path-dropdown.on{display:block}
+    .path-dd-item{padding:6px 10px;font-size:11px;font-family:monospace;cursor:pointer;color:var(--t2);border-bottom:1px solid var(--bdr);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .path-dd-item:hover{background:var(--bg3);color:var(--t1)}
+
+    /* Modal */
+    .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
+    .modal-bg.on{display:flex}
+    .modal{background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;padding:20px;width:560px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column}
+    .modal h2{font-size:16px;font-weight:600;margin-bottom:12px}
+    .modal-bar{display:flex;gap:6px;margin-bottom:10px}
+    .modal-bar input{flex:1;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none}
+    .modal-bar input:focus{border-color:var(--acc)}
+    .modal-drives{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+    .drive-btn{padding:5px 10px;background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;color:var(--t2);font-size:11px;cursor:pointer;transition:all .1s}
+    .drive-btn:hover{border-color:var(--acc);color:var(--t1)}
+    .modal-list{flex:1;overflow-y:auto;max-height:300px;border:1px solid var(--bdr);border-radius:6px;background:var(--bg0)}
+    .modal-actions{display:flex;gap:6px;margin-top:12px;justify-content:flex-end}
+    .newterm-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+    .newterm-tool{display:flex;align-items:center;gap:8px;padding:10px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;cursor:pointer;transition:all .12s}
+    .newterm-tool:hover{border-color:var(--acc)}.newterm-tool.off{opacity:.35;pointer-events:none}
+    .storage-type-btn{padding:5px 10px;background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;color:var(--t2);font-size:11px;cursor:pointer;transition:all .1s}
+    .storage-type-btn:hover{border-color:var(--acc);color:var(--t1)}.storage-type-btn.on{border-color:var(--acc);color:var(--acc);background:rgba(88,166,255,.1)}
+    .model-card{background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:14px;transition:all .15s}
+    .model-card:hover{border-color:var(--acc)}
+    .model-card.selected{border-color:var(--ok);background:rgba(63,185,80,.05)}
+    .model-card .model-name{font-size:13px;font-weight:600;margin-bottom:4px}
+    .model-card .model-id{font-size:9px;color:var(--t3);font-family:monospace;word-break:break-all}
+    .model-card .model-tools{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+    .model-card .model-tool{font-size:8px;padding:2px 6px;border-radius:4px;background:var(--bg4);color:var(--t2)}
+    .tool-config-card{background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:14px}
+    .tool-config-card .tc-name{font-size:13px;font-weight:600;margin-bottom:6px}
+    .tool-config-card .tc-key{font-size:9px;color:var(--t3);font-family:monospace;word-break:break-all;margin-top:4px}
+
+    ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:var(--t3)}
+
+
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="logo">◆ NPM Hub</div>
+    <div class="topbar-nav">
+      <button class="tb on" onclick="showPage('dashboard')">Dashboard</button>
+      <button class="tb" onclick="showPage('terminal')">Терминал</button>
+      <button class="tb" onclick="showPage('files')">Файлы</button>
+      <button class="tb" onclick="showPage('models-full')">🔧 Models</button>
+    </div>
+    <div class="topbar-right">
+      <div style="position:relative">
+        <button class="btn" onclick="toggleModelMenu(event)" id="model-btn" style="font-size:10px">
+          <span id="model-name">OWL Alpha</span> ▾
+        </button>
+        <div class="apply-menu" id="model-menu" style="min-width:280px"></div>
+      </div>
+      <span class="access-badge" id="access-mode"></span>
+      <span id="access-ip" style="font-size:10px;color:var(--t3)"></span>
+      <a id="tunnel-link" class="tunnel-badge" style="display:none" target="_blank" rel="noopener">🌐 Public</a>
+      <span id="tunnel-url" class="tunnel-url" style="display:none" onclick="copyTunnelUrl()"></span>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="sidebar">
+      <div class="sb">
+        <div class="sb-lbl">Инструменты</div>
+        <div id="tool-list"></div>
+        <div class="sb-lbl" style="margin-top:12px">Сессии</div>
+        <div id="term-list"></div>
+      </div>
+      <div class="sb-actions">
+        <button class="btn" onclick="openTerminal()" style="flex:1;text-align:center">>_ Терминал</button>
+        <button class="btn btn-p" onclick="showNewTermModal()" style="flex:1;text-align:center">+ Сессия</button>
+      </div>
+    </div>
+    <div class="content">
+      <div class="page" id="p-dashboard">
+        <div class="ph"><h1>Dashboard</h1><p>AI инструменты — выберите папку и нажмите Применить</p></div>
+        <div class="stats" id="stats"></div>
+        <div class="grid" id="grid"></div>
+      </div>
+      <div class="term-page" id="p-terminal">
+        <div class="term-topbar">
+          <div class="tabs-row" id="tabs"></div>
+          <div class="term-controls">
+            <button class="tc-btn" onclick="killTerm()" title="Стоп (SIGINT)">⏹</button>
+            <button class="tc-btn" onclick="sendEscape()" title="Escape">Esc</button>
+            <button class="tc-btn" onclick="pasteClipboard()" title="Вставить">📋</button>
+            <button class="tc-btn" onclick="restartTerm()" title="Перезапустить">⟲</button>
+            <button class="tc-btn" onclick="zoomTerm(-1)">−</button>
+            <span class="zoom-label" id="zoom-label">100%</span>
+            <button class="tc-btn" onclick="zoomTerm(1)">+</button>
+            <button class="tc-btn" onclick="zoomTerm(0)">⟲</button>
+            <button class="tc-btn" onclick="toggleFullscreen()">⛶</button>
+          </div>
+        </div>
+        <div class="term-container" id="term-container"></div>
+      </div>
+      <div class="page on" id="p-files">
+        <div style="display:flex;height:calc(100vh - 100px)">
+          <div style="width:200px;background:var(--bg1);border:1px solid var(--bdr);border-radius:10px;margin-right:12px;overflow-y:auto;flex-shrink:0">
+            <div style="padding:10px 8px;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--t3);border-bottom:1px solid var(--bdr)">Устройства</div>
+            <div id="devices-list"></div>
+            <div style="padding:10px 8px;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--t3);border-top:1px solid var(--bdr)">Хранилища</div>
+            <div id="storages-list"></div>
+            <div style="padding:6px;border-top:1px solid var(--bdr)">
+              <button class="btn" onclick="showAddStorageModal()" style="width:100%;text-align:center;font-size:10px">+ Добавить</button>
+            </div>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+            <div style="display:flex;gap:6px;padding:8px 0;margin-bottom:8px;flex-shrink:0">
+              <button class="btn" onclick="fmGoUp()">↑</button>
+              <button class="btn" onclick="fmGoHome()">🏠</button>
+              <input type="text" id="fm-path" style="flex:1;padding:5px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')fmBrowse(this.value)">
+              <button class="btn" onclick="fmRefresh()">⟳</button>
+              <button class="btn" onclick="fmMkdir()">📁+</button>
+              <button class="btn" onclick="fmRename()">✏️</button>
+              <button class="btn" onclick="fmDelete()">🗑️</button>
+              <button class="btn" onclick="fmDownload()">⬇</button>
+              <button class="btn" onclick="fmUpload()">⬆</button>
+              <div style="position:relative">
+                <button class="btn btn-p" onclick="toggleFmMenu(event)">▶</button>
+                <div class="apply-menu" id="fm-apply-menu"></div>
+              </div>
+            </div>
+            <div style="flex:1;overflow-y:auto;border:1px solid var(--bdr);border-radius:8px;background:var(--bg0)" id="fm-list"></div>
+            <div style="padding:4px 0;font-size:10px;color:var(--t3)" id="fm-info"></div>
+          </div>
+        </div>
+      </div>
+      <div class="page" id="p-models-full">
+        <div class="ph"><h1>🔧 Models Full</h1><p>Все модели всех CLI инструментов с ключами и настройками</p></div>
+        <div style="display:flex;gap:10px;margin-bottom:16px">
+          <button class="btn btn-ok" onclick="syncAllModels()">🔄 Синхронизировать всё</button>
+          <button class="btn" onclick="refreshLiveModels()">🌐 Обновить каталоги</button>
+          <button class="btn" onclick="showApiKeyModal()">🔑 API Key</button>
+          <span id="models-full-info" style="font-size:11px;color:var(--t3);display:flex;align-items:center"></span>
+        </div>
+        <div id="models-full-tools" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:20px"></div>
+        <div class="ph"><h2>Все модели</h2><p>Нажмите "Скопировать" чтобы применить модель ко всем инструментам</p></div>
+        <div id="models-full-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Session Modal -->
+  <div class="modal-bg" id="modal-newterm">
+    <div class="modal">
+      <h2>Новая сессия</h2>
+      <div class="newterm-grid" id="newterm-grid"></div>
+      <div style="margin-bottom:10px">
+        <label style="font-size:10px;color:var(--t2)">Рабочая папка:</label>
+        <div style="display:flex;gap:6px;margin-top:4px">
+          <input type="text" id="newterm-cwd" placeholder="путь..." style="flex:1;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none">
+          <button class="btn" onclick="openBrowser()">📁</button>
+        </div>
+        <div id="recent-paths" style="margin-top:6px;max-height:80px;overflow-y:auto"></div>
+      </div>
+      <div class="modal-actions"><button class="btn" onclick="closeModal('modal-newterm')">Отмена</button></div>
+    </div>
+  </div>
+
+  <!-- Browser Modal -->
+  <div class="modal-bg" id="modal-browser">
+    <div class="modal">
+      <h2>Выберите папку</h2>
+      <div class="modal-bar">
+        <input type="text" id="browser-path" onkeydown="if(event.key==='Enter')browseTo(this.value)">
+        <button class="btn btn-p" onclick="browseTo(document.getElementById('browser-path').value)">Открыть</button>
+      </div>
+      <div class="modal-drives" id="browser-drives"></div>
+      <div class="modal-list" id="browser-list"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-browser')">Отмена</button>
+        <button class="btn btn-ok" onclick="selectBrowserPath()">Выбрать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Storage Modal -->
+  <div class="modal-bg" id="modal-addstorage">
+    <div class="modal">
+      <h2>Добавить хранилище</h2>
+      <div style="display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="btn storage-type-btn on" data-type="adb" onclick="setStorageType('adb')">📱 ADB</button>
+        <button class="btn storage-type-btn" data-type="ftp" onclick="setStorageType('ftp')">📂 FTP/SFTP</button>
+        <button class="btn storage-type-btn" data-type="gdrive" onclick="setStorageType('gdrive')">☁️ Google Drive</button>
+        <button class="btn storage-type-btn" data-type="github" onclick="setStorageType('github')">🐙 GitHub</button>
+        <button class="btn storage-type-btn" data-type="http" onclick="setStorageType('http')">🌐 HTTP</button>
+        <button class="btn storage-type-btn" data-type="webdav" onclick="setStorageType('webdav')">📁 WebDAV</button>
+      </div>
+
+      <!-- ADB -->
+      <div id="form-adb" style="display:block">
+        <div style="display:grid;grid-template-columns:1fr 100px;gap:6px;margin-bottom:8px">
+          <div><label style="font-size:10px;color:var(--t2)">IP адрес</label><input type="text" id="adb-host" placeholder="192.168.1.100" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+          <div><label style="font-size:10px;color:var(--t2)">Порт</label><input type="text" id="adb-port" value="5555" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        </div>
+        <div style="font-size:10px;color:var(--t3)">Подключится к телефону по Wi-Fi (adb connect ip:port)</div>
+      </div>
+
+      <!-- FTP -->
+      <div id="form-ftp" style="display:none">
+        <form autocomplete="off">
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Имя</label><input type="text" id="ftp-name" placeholder="My FTP" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        <div style="display:grid;grid-template-columns:1fr 80px;gap:6px;margin-bottom:8px">
+          <div><label style="font-size:10px;color:var(--t2)">Хост</label><input type="text" id="ftp-host" placeholder="ftp.example.com" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+          <div><label style="font-size:10px;color:var(--t2)">Порт</label><input type="text" id="ftp-port" value="21" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+          <div><label style="font-size:10px;color:var(--t2)">Логин</label><input type="text" id="ftp-user" placeholder="anonymous" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+          <div><label style="font-size:10px;color:var(--t2)">Пароль</label><input type="password" id="ftp-pass" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        </div>
+        </form>
+      </div>
+      <div id="form-gdrive" style="display:none">
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Имя</label><input type="text" id="gdrive-name" value="Google Drive" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Access Token</label><input type="text" id="gdrive-token" placeholder="ya29...." style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        <div style="font-size:10px;color:var(--t3)">Получить токен: console.cloud.google.com → APIs → Credentials</div>
+      </div>
+
+      <!-- GitHub -->
+      <div id="form-github" style="display:none">
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Репозиторий (URL)</label><input type="text" id="github-repo" placeholder="https://github.com/user/repo" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Branch</label><input type="text" id="github-branch" value="main" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Token (опционально)</label><input type="text" id="github-token" placeholder="ghp_..." style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+      </div>
+
+      <!-- HTTP -->
+      <div id="form-http" style="display:none">
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Имя</label><input type="text" id="http-name" placeholder="My HTTP" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">URL</label><input type="text" id="http-url" placeholder="https://example.com/files/" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+      </div>
+
+      <!-- WebDAV -->
+      <div id="form-webdav" style="display:none">
+        <form autocomplete="off">
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Имя</label><input type="text" id="webdav-name" placeholder="My WebDAV" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">URL</label><input type="text" id="webdav-url" placeholder="https://webdav.example.com/" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+          <div><label style="font-size:10px;color:var(--t2)">Логин</label><input type="text" id="webdav-user" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+          <div><label style="font-size:10px;color:var(--t2)">Пароль</label><input type="password" id="webdav-pass" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        </div>
+        </form>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-addstorage')">Отмена</button>
+        <button class="btn btn-ok" onclick="saveStorage()">Подключить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- API Key Modal -->
+  <div class="modal-bg" id="modal-apikey">
+    <div class="modal" style="width:400px">
+      <h2>🔑 API Key</h2>
+      <div style="margin-bottom:12px">
+        <label style="font-size:10px;color:var(--t2)">OpenRouter API Key</label>
+        <input type="text" id="apikey-input" placeholder="sk-or-v1-..." style="width:100%;padding:8px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:4px;outline:none">
+        <div style="font-size:9px;color:var(--t3);margin-top:4px">Общий ключ для всех инструментов. Получить: openrouter.ai/keys</div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-apikey')">Отмена</button>
+        <button class="btn btn-ok" onclick="saveApiKey()">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="desktop-app.js"></script>
+</body>
+</html>
