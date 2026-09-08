@@ -3,9 +3,9 @@ name: JS syntax
 on:
   push:
     branches: [main]
-    paths: ["agent/**"]
+    paths: ["agent/**", "desktop/**"]
   pull_request:
-    paths: ["agent/**"]
+    paths: ["agent/**", "desktop/**"]
 
 jobs:
   check:
@@ -33,3 +33,9 @@ jobs:
           subprocess.check_call(["node", "--check", "/tmp/hub.js"])
           print("ok")
           PY
+      - name: Syntax-check the desktop shell
+        run: |
+          node --check desktop/main.js
+          node --check desktop/preload.js
+          node --check desktop/panel-store.js
+          node desktop/test-panel-store.js

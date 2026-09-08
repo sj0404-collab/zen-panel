@@ -1,0 +1,57 @@
+{
+  "name": "zen-panel-desktop",
+  "productName": "Zen Panel",
+  "version": "0.0.0-dev",
+  "description": "Zen Panel for PC: Windows/Linux desktop shell (Electron) for the Zen Agent control panel.",
+  "main": "main.js",
+  "license": "GPL-3.0-or-later",
+  "author": "Symbiosis Project",
+  "homepage": "https://github.com/sj0404-collab/zen-panel",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "check": "node --check main.js && node --check preload.js && node --check panel-store.js && node test-panel-store.js"
+  },
+  "devDependencies": {
+    "electron": "^33.4.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "dev.zen.panel.desktop",
+    "productName": "Zen Panel",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "panel-store.js",
+      "package.json",
+      "build-info.json",
+      "build/icon.*"
+    ],
+    "extraResources": [
+      {
+        "from": "../app/src/main/assets/panel",
+        "to": "panel"
+      }
+    ],
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "build/icon.png",
+      "category": "Utility",
+      "maintainer": "sj0404-collab"
+    }
+  }
+}

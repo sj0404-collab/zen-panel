@@ -292,8 +292,9 @@
     <h2>Панель как приложение</h2>
     <div id="apk-panel"><span class="spin">загрузка…</span></div>
     <div class="note">
-      Каждый успешный билд публикует GitHub Release: тег <code>v1.N</code>,
-      versionCode = число коммитов. Установка поверх старой работает.
+      Каждый успешный билд публикует GitHub Release: тег <code>v1.N</code> для APK
+      и <code>desktop-v1.N</code> для ПК-версии, versionCode = число коммитов.
+      Установка поверх старой работает.
     </div>
     <div class="row" style="margin-top:10px">
       <button onclick="run('panel-apk.yml',{})">Собрать и выпустить APK</button>
@@ -1743,11 +1744,25 @@ async function loadInstalledVersion() {
 }
 window.onZenPanelBuild = v => { INSTALLED = v || INSTALLED; renderUpdateBanner(); };
 
+// The PC shell (desktop/preload.js) sets window.ZEN_DESKTOP; the APK and a
+// plain browser leave it undefined. Desktop builds publish tags desktop-v1.N
+// next to the APK tags v1.N, so releases/latest cannot tell them apart - scan
+// the list and pick by tag prefix instead.
+function wantDesktopRelease() {
+  return !!(window.ZEN_DESKTOP && window.ZEN_DESKTOP.platform);
+}
 async function latestRelease() {
+  const desktop = wantDesktopRelease();
   const seen = new Set();
   for (const repo of [ctlRepo(), DEFAULT_REPO]) {
     if (seen.has(repo)) continue;
     seen.add(repo);
+    try {
+      const all = await api(`${GH}/repos/${repo}/releases?per_page=30`);
+      const list = Array.isArray(all) ? all : [];
+      const pick = list.find(r => desktop === /^desktop-/i.test(String((r && r.tag_name) || '')));
+      if (pick) return pick;
+    } catch (e) {}
     try { return await api(`${GH}/repos/${repo}/releases/latest`); }
     catch (e) {}
   }
@@ -1755,6 +1770,29 @@ async function latestRelease() {
 }
 function releaseApk(rel) {
   return ((rel && rel.assets) || []).find(a => /\.apk$/i.test(a.name)) || null;
+}
+// The downloadable file for this shell: the APK on Android, the installer or
+// package for the current OS on desktop.
+function releaseFile(rel) {
+  const assets = ((rel && rel.assets) || []);
+  const zd = window.ZEN_DESKTOP;
+  if (!zd || !zd.platform) return releaseApk(rel);
+  if (zd.platform === 'win32') {
+    return assets.find(a => /setup.*\.exe$/i.test(a.name))
+        || assets.find(a => /\.exe$/i.test(a.name)) || null;
+  }
+  if (zd.platform === 'linux') {
+    return assets.find(a => /\.AppImage$/i.test(a.name))
+        || assets.find(a => /\.deb$/i.test(a.name)) || null;
+  }
+  return assets.find(a => /\.(zip|dmg|pkg)$/i.test(a.name)) || null;
+}
+function downloadWord() {
+  const zd = window.ZEN_DESKTOP;
+  if (!zd || !zd.platform) return 'APK';
+  if (zd.platform === 'win32') return 'версию для Windows';
+  if (zd.platform === 'linux') return 'версию для Linux';
+  return 'ПК-версию';
 }
 function releaseCode(rel) {
   const tag = String((rel && rel.tag_name) || '');
@@ -1768,27 +1806,30 @@ async function loadPanelApk() {
   renderUpdateBanner();
   try {
     const rel = await latestRelease();
-    const apk = releaseApk(rel);
+    const file = releaseFile(rel);
     const remote = releaseCode(rel);
     const mine = parseInt(INSTALLED.versionCode, 10) || 0;
     const newer = remote > mine && mine > 0;
-    if (!rel || !apk) {
+    if (!rel || !file) {
       const d = await api(`${CTL()}/actions/runs?per_page=20`);
       const b = (d.workflow_runs || []).find(r =>
-        (r.name === 'Panel APK' || r.name === 'Build Zen Panel APK') && r.conclusion === 'success');
+        (r.name === 'Panel APK' || r.name === 'Build Zen Panel APK' ||
+         r.name === 'Build Zen Panel Desktop') && r.conclusion === 'success');
       box.innerHTML = b
         ? `<table><tr><td>Сборка</td><td>#${b.run_number} · ${ago(b.updated_at)}</td></tr>
            <tr><td>Скачать</td><td><a href="${esc(b.html_url)}" target="_blank">артефакт запуска</a></td></tr></table>`
-        : '<span class="note">релиза ещё нет — нажмите «Собрать и выпустить APK»</span>';
+        : (wantDesktopRelease()
+          ? '<span class="note">релиза ещё нет — соберите его workflow «Build Zen Panel Desktop»</span>'
+          : '<span class="note">релиза ещё нет — нажмите «Собрать и выпустить APK»</span>');
       return;
     }
     box.innerHTML = `<table>
       <tr><td>Релиз</td><td><b>${esc(rel.name || rel.tag_name)}</b> · ${ago(rel.published_at || rel.created_at)}</td></tr>
-      <tr><td>У вас</td><td>${mine ? esc(INSTALLED.versionName || String(mine)) : 'не APK / веб'}</td></tr>
-      <tr><td>Файл</td><td>${esc(apk.name)} · ${kb(apk.size)}</td></tr>
+      <tr><td>У вас</td><td>${mine ? esc(INSTALLED.versionName || String(mine)) : (wantDesktopRelease() ? 'dev-сборка' : 'не APK / веб')}</td></tr>
+      <tr><td>Файл</td><td>${esc(file.name)} · ${kb(file.size)}</td></tr>
     </table>
     <div class="row" style="margin-top:10px">
-      <a href="${esc(apk.browser_download_url)}"><button>${newer ? 'Обновить APK' : 'Скачать APK'}</button></a>
+      <a href="${esc(file.browser_download_url)}"><button>${newer ? 'Обновить ' + downloadWord() : 'Скачать ' + downloadWord()}</button></a>
       <button class="ghost" onclick="window.open('${esc(rel.html_url)}','_blank')">Страница релиза</button>
     </div>
     ${newer ? '<div class="warn">Доступна более новая версия. Скачайте и установите поверх текущей.</div>' : ''}`;
@@ -1811,14 +1852,14 @@ async function checkUpdateBanner() {
   if (!mine) return;
   try {
     const rel = await latestRelease();
-    const apk = releaseApk(rel);
+    const file = releaseFile(rel);
     const remote = releaseCode(rel);
-    if (!apk || remote <= mine || document.getElementById('upd-banner')) return;
+    if (!file || remote <= mine || document.getElementById('upd-banner')) return;
     const bar = document.createElement('div');
     bar.id = 'upd-banner';
     bar.className = 'warn';
-    bar.innerHTML = 'Доступен APK <b>' + esc(rel.tag_name || rel.name) +
-      '</b> · <a href="' + esc(apk.browser_download_url) + '">скачать обновление</a>';
+    bar.innerHTML = 'Доступно обновление <b>' + esc(rel.tag_name || rel.name) +
+      '</b> · <a href="' + esc(file.browser_download_url) + '">скачать обновление</a>';
     document.body.insertBefore(bar, document.body.firstChild);
   } catch (e) {}
 }
