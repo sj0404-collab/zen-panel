@@ -501,8 +501,15 @@ function fmSwitchBackend(backend, startPath) {
 }
 
 async function fmBrowse(p) {
-  const r = await fetch(`/api/browse?backend=${fmBackend}&path=${encodeURIComponent(p)}`).then(r => r.json());
-  if (!r.success) return;
+  p = String(p == null ? '' : p);
+  const m = /^\[([^\]]+)\]\s*/.exec(p);
+  if (m) { fmBackend = m[1]; p = p.slice(m[0].length) || '/'; }
+  const r = await fetch(`/api/browse?backend=${encodeURIComponent(fmBackend)}&path=${encodeURIComponent(p)}`).then(r => r.json());
+  if (!r.success) {
+    const info = document.getElementById('fm-info');
+    if (info) info.textContent = 'Ошибка: ' + (r.error || 'неизвестная');
+    return;
+  }
   fmCurrentPath = r.path;
   document.getElementById('fm-path').value = `${fmBackend === 'local' ? '' : '[' + fmBackend + '] '}${r.path}`;
   const list = document.getElementById('fm-list');
@@ -533,6 +540,17 @@ function toggleFmMenu(e) {
   document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));
   const menu = document.getElementById('fm-apply-menu');
   if (!menu) return;
+  if (fmBackend !== 'local') {
+    const s = (storages || []).find(x => x.id === fmBackend);
+    if (!s || s.type !== 'github') { alert('Это удалённое хранилище, а не папка на диске. Откройте локальную папку или клонируйте репозиторий.'); return; }
+    menu.innerHTML = `<div class="apply-menu-title">Репозиторий не на диске</div>
+    <div class="apply-item" onclick="event.stopPropagation();fmCloneOpen('${escAttr(s.id)}')">
+      <div class="sb-ico" style="background:rgba(63,185,80,.15);color:var(--ok);width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800">⬇</div>
+      <span>Клонировать и открыть</span>
+    </div>`;
+    menu.classList.add('on');
+    return;
+  }
   const dir = fmCurrentPath || homeDir;
   menu.innerHTML = tools.filter(toolUsable).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','${t.id}')">
@@ -554,11 +572,25 @@ async function fmOpenIn(dir, toolId) {
   createTerm(toolId, dir);
 }
 
+async function fmCloneOpen(storageId) {
+  document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));
+  const info = document.getElementById('fm-info');
+  if (info) info.textContent = 'Клонирование…';
+  try {
+    const r = await fetch('/api/storages/clone', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: storageId }) }).then(r => r.json());
+    if (!r.success) { alert('Ошибка: ' + (r.error || 'неизвестная')); return; }
+    fmSwitchBackend('local', r.path);
+    toggleFmMenu({ stopPropagation() {} });
+  } finally {
+    if (info && !info.textContent) info.textContent = '';
+  }
+}
+
 async function fmBrowseAdbPath(device, path) {
   fmBackend = `adb:${device}`;
   fmCurrentPath = path;
   document.getElementById('fm-path').value = `[ADB] ${path}`;
-  const r = await fetch(`/api/browse?backend=adb:${device}&path=${encodeURIComponent(path)}`).then(r => r.json());
+  const r = await fetch(`/api/browse?backend=${encodeURIComponent('adb:' + device)}&path=${encodeURIComponent(path)}`).then(r => r.json());
   if (!r.success) return;
   const list = document.getElementById('fm-list');
   let html = '';
@@ -662,7 +694,7 @@ async function fmRename() {
 
 function fmDownload() {
   if (!fmSelected) return;
-  window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
+  window.open(`/api/fs/download?backend=${encodeURIComponent(fmBackend)}&path=${encodeURIComponent(fmSelected)}`);
 }
 
 async function fmUpload() {
