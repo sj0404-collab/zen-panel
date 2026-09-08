@@ -66,17 +66,29 @@ jobs:
           node -e "require('fs').writeFileSync('build-info.json', JSON.stringify({versionCode: ${{ needs.version.outputs.code }}, versionName: '${{ needs.version.outputs.name }}', sha: '${{ needs.version.outputs.sha }}'}))"
           cat build-info.json
 
+      # electron-builder's -c.<path>=<value> override arrives intact on Linux
+      # but mangled on Windows, where the build dies with ENOENT on a config
+      # *file* literally named .extraMetadata.version=... (measured, not
+      # guessed: same command, same electron-builder 25.1.8, Linux green and
+      # Windows red). Stamping package.json versions the packaged app the
+      # same way on both - and the running app reads build-info.json anyway.
+      - name: Stamp package version
+        working-directory: desktop
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version='${{ needs.version.outputs.semver }}';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          node -e "console.log('stamped version:',require('./package.json').version)"
+
       - name: Build Windows installers
         if: runner.os == 'Windows'
         working-directory: desktop
-        run: npx electron-builder --win --publish never -c.extraMetadata.version=${{ needs.version.outputs.semver }}
+        run: npx electron-builder --win --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Build Linux packages
         if: runner.os == 'Linux'
         working-directory: desktop
-        run: npx electron-builder --linux --publish never -c.extraMetadata.version=${{ needs.version.outputs.semver }}
+        run: npx electron-builder --linux --publish never
 
       - name: List outputs
         working-directory: desktop
