@@ -198,6 +198,19 @@ jobs:
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
               "slot=opencode" "state=ended" || true
 
+      - name: Save the models snapshot
+        if: always()
+        run: |
+          # Same idea as the agent roster: whatever OpenCode learned about
+          # models is copied to the session-state branch before the runner
+          # dies. json= merges are secret-scrubbed, so opencode.json API
+          # keys cannot land on the branch.
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "slot=opencode" "file=models-opencode.json" \
+              "kind=OpenCode" "os=linux" "ui=${{ inputs.ui }}" \
+              "json=$HOME/.config/opencode/opencode.json" || true
+
       - name: Final save
         if: always()
         run: |
@@ -378,6 +391,16 @@ jobs:
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=opencode" "state=ended"
+
+      - name: Save the models snapshot
+        if: always()
+        shell: pwsh
+        run: |
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            "slot=opencode" "file=models-opencode.json" `
+            "kind=OpenCode" "os=windows" "ui=${{ inputs.ui }}" `
+            "json=$env:USERPROFILE/.config/opencode/opencode.json"
 
       - name: Final save
         if: always()

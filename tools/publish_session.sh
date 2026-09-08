@@ -28,6 +28,27 @@
 #
 #   The panel reads all three and shows whichever are live.
 #
+# MODELS AND SAVED SNAPSHOTS
+#   Sessions alone do not survive usefully: which model answered, which died,
+#   which recovered - that roster lives in ~/.zen_free_models.json on the
+#   runner and dies with it. So every session also publishes its models:
+#
+#     publish_session.sh slot=agent file=models-agent.json \
+#       kind=CLI-агент json=$HOME/.zen_free_models.json
+#
+#   file= overrides the target on the branch (validated: only
+#   models-<slot>.json and saved/<slot>-<timestamp>.json are accepted, so a
+#   typo cannot spray files across the branch). json= merges a local JSON
+#   file into the payload - with secrets scrubbed: any key looking like a
+#   key/token/secret/password is dropped, because opencode.json holds API
+#   keys and this branch may be public. Pass scrub=0 to disable.
+#
+#   saved/<slot>-<UTC timestamp>.json bundles one { session, models } pair as
+#   history. The panel's «Сохранить» button writes those straight through the
+#   Contents API; the workflows write them at shutdown. Either way the whole
+#   transfer is this repo plus its API - no cloud trial, no third party, and
+#   the same script runs under bash on Linux and under Git Bash on Windows.
+#
 # Usage: publish_session.sh key=value ...
 #   Recognised keys are passed straight through to JSON, so a new session type
 #   can add a field without touching this script.
@@ -40,6 +61,9 @@ FILE="session.json"
 # A slot is a routing instruction, not data: pull it out of the arguments
 # before they become JSON.
 ARGS=()
+JSON_FILES=()
+FILE_OVERRIDE=""
+SCRUB=1
 for arg in "$@"; do
   case "$arg" in
     slot=linux)    FILE="session-linux.json" ;;
@@ -47,10 +71,30 @@ for arg in "$@"; do
     slot=agent)    FILE="session-agent.json" ;;
     slot=opencode) FILE="session-opencode.json" ;;
     slot=*)        ;;   # unknown slot: ignore rather than write a stray file
+    file=*)        FILE_OVERRIDE="$arg" ;;
+    scrub=0)       SCRUB=0 ;;
+    json=*)        # A Windows path (C:\Users\..) breaks mingw python; slashes
+                   # work for both Windows and mingw python, so normalise.
+                   _jv="${arg#json=}"; _jv="${_jv//\\//}"; JSON_FILES+=("$_jv") ;;
     *)            ARGS+=("$arg") ;;
   esac
 done
 set -- ${ARGS+"${ARGS[@]}"}
+
+# A file= override that is not one of the known names is refused outright -
+# the branch is a fixed set of mailboxes, not a scratch disk.
+if [ -n "$FILE_OVERRIDE" ]; then
+  _f="${FILE_OVERRIDE#file=}"
+  if [[ "$_f" =~ ^models-(linux|windows|agent|opencode)\.json$ ]] || \
+     [[ "$_f" =~ ^saved/(linux|windows|agent|opencode)-[0-9]{8}T[0-9]{6}\.json$ ]]; then
+    FILE="$_f"
+  else
+    echo "publish_session: rejected file override: $_f" >&2
+    exit 1
+  fi
+fi
+export SCRUB
+export JSON_MERGE="$(printf '%s\n' "${JSON_FILES[@]}")" 
 
 # A unique staging file per invocation. A fixed /tmp/session.json is shared by
 # every caller on the machine, and two publishes running at once overwrote each
@@ -60,9 +104,35 @@ STAGE="$(mktemp -t session.XXXXXX.json)"
 trap 'rm -f "$STAGE"' EXIT
 
 python3 - "$@" <<'PY' > "$STAGE"
-import json, os, sys, datetime
+import json, os, re, sys, datetime
+
+SECRET_RE = re.compile(r'key|token|secret|passw|auth|credential|private|bearer', re.I)
+
+def scrub(o):
+    if isinstance(o, dict):
+        return {k: scrub(v) for k, v in o.items() if not SECRET_RE.search(str(k))}
+    if isinstance(o, list):
+        return [scrub(v) for v in o]
+    return o
 
 data = {}
+# Local JSON files first, so explicit key=value arguments win over them.
+for path in (os.environ.get('JSON_MERGE') or '').splitlines():
+    path = path.strip()
+    if not path:
+        continue
+    try:
+        with open(path, encoding='utf-8') as f:
+            merged = json.load(f)
+    except Exception as e:
+        sys.stderr.write('publish_session: json=%s skipped (%s)\n' % (path, e))
+        continue
+    if not isinstance(merged, dict):
+        sys.stderr.write('publish_session: json=%s skipped (not an object)\n' % path)
+        continue
+    if os.environ.get('SCRUB', '1') != '0':
+        merged = scrub(merged)
+    data.update(merged)
 for arg in sys.argv[1:]:
     if '=' not in arg:
         continue
@@ -94,16 +164,20 @@ if [ ! -s "$STAGE" ]; then
   exit 0
 fi
 
+# SESSION_STATE_URL exists for local tests: point it at a file:// bare
+# repo and the whole publish runs without touching github.com.
+REMOTE="${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git}"
+
 WORK="$(mktemp -d)"
 cd "$WORK" || exit 0
 
 # A shallow clone of one branch, or a fresh orphan when it does not exist yet.
 if git clone -q --depth 1 --branch "$BRANCH" \
-    "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" state 2>/dev/null; then
+    "${REMOTE}" state 2>/dev/null; then
   cd state || exit 0
 else
   git clone -q --depth 1 \
-    "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" state || exit 0
+    "${REMOTE}" state || exit 0
   cd state || exit 0
   git checkout -q --orphan "$BRANCH"
   git rm -rqf . 2>/dev/null || true
@@ -130,6 +204,7 @@ except Exception:
   fi
 fi
 
+mkdir -p "$(dirname "$FILE")"
 cp "$STAGE" "$FILE"
 git config user.email "session@symbiosis"
 git config user.name  "Session state"
@@ -166,7 +241,8 @@ for attempt in 1 2 3 4 5; do
     sleep $((attempt * 2))
     continue
   fi
-  cp "$STAGE" "$FILE"
+  mkdir -p "$(dirname "$FILE")"
+cp "$STAGE" "$FILE"
   git add "$FILE"
   git commit -q -m "session $(date -u '+%Y-%m-%d %H:%M:%S')" 2>/dev/null || true
   sleep $((attempt * 2))

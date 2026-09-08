@@ -1055,7 +1055,8 @@ function collapsePreview() { previewOpen = false; renderPreview(); }
 // Neither has a password. There is nothing to copy and nothing to type: the
 // button opens the desk and it connects on its own.
 let DESKS = { linux: null, windows: null, agent: null, opencode: null };
-let deskOpen = null;   // 'linux' | 'windows' | null - which one is expanded
+let MODELS = { linux: null, windows: null, agent: null, opencode: null };
+let deskOpen = null;   // 'linux' | 'windows' | 'agent' | 'opencode' | null
 
 // The signature of what is currently drawn. Rebuilding the card replaces the
 // iframes, and a replaced iframe reconnects from scratch - which is exactly
@@ -1081,37 +1082,58 @@ async function loadDesks() {
   // scrolling the conversation back to the top. The open chat is left exactly
   // as it is; the poll still runs, it just does not touch this card.
   //
-  // Only the chat is protected: a desk iframe is a video stream with no state
-  // to lose, and its thumbnails genuinely need refreshing.
-  if ((deskOpen === 'agent' || deskOpen === 'opencode') && document.getElementById('chat-overlay')) return;
-
-  const read = async slot => {
+  // The open overlay is never rebuilt by a poll - only synced (tabs added or
+  // dropped), because rebuilding tears down the iframes and a chat loses what
+  // was typed. The reads below still run: sync needs fresh DESKS.
+  const readFile = async (name, checkAge) => {
     try {
       const f = await api(
-        `${CTL()}/contents/session-${slot}.json?ref=session-state&t=${Date.now()}`);
+        `${CTL()}/contents/${name}?ref=session-state&t=${Date.now()}`);
       const s = JSON.parse(decodeURIComponent(escape(
         atob((f.content || '').replace(/\n/g, '')))));
-      // A runner killed hard never clears its file, so an old entry lingers
-      // and would advertise a desk that stopped answering hours ago.
-      const age = (Date.now() - new Date(s.startedAt).getTime()) / 60000;
-      if (s.state === 'ended' || age > 361) return null;
-      s._age = Math.round(age);
+      if (checkAge) {
+        // A runner killed hard never clears its file, so an old entry lingers
+        // and would advertise a desk that stopped answering hours ago.
+        const age = (Date.now() - new Date(s.startedAt).getTime()) / 60000;
+        if (s.state === 'ended' || age > 361) return null;
+        s._age = Math.round(age);
+      }
       return s;
     } catch (e) { return null; }
   };
+  const read = async slot => readFile(`session-${slot}.json`, true);
+  const readModels = async slot => readFile(`models-${slot}.json`, false);
 
-  const [lin, win, agent, opencode] = await Promise.all(
-    [read('linux'), read('windows'), read('agent'), read('opencode')]);
+  const [lin, win, agent, opencode, mLin, mWin, mAgent, mOc] = await Promise.all(
+    [read('linux'), read('windows'), read('agent'), read('opencode'),
+     readModels('linux'), readModels('windows'), readModels('agent'), readModels('opencode')]);
   DESKS = { linux: lin, windows: win, agent: agent, opencode: opencode };
+  MODELS = { linux: mLin, windows: mWin, agent: mAgent, opencode: mOc };
+
+  if (deskOpen && document.getElementById('desk-overlay')) { syncDeskOverlay(); return; }
 
   if (!lin && !win && !agent && !opencode) {
     card.style.display = 'none';
     deskSig = '';
+    collapseDesks();
     return;
   }
   card.style.display = '';
 
   const ageLine = s => `${s.agentUrl ? 'по ссылке с токеном' : 'без пароля'} · идёт ${s._age} мин · осталось ~${Math.max(0, 360 - s._age)} мин`;
+  // One line per session: most-used model plus live/total roster counts.
+  // The roster shape is the agent's ~/.zen_free_models.json: { models: { id:
+  // { state, ok, fails } } }. Anything else (opencode config) shows its ui.
+  const modelText = slot => {
+    const m = MODELS[slot];
+    if (!m) return '';
+    const entries = Object.entries((m && m.models) || {});
+    if (!entries.length) return m.ui ? `OpenCode · ${m.ui}` : (m.kind ? String(m.kind) : '');
+    const live = entries.filter(([, e]) => e && e.state !== 'dead').length;
+    const top = entries.filter(([, e]) => e && (e.ok | 0) > 0)
+      .sort((a, b) => (b[1].ok | 0) - (a[1].ok | 0))[0] || entries[0];
+    return `Модель: ${top[0]} · ростер ${live}/${entries.length}`;
+  };
 
   // Nothing structural changed: touch the counters and leave the iframes be.
   const sig = JSON.stringify([
@@ -1125,6 +1147,8 @@ async function loadDesks() {
     for (const [slot, s] of [['linux', lin], ['windows', win], ['agent', agent], ['opencode', opencode]]) {
       const el = $('desk-age-' + slot);
       if (el && s) el.textContent = ageLine(s);
+      const ml = $('desk-model-' + slot);
+      if (ml) ml.textContent = modelText(slot);
     }
     return;
   }
@@ -1144,11 +1168,13 @@ async function loadDesks() {
            padding:12px">
         <b>${title}</b>
         <div class="note" style="margin:4px 0 8px" id="desk-age-${slot}">${esc(ageLine(s))}</div>
+        <div class="note" style="margin:0 0 8px" id="desk-model-${slot}">${esc(modelText(slot))}</div>
         <div class="desk-ph" onclick="expandDesk('${slot}')">${title} · нажмите «Открыть»</div>
         <div style="height:8px"></div>
         <div class="row">
           <button class="small" onclick="expandDesk('${slot}')">Открыть здесь</button>
           <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">В новой вкладке</button>
+          <button class="ghost small" onclick="saveSession('${slot}')">Сохранить</button>
         </div>
         ${s.terminal ? `<div class="row" style="margin-top:6px">
           <button class="ghost small" onclick="window.open('${esc(s.terminal)}','_blank')">Терминал</button></div>` : ''}
@@ -1157,63 +1183,9 @@ async function loadDesks() {
       </div>`;
   };
 
-  if ((deskOpen === 'agent' || deskOpen === 'opencode') && DESKS[deskOpen]) {
-    // The chat opens full-screen, inside the app.
-    //
-    // It used to be window.open(): on a phone that leaves the app entirely,
-    // and the address carries the session token. Then it was an 85vh iframe
-    // inside this card - but the card sits on a page with 12px padding and
-    // 90px of bottom padding for the tab bar, so the chat lost roughly a
-    // fifth of the screen and its composer sat above a dead strip.
-    //
-    // A fixed overlay ignores all of that: it covers the viewport exactly,
-    // and 100dvh (not vh) follows the browser chrome as it collapses, which
-    // is what keeps the input visible when the keyboard opens on Android.
-    const session = DESKS[deskOpen];
-    const url = chatUrlWithQ(session.agentUrl || session.url || '');
-    const title = deskOpen === 'opencode' ? 'OpenCode' : 'CLI-агент';
-    let ov = document.getElementById('chat-overlay');
-    if (!ov) {
-      ov = document.createElement('div');
-      ov.id = 'chat-overlay';
-      document.body.appendChild(ov);
-    }
-    ov.style.cssText =
-      'position:fixed;inset:0;z-index:9999;background:var(--bg);' +
-      'display:flex;flex-direction:column;height:100dvh';
-    // Rebuilt only when the address changes, so a re-render never reloads the
-    // hub and throws away what the user was typing.
-    if (ov.dataset.url !== url) {
-      ov.dataset.url = url;
-      ov.innerHTML = `
-        <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;
-                    padding-top:calc(8px + env(safe-area-inset-top));
-                    border-bottom:1px solid var(--line);background:var(--panel)">
-          <b style="flex:1;font-size:14px">${esc(title)}</b>
-          <button class="ghost small" onclick="openChatInBrowser()">В браузере</button>
-          <button class="ghost small" onclick="collapseDesks()">Закрыть</button>
-          ${deskOpen === 'opencode' ? '<span class="note">мобильный чат</span>' : ''}
-        </div>
-        <iframe src="${esc(url)}" style="border:0;flex:1;width:100%;background:var(--bg)"
-                allow="clipboard-read; clipboard-write"
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`;
-    }
-    document.body.style.overflow = 'hidden';
-    box.innerHTML = '<div class="note">Чат открыт на весь экран.</div>';
-  } else if (deskOpen && DESKS[deskOpen]) {
-    const s = DESKS[deskOpen];
-    const url = s.deskUrl || s.url || '';
-    const other = deskOpen === 'linux' ? 'windows' : 'linux';
-    box.innerHTML = `
-      <div class="row" style="margin-bottom:8px">
-        <button class="small">${deskOpen === 'linux' ? 'Linux' : 'Windows'}</button>
-        ${DESKS[other] ? `<button class="ghost small" onclick="expandDesk('${other}')">
-          ${other === 'linux' ? 'Linux' : 'Windows'}</button>` : ''}
-        <button class="ghost small" onclick="collapseDesks()">Оба рядом</button>
-      </div>
-      <iframe src="${esc(url)}" style="border:1px solid var(--line);border-radius:10px;
-              width:100%;height:70vh;background:#000"
-              sandbox="allow-scripts allow-same-origin allow-forms"></iframe>`;
+  if (deskOpen && DESKS[deskOpen]) {
+    renderDeskOverlay();
+    box.innerHTML = '<div class="note">Открыто вторым слоем — переключайте вкладки сверху.</div>';
   } else {
     // The agent has no screen to show - it is a chat page - so it gets a row
     // of its own rather than an empty black thumbnail pretending to be a desk.
@@ -1221,11 +1193,13 @@ async function loadDesks() {
       <div style="margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:12px">
         <b>${esc(title)}</b>
         <div class="note" style="margin:4px 0 8px" id="desk-age-${slot}">${esc(ageLine(s))}</div>
+        <div class="note" style="margin:0 0 8px" id="desk-model-${slot}">${esc(modelText(slot))}</div>
         <div class="row">
           <button class="small" onclick="expandDesk('${slot}')">Открыть чат</button>
           <button class="ghost small"
                   onclick="window.open('${esc(s.agentUrl || s.url)}','_blank')">
             В браузере</button>
+          <button class="ghost small" onclick="saveSession('${slot}')">Сохранить</button>
           ${s.runId && tok() ? `<button class="ghost small" onclick="stopRun(${s.runId})">Выключить</button>` : ''}
         </div>
       </div>`;
@@ -1237,27 +1211,156 @@ async function loadDesks() {
 }
 
 function expandDesk(slot) { deskOpen = slot; loadDesks(); }
-function collapseDesks()  { deskOpen = null; closeChatOverlay(); loadDesks(); }
+function collapseDesks()  { deskOpen = null; closeDeskOverlay(); loadDesks(); }
 
-/** Tear down the full-screen chat and give the page its scrolling back. */
-function closeChatOverlay() {
-  const ov = document.getElementById('chat-overlay');
-  if (ov) ov.remove();
+/** Tear down the second layer and give the page its scrolling back. */
+function closeDeskOverlay() {
+  // chat-overlay is the previous generation's id; removing it too costs
+  // nothing and covers a panel reloaded mid-overlay.
+  for (const id of ['desk-overlay', 'chat-overlay']) {
+    const ov = document.getElementById(id);
+    if (ov) ov.remove();
+  }
   document.body.style.overflow = '';
 }
 
-/** Hand the current chat address to a real browser tab, on request. */
-function openChatInBrowser() {
-  const ov = document.getElementById('chat-overlay');
-  const url = ov && ov.dataset.url;
+/** Hand the active tab's address to a real browser tab, on request. */
+function openDeskInBrowser() {
+  const f = deskOpen && document.getElementById('desk-frame-' + deskOpen);
+  const url = f && f.dataset.url;
   if (url) window.open(url, '_blank');
 }
 
-// Android's back gesture should leave the chat, not the panel. Without this
+// Android's back gesture should leave the layer, not the panel. Without this
 // the overlay stays up and back appears to do nothing.
 window.addEventListener('popstate', () => {
-  if (document.getElementById('chat-overlay')) collapseDesks();
+  if (document.getElementById('desk-overlay')) collapseDesks();
 });
+
+const DESK_SLOTS = ['linux', 'windows', 'agent', 'opencode'];
+
+/** Address of a slot; chat flavours go through the token query. */
+function deskSlotUrl(slot) {
+  const s = DESKS[slot];
+  if (!s) return '';
+  if (slot === 'agent' || slot === 'opencode') return chatUrlWithQ(s.agentUrl || s.url || '');
+  return s.deskUrl || s.url || '';
+}
+
+/**
+ * Every live session as a tab in one full-screen second layer.
+ *
+ * It used to be one slot at a time - a chat OR a desk, and switching meant
+ * closing and reopening, which reloaded the iframe and threw away what was
+ * typed. Now each live slot keeps its own mounted iframe and switching tabs
+ * only flips display, so a chat keeps its draft and a desk keeps streaming.
+ *
+ * A fixed overlay ignores the page padding and the tab bar, and 100dvh (not
+ * vh) follows the browser chrome as it collapses, which is what keeps the
+ * input visible when the keyboard opens on Android.
+ */
+function renderDeskOverlay() {
+  const live = DESK_SLOTS.filter(s => DESKS[s]);
+  if (!live.includes(deskOpen)) deskOpen = live[0] || null;
+  if (!deskOpen) { collapseDesks(); return; }
+  let ov = document.getElementById('desk-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'desk-overlay';
+    ov.innerHTML = `
+      <div style="display:flex;align-items:center;gap:6px;padding:8px 10px;
+                  padding-top:calc(8px + env(safe-area-inset-top));
+                  border-bottom:1px solid var(--line);background:var(--panel);
+                  overflow-x:auto;flex:none">
+        <div id="desk-tabs" style="display:flex;gap:6px;flex:1"></div>
+        <button class="ghost small" onclick="openDeskInBrowser()">В браузере</button>
+        <button class="ghost small" id="desk-save-btn">Сохранить</button>
+        <button class="ghost small" onclick="collapseDesks()">Закрыть</button>
+      </div>
+      <div id="desk-frames" style="flex:1;display:flex;min-height:0"></div>`;
+    document.body.appendChild(ov);
+  }
+  ov.style.cssText =
+    'position:fixed;inset:0;z-index:9999;background:var(--bg);' +
+    'display:flex;flex-direction:column;height:100dvh';
+  document.body.style.overflow = 'hidden';
+  syncDeskOverlay();
+}
+
+/**
+ * Reconcile the layer with fresh DESKS: rebuild the tab bar (cheap, no
+ * iframes inside it), create frames for newly live slots, drop dead ones,
+ * show the active tab. A frame whose address did not change is never
+ * touched - that is the whole point.
+ */
+function syncDeskOverlay() {
+  const ov = document.getElementById('desk-overlay');
+  if (!ov) return;
+  const live = DESK_SLOTS.filter(s => DESKS[s]);
+  if (!live.length) { collapseDesks(); return; }
+  if (!live.includes(deskOpen)) deskOpen = live[0];
+  const bar = document.getElementById('desk-tabs');
+  if (bar) {
+    bar.innerHTML = live.map(s =>
+      `<button class="${s === deskOpen ? 'small' : 'ghost small'}" ` +
+      `onclick="switchDeskTab('${s}')">${esc(KIND_LABEL[s] || s)}</button>`
+    ).join('');
+  }
+  const saveBtn = document.getElementById('desk-save-btn');
+  if (saveBtn) saveBtn.setAttribute('onclick', `saveSession('${deskOpen}')`);
+  const wrap = document.getElementById('desk-frames');
+  if (!wrap) return;
+  for (const s of live) {
+    const url = deskSlotUrl(s);
+    let f = document.getElementById('desk-frame-' + s);
+    if (!f) {
+      f = document.createElement('iframe');
+      f.id = 'desk-frame-' + s;
+      f.style.cssText = 'border:0;flex:1;width:100%;height:100%;background:#000';
+      f.setAttribute('allow', 'clipboard-read; clipboard-write');
+      f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups');
+      wrap.appendChild(f);
+    }
+    if (url && f.dataset.url !== url) { f.dataset.url = url; f.src = url; }
+    f.style.display = s === deskOpen ? 'block' : 'none';
+  }
+  for (const s of DESK_SLOTS) {
+    if (!DESKS[s]) {
+      const f = document.getElementById('desk-frame-' + s);
+      if (f) f.remove();
+    }
+  }
+}
+
+function switchDeskTab(slot) { deskOpen = slot; syncDeskOverlay(); }
+
+/**
+ * Save this minute's { session, models } bundle to the session-state branch
+ * as saved/<slot>-<UTC timestamp>.json - the manual half of the transfer
+ * (the automatic half runs in the workflows at shutdown). Timestamped, so it
+ * never overwrites: the branch keeps history, not just the latest.
+ */
+async function saveSession(slot) {
+  if (!tok()) { alert('Нужен токен, чтобы сохранять.'); return; }
+  const s = DESKS[slot];
+  if (!s) { alert('Сессия уже закрыта — сохранять нечего.'); return; }
+  const d = new Date();
+  const p2 = n => String(n).padStart(2, '0');
+  const ts = `${d.getUTCFullYear()}${p2(d.getUTCMonth() + 1)}${p2(d.getUTCDate())}` +
+    `T${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}${p2(d.getUTCSeconds())}`;
+  const bundle = { savedAt: d.toISOString(), slot, session: s, models: MODELS[slot] || null };
+  const content = btoa(unescape(encodeURIComponent(JSON.stringify(bundle, null, 2))));
+  try {
+    await api(`${CTL()}/contents/saved/${slot}-${ts}.json`, {
+      method: 'PUT',
+      headers: Object.assign(hdr(), { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ message: `save ${slot} ${ts}`, content, branch: 'session-state' })
+    });
+    alert('Сохранено: saved/' + slot + '-' + ts + '.json');
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  }
+}
 
 /**
  * Open a desk or the chat inside the panel, from anywhere in the UI.

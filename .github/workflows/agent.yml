@@ -264,6 +264,18 @@ jobs:
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent" "state=ended" || true
 
+      - name: Save the models roster
+        if: always()
+        run: |
+          # The learned roster (~/.zen_free_models.json) dies with the runner;
+          # this copy on the session-state branch outlives it. Secrets cannot
+          # leak through: json= merges are scrubbed by publish_session.sh.
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "slot=agent" "file=models-agent.json" \
+              "kind=CLI-агент" "os=linux" \
+              "json=$HOME/.zen_free_models.json" || true
+
       - name: Final save
         if: always()
         run: |
@@ -521,6 +533,16 @@ jobs:
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent" "state=ended"
+
+      - name: Save the models roster
+        if: always()
+        shell: pwsh
+        run: |
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            "slot=agent" "file=models-agent.json" `
+            "kind=CLI-агент" "os=windows" `
+            "json=$env:USERPROFILE/.zen_free_models.json"
 
       - name: Final save
         if: always()
