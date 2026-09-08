@@ -623,7 +623,9 @@ const ZEN_MODEL_NAMES = {
   'mimo-v2.5-free': { name: 'MiMo V2.5', ctx: '200K', note: 'бесплатная Xiaomi' },
   'big-pickle': { name: 'Big Pickle', ctx: '200K', note: 'бесплатная, дефолт OpenCode' },
   'laguna-s-2.1-free': { name: 'Laguna S 2.1', ctx: '256K', note: 'бесплатная, стабильная' },
-  'deepseek-v4-flash-free': { name: 'DeepSeek V4 Flash', ctx: '200K', note: 'если ещё отдаётся' }
+  'deepseek-v4-flash-free': { name: 'DeepSeek V4 Flash', ctx: '200K', note: 'бесплатная' },
+  'muse-spark-1.3-contributor-free': { name: 'Muse Spark 1.3', ctx: '1M', note: 'бесплатная contributor' },
+  'ling-3.0-flash-fin-free': { name: 'Ling 3.0 Flash', ctx: '128K', note: 'бесплатная' }
 };
 function zenEntry(id) {
   const meta = ZEN_MODEL_NAMES[id] || {};
@@ -659,6 +661,227 @@ function mergeZenCatalog(ids) {
   }
   return ZEN_MODELS;
 }
+// ═══════════════════════════════════════════════════════════════════
+//  ZEN FREE-MODEL ROSTER — self-healing discovery
+// ═══════════════════════════════════════════════════════════════════
+// Free models churn: providers rename them (hy3-free), drop them
+// (x-preview-f-free), or add new ones (muse-spark-1.3-contributor-free).
+// A hardcoded list rots within weeks. Instead the roster is learned:
+//
+// - fetchZenFreeModels() pulls GET /zen/v1/models, keeps every *-free id
+//   (plus known free-by-policy aliases) and merges it into ZEN_MODELS.
+//   Brand-new ids appear in the hub and in rotation automatically.
+// - Every provider answer updates the learned state: ModelError/not-supported
+//   marks the id dead (skipped by rotation), any success resurrects it.
+// - Ids missing from the endpoint are retired but kept, so a model that
+//   comes back under the same name resumes without reconfiguration.
+// - State persists in ~/.zen_free_models.json across restarts.
+const FREE_MODELS_FILE = path.join(os.homedir(), '.zen_free_models.json');
+const FREE_ID_RE = /-free$/i;
+// In the catalogue but free by policy (no -free suffix).
+const FREE_ALIASES = new Set(['big-pickle']);
+let FREE_MODEL_STORE = null;
+let ZEN_FETCH_AT = 0;
+let ZEN_FETCH_PROMISE = null;
+
+function freeModelStore() {
+  if (FREE_MODEL_STORE) return FREE_MODEL_STORE;
+  FREE_MODEL_STORE = { version: 1, updatedAt: 0, endpointIds: [], models: {} };
+  try {
+    const raw = JSON.parse(fs.readFileSync(FREE_MODELS_FILE, 'utf8'));
+    if (raw && typeof raw === 'object') {
+      if (Array.isArray(raw.endpointIds)) FREE_MODEL_STORE.endpointIds = raw.endpointIds;
+      if (raw.updatedAt) FREE_MODEL_STORE.updatedAt = raw.updatedAt;
+      if (raw.models && typeof raw.models === 'object') FREE_MODEL_STORE.models = raw.models;
+    }
+  } catch {}
+  return FREE_MODEL_STORE;
+}
+function saveFreeModelStore() {
+  try { fs.writeFileSync(FREE_MODELS_FILE, JSON.stringify(freeModelStore(), null, 2), 'utf8'); } catch {}
+}
+// dead = removed/renamed/gated (never retried in rotation); limited = quota
+// exhausted (still rotated: quotas recover); null = transient/unknown.
+function classifyZenError(msg) {
+  const s = String(msg || '');
+  if (/not supported|unknown model|modelerror|missing session|missingsessionid|does not exist|invalid model|model_not_found|[^0-9]404([^0-9]|$)/i.test(s)) return 'dead';
+  if (isRateLimit(s) || /429|quota|FreeUsageLimit|rate.?limit|limited/i.test(s)) return 'limited';
+  return null;
+}
+function zenDeadShortReason(msg) {
+  const s = String(msg || '');
+  if (/not supported|unknown model|modelerror/i.test(s)) return 'убрана из API';
+  if (/missing session|missingsessionid/i.test(s)) return 'нужна OpenCode-сессия';
+  if (/[^0-9]404([^0-9]|$)/i.test(s)) return 'HTTP 404';
+  return s.slice(0, 90) || 'недоступна';
+}
+function zenModelState(id) {
+  return (freeModelStore().models[id] && freeModelStore().models[id].state) || 'unverified';
+}
+function zenModelEntry(id) {
+  const store = freeModelStore();
+  if (!store.models[id]) store.models[id] = { state: 'unverified', at: Date.now(), fails: 0, ok: 0 };
+  return store.models[id];
+}
+function zenLiveModels() {
+  return ZEN_MODELS.map(m => m.id).filter(id => ['live', 'unverified', 'limited'].includes(zenModelState(id)));
+}
+// Next model in roster order that is not known-dead. When every model is
+// excluded it returns the plain next one, so rotation degrades to the old
+// behaviour instead of getting stuck.
+function nextLiveModel(model) {
+  if (!ZEN_MODELS.length) return model;
+  const idx = ZEN_MODELS.findIndex(m => m.id === model);
+  for (let step = 1; step <= ZEN_MODELS.length; step++) {
+    const cand = ZEN_MODELS[(idx + step + ZEN_MODELS.length) % ZEN_MODELS.length].id;
+    if (['live', 'unverified', 'limited'].includes(zenModelState(cand))) return cand;
+  }
+  return ZEN_MODELS[(idx + 1 + ZEN_MODELS.length) % ZEN_MODELS.length].id;
+}
+function markZenModelDead(id, reason) {
+  if (!id) return;
+  const e = zenModelEntry(id);
+  e.state = 'dead'; e.reason = String(reason || 'недоступна').slice(0, 160);
+  e.at = Date.now(); e.fails = (e.fails || 0) + 1;
+  saveFreeModelStore();
+  auditEvent('model_dead', { id, reason: e.reason });
+}
+function noteZenModelSuccess(id) {
+  if (!id) return;
+  const e = zenModelEntry(id);
+  // Any real answer proves liveness — including for a model the catalogue
+  // dropped (liveness beats the catalogue in the retire check).
+  if (e.state === 'dead' || e.state === 'retired' || e.state === 'limited' || e.state === 'unverified') {
+    if (e.state !== 'unverified') auditEvent('model_revived', { id, from: e.state });
+    e.state = 'live'; delete e.reason;
+  }
+  e.ok = (e.ok || 0) + 1; e.at = Date.now();
+  saveFreeModelStore();
+}
+function ensureLiveModelSelected() {
+  if (currentProvider !== 'zen') return false;
+  if (['live', 'unverified', 'limited'].includes(zenModelState(currentModel))) return false;
+  const live = zenLiveModels();
+  if (!live.length) return false;
+  const prev = currentModel;
+  currentModel = live[0];
+  const why = (freeModelStore().models[prev] || {}).reason || 'недоступна';
+  console.log(c(`\n⛔ Модель ${prev} недоступна (${why}). Выбрана ${currentModel}.`, 'yellow'));
+  auditEvent('model_autoswitched', { from: prev, to: currentModel });
+  return true;
+}
+function zenNoLiveHint() {
+  if (currentProvider !== 'zen' || zenLiveModels().length) return '';
+  return ' Все Zen-модели недоступны прямо сейчас. Дождитесь восстановления квот, обновите список — /models refresh — или переключите провайдера (/provider: Tokenra Ox Alpha, OrcaRouter — нужен ключ).';
+}
+function fetchZenModelIds() {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(curlPath(), ['-s', '--connect-timeout', '10', '--max-time', '15',
+      ...(CONFIG.proxy ? ['-x', CONFIG.proxy] : []), ...(CONFIG.curlIpv4 ? ['--ipv4'] : []),
+      'https://opencode.ai/zen/v1/models']);
+    let out = '', err = '', settled = false;
+    const timer = setTimeout(() => { try { proc.kill('SIGTERM'); } catch {} done(new Error('models timeout (15s)')); }, 16000);
+    const done = (e, v) => { if (settled) return; settled = true; clearTimeout(timer); e ? reject(e) : resolve(v); };
+    proc.stdout.on('data', c => out += c.toString());
+    proc.stderr.on('data', c => err += c.toString());
+    proc.on('error', e => done(new Error('models fetch failed: ' + e.message)));
+    proc.on('close', code => {
+      if (code !== 0) { done(new Error('models fetch failed: ' + (err || `curl exit ${code}`).slice(0, 160))); return; }
+      try {
+        const j = JSON.parse(out);
+        const ids = (j.data || []).map(m => m && m.id).filter(id => typeof id === 'string' && id);
+        if (!ids.length) { done(new Error('models endpoint returned no ids')); return; }
+        done(null, ids);
+      } catch { done(new Error('models parse error: ' + out.slice(0, 160))); }
+    });
+  });
+}
+// The refresh the hub (/api/models) and main() already call — previously a
+// no-op (the function never existed). Merges endpoint ids into the roster,
+// retires ids the endpoint dropped, and re-probes long-dead ids that are
+// listed again. Cached 10 minutes; { force: true } bypasses the cache.
+async function fetchZenFreeModels(opts = {}) {
+  if (ZEN_FETCH_PROMISE) return ZEN_FETCH_PROMISE;
+  const store = freeModelStore();
+  const now = Date.now();
+  if (!opts.force && (store.updatedAt && now - store.updatedAt < 10 * 60 * 1000)) {
+    return { cached: true, added: [], retired: [], live: zenLiveModels() };
+  }
+  if (!opts.force && now - ZEN_FETCH_AT < 60 * 1000) {
+    return { cached: true, added: [], retired: [], live: zenLiveModels() };
+  }
+  ZEN_FETCH_PROMISE = (async () => {
+    try {
+      const ids = await fetchZenModelIds();
+      const ep = new Set(ids);
+      const endpointFree = ids.filter(id => FREE_ID_RE.test(id) || FREE_ALIASES.has(id));
+      const seen = new Set(); const order = []; const added = [];
+      for (const m of ZEN_MODELS) if (!seen.has(m.id)) { seen.add(m.id); order.push(m.id); }
+      for (const id of endpointFree) if (!seen.has(id)) { seen.add(id); order.push(id); added.push(id); }
+      const retired = [];
+      for (const id of order) {
+        const e = zenModelEntry(id);
+        if (!ep.has(id)) {
+          // Absent from the catalogue: renamed or removed. A model that
+          // answers stays live regardless — liveness beats the catalogue.
+          if (e.state !== 'live' || now - (e.at || 0) > 24 * 3600 * 1000) {
+            if (e.state !== 'retired' && e.state !== 'dead') retired.push(id);
+            e.state = 'retired'; e.reason = 'нет в /v1/models'; e.at = now;
+          }
+        } else if (e.state === 'retired') {
+          e.state = 'unverified'; delete e.reason; e.at = now;
+        } else if (e.state === 'dead' && now - (e.at || 0) > 6 * 3600 * 1000) {
+          // Listed again and long dead: allow one re-probe instead of
+          // skipping it forever.
+          e.state = 'unverified'; delete e.reason; e.at = now;
+          auditEvent('model_reprobe', { id });
+        }
+      }
+      mergeZenCatalog(order);
+      store.endpointIds = ids; store.updatedAt = Date.now();
+      saveFreeModelStore();
+      ensureLiveModelSelected();
+      const live = zenLiveModels();
+      auditEvent('models_refreshed', { added, retired, live: live.length, total: order.length });
+      if (added.length || retired.length) {
+        console.log(c(`🔄 Модели Zen обновлены: +${added.length} (${added.join(', ') || '—'}), −${retired.length} (${retired.join(', ') || '—'}). Живых: ${live.length}/${order.length}.`, 'cyan'));
+      }
+      return { cached: false, added, retired, live };
+    } catch (e) {
+      console.log(c('⚠️ Не удалось обновить список Zen-моделей: ' + (e.message || e) + ' — работаю с сохранённым.', 'yellow'));
+      return { cached: true, added: [], retired: [], live: zenLiveModels() };
+    } finally {
+      ZEN_FETCH_AT = Date.now();
+      ZEN_FETCH_PROMISE = null;
+    }
+  })();
+  return ZEN_FETCH_PROMISE;
+}
+function printZenRoster() {
+  const store = freeModelStore();
+  console.log(c('Модели Zen:', 'brightCyan'));
+  for (const m of ZEN_MODELS) {
+    const e = store.models[m.id] || {};
+    const st = e.state || 'unverified';
+    const mark = { live: '✓', unverified: '○', limited: '⏳', dead: '✗', retired: '–' }[st] || '?';
+    console.log(`  ${mark} ${m.id}${m.id === currentModel ? ' (выбрана)' : ''}${e.reason ? ' — ' + e.reason : ''}`);
+  }
+}
+async function refreshZenModelsCommand() {
+  console.log(c('🔄 Обновляю список бесплатных Zen-моделей…', 'cyan'));
+  await fetchZenFreeModels({ force: true });
+  printZenRoster();
+}
+// Hub list annotation: a dead/retired id stays selectable (it may come
+// back), but the user sees it is down instead of wondering why runs fail.
+function zenHubDesc(m) {
+  const base = m.note || 'OpenCode Zen';
+  const st = zenModelState(m.id);
+  if (st === 'dead' || st === 'retired') return `\u26D4 ${base} — недоступна`;
+  if (st === 'limited') return `\u23F3 ${base} — квоты исчерпаны`;
+  return base;
+}
+
 
 // ═══════════════════════════════════════════════════════════════════
 //  LEGACY COLOR HELPER (backward compat)
@@ -3407,7 +3630,11 @@ async function proxyZenChat(body) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const json = await zenChatOnce({ ...body, model });
-        if (json && json.__rateLimit) { if (attempt < 1) { await zenSleep(1500); continue; } break; }
+        if (json && json.__rateLimit) {
+          if (classifyZenError(json.raw) === 'dead') markZenModelDead(model, zenDeadShortReason(json.raw));
+          if (attempt < 1) { await zenSleep(1500); continue; } break;
+        }
+        noteZenModelSuccess(model);
         json._model = model; return json;
       } catch (e) {
         lastErr = e;
@@ -3415,7 +3642,7 @@ async function proxyZenChat(body) {
         throw e;
       }
     }
-    if (i < ZEN_MODELS.length - 1) { model = nextModel(model); await zenSleep(1500); }
+    if (i < ZEN_MODELS.length - 1) { model = nextLiveModel(model); await zenSleep(1500); }
     else throw lastErr || new Error('Zen rate limit: лимит исчерпан на всех моделях.');
   }
   throw lastErr;
@@ -3605,7 +3832,7 @@ function startEmbeddedServer() {
 
     for (const m of ZEN_MODELS) {
       add(m.id, m.name, 'zen', 'OpenCode Zen', '🟢',
-        { free: true, desc: m.note || 'OpenCode Zen' });
+        { free: true, desc: zenHubDesc(m) });
     }
 
     // OpenRouter: whatever the catalogue returned - free and paid alike.
@@ -4779,11 +5006,20 @@ function nextModel(model) {
 
 async function callZenWithRetry(messages, model = currentModel, maxAttempts = CONFIG.maxProviderRetries, stream = false) {
   let lastErr = new Error('Неизвестная ошибка Zen API');
-  let usedModel = model;
+  // Self-healing roster: a catalogue refresh is cheap when cached, and when
+  // every model is marked dead it is the only way new ids can appear.
+  if (!zenLiveModels().length) {
+    console.log(c('⚠️ Все Zen-модели недоступны — обновляю список…', 'yellow'));
+    try { await fetchZenFreeModels({ force: true }); } catch {}
+    if (!zenLiveModels().length) auditEvent('roster_exhausted', { model });
+  }
+  ensureLiveModelSelected();
+  let usedModel = (zenModelState(model) === 'dead' || zenModelState(model) === 'retired') ? nextLiveModel(model) : model;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (agentBusy) setRunPhase('model', `Zen • попытка ${attempt}/${maxAttempts}`);
     try {
       const res = await callZenDirect(messages, usedModel, stream);
+      noteZenModelSuccess(usedModel);
       if (usedModel !== model) {
         currentModel = usedModel;
         console.log(`\n${c('✅ Переключено на модель: ' + usedModel, 'green')}`);
@@ -4791,7 +5027,19 @@ async function callZenWithRetry(messages, model = currentModel, maxAttempts = CO
       return res;
     } catch (e) {
       lastErr = e;
-      const rateLimited = isRateLimit(e.message);
+      // A model the API dropped or renamed can never answer: mark it dead and
+      // move on immediately instead of burning all attempts on it. This switch
+      // is not gated on autoSwitchModel — a removed model is not a choice.
+      if (classifyZenError(e.message) === 'dead') {
+        markZenModelDead(usedModel, zenDeadShortReason(e.message));
+        if (attempt < maxAttempts) {
+          const prev = usedModel;
+          usedModel = nextLiveModel(usedModel);
+          console.log(`\n${c('⛔ Модель ' + prev + ' недоступна (' + zenDeadShortReason(e.message) + '). Переключаюсь на ' + usedModel + '…', 'yellow')}`);
+          continue;
+        }
+      }
+      const rateLimited = isRateLimit(e.message) || classifyZenError(e.message) === 'limited';
       if (attempt < maxAttempts) {
         // Swapping the model behind the user's back is only acceptable as a
         // last resort on a free tier. With autoSwitchModel off the chosen
@@ -4800,7 +5048,7 @@ async function callZenWithRetry(messages, model = currentModel, maxAttempts = CO
         // meaningless. Retry the same one instead.
         if (rateLimited && CONFIG.autoSwitchModel) {
           const prev = usedModel;
-          usedModel = nextModel(usedModel);
+          usedModel = nextLiveModel(usedModel);
           console.log(`\n${c('⚠️ Лимит API на ' + prev + '. Переключаюсь на ' + usedModel + '...', 'yellow')}`);
           await new Promise(r => setTimeout(r, 700));
         } else if (rateLimited) {
@@ -5680,7 +5928,7 @@ async function callCurrentProviderWithStall() {
     const msg = String(e && e.message || e);
     if (/MODEL_STALL/i.test(msg) && CONFIG.autoSwitchModel && currentProvider === 'zen') {
       const prev = currentModel;
-      currentModel = nextModel(currentModel);
+      currentModel = nextLiveModel(currentModel);
       webRunEvent('model_switched', { from: prev, to: currentModel, reason: 'stall' });
       console.log(c('⚠️ Зависание ' + prev + ' — переключаюсь на ' + currentModel, 'yellow'));
       return await callCurrentProvider();
@@ -6690,9 +6938,7 @@ ${correction}` });
         // answer instead of cycling models and appearing frozen.
         if (currentProvider === 'zen' && CONFIG.autoSwitchModel !== false &&
             emptyReplyTries <= MAX_EMPTY_TRIES) {
-          const order = zenFallbackOrder();
-          const idx = order.indexOf(currentModel);
-          const nxt = order[(idx + 1) % Math.max(1, order.length)];
+          const nxt = nextLiveModel(currentModel);
           if (nxt && nxt !== currentModel) {
             webRunEvent('empty_reply_switch', { from: currentModel, to: nxt, try: String(emptyReplyTries) });
             currentModel = nxt;
@@ -6705,7 +6951,7 @@ ${correction}` });
         finalAnswer = `Модель ${currentModel} вернула пустой ответ (${emptyReplyTries} раз подряд). ` +
           'Обычно это исчерпанный лимит бесплатной модели или слишком длинный контекст. ' +
           'Смените модель или начните новую сессию — /clear. При необходимости повторите запрос.' +
-          zenEmptyDiagSuffix();
+          zenEmptyDiagSuffix() + zenNoLiveHint();
         setRunPhase('error', 'пустой ответ модели');
         webRunEvent('empty_reply', { step: String(TELEMETRY.step), model: String(currentModel), tries: String(emptyReplyTries) });
         auditEvent('empty_reply_terminal', { step: TELEMETRY.step, model: currentModel, tries: emptyReplyTries, diag: TELEMETRY.lastDiag || {} });
@@ -6794,7 +7040,7 @@ ${correction}` });
     if (TELEMETRY.toolCalls === 0) {
       finalAnswer = `Агент исчерпал лимит шагов (${TELEMETRY.step}/${agentStepLimit()}), но модели не прислали ни слова и не вызвали ни одного инструмента. ` +
         'Похоже, API моделей недоступен или бесплатные квоты исчерпаны. Проверьте связь — /net, подождите и повторите, либо смените модель/провайдера.' +
-        zenEmptyDiagSuffix();
+        zenEmptyDiagSuffix() + zenNoLiveHint();
       setRunPhase('error', 'шаги исчерпаны без результата');
       auditEvent('steps_exhausted', { steps: TELEMETRY.step, limit: agentStepLimit(), toolCalls: 0, model: currentModel, diag: TELEMETRY.lastDiag || {} });
       webRunEvent('steps_exhausted', { steps: String(TELEMETRY.step), limit: String(agentStepLimit()), toolCalls: '0' });
@@ -6862,7 +7108,7 @@ function getHelp() {
     `  ${c('/key', 'brightCyan')}         — задать OpenRouter key через Android password-dialog`,
     `  ${c('/key status|clear', 'brightCyan')} — проверить / удалить ключ`,
     `  ${c('/vision [модель]', 'brightCyan')} — vision-модель для скриншотов`,
-    `  ${c('/models [N|id]', 'brightCyan')} — список / выбор модели провайдера`,
+    `  ${c('/models [N|id|refresh]', 'brightCyan')} — список / выбор модели, refresh — обновить free-список`,
     `  ${c('/session', 'brightCyan')}      — список AI-сессий`,
     `  ${c('/session new ИМЯ', 'brightCyan')} — новая / переключение сессии`,
     `  ${c('/session fork ИМЯ', 'brightCyan')} — ветка текущей сессии`,
@@ -7060,7 +7306,9 @@ async function main() {
       finishCommand(); return;
     }
     if (lower === '/models' || lower === '/model' || lower.startsWith('/models ') || lower.startsWith('/model ')) {
-      const spec = text.replace(/^\/models?\s*/i, '').trim(); await chooseCurrentProviderModel(spec); finishCommand(); return;
+      const spec = text.replace(/^\/models?\s*/i, '').trim();
+      if (spec.toLowerCase() === 'refresh') { await refreshZenModelsCommand(); finishCommand(); return; }
+      await chooseCurrentProviderModel(spec); finishCommand(); return;
     }
     if (lower === '/key' || lower.startsWith('/key ')) {
       const value = text.replace(/^\/key\s*/i, '').trim();
@@ -7357,6 +7605,7 @@ if (args.length === 0 || (args.length >= 1 && args[0].startsWith('--'))) {
 } else {
   (async () => {
     await checkMCP();
+    try { await fetchZenFreeModels(); } catch {}
     const prompt = args.join(' ');
     await agentLoop(prompt);
     process.exit(0);
