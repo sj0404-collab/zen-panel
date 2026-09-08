@@ -521,10 +521,30 @@ function setControl() {
 async function api(url, opts) {
   const r = await fetch(url, Object.assign({ headers: hdr() }, opts || {}));
   if (r.status === 401) throw new Error('Токен недействителен (401). Вставьте новый.');
-  if (r.status === 403) throw new Error('403: лимит запросов или нет прав. Без токена лимит 60/час.');
+  if (r.status === 403) {
+    const err = new Error('403: лимит запросов или нет прав. Без токена лимит 60/час.' + unbanHint(r));
+    err.is403 = true;
+    throw err;
+  }
   if (r.status === 404) throw new Error('404: не найдено или не видно этому токену.');
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
+}
+
+// When the API will answer again, so a 403 pauses the pollers instead
+// of feeding the ban they are already under.
+function unbanHint(r) {
+  try {
+    const ra = r.headers.get('retry-after');
+    if (ra) return ` Пауза ${ra} с.`;
+    const reset = +r.headers.get('x-ratelimit-reset') || 0;
+    if (reset) {
+      const t = new Date(reset * 1000);
+      const hh = String(t.getHours()).padStart(2, '0'), mm = String(t.getMinutes()).padStart(2, '0');
+      return ` Пауза до ${hh}:${mm}.`;
+    }
+  } catch (e) {}
+  return '';
 }
 
 // ── navigation ──────────────────────────────────────────────────────
@@ -803,7 +823,7 @@ async function pollWatch() {
   if (!card || !box) return;
   let runs = [];
   try { runs = (await api(`${CTL()}/actions/runs?per_page=15`)).workflow_runs || []; }
-  catch (e) { return; }
+  catch (e) { pauseWatchOn403(e); return; }
 
   const live = runs.filter(r => r.status !== 'completed' && WATCH_NAMES.includes(r.name));
   if (!live.length) {
@@ -817,7 +837,7 @@ async function pollWatch() {
   for (const r of live.slice(0, 3)) {
     let jobs = [];
     try { jobs = (await api(`${CTL()}/actions/runs/${r.id}/jobs`)).jobs || []; }
-    catch (e) { continue; }
+    catch (e) { if (pauseWatchOn403(e)) return; continue; }
     for (const j of jobs) {
       if (j.conclusion === 'skipped') continue;
       const done = j.steps.filter(x => x.status === 'completed').length;
@@ -851,6 +871,15 @@ async function pollWatch() {
   }
   box.innerHTML = parts.join('') ||
     '<span class="note">запуск ставится в очередь…</span>';
+}
+
+function pauseWatchOn403(e) {
+  if (!e || !e.is403) return false;
+  watchPaused = true;
+  const b = $('watch-btn'); if (b) b.textContent = 'продолжить';
+  const card = $('watch-card'), box = $('watch');
+  if (card && box) { card.style.display = ''; box.innerHTML = `<div class="danger">${esc(e.message)}</div>`; }
+  return true;
 }
 
 function toggleWatch() {
@@ -1687,12 +1716,24 @@ async function waitAndOpen(kind) {
     : 'Desks';
   let lastStep = '';
   for (let i = 0; i < budget; i++) {
-    const sec = i * 3;
+    const sec = i * 5;
     if (btn) btn.textContent = `Поднимаю… ${sec}s`;
     if (i === 0) await new Promise(r => setTimeout(r, 1200));
-    else await new Promise(r => setTimeout(r, 3000));
-    // Session file first — cheap and is what we actually need.
-    const s = await loadCreds(kind);
+    else await new Promise(r => setTimeout(r, 5000));
+    // Session file first — cheap and is what we actually need. One slot
+    // only: fetching all seven every few seconds is what trips GitHub's
+    // abuse throttle (~9 calls per tick before, ~3 now).
+    let s = null;
+    try {
+      s = await readSessionSlot(kind);
+    } catch (e) {
+      if (e && e.is403) {
+        bootLog('GitHub ограничил запросы — жду, не стучу.');
+        if (btn) btn.textContent = 'Пауза (403)';
+        alert('GitHub ограничил запросы (403). Подождите минуту и обновите «Доступы» вручную.');
+        return;
+      }
+    }
     const ready = s && (s.agentUrl || s.deskUrl || s.vncUrl || s.rdpHost ||
       (kind !== 'agent' && kind !== 'opencode' && s.url));
     if (ready) {
@@ -1720,7 +1761,14 @@ async function waitAndOpen(kind) {
           }
         }
       }
-    } catch (e) { /* keep waiting */ }
+    } catch (e) {
+      // Anything but a ban is worth waiting through; a ban is not.
+      if (e && e.is403) {
+        bootLog('GitHub ограничил запросы — жду, не стучу.');
+        if (btn) btn.textContent = 'Пауза (403)';
+        return;
+      }
+    }
   }
   await refresh();
   bootLog('таймаут ожидания адреса — смотрите «Доступы»');
@@ -1838,7 +1886,7 @@ async function readSessionSlot(slot) {
     s._age = Math.round(age);
     s._slot = slot || 'legacy';
     return s;
-  } catch (e) { return null; }
+  } catch (e) { if (e && e.is403) throw e; return null; }
 }
 
 async function loadCreds(preferSlot) {
