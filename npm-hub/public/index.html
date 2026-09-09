@@ -39,5 +39,12 @@
     </div>
   </div>
   <div class="footer">NPM Hub v1.0</div>
+  <script>
+    // The gate token rides the query (?zt=) and the GitHub token the fragment
+    // (#gh=): plain links would drop both and land on a 401. Carry them over.
+    document.querySelectorAll('a.card').forEach(a => {
+      a.href = a.getAttribute('href') + location.search + location.hash;
+    });
+  </script>
 </body>
 </html>

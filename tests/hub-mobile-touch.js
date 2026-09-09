@@ -144,6 +144,12 @@ function check(name, cond, extra) {
   await window.saveTermSession();
   check('t26 save posts id', seen.some(u => u.includes('/api/sessions/save')), seen.join('|'));
   check('t27 save confirms', window.__alerts.length === 1 && window.__alerts[0].includes('Сессия сохранена') && window.__alerts[0].includes('запушено'), window.__alerts[0]);
+  // 13. chooser carries ?zt= and #gh= into /d and /m (else bare 401)
+  const chooser = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/index.html'), 'utf8');
+  const cdom = new JSDOM(chooser, { url: 'http://localhost:8090/?zt=tok123#gh=abc', runScripts: 'dangerously' });
+  const chrefs = [...cdom.window.document.querySelectorAll('a.card')].map(a => a.href);
+  check('t28 chooser keeps zt', chrefs.length === 2 && chrefs.every(h => h.includes('zt=tok123')), chrefs.join('|'));
+  check('t29 chooser keeps gh', chrefs.every(h => h.includes('#gh=abc')), chrefs.join('|'));
   console.log(`HUB-TOUCH: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
