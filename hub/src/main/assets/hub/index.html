@@ -37,6 +37,10 @@
     <input id="token" type="password" placeholder="ghp_…" autocomplete="off"
            autocorrect="off" autocapitalize="none" spellcheck="false">
   </label>
+  <label>Раннер (пусто = GitHub, иначе метка своего ПК)
+    <input id="runner" type="text" placeholder="" autocomplete="off"
+           autocorrect="off" autocapitalize="none" spellcheck="false">
+  </label>
   <button id="launch">Запустить хаб</button>
   <button id="reopen" class="ghost" style="display:none">Открыть последний</button>
   <div id="log" class="log"></div>
@@ -75,10 +79,12 @@ async function api(path, token, opts) {
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
-async function dispatchHub(token, zt) {
+async function dispatchHub(token, zt, runner) {
+  const inputs = { os: 'linux', label: 'hub-apk', token: zt, gh_token: token };
+  if (runner) inputs.runner_linux = runner;
   await api(`/repos/${REPO}/actions/workflows/hub.yml/dispatches`, token, {
     method: 'POST',
-    body: JSON.stringify({ ref: 'main', inputs: { os: 'linux', label: 'hub-apk', token: zt } })
+    body: JSON.stringify({ ref: 'main', inputs })
   });
 }
 function parseSessionFile(f) {
@@ -107,9 +113,10 @@ async function preflightHub(base, zt) {
     ((j && j.error) || ('HTTP ' + r.status)) + '). Перезапустите хаб.');
   return true;
 }
-function buildOpenUrl(s, zt, token) {
+function buildOpenUrl(s, zt) {
   const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
-  return base + '/m?zt=' + encodeURIComponent(zt) + '#gh=' + encodeURIComponent(token);
+  // No #gh=: the server holds the PAT (gh_token input), the browser needs only ?zt=.
+  return base + '/panel?zt=' + encodeURIComponent(zt);
 }
 function saveLast(url) {
   try { localStorage.setItem('hub_last', JSON.stringify({ url, at: Date.now() })); } catch (e) {}
@@ -119,6 +126,7 @@ function readLast() {
 }
 // ── UI ──
 try { $('token').value = localStorage.getItem('hub_gh_token') || ''; } catch (e) {}
+try { $('runner').value = localStorage.getItem('hub_runner') || ''; } catch (e) {}
 (function showReopen() {
   const last = readLast();
   if (!last || !last.url) return;
@@ -132,19 +140,21 @@ $('launch').onclick = async () => {
   const token = ($('token').value || '').trim();
   if (!token) { log('Вставьте GitHub-токен.', 'err'); return; }
   try { localStorage.setItem('hub_gh_token', token); } catch (e) {}
+  const runner = ($('runner').value || '').trim();
+  try { localStorage.setItem('hub_runner', runner); } catch (e) {}
   const btn = $('launch');
   btn.disabled = true;
   try {
     const zt = genZt();
     const since = Date.now();
     log('Отправляю запуск…');
-    await dispatchHub(token, zt);
+    await dispatchHub(token, zt, runner);
     log('Ран принят. Жду адрес (обычно 1–3 мин)…', 'ok');
     const s = await waitForHub(token, since);
     const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
     log('Проверяю доступ…');
     await preflightHub(base, zt);
-    const url = buildOpenUrl(s, zt, token);
+    const url = buildOpenUrl(s, zt);
     saveLast(url);
     log('Хаб жив. Открываю…', 'ok');
     location.href = url;
