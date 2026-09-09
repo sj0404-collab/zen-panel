@@ -268,6 +268,22 @@ function stubFetch(url, opts) {
   eq('p44 probe netfail logged', (document.getElementById('boot-log')?.textContent || '').includes('сеть недоступна'), true);
   eq('p45 open hints vpn', (document.getElementById('boot-log')?.textContent || '').includes('не отвечает (VPN?)'), true);
   hubNetFail = false;
+  dom.window.eval(`LIVE = { url: 'https://hub.local', hubUrl: 'https://hub.local', _slot: 'hub-linux', kind: 'NPM-Hub' };
+    HUB_TOKENS['hub-linux'] = 'tok123'; previewOpen = false; renderPreview();`);
+  const p46src = document.querySelector('#preview iframe')?.src || '';
+  eq('p46 preview carries zt', p46src.includes('zt=tok123'), true);
+  eq('p46b preview not vnc', !p46src.includes('vnc.html'), true);
+  dom.window.eval(`delete HUB_TOKENS['hub-linux']; previewOpen = false; renderPreview();`);
+  eq('p47 preview no-token hint', (document.getElementById('preview')?.innerHTML || '').includes('Открыть стол'), true);
+  dom.window.eval(`LIVE = null; previewOpen = false; renderPreview();`);
+  const realFetch = dom.window.fetch;
+  dom.window.eval(`fetch = async () => ({ ok: false, status: 429, headers: { get: () => null } });`);
+  let msg429 = '', pause429 = 0;
+  try { await dom.window.eval('api("https://api.github.com/zen429probe")'); }
+  catch (e) { msg429 = e.message; pause429 = e.unbanMs || 0; }
+  dom.window.fetch = realFetch;
+  eq('p48 429 hint', msg429.includes('429') && msg429.includes('лишние'), true);
+  eq('p48b 429 pauses polls', pause429 > 0, true);
   // expandDesk does not await loadDesks; let it land before close()
   await new Promise(r => setTimeout(r, 400));
 
