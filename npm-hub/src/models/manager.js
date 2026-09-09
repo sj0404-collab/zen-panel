@@ -7,8 +7,7 @@ const CONFIG_DIR = path.join(HOME, '.npm-hub');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'models.json');
 const KEYS_FILE = path.join(CONFIG_DIR, 'keys.json');
 
-// No bundled API keys: the OpenRouter key comes from OPENROUTER_API_KEY env
-// or ~/.npm-hub/keys.json (set via the key modal). Never commit real keys.
+const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 
 // ═══════════════════════════════════════════════════════════════
 // ALL OPENCODE MODELS - полный реестр как в интерфейсе OpenCode
@@ -19,7 +18,7 @@ const PROVIDERS = {
   opencode: {
     name: 'OpenCode Zen',
     env: 'OPENCODE_API_KEY',
-    baseUrl: process.env.OPENCODE_BASE_URL || 'https://opencode.ai/zen/v1',
+    baseUrl: 'https://opencode.ai/zen/v1',
     icon: '🟢',
     free: true,
     models: [
@@ -62,7 +61,7 @@ const PROVIDERS = {
   openrouter: {
     name: 'OpenRouter',
     env: 'OPENROUTER_API_KEY',
-    baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+    baseUrl: 'https://openrouter.ai/api/v1',
     icon: '🟣',
     free: false,
     models: [
@@ -257,7 +256,7 @@ const PROVIDERS = {
   xiaomi: {
     name: 'Xiaomi',
     env: 'XIAOMI_API_KEY',
-    baseUrl: 'https://api.xiaomimimo.com/v1',
+    baseUrl: 'https://api.xiaomi.com/v1',
     icon: '📱',
     free: false,
     models: [
@@ -365,7 +364,7 @@ const PROVIDERS = {
   huggingface: {
     name: 'Hugging Face',
     env: 'HF_TOKEN',
-    baseUrl: 'https://router.huggingface.co/v1',
+    baseUrl: 'https://api-inference.huggingface.co/v1',
     icon: '🤗',
     free: false,
     models: [
@@ -377,7 +376,7 @@ const PROVIDERS = {
   'github-models': {
     name: 'GitHub Models',
     env: 'GITHUB_TOKEN',
-    baseUrl: 'https://models.github.ai/inference',
+    baseUrl: 'https://models.inference.ai.azure.com',
     icon: '🐙',
     free: false,
     models: [
@@ -429,7 +428,7 @@ const PROVIDERS = {
   ollama: {
     name: 'Ollama (Local)',
     env: '',
-    baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
+    baseUrl: 'http://localhost:11434/v1',
     icon: '🦙',
     free: true,
     local: true,
@@ -444,8 +443,6 @@ class ModelManager {
     this._ensureDir();
     this.config = this._loadConfig();
     this.customKeys = this._loadKeys();
-    this.liveCache = this._loadLiveCache();
-    this._applyLiveCache();
   }
 
   _ensureDir() {
@@ -470,22 +467,12 @@ class ModelManager {
 
   _saveKeys() { fs.writeFileSync(KEYS_FILE, JSON.stringify(this.customKeys, null, 2)); }
 
-  // Full keys never leave the server: the UI only gets a masked preview.
-  maskKey(key) {
-    if (!key || key === '(free)') return '';
-    if (key.length <= 10) return '••••••';
-    return key.slice(0, 6) + '••••' + key.slice(-4);
-  }
-
-  getApiKeyMasked() { return this.maskKey(this.getKeyForProvider('openrouter')); }
-
   // Get all providers
   getProviders() {
     return Object.entries(PROVIDERS).map(([id, p]) => ({
       id, name: p.name, icon: p.icon, free: p.free, local: p.local || false,
       modelCount: p.models.length,
-      keyMasked: this.maskKey(this.getKeyForProvider(id)),
-      hasKey: (() => { const k = this.getKeyForProvider(id); return !!k && k !== '(free)'; })(),
+      key: this.getKeyForProvider(id),
       configured: !!(p.free || this.customKeys[p.env] || process.env[p.env])
     }));
   }
@@ -517,7 +504,7 @@ class ModelManager {
     return models.map(m => ({
       ...m,
       selected: m.id === selected || m.fullId === selected,
-      keyMasked: this.maskKey(this.getKeyForProvider(m.providerId)),
+      key: this.getKeyForProvider(m.providerId),
     }));
   }
 
@@ -527,6 +514,8 @@ class ModelManager {
     if (provider.free) return '(free)';
     if (this.customKeys[provider.env]) return this.customKeys[provider.env];
     if (process.env[provider.env]) return process.env[provider.env];
+    if (providerId === 'opencode' || providerId === 'opencode-go') return OPENROUTER_KEY;
+    if (providerId === 'openrouter') return OPENROUTER_KEY;
     return '';
   }
 
@@ -539,184 +528,11 @@ class ModelManager {
   getSelectedProvider() { return this.config.selectedProvider; }
 
   selectModel(modelId, providerId) {
-    // The top-bar menu posts the id only: resolve the provider from the registry.
-    if (!providerId) {
-      for (const [pid, p] of Object.entries(PROVIDERS)) {
-        if (p.models.some(m => m.id === modelId || `${pid}/${m.id}` === modelId)) { providerId = pid; break; }
-      }
-    }
     this.config.selectedModel = modelId;
     this.config.selectedProvider = providerId;
     this._saveConfig();
     this._syncAllTools(modelId, providerId);
     return { success: true };
-  }
-
-
-  // ── LIVE CATALOGUES (auto add/update free+paid models) ──
-  // Zen needs no key, OpenRouter /models is public, Ollama is local.
-  // Results persist in ~/.npm-hub/live-models.json so restarts and
-  // offline runs keep the last known roster.
-  _httpJson(url, { method = 'GET', headers = {}, body = null, timeoutMs = 15000 } = {}) {
-    return new Promise((resolve, reject) => {
-      const lib = url.startsWith('https') ? require('https') : require('http');
-      const req = lib.request(url, { method, headers, timeout: timeoutMs }, res => {
-        let data = '';
-        res.on('data', c => data += c);
-        res.on('end', () => {
-          if (res.statusCode >= 400) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
-          try { resolve({ status: res.statusCode, json: JSON.parse(data) }); }
-          catch { reject(new Error('Bad JSON')); }
-        });
-      });
-      req.on('timeout', () => { req.destroy(new Error('timeout')); });
-      req.on('error', reject);
-      if (body) req.write(body);
-      req.end();
-    });
-  }
-
-  _prettyName(id) {
-    return id.split('/').pop().replace(/[-_:]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  }
-
-  _loadLiveCache() {
-    try {
-      const f = path.join(CONFIG_DIR, 'live-models.json');
-      if (fs.existsSync(f)) return JSON.parse(fs.readFileSync(f, 'utf-8'));
-    } catch {}
-    return null;
-  }
-
-  _saveLiveCache(cache) {
-    try { fs.writeFileSync(path.join(CONFIG_DIR, 'live-models.json'), JSON.stringify(cache)); } catch {}
-  }
-
-  _mergeLive(providerId, liveModels, { replace = false } = {}) {
-    const p = PROVIDERS[providerId];
-    if (!p) return 0;
-    if (replace) {
-      p.models = p.models.filter(m => !m.live).concat(liveModels.map(m => ({ ...m, live: true })));
-      return liveModels.length;
-    }
-    const seen = new Set(p.models.map(m => m.id));
-    let added = 0;
-    for (const m of liveModels) {
-      if (!m.id || seen.has(m.id)) continue;
-      seen.add(m.id);
-      p.models.push({ ...m, live: true });
-      added++;
-    }
-    return added;
-  }
-
-  _applyLiveCache() {
-    const c = this.liveCache;
-    if (!c || !c.roster) return;
-    for (const [pid, list] of Object.entries(c.roster)) {
-      if (Array.isArray(list)) this._mergeLive(pid, list, { replace: pid === 'ollama' });
-    }
-  }
-
-  async refreshLive() {
-    const roster = (this.liveCache && this.liveCache.roster) || {};
-    const added = {};
-    const errors = {};
-
-    const zenJob = (async () => {
-      try {
-        const base = PROVIDERS.opencode.baseUrl.replace(/\/$/, '');
-        const { json } = await this._httpJson(`${base}/models`);
-        const list = (json.data || []).map(m => m && m.id).filter(Boolean).map(id => ({
-          id, name: this._prettyName(id), ctx: 128000, out: 32000,
-          free: /-free$/i.test(id) || id === 'big-pickle'
-        }));
-        roster.opencode = list;
-        added.opencode = this._mergeLive('opencode', list);
-      } catch (e) { errors.opencode = e.message || String(e); }
-    })();
-
-    const orJob = (async () => {
-      try {
-        const base = PROVIDERS.openrouter.baseUrl.replace(/\/$/, '');
-        const key = this.getKeyForProvider('openrouter');
-        const headers = key && key !== '(free)' ? { Authorization: `Bearer ${key}` } : {};
-        const { json } = await this._httpJson(`${base}/models`, { headers });
-        const list = (json.data || []).slice(0, 1000).map(m => ({
-          id: m.id, name: m.name || this._prettyName(m.id),
-          ctx: m.context_length || 128000, out: 32000,
-          free: String(m.id).endsWith(':free') ||
-            (m.pricing && m.pricing.prompt === '0' && m.pricing.completion === '0')
-        })).filter(m => m.id);
-        roster.openrouter = list;
-        added.openrouter = this._mergeLive('openrouter', list);
-      } catch (e) { errors.openrouter = e.message || String(e); }
-    })();
-
-    const ollamaJob = (async () => {
-      try {
-        const root = PROVIDERS.ollama.baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '');
-        const { json } = await this._httpJson(`${root}/api/tags`, { timeoutMs: 5000 });
-        const list = (json.models || []).map(m => ({
-          id: m.name, name: m.name, ctx: 128000, out: 32000, free: true
-        })).filter(m => m.id);
-        roster.ollama = list;
-        added.ollama = this._mergeLive('ollama', list, { replace: true });
-      } catch (e) { errors.ollama = e.message || String(e); }
-    })();
-
-    await Promise.all([zenJob, orJob, ollamaJob]);
-    this.liveCache = { updatedAt: Date.now(), roster };
-    this._saveLiveCache(this.liveCache);
-    return { updatedAt: this.liveCache.updatedAt, added, errors };
-  }
-
-  // ── MODEL PROBE: tiny OpenAI-compatible chat completion ──
-  static PROBE_SKIP = new Set(['anthropic', 'google']);
-  async testModel(modelId, providerId) {
-    const p = PROVIDERS[providerId];
-    if (!p) return { ok: false, error: 'Unknown provider' };
-    if (ModelManager.PROBE_SKIP.has(providerId)) return { ok: false, error: 'Проба поддерживает только OpenAI-совместимые API' };
-    const key = this.getKeyForProvider(providerId);
-    if (!key && !p.free) return { ok: false, error: 'Нет ключа для провайдера' };
-    const base = p.baseUrl.replace(/\/$/, '');
-    const t0 = Date.now();
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (key && key !== '(free)') headers.Authorization = `Bearer ${key}`;
-      await this._httpJson(`${base}/chat/completions`, {
-        method: 'POST', headers, timeoutMs: 30000,
-        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 5, temperature: 0 })
-      });
-      return { ok: true, ms: Date.now() - t0 };
-    } catch (e) {
-      return { ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 200) };
-    }
-  }
-
-  // ── MONITORING: reachability + latency per provider ──
-  async health() {
-    const jobs = Object.entries(PROVIDERS).map(async ([id, p]) => {
-      const t0 = Date.now();
-      const base = { id, name: p.name, icon: p.icon, ms: Date.now() - t0, models: p.models.length };
-      try {
-        const target = id === 'ollama'
-          ? p.baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '') + '/api/tags'
-          : p.baseUrl.replace(/\/$/, '');
-        await this._httpJson(target, { timeoutMs: 8000 });
-        return { ...base, ok: true, ms: Date.now() - t0 };
-      } catch (e) {
-        // A 200 with a non-JSON body still proves the host is up
-        // (_httpJson rejects >= 400 before parsing).
-        if (e.message === 'Bad JSON') return { ...base, ok: true, ms: Date.now() - t0 };
-        // Any HTTP status below 500 proves reachability; only network
-        // errors and 5xx count as down.
-        const m = /^HTTP (\d+)/.exec(e.message || '');
-        const ok = !!m && +m[1] < 500;
-        return { ...base, ok, ms: Date.now() - t0, error: ok ? undefined : String(e.message || 'unreachable').slice(0, 120) };
-      }
-    });
-    return Promise.all(jobs);
   }
 
   // Sync to all CLI tools
@@ -742,7 +558,6 @@ class ModelManager {
   _syncOpenClaude(model, key, baseUrl) {
     try {
       const cfgDir = path.join(HOME, '.openclaude');
-      if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
       const settingsPath = path.join(cfgDir, 'settings.json');
       let s = {}; try { s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch {}
       s.model = model;
@@ -762,8 +577,6 @@ class ModelManager {
 
   _syncQwen(model, key, baseUrl) {
     try {
-      const qdir = path.join(HOME, '.qwen');
-      if (!fs.existsSync(qdir)) fs.mkdirSync(qdir, { recursive: true });
       const sp = path.join(HOME, '.qwen', 'settings.json');
       let s = {}; try { s = JSON.parse(fs.readFileSync(sp, 'utf-8')); } catch {}
       s.model = { name: model };
