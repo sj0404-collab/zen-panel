@@ -518,21 +518,46 @@ function setControl() {
 
 // A single place for API calls so an expired token reports itself once, in
 // words, instead of every panel silently rendering empty.
+// Conditional GETs: GitHub answers 304 without a body and - the point -
+// without spending quota, so a quiet re-poll costs nothing.
+const ETAGS = new Map();
 async function api(url, opts) {
-  const r = await fetch(url, Object.assign({ headers: hdr() }, opts || {}));
+  const o = Object.assign({ headers: hdr() }, opts || {});
+  const isGet = !o.method || o.method === 'GET';
+  // The t= buster changes every call; the etag is per resource, not per URL.
+  const ekey = String(url).replace(/[?&]t=\d+/, '');
+  const slot = isGet && ETAGS.get(ekey);
+  if (slot && slot.etag) o.headers['If-None-Match'] = slot.etag;
+  const r = await fetch(url, o);
+  if (r.status === 304 && slot) return slot.body;
   if (r.status === 401) throw new Error('Токен недействителен (401). Вставьте новый.');
   if (r.status === 403) {
     const err = new Error('403: лимит запросов или нет прав. Без токена лимит 60/час.' + unbanHint(r));
     err.is403 = true;
+    err.unbanMs = unbanMs(r);
     throw err;
   }
   if (r.status === 404) throw new Error('404: не найдено или не видно этому токену.');
   if (!r.ok) throw new Error('HTTP ' + r.status);
-  return r.json();
+  const body = await r.json();
+  if (isGet) {
+    try { const et = r.headers.get('etag'); if (et) ETAGS.set(ekey, { etag: et, body }); } catch (e) {}
+  }
+  return body;
 }
 
 // When the API will answer again, so a 403 pauses the pollers instead
 // of feeding the ban they are already under.
+function unbanMs(r) {
+  try {
+    const ra = +r.headers.get('retry-after') || 0;
+    if (ra) return ra * 1000;
+    const reset = +r.headers.get('x-ratelimit-reset') || 0;
+    if (reset) return Math.max(0, reset * 1000 - Date.now());
+  } catch (e) {}
+  return 10 * 60 * 1000;
+}
+
 function unbanHint(r) {
   try {
     const ra = r.headers.get('retry-after');
@@ -795,6 +820,7 @@ let ACT_REPO = ctlRepo();
 
 let watchTimer = null;
 let watchPaused = false;
+let sessPausedUntil = 0;   // a 403 parks the Sessions auto-refresh until this time
 const WATCH_NAMES = ['Build APK', 'Tests', 'Panel APK', 'Build Zen Panel APK', 'Zen agent', 'Remote session', 'Desks', 'OpenCode'];
 
 function fmtSecs(sec) {
@@ -897,7 +923,7 @@ function startWatching() {
   watchTimer = setInterval(() => {
     // Jobs polling is heavy and used to freeze the session tab. Only the
     // Actions page needs per-step ticks; the session tab has its own boot log.
-    if (!watchPaused && page === 'act') pollWatch();
+    if (!watchPaused && page === 'act' && !document.hidden) pollWatch();
   }, 8000);
 }
 
@@ -1539,10 +1565,22 @@ async function launchDesks(which) {
     // A desk takes two to four minutes to install, tunnel and publish. Poll
     // rather than promising it is ready: the tile appears the moment the
     // address lands in the session-state branch.
+    const wantDesks = which === 'both' ? ['linux', 'windows'] : [which];
     for (let i = 0; i < 90; i++) {
       await new Promise(res => setTimeout(res, 5000));
-      await loadDesks();
-      if (DESKS.linux || DESKS.windows) break;
+      let hit = null;
+      for (const dslot of wantDesks) {
+        try { hit = await readSessionSlot(dslot); }
+        catch (e) {
+          if (e && e.is403) {
+            sessPausedUntil = Date.now() + (e.unbanMs || 600000);
+            alert('GitHub ограничил запросы (403). Адрес появится в «Доступах» позже.');
+            return;
+          }
+        }
+        if (hit) break;
+      }
+      if (hit) break;
       btn.textContent = `Поднимаю… ${Math.round(i * 5 / 60 * 10) / 10} мин`;
     }
     await refresh();
@@ -2133,6 +2171,7 @@ async function refresh() {
   try { runs = (await api(`${CTL()}/actions/runs?per_page=20`)).workflow_runs || []; }
   catch (e) {
     $('live').innerHTML = `<div class="danger">${esc(e.message)}</div>`;
+    if (e && e.is403) sessPausedUntil = Date.now() + (e.unbanMs || 600000);
     return;
   }
 
@@ -2169,8 +2208,8 @@ async function refresh() {
   // Awaited: the credentials decide what the screen and access cards show, and
   // firing this off unawaited left refresh() reporting a live session above two
   // cards that were still empty.
-  await loadCreds();
-  await loadDesks();
+  try { await loadCreds(); await loadDesks(); }
+  catch (e) { if (e && e.is403) sessPausedUntil = Date.now() + (e.unbanMs || 600000); }
 
   if (page !== 'apk') return;
   const build = runs.find(r => r.name === 'Build APK' && r.conclusion === 'success');
@@ -2206,7 +2245,7 @@ checkUpdateBanner();
 setInterval(tickAges, 1000);
 // Session tab: session-state + run list. 12s is enough to feel live without
 // stacking GitHub calls the way a 5s jobs poll did.
-setInterval(() => { if (page === 'sess') refresh(); }, 12000);
+setInterval(() => { if (page === 'sess' && !document.hidden && Date.now() >= sessPausedUntil) refresh(); }, 12000);
 </script>
 </body>
 </html>
