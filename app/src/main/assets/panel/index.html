@@ -1175,7 +1175,7 @@ async function loadDesks() {
   const marr = await Promise.all(liveSlots.map(readModels));
   DESKS = {}; MODELS = {};
   for (const s of DESK_SLOTS) { DESKS[s] = null; MODELS[s] = null; }
-  DESK_SLOTS.forEach((s, i) => { DESKS[s] = sess[i]; });
+  DESK_SLOTS.forEach((s, i) => { if (sess[i]) sess[i]._slot = s; DESKS[s] = sess[i]; });
   liveSlots.forEach((s, i) => { MODELS[s] = marr[i]; });
 
   if (deskOpen && document.getElementById('desk-overlay')) { syncDeskOverlay(); return; }
@@ -1983,7 +1983,15 @@ async function loadCreds(preferSlot) {
       seen.add(key);
       slots.push(slot);
     }
-    const found = await Promise.all(slots.map(readSessionSlot));
+    // No fetching here: refresh() runs loadDesks() first, and DESKS already
+    // holds every slot. Only the legacy session.json (null slot) is read.
+    const found = [];
+    for (const slot of slots) {
+      if (slot === null) {
+        try { found.push(await readSessionSlot(null)); }
+        catch (e) { found.push(null); }
+      } else found.push(DESKS[slot] || null);
+    }
     let s = found.find(Boolean) || null;
 
     if (!s) {
@@ -2236,7 +2244,7 @@ async function refresh() {
   // Awaited: the credentials decide what the screen and access cards show, and
   // firing this off unawaited left refresh() reporting a live session above two
   // cards that were still empty.
-  try { await loadCreds(); await loadDesks(); }
+  try { await loadDesks(); await loadCreds(); }
   catch (e) { if (e && e.is403) sessPausedUntil = Date.now() + (e.unbanMs || 600000); }
 
   if (page !== 'apk') return;
