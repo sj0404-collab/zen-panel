@@ -150,6 +150,35 @@ function check(name, cond, extra) {
   const chrefs = [...cdom.window.document.querySelectorAll('a.card')].map(a => a.href);
   check('t28 chooser keeps zt', chrefs.length === 2 && chrefs.every(h => h.includes('zt=tok123')), chrefs.join('|'));
   check('t29 chooser keeps gh', chrefs.every(h => h.includes('#gh=abc')), chrefs.join('|'));
+
+  // 14. ?zt= from the page URL is forwarded on API calls
+  const zd = new JSDOM(inline, {
+    url: 'http://localhost:8090/m?zt=tok123', runScripts: 'dangerously', pretendToBeVisual: true,
+    beforeParse(window) {
+      window.fetch = stubFetch;
+      window.__alerts = [];
+      window.alert = m => { window.__alerts.push(String(m)); };
+      window.Terminal = class { constructor(o) { this.options = o || {}; this.cols = 80; this.rows = 24; } loadAddon() {} open() {} write() {} focus() {} dispose() {} onData() {} onResize() {} };
+      window.FitAddon = { FitAddon: class { fit() {} } };
+      window.WebLinksAddon = { WebLinksAddon: class {} };
+      window.WebSocket = class { constructor() { this.readyState = 0; } send() {} close() {} };
+      window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+    },
+  });
+  seen.length = 0;
+  await sleep(600);
+  const zseen = seen.filter(u => u.includes('/api/'));
+  check('t30 zt forwarded', zseen.length > 0 && zseen.every(u => u.includes('zt=tok123')), seen.join('|'));
+
+  // 15. boot diagnostics never throw and say it on screen
+  const f0 = window.fetch;
+  window.fetch = () => Promise.reject(new Error('net down'));
+  const r31 = await window.bootFetch('probe', '/api/tools');
+  window.fetch = f0;
+  check('t31 bootFetch survives net fail', JSON.stringify(r31) === '{}' && window.bootErrs.includes('probe'));
+  window.showBootBanner('demo banner');
+  check('t32 banner shows', (window.document.getElementById('boot-banner') || {}).textContent === 'demo banner');
+  window.document.getElementById('boot-banner').remove();
   console.log(`HUB-TOUCH: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

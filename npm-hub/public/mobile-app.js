@@ -4,6 +4,25 @@
 var __zt = null;
 try { __zt = new URLSearchParams(location.search).get('zt'); } catch (e) { __zt = null; }
 function __ztQ() { return __zt ? '?zt=' + encodeURIComponent(__zt) : ''; }
+var bootErrs = [];
+async function bootFetch(name, url) {
+  try { return (await (await fetch(url)).json()) || {}; }
+  catch (e) { bootErrs.push(name); return {}; }
+}
+// The app used to fail silently: one dead endpoint bricked init and left a
+// static skeleton with dead buttons and no explanation. Say it on screen.
+function showBootBanner(text) {
+  let b = document.getElementById('boot-banner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'boot-banner';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;' +
+      'background:#7a2e2e;color:#fff;font:13px/1.4 sans-serif;padding:10px 12px';
+    b.onclick = () => b.remove();
+    document.body.prepend(b);
+  }
+  b.textContent = text;
+}
 if (__zt && typeof window !== 'undefined' && !window.__ztWrapped) {
   window.__ztWrapped = true;
   const __fetch0 = window.fetch.bind(window);
@@ -41,14 +60,17 @@ window.addEventListener('resize', () => {
 
 async function init() {
   const [toolsR, infoR, histR, storR, modelsR, netR, tunnelR] = await Promise.all([
-    fetch('/api/tools').then(r => r.json()),
-    fetch('/api/info').then(r => r.json()),
-    fetch('/api/path-history').then(r => r.json()),
-    fetch('/api/storages').then(r => r.json()),
-    fetch('/api/models').then(r => r.json()),
-    fetch('/api/networks').then(r => r.json()),
-    fetch('/api/tunnel').then(r => r.json())
+    bootFetch('tools', '/api/tools'),
+    bootFetch('info', '/api/info'),
+    bootFetch('path-history', '/api/path-history'),
+    bootFetch('storages', '/api/storages'),
+    bootFetch('models', '/api/models'),
+    bootFetch('networks', '/api/networks'),
+    bootFetch('tunnel', '/api/tunnel')
   ]);
+  if (!__zt) showBootBanner('НЕТ ?zt= в адресе — API закрыто. Откройте ссылку с токеном.');
+  else if (bootErrs.length) showBootBanner('API недоступно (' + bootErrs.join(', ') +
+    '). Туннель/сервер? (тап — скрыть)');
   if (toolsR.success) tools = toolsR.tools;
   if (infoR.home) homeDir = infoR.home;
   if (infoR.state?.lastDirs) toolDirs = infoR.state.lastDirs;
