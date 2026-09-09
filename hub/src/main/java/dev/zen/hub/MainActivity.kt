@@ -19,12 +19,14 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.ValueCallback
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import org.json.JSONObject
 
 /**
@@ -42,6 +44,17 @@ class MainActivity : ComponentActivity() {
     private lateinit var errorView: LinearLayout
 
     private val assets_ by lazy { HubAssets(this) }
+
+    // <input type=file> in the hub's /m file manager: without this the
+    // upload button silently does nothing in a WebView.
+    private var fileChooser: ValueCallback<Array<android.net.Uri>>? = null
+    private val filePicker =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+            val uris = WebChromeClient.FileChooserParams.parseResult(res.resultCode, res.data)
+                ?: emptyArray()
+            fileChooser?.onReceiveValue(uris)
+            fileChooser = null
+        }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -102,6 +115,21 @@ class MainActivity : ComponentActivity() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 bar.progress = newProgress
                 bar.visibility = if (newProgress in 1..99) View.VISIBLE else View.GONE
+            }
+
+            override fun onShowFileChooser(
+                view: WebView?, callback: ValueCallback<Array<android.net.Uri>>?,
+                params: WebChromeClient.FileChooserParams?
+            ): Boolean {
+                fileChooser?.onReceiveValue(null)
+                fileChooser = callback
+                return try {
+                    filePicker.launch(params?.createIntent())
+                    true
+                } catch (e: Exception) {
+                    fileChooser = null
+                    false
+                }
             }
         }
 
