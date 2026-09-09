@@ -167,7 +167,7 @@ jobs:
 
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
-              "slot=opencode" "kind=OpenCode" "os=linux" \
+              "slot=opencode-linux" "kind=OpenCode" "os=linux" \
               "url=$URL" "agentUrl=$URL/" \
               "branch=$WORK_BRANCH"
 
@@ -196,7 +196,7 @@ jobs:
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
-              "slot=opencode" "state=ended" || true
+              "slot=opencode-linux" "state=ended" || true
 
       - name: Save the models snapshot
         if: always()
@@ -207,7 +207,7 @@ jobs:
           # keys cannot land on the branch.
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
-              "slot=opencode" "file=models-opencode.json" \
+              "slot=opencode-linux" "file=models-opencode-linux.json" \
               "kind=OpenCode" "os=linux" "ui=${{ inputs.ui }}" \
               "json=$HOME/.config/opencode/opencode.json" || true
 
@@ -363,7 +363,7 @@ jobs:
 
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-            "slot=opencode" "kind=OpenCode" "os=windows" `
+            "slot=opencode-windows" "kind=OpenCode" "os=windows" `
             "url=$url" "agentUrl=$url/" `
             "branch=$env:WORK_BRANCH"
 
@@ -390,7 +390,7 @@ jobs:
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
-          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=opencode" "state=ended"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=opencode-windows" "state=ended"
 
       - name: Save the models snapshot
         if: always()
@@ -398,7 +398,7 @@ jobs:
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-            "slot=opencode" "file=models-opencode.json" `
+            "slot=opencode-windows" "file=models-opencode-windows.json" `
             "kind=OpenCode" "os=windows" "ui=${{ inputs.ui }}" `
             "json=$env:USERPROFILE/.config/opencode/opencode.json"
 

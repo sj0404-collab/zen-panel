@@ -249,7 +249,7 @@ jobs:
 
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
-              "slot=agent" "kind=CLI-агент" "os=linux" \
+              "slot=agent-linux" "kind=CLI-агент" "os=linux" \
               "url=$URL" "agentUrl=$URL/hub?token=$TOKEN" \
               "agentToken=$TOKEN" "branch=$WORK_BRANCH"
 
@@ -262,7 +262,7 @@ jobs:
         if: always()
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent" "state=ended" || true
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent-linux" "state=ended" || true
 
       - name: Save the models roster
         if: always()
@@ -272,7 +272,7 @@ jobs:
           # leak through: json= merges are scrubbed by publish_session.sh.
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
-              "slot=agent" "file=models-agent.json" \
+              "slot=agent-linux" "file=models-agent-linux.json" \
               "kind=CLI-агент" "os=linux" \
               "json=$HOME/.zen_free_models.json" || true
 
@@ -502,7 +502,7 @@ jobs:
 
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-            "slot=agent" "kind=CLI-агент" "os=windows" `
+            "slot=agent-windows" "kind=CLI-агент" "os=windows" `
             "url=$url" "agentUrl=$url/hub?token=$token" `
             "agentToken=$token" "branch=$env:WORK_BRANCH"
 
@@ -532,7 +532,7 @@ jobs:
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
-          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent" "state=ended"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent-windows" "state=ended"
 
       - name: Save the models roster
         if: always()
@@ -540,7 +540,7 @@ jobs:
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-            "slot=agent" "file=models-agent.json" `
+            "slot=agent-windows" "file=models-agent-windows.json" `
             "kind=CLI-агент" "os=windows" `
             "json=$env:USERPROFILE/.zen_free_models.json"
 

@@ -1085,9 +1085,9 @@ function collapsePreview() { previewOpen = false; renderPreview(); }
 //
 // Neither has a password. There is nothing to copy and nothing to type: the
 // button opens the desk and it connects on its own.
-let DESKS = { linux: null, windows: null, agent: null, opencode: null, hub: null };
-let MODELS = { linux: null, windows: null, agent: null, opencode: null, hub: null };
-let deskOpen = null;   // 'linux' | 'windows' | 'agent' | 'opencode' | null
+let DESKS = { linux: null, windows: null, 'agent-linux': null, 'agent-windows': null, agent: null, 'opencode-linux': null, 'opencode-windows': null, opencode: null, 'hub-linux': null, 'hub-windows': null, hub: null };
+let MODELS = { linux: null, windows: null, 'agent-linux': null, 'agent-windows': null, agent: null, 'opencode-linux': null, 'opencode-windows': null, opencode: null, 'hub-linux': null, 'hub-windows': null, hub: null };
+let deskOpen = null;   // a DESK_SLOTS entry ('agent-linux', 'hub', …) | null
 
 // The signature of what is currently drawn. Rebuilding the card replaces the
 // iframes, and a replaced iframe reconnects from scratch - which is exactly
@@ -1135,15 +1135,19 @@ async function loadDesks() {
   const read = async slot => readFile(`session-${slot}.json`, true);
   const readModels = async slot => readFile(`models-${slot}.json`, false);
 
-  const [lin, win, agent, opencode, hub, mLin, mWin, mAgent, mOc, mHub] = await Promise.all(
-    [read('linux'), read('windows'), read('agent'), read('opencode'), read('hub'),
-     readModels('linux'), readModels('windows'), readModels('agent'), readModels('opencode'), readModels('hub')]);
-  DESKS = { linux: lin, windows: win, agent: agent, opencode: opencode, hub: hub };
-  MODELS = { linux: mLin, windows: mWin, agent: mAgent, opencode: mOc, hub: mHub };
+  // Session files first, models only for slots that are actually live: most
+  // models files do not exist, and a 404 still costs a request.
+  const sess = await Promise.all(DESK_SLOTS.map(read));
+  const liveSlots = DESK_SLOTS.filter((s, i) => sess[i]);
+  const marr = await Promise.all(liveSlots.map(readModels));
+  DESKS = {}; MODELS = {};
+  for (const s of DESK_SLOTS) { DESKS[s] = null; MODELS[s] = null; }
+  DESK_SLOTS.forEach((s, i) => { DESKS[s] = sess[i]; });
+  liveSlots.forEach((s, i) => { MODELS[s] = marr[i]; });
 
   if (deskOpen && document.getElementById('desk-overlay')) { syncDeskOverlay(); return; }
 
-  if (!lin && !win && !agent && !opencode && !hub) {
+  if (!liveSlots.length) {
     card.style.display = 'none';
     deskSig = '';
     collapseDesks();
@@ -1168,16 +1172,13 @@ async function loadDesks() {
   };
 
   // Nothing structural changed: touch the counters and leave the iframes be.
-  const sig = JSON.stringify([
-    deskOpen,
-    lin && [lin.deskUrl || lin.url, lin.terminal || '', lin.runId || ''],
-    win && [win.deskUrl || win.url, win.terminal || '', win.runId || ''],
-    agent && [agent.agentUrl || agent.url, agent.runId || ''],
-    opencode && [opencode.agentUrl || opencode.url, opencode.runId || ''],
-    hub && [hub.hubUrl || hub.url, hub.runId || '']
-  ]);
+  const sig = JSON.stringify([deskOpen, ...DESK_SLOTS.map(s => {
+    const v = DESKS[s];
+    return v && [v.deskUrl || v.agentUrl || v.hubUrl || v.url, v.terminal || '', v.runId || ''];
+  })]);
   if (sig === deskSig) {
-    for (const [slot, s] of [['linux', lin], ['windows', win], ['agent', agent], ['opencode', opencode], ['hub', hub]]) {
+    for (const slot of DESK_SLOTS) {
+      const s = DESKS[slot];
       const el = $('desk-age-' + slot);
       if (el && s) el.textContent = ageLine(s);
       const ml = $('desk-model-' + slot);
@@ -1236,10 +1237,11 @@ async function loadDesks() {
           ${s.runId && tok() ? `<button class="ghost small" onclick="stopRun(${s.runId})">Выключить</button>` : ''}
         </div>
       </div>`;
+    const chatSlots = DESK_SLOTS.filter(s => s !== 'linux' && s !== 'windows');
     box.innerHTML = `<div class="row" style="gap:10px;align-items:stretch">
-      ${tile('linux', lin, 'Linux')}
-      ${tile('windows', win, 'Windows')}
-    </div>` + chatRow('agent', agent, 'CLI-агент') + chatRow('opencode', opencode, 'OpenCode') + chatRow('hub', hub, 'NPM-Hub');
+      ${tile('linux', DESKS.linux, 'Linux')}
+      ${tile('windows', DESKS.windows, 'Windows')}
+    </div>` + chatSlots.map(s => chatRow(s, DESKS[s], KIND_LABEL[s] || s)).join('');
   }
 }
 
@@ -1270,14 +1272,14 @@ window.addEventListener('popstate', () => {
   if (document.getElementById('desk-overlay')) collapseDesks();
 });
 
-const DESK_SLOTS = ['linux', 'windows', 'agent', 'opencode', 'hub'];
+const DESK_SLOTS = ['linux', 'windows', 'agent-linux', 'agent-windows', 'agent', 'opencode-linux', 'opencode-windows', 'opencode', 'hub-linux', 'hub-windows', 'hub'];
 
 /** Address of a slot; chat flavours go through the token query. */
 function deskSlotUrl(slot) {
   const s = DESKS[slot];
   if (!s) return '';
-  if (slot === 'agent' || slot === 'opencode') return chatUrlWithQ(s.agentUrl || s.url || '');
-  if (slot === 'hub') return hubUrlWithToken(s.hubUrl || s.deskUrl || s.url || '');
+  if (slot === 'agent' || slot === 'opencode' || slot.startsWith('agent-') || slot.startsWith('opencode-')) return chatUrlWithQ(s.agentUrl || s.url || '');
+  if (slot === 'hub' || slot.startsWith('hub-')) return hubUrlWithToken(s.hubUrl || s.deskUrl || s.url || '');
   return s.hubUrl || s.deskUrl || s.url || '';
 }
 // The hub lists the account's repos from the browser (api.github.com
@@ -1413,6 +1415,11 @@ async function saveSession(slot) {
  * cannot see reads as a dead button. loadDesks() is async, hence the scroll on
  * the next frame, once the iframe has been laid out.
  */
+/** Newest live slot of a family: 'agent' -> 'agent-linux' if that run is up. */
+function liveSlotOf(fam) {
+  return DESK_SLOTS.find(s => (s === fam || s.startsWith(fam + '-')) && DESKS[s]) || fam;
+}
+
 function openDeskInPanel(slot) {
   go('sess');
   expandDesk(slot);
@@ -1431,7 +1438,7 @@ function openDeskInPanel(slot) {
 // concurrent session could never have been reachable - the old panel let you
 // start one regardless and then showed a blank page.
 
-const KIND_LABEL = { linux: 'Linux', windows: 'Windows', agent: 'CLI-агент', opencode: 'OpenCode', hub: 'NPM-Hub' };
+const KIND_LABEL = { linux: 'Linux', windows: 'Windows', agent: 'CLI-агент', 'agent-linux': 'CLI-агент Linux', 'agent-windows': 'CLI-агент Windows', opencode: 'OpenCode', 'opencode-linux': 'OpenCode Linux', 'opencode-windows': 'OpenCode Windows', hub: 'NPM-Hub', 'hub-linux': 'NPM-Hub Linux', 'hub-windows': 'NPM-Hub Windows' };
 
 function busyButtons(on, which) {
   for (const id of ['btn-linux', 'btn-windows', 'btn-agent', 'btn-opencode', 'btn-hub', 'btn-both']) {
@@ -1559,7 +1566,7 @@ async function launchAgent() {
   if (running.length) {
     if (!confirm(`CLI-агент уже идёт (${mins(running[0].created_at)} мин).\n\n` +
                  'ОК — остановить его и поднять заново.\nОтмена — открыть текущий чат.')) {
-      await refresh(); openDeskInPanel('agent'); return;
+      await refresh(); openDeskInPanel(liveSlotOf('agent')); return;
     }
     for (const r of running) await cancelRun(r.id);
     await new Promise(r => setTimeout(r, 8000));
@@ -1573,7 +1580,7 @@ async function launchAgent() {
       os: where, branch: 'agent-work', repos: '', autosave_minutes: '2'
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
-    await waitAndOpen('agent');
+    await waitAndOpen('agent-' + where);
   } catch (e) {
     alert('Не вышло: ' + e.message);
   } finally {
@@ -1592,7 +1599,7 @@ async function launchOpencode() {
   if (running.length) {
     if (!confirm(`OpenCode уже идёт (${mins(running[0].created_at)} мин).\n\n` +
                  'ОК — остановить и поднять заново.\nОтмена — открыть текущий чат.')) {
-      await refresh(); openDeskInPanel('opencode'); return;
+      await refresh(); openDeskInPanel(liveSlotOf('opencode')); return;
     }
     for (const r of running) await cancelRun(r.id);
     await new Promise(r => setTimeout(r, 8000));
@@ -1606,7 +1613,7 @@ async function launchOpencode() {
       os: where, prompt: PENDING_Q, branch: 'opencode-work'
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
-    await waitAndOpen('opencode');
+    await waitAndOpen('opencode-' + where);
   } catch (e) {
     alert('Не вышло: ' + e.message);
   } finally {
@@ -1624,7 +1631,7 @@ async function launchHub() {
   if (running.length) {
     if (!confirm(`NPM-Hub уже идёт (${mins(running[0].created_at)} мин).\n\n` +
                  'ОК — остановить и поднять заново.\nОтмена — открыть текущий.')) {
-      await refresh(); openDeskInPanel('hub'); return;
+      await refresh(); openDeskInPanel(liveSlotOf('hub')); return;
     }
     for (const r of running) await cancelRun(r.id);
     await new Promise(r => setTimeout(r, 8000));
@@ -1636,7 +1643,7 @@ async function launchHub() {
   try {
     const r = await dispatchWorkflow('hub.yml', { os: where, label: 'hub' });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
-    await waitAndOpen('hub');
+    await waitAndOpen('hub-' + where);
   } catch (e) {
     alert('Не вышло: ' + e.message);
   } finally {
@@ -1670,7 +1677,7 @@ function bootLog(msg) {
 let READY = { slot: '', url: '', title: '' };
 function sessionReady(kind, s) {
   const url = chatUrlWithQ((s && (s.agentUrl || s.hubUrl || s.deskUrl || s.url)) || '');
-  const title = kind === 'opencode' ? 'OpenCode' : kind === 'agent' ? 'CLI-агент' : (KIND_LABEL[kind] || 'Сессия');
+  const title = KIND_LABEL[kind] || 'Сессия';
   READY = { slot: kind, url, title };
   bootLog('готово · ' + (url ? 'адрес получен' : 'сессия жива'));
   const bar = $('ready-bar');
@@ -1687,7 +1694,7 @@ function sessionReady(kind, s) {
   } catch (e) {}
 }
 function openReadyChat() {
-  if (READY.slot === 'agent' || READY.slot === 'opencode' || READY.slot === 'hub') openDeskInPanel(READY.slot);
+  if (READY.slot === 'agent' || READY.slot === 'opencode' || READY.slot === 'hub' || READY.slot.startsWith('agent-') || READY.slot.startsWith('opencode-') || READY.slot.startsWith('hub-')) openDeskInPanel(READY.slot);
   else openLive();
 }
 window.zenOpenFromNotify = function (slot, url) {
@@ -1703,16 +1710,21 @@ async function waitAndOpen(kind) {
   if ($('boot-log')) $('boot-log').innerHTML = '';
   bootLog('отправка workflow…');
   try { if (window.ZenBridge && ZenBridge.requestNotifications) ZenBridge.requestNotifications(); } catch (e) {}
-  const btnId = kind === 'windows' ? 'btn-windows'
-    : kind === 'agent' ? 'btn-agent'
-    : kind === 'opencode' ? 'btn-opencode'
-    : kind === 'hub' ? 'btn-hub'
+  // kind is the slot ('agent-linux'); the family drives buttons and budgets.
+  const fam = kind === 'linux' || kind === 'windows' ? kind
+    : kind.startsWith('agent-') ? 'agent'
+    : kind.startsWith('opencode-') ? 'opencode'
+    : kind.startsWith('hub-') ? 'hub' : kind;
+  const btnId = fam === 'windows' ? 'btn-windows'
+    : fam === 'agent' ? 'btn-agent'
+    : fam === 'opencode' ? 'btn-opencode'
+    : fam === 'hub' ? 'btn-hub'
     : 'btn-linux';
   const btn = $(btnId);
-  const budget = kind === 'windows' || kind === 'opencode' || kind === 'hub' ? 90 : 70;
-  const wantName = kind === 'agent' ? 'Zen agent'
-    : kind === 'opencode' ? 'OpenCode'
-    : kind === 'hub' ? 'NPM Hub'
+  const budget = fam === 'windows' || fam === 'opencode' || fam === 'hub' ? 90 : 70;
+  const wantName = fam === 'agent' ? 'Zen agent'
+    : fam === 'opencode' ? 'OpenCode'
+    : fam === 'hub' ? 'NPM Hub'
     : 'Desks';
   let lastStep = '';
   for (let i = 0; i < budget; i++) {
@@ -1735,7 +1747,7 @@ async function waitAndOpen(kind) {
       }
     }
     const ready = s && (s.agentUrl || s.deskUrl || s.vncUrl || s.rdpHost ||
-      (kind !== 'agent' && kind !== 'opencode' && s.url));
+      (fam !== 'agent' && fam !== 'opencode' && s.url));
     if (ready) {
       await refresh();
       sessionReady(kind, s);
@@ -1800,11 +1812,11 @@ function openLive() {
   // tab - and openDeskInPanel() scrolls to it, because expanding a panel that
   // is off-screen looks like the button did nothing.
   if (s.agentUrl) {
-    openDeskInPanel(s._slot === 'opencode' || /opencode/i.test(s.kind || '') ? 'opencode' : 'agent');
+    openDeskInPanel(liveSlotOf(String(s._slot || '').startsWith('opencode') || /opencode/i.test(s.kind || '') ? 'opencode' : 'agent'));
     return;
   }
-  if (s._slot === 'hub' || s.hubUrl || /npm-hub/i.test(s.kind || '')) {
-    openDeskInPanel('hub');
+  if (String(s._slot || '').startsWith('hub') || s.hubUrl || /npm-hub/i.test(s.kind || '')) {
+    openDeskInPanel(liveSlotOf('hub'));
     return;
   }
   if (s.vncUrl)   { openDeskInPanel(s.rdpHost ? 'windows' : 'linux'); return; }
@@ -1849,7 +1861,7 @@ async function stopRun(id, repo) {
  */
 async function markSessionEnded(id) {
   try {
-    const slot = ['linux', 'windows', 'agent', 'opencode', 'hub']
+    const slot = DESK_SLOTS
       .find(s => DESKS[s] && String(DESKS[s].runId) === String(id));
     if (!slot) return;
     const path = `session-${slot}.json`;
@@ -1892,9 +1904,11 @@ async function readSessionSlot(slot) {
 async function loadCreds(preferSlot) {
   const box = $('creds');
   try {
+    // Newest first inside each family, legacy bare slots kept for old runs.
+    const LIVE_ORDER = ['agent-linux', 'agent-windows', 'agent', 'opencode-linux', 'opencode-windows', 'opencode', 'hub-linux', 'hub-windows', 'hub', null, 'linux', 'windows'];
     const order = preferSlot
-      ? [preferSlot, 'agent', 'opencode', 'hub', null, 'linux', 'windows']
-      : ['agent', 'opencode', 'hub', null, 'linux', 'windows'];
+      ? [preferSlot, ...LIVE_ORDER.filter(s => s !== preferSlot)]
+      : LIVE_ORDER;
     const seen = new Set();
     const slots = [];
     for (const slot of order) {
@@ -2146,7 +2160,7 @@ async function refresh() {
           <td><b>${esc(kind)}</b> ${pill(r)}
             <div class="note"><span class="live-age" data-started="${started}">идёт ${used} мин · осталось ~${left} мин</span> ·
               <a href="${esc(r.html_url)}" target="_blank">журнал</a></div>
-            <button class="small" onclick="${kind === 'CLI-агент' ? "openDeskInPanel('agent')" : kind === 'OpenCode' ? "openDeskInPanel('opencode')" : 'openLive()'}">Открыть чат</button>
+            <button class="small" onclick="${kind === 'CLI-агент' ? "openDeskInPanel(liveSlotOf('agent'))" : kind === 'OpenCode' ? "openDeskInPanel(liveSlotOf('opencode'))" : 'openLive()'}">Открыть чат</button>
             <button class="ghost small" onclick="stopRun(${r.id})">Выключить</button></td>
           </tr>`;
       }).join('') + '</table>'

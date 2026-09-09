@@ -25,7 +25,7 @@ Android-панель и GitHub Actions для Zen Agent, OpenCode, NPM Hub и у
 2. На вкладке «Сессии» запустите стол, CLI-агент, OpenCode или NPM Hub (Linux/Windows на выбор).
 3. После старта панель сама откроет веб-чат в оверлее. Поле «Первая команда» уходит в чат сразу (`?q=` у CLI, `opencode run --attach` у OpenCode).
 
-Адрес сессии публикуется в ветке `session-state`: `session-agent.json`, `session-opencode.json`, `session-hub.json`, `session-linux.json`, `session-windows.json` (плюс старый общий `session.json` для совместимости).
+Адрес сессии публикуется в ветке `session-state` — у каждого типа свой файл на ОС: `session-agent-linux.json`, `session-agent-windows.json`, `session-opencode-linux.json`, `session-opencode-windows.json`, `session-hub-linux.json`, `session-hub-windows.json`, `session-linux.json`, `session-windows.json` (плюс старые `session-agent.json`, `session-opencode.json`, `session-hub.json` и общий `session.json` для совместимости).
 
 ## Вкладки панели
 
