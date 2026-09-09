@@ -54,5 +54,10 @@ check('q8 fm boots to workdir', mob.includes('fmBrowse(workDir || homeDir)') &&
 // q9: hub-work is first in the devices list.
 check('q9 workdir first device', /devices\.push\(\{ type: 'local', id: path\.join\(HOME, 'hub-work'\), name: 'hub-work'/.test(mgr));
 
+// q10: the runner's start step waits for `"warming":false` in /api/tools
+// (hub.yml, linux+windows). The original response lacked it: the run failed
+// with "the hub did not start" and the site never came up.
+check('q10 tools report warming:false', server.includes('res.json({ success: true, warming: false, tools })'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
