@@ -182,7 +182,7 @@ app.post('/api/storages/remove', (req, res) => {
 // hits a log (errors are scrubbed too).
 const runCmd = (cmd, args, opts, stdin) => new Promise((resolve, reject) => {
   const p = require('child_process').execFile(cmd, args, opts, (err, stdout, stderr) => {
-    if (err) reject(Object.assign(err, { stderr: String(stderr || '') }));
+    if (err) reject(Object.assign(err, { stderr: String(stderr || ''), stdout: String(stdout || '') }));
     else resolve(String(stdout || ''));
   });
   if (stdin) { p.stdin.write(stdin); p.stdin.end(); }
@@ -279,6 +279,20 @@ app.post('/api/git/clone', async (req, res) => {
 // Clone the repo behind a github storage onto the runner and make the
 // workspace push-ready - the server already holds that storage's token,
 // so no secret crosses the wire for this.
+// Save a terminal session by hand: transcript + work diff into the working
+// repo's .hub-sessions/ folder (commit + push when the runner allows).
+app.post('/api/sessions/save', async (req, res) => {
+  try {
+    const id = String((req.body || {}).id || '');
+    const sess = ptys.get(id);
+    if (!sess) return res.json({ success: false, error: 'нет такой сессии' });
+    const r = await saveTermSession(sess, { auto: false });
+    res.json({ success: true, ...r });
+  } catch (e) {
+    res.json({ success: false, error: String((e && e.message) || e).slice(0, 300) });
+  }
+});
+
 app.post('/api/storages/clone', async (req, res) => {
   try {
     const b = storage.exact(String((req.body || {}).id || ''));
@@ -524,7 +538,106 @@ app.post('/api/ngrok-token', (req, res) => {
 // ─── WEBSOCKET / PTY ───
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
-const ptys = new Map();
+const ptys = new Map(); // id -> { pty, id, cwd, toolId, log[], logBytes, startedAt }
+
+// ─── TERMINAL SESSION RECORDING ───
+// Every pty keeps its output (bounded ring, 512 KB) so a finished session
+// can be stored as transcript + work diff into the working repo.
+function pushTermLog(sess, data) {
+  if (!sess) return;
+  const s = String(data || '');
+  if (!s) return;
+  sess.log.push(s);
+  sess.logBytes += s.length;
+  while (sess.log.length > 1 && sess.logBytes > 524288) {
+    sess.logBytes -= sess.log[0].length;
+    sess.log.shift();
+  }
+}
+function stripAnsi(s) {
+  return String(s || '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b[()][0-9A-Z]/g, '')
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+    .replace(/\x1b[=>M78]/g, '')
+    .replace(/\r/g, '');
+}
+function findGitRoot(dir) {
+  let d = '';
+  try { d = path.resolve(String(dir || '')); } catch { return ''; }
+  for (let i = 0; i < 12 && d; i++) {
+    try { if (fs.existsSync(path.join(d, '.git'))) return d; } catch {}
+    const up = path.dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return '';
+}
+const shortErr = (e) => String((e && (e.stderr || e.message)) || e).split('\n')[0].slice(0, 160);
+
+// Transcript + work diff -> <repo>/.hub-sessions/, committed and pushed when
+// the runner allows. Files on disk survive even if git does not cooperate.
+async function saveTermSession(sess, { auto = false } = {}) {
+  const root = findGitRoot(sess && sess.cwd);
+  if (!root) throw new Error('сессия не в git-репозитории');
+  const raw = (sess.log || []).join('');
+  if (!raw.trim()) throw new Error('транскрипт пуст');
+  const ts = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15);
+  const safeId = String(sess.id || 'term').replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 40);
+  const dir = path.join(root, '.hub-sessions');
+  fs.mkdirSync(dir, { recursive: true });
+  const mdName = `${safeId}-${ts}.md`, diffName = `${safeId}-${ts}.diff`;
+  const stripped = stripAnsi(raw).replace(/[ \t]+\n/g, '\n').slice(-200000);
+  fs.writeFileSync(path.join(dir, mdName),
+    `# hub-сессия ${sess.id}\n\n- инструмент: ${sess.toolId || 'терминал'}\n- папка: ${sess.cwd}\n- начата: ${sess.startedAt || '—'}\n- сохранена: ${new Date().toISOString()}${auto ? ' (автосейв)' : ''}\n\n\`\`\`text\n${stripped}\n\`\`\`\n`);
+  let diff = '';
+  try {
+    const st = await runGit(['-C', root, 'status', '--porcelain', '--', '.', ':!.hub-sessions'], { timeout: 15000 });
+    diff += '=== git status ===\n' + (st.trim() || '(чисто)') + '\n\n';
+  } catch (e) { diff += '=== git status ===\n(ошибка: ' + shortErr(e) + ')\n\n'; }
+  try {
+    const d = await runGit(['-C', root, 'diff', 'HEAD', '--', '.', ':!.hub-sessions'], { timeout: 30000 });
+    diff += '=== git diff HEAD ===\n' + ((d || '').trim() || '(нет изменений)') + '\n';
+  } catch (e) { diff += '=== git diff HEAD ===\n(ошибка: ' + shortErr(e) + ')\n'; }
+  try {
+    const st2 = await runGit(['-C', root, 'status', '--porcelain', '--', '.', ':!.hub-sessions'], { timeout: 15000 });
+    const skipDir = ['node_modules', '.git', 'dist', 'build', 'out', '__pycache__', '.venv', 'venv', 'vendor', 'target', '.hub-sessions'];
+    const un = st2.split('\n').filter(l => l.startsWith('??')).map(l => l.slice(3).trim()).filter(Boolean).slice(0, 30);
+    for (const rel of un) {
+      if (!rel || rel.endsWith('/')) continue;
+      if (rel.split('/').some(x => skipDir.includes(x))) continue;
+      const abs = path.join(root, rel);
+      try {
+        const fst = fs.statSync(abs);
+        if (!fst.isFile() || fst.size > 204800) continue;
+        if (fs.readFileSync(abs).slice(0, 8192).includes(0)) continue;
+      } catch { continue; }
+      try {
+        await runGit(['-C', root, 'diff', '--no-index', '--', '/dev/null', rel], { timeout: 15000 });
+      } catch (e) {
+        const d = String((e && e.stdout) || '');
+        if (d.trim()) diff += '\n=== новый файл: ' + rel + ' ===\n' + d + '\n';
+      }
+    }
+  } catch {}
+  fs.writeFileSync(path.join(dir, diffName), diff.slice(0, 500000));
+  let pushed = false, note = '';
+  try {
+    await runGit(['-C', root, 'add', '--', '.hub-sessions/' + mdName, '.hub-sessions/' + diffName], { timeout: 15000 });
+    const msg = `hub-сессия: ${sess.id} ${ts}${auto ? ' (авто)' : ''}`;
+    try {
+      await runGit(['-C', root, 'commit', '-m', msg], { timeout: 15000 });
+    } catch (e) {
+      if (!/user\.name|author identity|empty/i.test(String((e.stderr || '') + e.message))) throw e;
+      await runGit(['-C', root, '-c', 'user.name=hub', '-c', 'user.email=hub@local', 'commit', '-m', msg], { timeout: 15000 });
+    }
+    try {
+      await runGit(['-C', root, 'push', 'origin', 'HEAD'], { timeout: 60000 });
+      pushed = true;
+    } catch (e) { note = 'commit ok, push не вышел: ' + shortErr(e); }
+  } catch (e) { note = 'git commit не вышел: ' + shortErr(e); }
+  return { files: [mdName, diffName], pushed, note };
+}
 
 wss.on('connection', (ws, req) => {
   if (HUB_TOKEN) {
@@ -564,7 +677,8 @@ wss.on('connection', (ws, req) => {
           });
           currentId = msg.sessionId || ('term_' + Date.now());
           currentPty = p;
-          ptys.set(currentId, p);
+          const sess = { id: currentId, pty: p, cwd, toolId: msg.toolId || '', log: [], logBytes: 0, startedAt: new Date().toISOString() };
+          ptys.set(currentId, sess);
 
           const cdCmd = isWin ? `cd /d "${cwd}"` : `cd "${cwd}"`;
           p.write(cdCmd + '\r');
@@ -573,8 +687,8 @@ wss.on('connection', (ws, req) => {
             setTimeout(() => { p.write(launch + '\r'); }, 200);
           }
 
-          p.onData((data) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'output', id: currentId, data })); });
-          p.onExit(({ exitCode }) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'exit', id: currentId, code: exitCode })); ptys.delete(currentId); });
+          p.onData((data) => { pushTermLog(sess, data); if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'output', id: currentId, data })); });
+          p.onExit(({ exitCode }) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'exit', id: currentId, code: exitCode })); ptys.delete(currentId); if (sess.logBytes >= 2000 && !sess.savedOnce) { sess.savedOnce = true; saveTermSession(sess, { auto: true }).catch(() => {}); } });
           ws.send(JSON.stringify({ type: 'opened', id: currentId }));
         } catch (err) { ws.send(JSON.stringify({ type: 'error', error: err.message })); }
         break;
@@ -675,7 +789,7 @@ app.get('/api/tunnel', (req, res) => {
 });
 
 process.on('SIGINT', () => {
-  ptys.forEach(p => p.kill());
+  ptys.forEach(s => { try { s.pty.kill(); } catch {} });
   if (tunnelInfo && tunnelInfo.close) tunnelInfo.close();
   server.close();
   process.exit(0);
