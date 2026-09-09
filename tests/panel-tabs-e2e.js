@@ -29,6 +29,7 @@ let force403 = false;
 let etagOn = false, seenInm = '';
 let confirmSeq = [];
 const dispatches = [];
+let contentsGets = 0;
 function stub403() {
   return { status: 403, ok: false,
     headers: { get: (h) => h === 'x-ratelimit-reset' ? String(Math.floor(Date.now() / 1000) + 300) : null },
@@ -36,6 +37,7 @@ function stub403() {
 }
 function stubFetch(url, opts) {
   url = String(url);
+  if (url.includes('/contents/')) contentsGets++;
   if (url.includes('/force403') || force403) return Promise.resolve(stub403());
   if (etagOn && url.includes('session-linux.json')) {
     const inm = opts && opts.headers && opts.headers['If-None-Match'];
@@ -199,6 +201,10 @@ function stubFetch(url, opts) {
   await dom.window.launchHub();
   const d2 = (dispatches[1] || {}).inputs || {};
   eq('p32 self-hosted runner', d2.runner_linux === 'self-hosted' && d2.runner_windows === 'self-hosted', true);
+
+  contentsGets = 0;
+  const lc = await dom.window.loadCreds();
+  eq('p33 creds reuse desks', contentsGets <= 1 && lc && lc._slot === 'agent-linux', true);
 
   dom.window.close();
   await new Promise(r => setTimeout(r, 500));
