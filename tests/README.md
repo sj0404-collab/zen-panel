@@ -6,11 +6,8 @@ Regression suites for the panel and the hub UIs. Everything runs locally:
 | Suite | Covers |
 |---|---|
 | `panel-tabs-e2e.js` | session/model cards, tabbed second layer, no-reload switching, save/stop PUTs, dead-tab drop, 403 backoff (mark/stop/pause/alert), per-OS slots, ETag 304, refresh auto-pause, hub gate tokens (+probe/recovery/reuse, zt-strip, probe-url, open diagnostic, safe links, probe logging, preview zt, 429 hint) |
-| `hub-mobile-touch.js` | mobile UI: touch actions, storage ids, browse, clone-and-open, unknown-backend errors, gh verify/badges/repo-open, session save, chooser zt/gh carry |
 | `hub-connect-e2e.js` | hub APK connect page: dispatch token, session poll, /m open URL |
-| `hub-panel-e2e.js` | panel UI: 4 tabs over /gh proxy, repo open, actions cancel, hub sessions+dispatch |
-| `gh-proxy-test.js` | server GH proxy: allowlist, ETag 304, hub.yml token dynasty, errors |
-| `hub-desktop-touch.js` | same for the desktop UI |
+| `mobile-touch-test.js` | phone taps/scroll fixes + default hub-work folder |
 
 The panel suite stubs `fetch` (GitHub API), the hub suites stub it too
 (hub server API) — no tokens, no network. Env overrides for local runs:
