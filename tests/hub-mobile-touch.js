@@ -148,7 +148,7 @@ function check(name, cond, extra) {
   const chooser = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/index.html'), 'utf8');
   const cdom = new JSDOM(chooser, { url: 'http://localhost:8090/?zt=tok123#gh=abc', runScripts: 'dangerously' });
   const chrefs = [...cdom.window.document.querySelectorAll('a.card')].map(a => a.href);
-  check('t28 chooser keeps zt', chrefs.length === 2 && chrefs.every(h => h.includes('zt=tok123')), chrefs.join('|'));
+  check('t28 chooser keeps zt', chrefs.length === 3 && chrefs.every(h => h.includes('zt=tok123')) && chrefs.some(h => h.includes('/panel?')), chrefs.join('|'));
   check('t29 chooser keeps gh', chrefs.every(h => h.includes('#gh=abc')), chrefs.join('|'));
 
   // 14. ?zt= from the page URL is forwarded on API calls

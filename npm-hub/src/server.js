@@ -9,6 +9,7 @@ const pty = require('node-pty');
 const StorageManager = require('./storage/manager');
 const ModelManager = require('./models/manager');
 const { startTunnel } = require('./tunnel');
+const ghProxy = require('./gh-proxy');
 
 const app = express();
 const HOME = os.homedir();
@@ -47,6 +48,21 @@ app.get('/m', (req, res) => {
 });
 app.get('/m/*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'mobile.html'));
+});
+app.get('/panel', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'panel.html'));
+});
+
+// ─── GITHUB PROXY — the browser holds only ?zt=, the PAT lives here ───
+app.all('/gh/*', async (req, res) => {
+  try {
+    const sub = (req.params[0] || '').split('?')[0];
+    const r = await ghProxy.request(req.method, sub, { query: req.query, body: req.body });
+    if (r.status === 204) return res.sendStatus(204);
+    res.json({ success: true, cached: !!r.cached, data: r.body });
+  } catch (e) {
+    res.status((e && e.status) || 500).json({ success: false, error: String((e && e.message) || e) });
+  }
 });
 
 // ─── CORS — allow all origins (for phone access) ───
@@ -269,7 +285,7 @@ app.post('/api/git/clone', async (req, res) => {
   const m = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(String((req.body || {}).repo || '').trim());
   if (!m) return res.json({ success: false, error: 'need "owner/name"' });
   try {
-    const r = await doCloneRepo(m[1], m[2], { token: String((req.body || {}).token || ''), branch: String((req.body || {}).branch || '') });
+    const r = await doCloneRepo(m[1], m[2], { token: String((req.body || {}).token || process.env.GH_TOKEN || ''), branch: String((req.body || {}).branch || '') });
     res.json({ success: true, ...r });
   } catch (e) {
     res.json({ success: false, error: e.message });

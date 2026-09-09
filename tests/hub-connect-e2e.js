@@ -53,7 +53,10 @@ function check(name, cond, extra) {
   await window.dispatchHub('ghp_x', 'zt123');
   const d = dispatches[0] || {};
   check('c2 dispatch ref+inputs', d.ref === 'main' && d.inputs && d.inputs.os === 'linux' &&
-    d.inputs.token === 'zt123' && d.inputs.label === 'hub-apk', JSON.stringify(d));
+    d.inputs.token === 'zt123' && d.inputs.label === 'hub-apk' && d.inputs.gh_token === 'ghp_x' &&
+    d.inputs.runner_linux === undefined, JSON.stringify(d));
+  await window.dispatchHub('ghp_x', 'zt123', 'mypc');
+  check('c2b dispatch runner', dispatches[1].inputs.runner_linux === 'mypc', JSON.stringify(dispatches[1]));
 
   sessionMode = 'live';
   const s = await window.readHubSession('ghp_x');
@@ -62,8 +65,8 @@ function check(name, cond, extra) {
   sessionMode = 'missing';
   check('c4 session 404 is null', (await window.readHubSession('ghp_x')) === null);
 
-  check('c5 open url shape', window.buildOpenUrl(liveSession, 'ZZ', 'ghp_x') === 'https://hub.local/m?zt=ZZ#gh=ghp_x',
-    window.buildOpenUrl(liveSession, 'ZZ', 'ghp_x'));
+  check('c5 open url shape', window.buildOpenUrl(liveSession, 'ZZ') === 'https://hub.local/panel?zt=ZZ',
+    window.buildOpenUrl(liveSession, 'ZZ'));
 
   sessionMode = 'flaky'; polls = 0;
   const w = await window.waitForHub('ghp_x', Date.now() - 1000, 5);
