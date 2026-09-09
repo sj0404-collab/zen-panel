@@ -65,7 +65,7 @@ function check(name, cond, extra) {
   sessionMode = 'missing';
   check('c4 session 404 is null', (await window.readHubSession('ghp_x')) === null);
 
-  check('c5 open url shape', window.buildOpenUrl(liveSession, 'ZZ') === 'https://hub.local/panel?zt=ZZ',
+  check('c5 open url shape', window.buildOpenUrl(liveSession, 'ZZ') === 'https://hub.local/m?zt=ZZ',
     window.buildOpenUrl(liveSession, 'ZZ'));
 
   sessionMode = 'flaky'; polls = 0;
