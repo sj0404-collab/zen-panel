@@ -8,6 +8,9 @@ const server = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/src/server.js
 const mob = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/mobile-app.js'), 'utf8');
 const desk = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/desktop-app.js'), 'utf8');
 const mgr = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/src/storage/manager.js'), 'utf8');
+const mobHtml = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/mobile.html'), 'utf8');
+const deskHtml = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/desktop.html'), 'utf8');
+const mainKt = fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/java/dev/zen/hub/MainActivity.kt'), 'utf8');
 
 let pass = 0, fail = 0;
 function check(name, cond, extra) {
@@ -74,6 +77,27 @@ check('q13 mobile install ui', mob.includes('installTool(') && mob.includes('С�
 // q14: same for desktop.
 check('q14 desktop install ui', desk.includes('installTool(') && desk.includes('Скачать') &&
   desk.includes('install-ov') && desk.includes('/api/tools/install-status'));
+
+// q15: Files tab works without system dialogs (dead in some WebViews).
+check('q15 mobile no system dialogs', !/prompt\('/.test(mob) && !/confirm\('/.test(mob) && !/alert\('/.test(mob));
+
+// q16: same for desktop.
+check('q16 desktop no system dialogs', !/prompt\('/.test(desk) && !/confirm\('/.test(desk) && !/alert\('/.test(desk));
+
+// q17: tap-to-enter folders (dblclick is dead on phones).
+check('q17 tap to enter', mob.includes('function fmTap(') && desk.includes('function fmTap(') &&
+  mob.includes('data-isdir=') && desk.includes('data-isdir=') &&
+  !/ondblclick/.test(mob) && !/ondblclick/.test(desk));
+
+// q18: create-file button exists in both UIs.
+check('q18 create file', mob.includes('function fmCreateFile(') && desk.includes('function fmCreateFile(') &&
+  mobHtml.includes('fmCreateFile()') && deskHtml.includes('fmCreateFile()'));
+
+// q19: APK opens the system file picker for uploads.
+check('q19 apk file chooser', mainKt.includes('onShowFileChooser') && mainKt.includes('ActivityResultContracts'));
+
+// q20: APK hands downloads to the system DownloadManager.
+check('q20 apk downloads', mainKt.includes('setDownloadListener') && mainKt.includes('DownloadManager'));
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
