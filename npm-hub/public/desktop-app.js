@@ -1,4 +1,4 @@
-let tools = [], homeDir = 'C:\\Users\\virus', workDir = '', accessMode = 'local';
+let tools = [], homeDir = '', workDir = '', accessMode = 'local';
 let tabs = [], activeTab = null, zoomLevel = 100;
 let fmCurrentPath = '', fmSelected = null, fmBackend = 'local';
 let recentPaths = [], toolDirs = {};
@@ -159,6 +159,9 @@ function renderDashboard() {
     <div class="st"><div class="st-v" style="color:var(--pur)">${tabs.length}</div><div class="st-l">Сессий</div></div>
     <div class="st"><div class="st-v" style="color:var(--warn)">${m ? m.name : selectedModel}</div><div class="st-l">Модель</div></div>`;
 
+  const dirStash = {};
+  document.querySelectorAll('.card-dir').forEach(el => { dirStash[el.id] = el.value; });
+  const focusId = document.activeElement && document.activeElement.id;
   document.getElementById('grid').innerHTML = tools.map(t => {
     const dir = toolDirs[t.id] || homeDir;
     return `<div class="card">
@@ -178,6 +181,8 @@ function renderDashboard() {
       </div>
     </div>`;
   }).join('');
+  for (const [id, v] of Object.entries(dirStash)) { const el = document.getElementById(id); if (el) el.value = v; }
+  if (focusId) { const f = document.getElementById(focusId); if (f && f.focus) f.focus(); }
 }
 
 function toggleApplyMenu(e, toolId) {
@@ -217,7 +222,7 @@ function showDirPicker(e, toolId) {
   if (!dd) return;
   const paths = recentPaths.slice(0, 15);
   dd.innerHTML = paths.map(p => {
-    const short = p.replace(homeDir, '~').replace(/\\/g, '/');
+    const short = (homeDir ? p.replace(homeDir, '~') : p).replace(/\\/g, '/');
     return `<div class="path-dd-item" onclick="event.stopPropagation();setToolDir('${toolId}','${escAttr(p)}')">${short}</div>`;
   }).join('') || '<div class="path-dd-item" style="color:var(--t3)">Нет путей</div>';
   dd.classList.add('on');
@@ -252,7 +257,7 @@ function openTerminal(dir) {
 function renderSidebar() {
   document.getElementById('tool-list').innerHTML = tools.filter(t => t.installed).map(t => {
     const dir = toolDirs[t.id] || homeDir;
-    const short = dir.replace(homeDir, '~').split('\\').pop();
+    const short = (homeDir ? dir.replace(homeDir, '~') : dir).split('\\').pop();
     return `<div class="sb-i" onclick="launchTool('${t.id}')">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div>
       <div style="overflow:hidden;flex:1"><div>${t.name}</div><div style="font-size:8px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${short}</div></div>
@@ -282,7 +287,7 @@ function showNewTermModal() {
   const rp = document.getElementById('recent-paths');
   rp.innerHTML = recentPaths.length ? '<div style="font-size:9px;color:var(--t3);margin-bottom:4px">Недавние:</div>' +
     recentPaths.slice(0, 8).map(p => {
-      const short = p.replace(homeDir, '~').replace(/\\/g, '/');
+      const short = (homeDir ? p.replace(homeDir, '~') : p).replace(/\\/g, '/');
       return `<div class="path-dd-item" onclick="document.getElementById('newterm-cwd').value='${escAttr(p)}'" style="padding:3px 6px;font-size:10px;font-family:monospace;cursor:pointer;color:var(--t2);border-bottom:1px solid var(--bdr)">${short}</div>`;
     }).join('') : '';
   document.getElementById('modal-newterm').classList.add('on');
@@ -322,7 +327,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   term.loadAddon(fitAddon);
   term.loadAddon(new WebLinksAddon.WebLinksAddon());
 
-  const dirShort = cwd.replace(homeDir, '~').split('\\').pop();
+  const dirShort = (homeDir ? cwd.replace(homeDir, '~') : cwd).split('\\').pop();
   const displayName = isPlain ? 'Terminal' : tool.name;
   const color = isPlain ? '#58a6ff' : tool.color;
   const icon = isPlain ? '>_' : tool.icon;
@@ -547,7 +552,7 @@ function fmGoUp() {
   fmBrowse(p.join('/') || '/');
 }
 
-function fmGoHome() { fmBackend = 'local'; fmBrowse(homeDir); }
+function fmGoHome() { fmBackend = 'local'; fmBrowse(homeDir || '/'); }
 function fmRefresh() { fmBrowse(fmCurrentPath); }
 
 function toggleFmMenu(e) {
@@ -767,6 +772,42 @@ async function fmUpload() {
 // ─── HELPERS ───
 function formatSize(b) { if (!b) return ''; if (b < 1024) return b + ' B'; if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'; if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB'; return (b / 1073741824).toFixed(1) + ' GB'; }
 function fileIcon(n) { const e = n.split('.').pop().toLowerCase(); return {js:'📜',ts:'📜',py:'🐍',rs:'🦀',go:'🔷',html:'🌐',css:'🎨',json:'📋',md:'📝',txt:'📝',jpg:'🖼',png:'🖼',mp3:'🎵',mp4:'🎬',zip:'📦',exe:'⚙',bat:'🖥',sh:'🖥'}[e] || '📄'; }
+async function openBrowser() {
+  closeModal('modal-newterm');
+  document.getElementById('modal-browser').classList.add('on');
+  const drivesR = await fetch('/api/drives').then(r => r.json());
+  if (drivesR.success) {
+    document.getElementById('browser-drives').innerHTML = drivesR.drives.map(d =>
+      `<button class="drive-btn" onclick="browseTo('${d}')">${d}</button>`
+    ).join('');
+  }
+  browseTo(homeDir || '/');
+}
+
+async function browseTo(p) {
+  const r = await fetch(`/api/browse?backend=local&path=${encodeURIComponent(p)}`).then(r => r.json());
+  if (!r.success) return;
+  document.getElementById('browser-path').value = r.path;
+  const list = document.getElementById('browser-list');
+  let html = '';
+  if (r.parent && r.parent !== r.path) html += `<div class="fm-item" onclick="browseTo('${escAttr(r.parent)}')"><span class="fm-ico">📁</span><span class="fm-name">..</span></div>`;
+  html += r.items.filter(i => i.isDir).map(i => `<div class="fm-item" data-path="${escHtml(i.path)}" onclick="browserTap(this)"><span class="fm-ico">📁</span><span class="fm-name">${escHtml(i.name)}</span></div>`).join('');
+  list.innerHTML = html || '<div style="padding:20px;color:var(--t3);text-align:center">Пусто</div>';
+}
+
+function browserTap(el) {
+  if (el.classList.contains('fm-sel')) { browseTo(el.dataset.path); return; }
+  document.querySelectorAll('#browser-list .fm-item').forEach(e => e.classList.remove('fm-sel'));
+  el.classList.add('fm-sel');
+}
+
+function selectBrowserPath() {
+  const sel = document.querySelector('#browser-list .fm-sel');
+  if (sel) document.getElementById('newterm-cwd').value = sel.dataset.path;
+  closeModal('modal-browser');
+  document.getElementById('modal-newterm').classList.add('on');
+}
+
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function escAttr(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 

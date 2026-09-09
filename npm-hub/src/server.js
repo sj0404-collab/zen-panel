@@ -406,7 +406,8 @@ wss.on('connection', (ws) => {
         const tool = TOOLS.find(t => t.id === msg.toolId);
         const isWin = process.platform === 'win32';
         const shell = isWin ? (process.env.COMSPEC || 'cmd.exe') : (process.env.SHELL || '/bin/sh');
-        const cwd = msg.cwd || HOME;
+        let cwd = msg.cwd || HOME;
+        try { if (!fs.statSync(cwd).isDirectory()) cwd = HOME; } catch { cwd = HOME; }
 
         try {
           const p = pty.spawn(shell, [], {

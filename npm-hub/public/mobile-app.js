@@ -1,4 +1,4 @@
-let tools = [], homeDir = 'C:\\Users\\virus', workDir = '', accessMode = 'local';
+let tools = [], homeDir = '', workDir = '', accessMode = 'local';
 let tabs = [], activeTab = null, zoomLevel = 100;
 let fmCurrentPath = '', fmSelected = null, fmBackend = 'local';
 let recentPaths = [], toolDirs = {};
@@ -159,6 +159,9 @@ function renderDashboard() {
     <div class="st"><div class="st-v" style="color:var(--pur)">${tabs.length}</div><div class="st-l">Сессий</div></div>
     <div class="st"><div class="st-v" style="color:var(--warn)">${m ? m.name : selectedModel}</div><div class="st-l">Модель</div></div>`;
 
+  const dirStash = {};
+  document.querySelectorAll('.card-dir').forEach(el => { dirStash[el.id] = el.value; });
+  const focusId = document.activeElement && document.activeElement.id;
   document.getElementById('grid').innerHTML = tools.map(t => {
     const dir = toolDirs[t.id] || homeDir;
     return `<div class="card">
@@ -178,6 +181,8 @@ function renderDashboard() {
       </div>
     </div>`;
   }).join('');
+  for (const [id, v] of Object.entries(dirStash)) { const el = document.getElementById(id); if (el) el.value = v; }
+  if (focusId) { const f = document.getElementById(focusId); if (f && f.focus) f.focus(); }
 }
 
 function toggleApplyMenu(e, toolId) {
@@ -213,7 +218,7 @@ async function openFromCard(fromToolId, dir, launchToolId) {
 function renderSidebar() {
   document.getElementById('tool-list').innerHTML = tools.filter(t => t.installed).map(t => {
     const dir = toolDirs[t.id] || homeDir;
-    const short = dir.replace(homeDir, '~').split('\\').pop();
+    const short = (homeDir ? dir.replace(homeDir, '~') : dir).split('\\').pop();
     return `<div class="sb-i" onclick="launchTool('${t.id}');toggleDrawer()">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div>
       <div style="overflow:hidden;flex:1"><div>${t.name}</div><div style="font-size:9px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${short}</div></div>
@@ -243,7 +248,7 @@ function showNewTermModal() {
   const rp = document.getElementById('recent-paths');
   rp.innerHTML = recentPaths.length ? '<div style="font-size:10px;color:var(--t3);margin-bottom:4px">Недавние:</div>' +
     recentPaths.slice(0, 8).map(p => {
-      const short = p.replace(homeDir, '~').replace(/\\/g, '/');
+      const short = (homeDir ? p.replace(homeDir, '~') : p).replace(/\\/g, '/');
       return `<div class="path-dd-item" onclick="document.getElementById('newterm-cwd').value='${escAttr(p)}'" style="padding:6px 8px;font-size:12px;font-family:monospace;cursor:pointer;color:var(--t2);border-bottom:1px solid var(--bdr)">${short}</div>`;
     }).join('') : '';
   document.getElementById('modal-newterm').classList.add('on');
@@ -283,7 +288,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   term.loadAddon(fitAddon);
   term.loadAddon(new WebLinksAddon.WebLinksAddon());
 
-  const dirShort = cwd.replace(homeDir, '~').split('\\').pop();
+  const dirShort = (homeDir ? cwd.replace(homeDir, '~') : cwd).split('\\').pop();
   const toolName = isPlain ? 'Terminal' : tool.name;
   const toolColor = isPlain ? '#58a6ff' : tool.color;
   const toolIcon = isPlain ? '>_ ' : tool.icon;
@@ -570,7 +575,7 @@ function fmGoUp() {
   fmBrowse(p.join('/') || '/');
 }
 
-function fmGoHome() { fmBackend = 'local'; fmBrowse(homeDir); }
+function fmGoHome() { fmBackend = 'local'; fmBrowse(homeDir || '/'); }
 function fmRefresh() { fmBrowse(fmCurrentPath); }
 
 function toggleFmMenu(e) {
@@ -776,7 +781,7 @@ async function openBrowser() {
       `<button class="drive-btn" onclick="browseTo('${d}')">${d}</button>`
     ).join('');
   }
-  browseTo(homeDir);
+  browseTo(homeDir || '/');
 }
 
 async function browseTo(p) {
