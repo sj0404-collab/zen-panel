@@ -10,6 +10,7 @@ Android-панель и GitHub Actions для Zen Agent, OpenCode, NPM Hub и у
 - CLI-агент и веб-хаб (`agent/`)
 - NPM Hub — дашборд CLI-инструментов, терминалы и файловый менеджер (`npm-hub/`, доки: `npm-hub/README.md`)
 - Десктопная оболочка для Windows/Linux в `desktop/` (Electron, те же страницы панели)
+- Локальный ПК (`pc-local/`): старт хаба и панели одним скриптом, плюс вариант с self-hosted раннером внутри
 - Workflow:
   - `agent.yml` — CLI-агент на Linux/Windows, туннель, чат в оверлее
   - `opencode.yml` — OpenCode web на Linux/Windows, туннель, чат в оверлее
@@ -49,6 +50,13 @@ cd npm-hub && npm install && node src/server.js   # http://localhost:8090/ (d �
 ```
 
 Подробности — в `npm-hub/README.md`: env-переменные, API, модель id хранилищ (`github-xxxxx`), клонирование репозитория в один клик (▶).
+
+## Локальный ПК (две версии)
+
+- **Без раннера** — `pc-local/start.sh` (`.bat` на Windows): поднимает npm-hub и десктопную панель на этом ПК. Агент/OpenCode/столы при этом по-прежнему запускаются в облаке GitHub.
+- **С раннером** — `pc-local/runner/setup.sh` регистрирует ПК self-hosted раннером репозитория; после этого в диалоге запуска панели появляется «свой ПК», и сессии выполняются локально. Workflow принимают метки через inputs `runner_linux` / `runner_windows` (по умолчанию `ubuntu-latest` / `windows-latest`).
+
+Подробности — в `pc-local/README.md` и `pc-local/runner/README.md`.
 
 ## OpenCode — какой адрес открывать и как выбрать веб-интерфейс
 

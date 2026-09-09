@@ -61,6 +61,14 @@ on:
         description: "Name for this session"
         type: string
         default: "desks"
+      runner_linux:
+        description: "Runner for the Linux job (a label, or self-hosted - see pc-local/runner)"
+        type: string
+        default: "ubuntu-latest"
+      runner_windows:
+        description: "Runner for the Windows job (a label, or self-hosted - see pc-local/runner)"
+        type: string
+        default: "windows-latest"
 
 permissions:
   contents: write
@@ -69,7 +77,7 @@ jobs:
   # ── Linux desk ─────────────────────────────────────────────────────
   linux:
     if: inputs.which == 'both' || inputs.which == 'linux'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner_linux }}
     timeout-minutes: 360
 
     steps:
@@ -262,7 +270,7 @@ jobs:
   # ── Windows desk ───────────────────────────────────────────────────
   windows:
     if: inputs.which == 'both' || inputs.which == 'windows'
-    runs-on: windows-latest
+    runs-on: ${{ inputs.runner_windows }}
     timeout-minutes: 360
 
     steps:
