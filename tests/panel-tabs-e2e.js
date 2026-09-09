@@ -32,6 +32,7 @@ const dispatches = [];
 let contentsGets = 0;
 let hubGate401 = false;
 let promptAnswer = null;
+const fetchUrls = [];
 function stub403() {
   return { status: 403, ok: false,
     headers: { get: (h) => h === 'x-ratelimit-reset' ? String(Math.floor(Date.now() / 1000) + 300) : null },
@@ -50,6 +51,7 @@ function stubFetch(url, opts) {
     puts.push({ url, body: JSON.parse(opts.body) });
     return Promise.resolve({ status: 201, ok: true, json: async () => ({ content: {} }) });
   }
+  fetchUrls.push(url);
   if (/^https:\/\/hub[^/]*\//.test(url)) {
     if (hubGate401) return Promise.resolve({ status: 401, ok: false, json: async () => ({ success: false, error: 'hub token?' }) });
     return Promise.resolve({ status: 200, ok: true, json: async () => ({ success: true }) });
@@ -237,6 +239,18 @@ function stubFetch(url, opts) {
   await dom.window.launchHub();
   eq('p37 token reused', ((dispatches[0] || {}).inputs || {}).token === 'REUSE1', true);
   eq('p38 notify url token', /zt=REUSE1/.test(dom.window.eval('READY.url')) && /#gh=TEST/.test(dom.window.eval('READY.url')), true);
+
+  dom.window.eval('HUB_TOKENS["hub-linux"]="NEW1"');
+  dom.window.eval('DESKS["hub-linux"]={hubUrl:"https://hub.local/?zt=OLD&x=1"}');
+  const dupe = dom.window.eval('deskSlotUrl("hub-linux")');
+  eq('p39 zt idempotent', (dupe.match(/zt=/g) || []).length === 1 && dupe.includes('zt=NEW1') && dupe.includes('x=1') && !dupe.includes('zt=OLD'), true);
+
+  fetchUrls.length = 0;
+  await dom.window.expandDesk('hub-linux');
+  await waitFor(() => (document.getElementById('desk-frame-hub-linux')?.src || '').includes('zt=NEW1'));
+  eq('p40 probe url clean', fetchUrls.some(u => u === 'https://hub.local/api/tools'), true);
+  eq('p41 open diagnostic', (document.getElementById('boot-log')?.textContent || '').includes('hub-linux') &&
+    (document.getElementById('boot-log')?.textContent || '').includes('zt ok'), true);
 
   dom.window.close();
   await new Promise(r => setTimeout(r, 500));

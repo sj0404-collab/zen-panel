@@ -64,6 +64,15 @@ jobs:
         with:
           path: fork
 
+      # The gate token is echoed into this job's logs by the shell (every
+      # x-hub-token probe line). Mask it before anything prints it.
+      - name: Mask the gate token in logs
+        if: inputs.token != ''
+        shell: bash
+        env:
+          ZT_MASK: ${{ inputs.token }}
+        run: echo "::add-mask::$ZT_MASK"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -266,6 +275,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: fork
+
+      # The gate token is echoed into this job's logs by the shell (every
+      # x-hub-token probe line). Mask it before anything prints it.
+      - name: Mask the gate token in logs
+        if: inputs.token != ''
+        shell: bash
+        env:
+          ZT_MASK: ${{ inputs.token }}
+        run: echo "::add-mask::$ZT_MASK"
 
       - uses: actions/setup-node@v4
         with:
