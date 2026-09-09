@@ -409,13 +409,80 @@ function sendEscape() {
 async function pasteClipboard() {
   if (!activeTab || !activeTab.ws) return;
   try {
-    const text = await navigator.clipboard.readText();
-    if (text && activeTab.ws.readyState === WebSocket.OPEN) {
-      activeTab.ws.send(JSON.stringify({ type: 'input', data: text }));
-      activeTab.term?.focus();
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        if (activeTab.ws.readyState === WebSocket.OPEN) {
+          activeTab.ws.send(JSON.stringify({ type: 'input', data: text }));
+          activeTab.term?.focus();
+        }
+        return;
+      }
     }
   } catch {}
+  const text = await clipBox('Вставь текст (Ctrl+V), затем «Вставить»:', '', 'Вставить');
+  if (text && activeTab.ws.readyState === WebSocket.OPEN) {
+    activeTab.ws.send(JSON.stringify({ type: 'input', data: text }));
+    activeTab.term?.focus();
+  }
 }
+
+let clipResolve = null;
+function clipClose(val) {
+  const ov = document.getElementById('clip-ov');
+  if (ov) ov.style.display = 'none';
+  if (clipResolve) { const r = clipResolve; clipResolve = null; r(val); }
+}
+function clipBox(title, value, okText) {
+  return new Promise(resolve => {
+    if (clipResolve) { resolve(null); return; }
+    let ov = document.getElementById('clip-ov');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'clip-ov';
+      ov.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.75);display:flex;flex-direction:column;padding:14px;gap:10px';
+      ov.innerHTML = '<b id="clip-title" style="font-size:14px"></b>' +
+        '<textarea id="clip-text" style="flex:1;overflow-y:auto;background:#0a0a0f;border:1px solid var(--bdr);border-radius:10px;padding:10px;color:var(--t1);font:12px/1.5 monospace;-webkit-overflow-scrolling:touch"></textarea>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" id="clip-cancel">Отмена</button>' +
+        '<button class="btn btn-p" id="clip-ok">OK</button></div>';
+      document.body.appendChild(ov);
+      document.getElementById('clip-cancel').onclick = () => clipClose(null);
+      document.getElementById('clip-ok').onclick = () => clipClose(document.getElementById('clip-text').value);
+    }
+    document.getElementById('clip-title').textContent = title;
+    const ta = document.getElementById('clip-text');
+    ta.value = value || '';
+    document.getElementById('clip-ok').textContent = okText || 'OK';
+    ov.style.display = 'flex';
+    clipResolve = v => resolve(v);
+    setTimeout(() => { ta.focus(); ta.select(); }, 50);
+  });
+}
+async function copySelection() {
+  const term = activeTab && activeTab.term;
+  if (!term) return;
+  let txt = '';
+  try { txt = term.getSelection() || ''; } catch {}
+  if (!txt) {
+    try {
+      const buf = term.buffer.active;
+      const from = Math.max(0, buf.length - 200);
+      const lines = [];
+      for (let y = from; y < buf.length; y++) lines.push(buf.getLine(y).translateToString(true));
+      txt = lines.join('\n').replace(/\s+$/, '');
+    } catch {}
+  }
+  if (!txt) { fmInfo('Нечего копировать'); return; }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(txt);
+      fmInfo('Скопировано');
+      return;
+    }
+  } catch {}
+  await clipBox('Скопируй текст (долгий тап → Копировать):', txt, 'Готово');
+}
+
 
 function restartTerm() {
   if (!activeTab) return;
