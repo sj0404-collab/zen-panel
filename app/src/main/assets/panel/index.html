@@ -1278,7 +1278,43 @@ async function loadDesks() {
   }
 }
 
-function expandDesk(slot) { deskOpen = slot; loadDesks(); }
+// A gated hub plus a panel that lost the token (reinstall, another device,
+// a hand-dispatched run) used to show a bare 401 JSON. Probe first; on a 401
+// offer a relaunch (the panel then holds the token) or manual entry.
+async function ensureHubAccess(slot) {
+  const s = DESKS[slot];
+  const raw = s && (s.hubUrl || s.deskUrl || s.url || '');
+  const base = String(raw || '').split('#')[0].replace(/\/+$/, '');
+  if (!base) return true;
+  let ctl = null;
+  try { ctl = new AbortController(); } catch (e) {}
+  let to = null;
+  try {
+    if (ctl) to = setTimeout(() => ctl.abort(), 8000);
+    const zt = HUB_TOKENS[slot] || '';
+    const r = await fetch(base + '/api/tools', zt
+      ? { headers: { 'x-hub-token': zt }, signal: ctl && ctl.signal }
+      : { signal: ctl && ctl.signal });
+    if (r.status !== 401) return true;
+  } catch (e) { return true; }
+  finally { if (to) clearTimeout(to); }
+  if (confirm('Хаб закрыт токеном, которого у панели нет (запуск с другого устройства, переустановка или ручной dispatch).\n\nОК — перезапустить хаб (панель получит новый токен)\nОтмена — ввести токен вручную')) {
+    await launchHub(slot === 'hub-windows' ? 'windows' : slot === 'hub-linux' ? 'linux' : undefined);
+    return false;
+  }
+  const manual = prompt('Токен хаба (?zt=...):', '');
+  if (!manual) return false;
+  HUB_TOKENS[slot] = manual.trim();
+  saveHubTokens();
+  return true;
+}
+
+async function expandDesk(slot) {
+  if (slot === 'hub' || slot.startsWith('hub-')) {
+    if (!await ensureHubAccess(slot)) return;
+  }
+  deskOpen = slot; loadDesks();
+}
 function collapseDesks()  { deskOpen = null; closeDeskOverlay(); loadDesks(); }
 
 /** Tear down the second layer and give the page its scrolling back. */
@@ -1685,10 +1721,10 @@ async function launchOpencode() {
   }
 }
 
-async function launchHub() {
+async function launchHub(preferOs) {
   if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
   try { if (window.ZenBridge && ZenBridge.requestNotifications) ZenBridge.requestNotifications(); } catch (e) {}
-  const where = confirm('Где поднять NPM-Hub?\n\nОК — Linux\nОтмена — Windows') ? 'linux' : 'windows';
+  const where = preferOs || (confirm('Где поднять NPM-Hub?\n\nОК — Linux\nОтмена — Windows') ? 'linux' : 'windows');
 
   const running = liveHub(await currentRuns());
   if (running.length) {
@@ -1704,7 +1740,10 @@ async function launchHub() {
   btn.dataset.label = btn.dataset.label || btn.textContent;
   busyButtons(true, 'btn-hub');
   try {
-    const hubToken = genHubToken();
+    // Reuse the slot's token when there is one: a relaunch while the old run
+    // is still dying would otherwise 401 against it with a fresh token, and
+    // the panel keeps opening the same address across relaunches.
+    const hubToken = HUB_TOKENS['hub-' + where] || genHubToken();
     HUB_TOKENS['hub-' + where] = hubToken;
     saveHubTokens();
     const r = await dispatchWorkflow('hub.yml', { os: where, label: 'hub', token: hubToken, ...runnerInputs() });
@@ -1743,8 +1782,9 @@ function bootLog(msg) {
 let READY = { slot: '', url: '', title: '' };
 function sessionReady(kind, s) {
   const url = chatUrlWithQ((s && (s.agentUrl || s.hubUrl || s.deskUrl || s.url)) || '');
+  const openUrl = (kind === 'hub' || (kind && kind.startsWith('hub-'))) ? hubUrlWithToken(url, kind) : url;
   const title = KIND_LABEL[kind] || 'Сессия';
-  READY = { slot: kind, url, title };
+  READY = { slot: kind, url: openUrl, title };
   bootLog('готово · ' + (url ? 'адрес получен' : 'сессия жива'));
   const bar = $('ready-bar');
   if (bar) {
@@ -1752,7 +1792,7 @@ function sessionReady(kind, s) {
     if ($('ready-title')) $('ready-title').textContent = title + ' готов';
     if ($('ready-sub')) $('ready-sub').textContent = bootStamp() + '  можно открывать чат';
   }
-  try { if (window.ZenBridge && ZenBridge.notifyReady) ZenBridge.notifyReady(title + ' готов', 'Нажмите «Открыть чат»', kind, url); } catch (e) {}
+  try { if (window.ZenBridge && ZenBridge.notifyReady) ZenBridge.notifyReady(title + ' готов', 'Нажмите «Открыть чат»', kind, openUrl); } catch (e) {}
   try {
     if (Notification && Notification.permission === 'granted') {
       new Notification(title + ' готов', { body: 'Открыть чат', tag: 'zen-' + kind });

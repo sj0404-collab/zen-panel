@@ -30,6 +30,8 @@ let etagOn = false, seenInm = '';
 let confirmSeq = [];
 const dispatches = [];
 let contentsGets = 0;
+let hubGate401 = false;
+let promptAnswer = null;
 function stub403() {
   return { status: 403, ok: false,
     headers: { get: (h) => h === 'x-ratelimit-reset' ? String(Math.floor(Date.now() / 1000) + 300) : null },
@@ -47,6 +49,10 @@ function stubFetch(url, opts) {
   if (opts && opts.method === 'PUT') {
     puts.push({ url, body: JSON.parse(opts.body) });
     return Promise.resolve({ status: 201, ok: true, json: async () => ({ content: {} }) });
+  }
+  if (/^https:\/\/hub[^/]*\//.test(url)) {
+    if (hubGate401) return Promise.resolve({ status: 401, ok: false, json: async () => ({ success: false, error: 'hub token?' }) });
+    return Promise.resolve({ status: 200, ok: true, json: async () => ({ success: true }) });
   }
   if (url.includes('/dispatches') && opts && opts.method === 'POST') {
     dispatches.push(JSON.parse(opts.body));
@@ -69,6 +75,7 @@ function stubFetch(url, opts) {
       window.fetch = stubFetch;
       window.alert = m => { alerts.push(String(m)); };
       window.confirm = () => confirmSeq.length ? confirmSeq.shift() : true;
+      window.prompt = () => promptAnswer;
       window.scrollTo = () => {};
       window.requestAnimationFrame = cb => setTimeout(cb, 0);
       window.localStorage.setItem('panel_accounts', JSON.stringify(
@@ -205,6 +212,31 @@ function stubFetch(url, opts) {
   contentsGets = 0;
   const lc = await dom.window.loadCreds();
   eq('p33 creds reuse desks', contentsGets <= 1 && lc && lc._slot === 'agent-linux', true);
+
+  dom.window.eval('HUB_TOKENS["hub-windows"]="ZTTEST"');
+  await dom.window.expandDesk('hub-windows');
+  await waitFor(() => document.getElementById('desk-frame-hub-windows')?.style.display === 'block');
+  eq('p34 probe opens gated frame', document.getElementById('desk-frame-hub-windows')?.src || '', /zt=ZTTEST/);
+
+  hubGate401 = true;
+  const openBefore = dom.window.eval('deskOpen');
+  const tokBefore = dom.window.eval('HUB_TOKENS["hub-linux"]');
+  confirmSeq.push(false); promptAnswer = null;
+  await dom.window.expandDesk('hub-linux');
+  eq('p35 recovery abort', dom.window.eval('deskOpen') === openBefore && dom.window.eval('HUB_TOKENS["hub-linux"]') === tokBefore, true);
+
+  confirmSeq.push(false); promptAnswer = 'MANUAL1';
+  await dom.window.expandDesk('hub-linux');
+  await waitFor(() => document.getElementById('desk-frame-hub-linux')?.style.display === 'block');
+  eq('p36 manual token', dom.window.eval('HUB_TOKENS["hub-linux"]') === 'MANUAL1' &&
+    (document.getElementById('desk-frame-hub-linux')?.src || '').includes('zt=MANUAL1'), true);
+  hubGate401 = false;
+
+  dom.window.eval('HUB_TOKENS["hub-linux"]="REUSE1"');
+  dispatches.length = 0; confirmSeq.length = 0;
+  await dom.window.launchHub();
+  eq('p37 token reused', ((dispatches[0] || {}).inputs || {}).token === 'REUSE1', true);
+  eq('p38 notify url token', /zt=REUSE1/.test(dom.window.eval('READY.url')) && /#gh=TEST/.test(dom.window.eval('READY.url')), true);
 
   dom.window.close();
   await new Promise(r => setTimeout(r, 500));
