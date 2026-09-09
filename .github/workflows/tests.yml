@@ -1,0 +1,23 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+    paths: ["agent/**", "desktop/**", "npm-hub/**", "app/src/main/assets/panel/**", "tests/**"]
+  pull_request:
+    paths: ["agent/**", "desktop/**", "npm-hub/**", "app/src/main/assets/panel/**", "tests/**"]
+
+jobs:
+  jsdom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: Install test dependencies
+        working-directory: tests
+        run: npm ci
+      - name: Run the jsdom suites
+        working-directory: tests
+        run: npm test

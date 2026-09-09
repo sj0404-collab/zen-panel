@@ -18,6 +18,7 @@ Android-панель и GitHub Actions для Zen Agent, OpenCode, NPM Hub и у
   - `panel-apk.yml` — сборка APK и GitHub Release (`v1.{commits}`, versionCode растёт сам)
   - `desktop.yml` — сборка ПК-версии и GitHub Release (`desktop-v1.{commits}`: `.exe` / `.AppImage` / `.deb`)
   - `js-syntax.yml` — `node --check` всего JS (`agent/`, `desktop/`, `npm-hub/`) на каждый push/PR
+  - `tests.yml` — jsdom-регрессии из `tests/` (`npm test`): панель (36 проверок), мобильный и десктопный UI хаба (20+18)
 
 ## Как пользоваться
 
