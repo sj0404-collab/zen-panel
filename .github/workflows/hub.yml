@@ -12,7 +12,7 @@ name: NPM Hub
 #
 #   No work branch, no autosave: the hub edits nothing by itself, it is a
 #   launcher. What outlives the runner is the models snapshot
-#   (models-hub.json) and whatever the user saves through the panel.
+#   (models-hub-<os>.json, one per OS) and whatever the user saves through the panel.
 #
 # AUTH
 #   None on the hub itself: whoever holds the tunnel address drives it. Same
@@ -144,7 +144,7 @@ jobs:
 
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
-              "slot=hub" "kind=NPM-Hub" "os=linux" \
+              "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
               "url=$URL" "hubUrl=$URL" "desktop=$URL/d" "mobile=$URL/m" \
               "auth=без пароля" "tools=$TOOLS" \
               "label=${{ inputs.label }}"
@@ -185,7 +185,7 @@ jobs:
             echo "back up on $URL"
             GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
               bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
-                "slot=hub" "kind=NPM-Hub" "os=linux" \
+                "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
                 "url=$URL" "hubUrl=$URL" "desktop=$URL/d" "mobile=$URL/m" \
                 "auth=без пароля" "label=${{ inputs.label }}"
           done
@@ -194,7 +194,7 @@ jobs:
         if: always()
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=hub" "state=ended" || true
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=hub-linux" "state=ended" || true
 
       - name: Save the models snapshot
         if: always()
@@ -218,7 +218,7 @@ jobs:
           PY
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
-              "slot=hub" "file=models-hub.json" \
+              "slot=hub-linux" "file=models-hub-linux.json" \
               "kind=NPM-Hub" "os=linux" \
               "json=/tmp/hub-models.json" || true
 
@@ -353,7 +353,7 @@ jobs:
 
           $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-            'slot=hub' 'kind=NPM-Hub' 'os=windows' `
+            'slot=hub-windows' 'kind=NPM-Hub' 'os=windows' `
             "url=$url" "hubUrl=$url" "desktop=$url/d" "mobile=$url/m" `
             'auth=без пароля' "tools=$toolsLine" `
             'label=${{ inputs.label }}'
@@ -406,7 +406,7 @@ jobs:
             Write-Host "back up on $url"
             $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
             bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-              'slot=hub' 'kind=NPM-Hub' 'os=windows' `
+              'slot=hub-windows' 'kind=NPM-Hub' 'os=windows' `
               "url=$url" "hubUrl=$url" "desktop=$url/d" "mobile=$url/m" `
               'auth=без пароля' 'label=${{ inputs.label }}'
           }
@@ -416,7 +416,7 @@ jobs:
         shell: pwsh
         run: |
           $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
-          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" 'slot=hub' 'state=ended'
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" 'slot=hub-windows' 'state=ended'
 
       - name: Save the models snapshot
         if: always()
@@ -437,6 +437,6 @@ jobs:
           } catch { }
           $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-            'slot=hub' 'file=models-hub.json' `
+            'slot=hub-windows' 'file=models-hub-windows.json' `
             'kind=NPM-Hub' 'os=windows' `
             "json=$env:TEMP\hub-models.json"

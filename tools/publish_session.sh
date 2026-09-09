@@ -23,6 +23,8 @@
 #   Pass slot=linux, slot=windows or slot=agent and the entry lands in its own
 #   file - session-linux.json, session-windows.json, session-agent.json,
 session-opencode.json and session-hub.json - so
+#   agent/opencode/hub take an -linux/-windows suffix (one file per OS, so two
+#   runners stop overwriting each other); the bare slot stays for old runs.
 #   the two desks and the agent never overwrite each other. Without a slot the
 #   old single session.json is used, which keeps the older workflows working
 #   unchanged.
@@ -70,8 +72,14 @@ for arg in "$@"; do
     slot=linux)    FILE="session-linux.json" ;;
     slot=windows)  FILE="session-windows.json" ;;
     slot=agent)    FILE="session-agent.json" ;;
+    slot=agent-linux)    FILE="session-agent-linux.json" ;;
+    slot=agent-windows)  FILE="session-agent-windows.json" ;;
     slot=opencode) FILE="session-opencode.json" ;;
+    slot=opencode-linux) FILE="session-opencode-linux.json" ;;
+    slot=opencode-windows) FILE="session-opencode-windows.json" ;;
     slot=hub)      FILE="session-hub.json" ;;
+    slot=hub-linux)      FILE="session-hub-linux.json" ;;
+    slot=hub-windows)    FILE="session-hub-windows.json" ;;
     slot=*)        ;;   # unknown slot: ignore rather than write a stray file
     file=*)        FILE_OVERRIDE="$arg" ;;
     scrub=0)       SCRUB=0 ;;
@@ -87,8 +95,8 @@ set -- ${ARGS+"${ARGS[@]}"}
 # the branch is a fixed set of mailboxes, not a scratch disk.
 if [ -n "$FILE_OVERRIDE" ]; then
   _f="${FILE_OVERRIDE#file=}"
-  if [[ "$_f" =~ ^models-(linux|windows|agent|opencode|hub)\.json$ ]] || \
-     [[ "$_f" =~ ^saved/(linux|windows|agent|opencode|hub)-[0-9]{8}T[0-9]{6}\.json$ ]]; then
+  if [[ "$_f" =~ ^models-(linux|windows|agent(-linux|-windows)?|opencode(-linux|-windows)?|hub(-linux|-windows)?)\.json$ ]] || \
+     [[ "$_f" =~ ^saved/(linux|windows|agent(-linux|-windows)?|opencode(-linux|-windows)?|hub(-linux|-windows)?)-[0-9]{8}T[0-9]{6}\.json$ ]]; then
     FILE="$_f"
   else
     echo "publish_session: rejected file override: $_f" >&2
