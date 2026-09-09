@@ -26,14 +26,14 @@ const paired = btns.filter(b => {
   const ot = (b[0].match(/ontouchend="([^"]+)"/) || [])[1];
   return oc && ot && ot === 'event.preventDefault();' + oc;
 });
-check('q1 touchend re-fires onclick', btns.length === 15 && paired.length === 15,
+check('q1 touchend re-fires onclick', btns.length === 16 && paired.length === 16,
   `${paired.length}/${btns.length}`);
 
 // q2: no dead preventDefault-only handlers left.
 check('q2 no bare preventDefault', !/ontouchend="event\.preventDefault\(\)"/.test(html));
 
 // q3: long-press menu suppressed on terminal buttons.
-check('q3 contextmenu guard', (html.match(/oncontextmenu="event\.preventDefault\(\)"/g) || []).length === 15);
+check('q3 contextmenu guard', (html.match(/oncontextmenu="event\.preventDefault\(\)"/g) || []).length === 16);
 
 // q4: terminal scrolls by touch swipe.
 check('q4 viewport touch-action', html.includes('.term .xterm-viewport{touch-action:pan-x pan-y!important}'));
@@ -98,6 +98,23 @@ check('q19 apk file chooser', mainKt.includes('onShowFileChooser') && mainKt.inc
 
 // q20: APK hands downloads to the system DownloadManager.
 check('q20 apk downloads', mainKt.includes('setDownloadListener') && mainKt.includes('DownloadManager'));
+
+// q21: paste falls back to the manual box when the clipboard API is blocked.
+check('q21 paste fallback', mob.includes('await clipBox(') && desk.includes('await clipBox(') &&
+  mob.includes('clipboard.readText') && desk.includes('clipboard.readText'));
+
+// q22: copy grabs selection or the last screen lines.
+check('q22 copy source', mob.includes('function copySelection(') && desk.includes('function copySelection(') &&
+  mob.includes('term.buffer.active') && desk.includes('term.buffer.active') &&
+  mob.includes('clipboard.writeText') && desk.includes('clipboard.writeText'));
+
+// q23: copy buttons in both toolbars (touch handler on mobile).
+check('q23 copy buttons', mobHtml.includes('onclick="copySelection()" ontouchend="event.preventDefault();copySelection()"') &&
+  deskHtml.includes('onclick="copySelection()"'));
+
+// q24: textarea clip box builder in both clients.
+check('q24 clip box', mob.includes('function clipBox(') && desk.includes('function clipBox(') &&
+  mob.includes('clip-ov') && desk.includes('clip-ov'));
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
