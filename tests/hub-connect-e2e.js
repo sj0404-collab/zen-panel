@@ -20,6 +20,11 @@ async function stubFetch(url, opts) {
     dispatches.push(JSON.parse(opts.body));
     return { ok: true, status: 204, json: async () => ({}) };
   }
+  if (u.includes('/api/tools')) {
+    return u.includes('zt=good')
+      ? { ok: true, status: 200, json: async () => ({ success: true, tools: [] }) }
+      : { ok: false, status: 401, json: async () => ({ success: false, error: 'hub token?' }) };
+  }
   if (u.includes('session-hub-linux.json')) {
     polls++;
     if (sessionMode === 'missing') return { ok: false, status: 404, json: async () => ({}) };
@@ -67,6 +72,11 @@ function check(name, cond, extra) {
   let msg = '';
   try { await window.dispatchHub('BAD', 'zt123'); } catch (e) { msg = e.message; }
   check('c7 bad token 401', /401/.test(msg), msg);
+
+  check('c8 preflight ok', (await window.preflightHub('https://hub.local', 'good')) === true);
+  let msg9 = '';
+  try { await window.preflightHub('https://hub.local', 'bad'); } catch (e) { msg9 = e.message; }
+  check('c9 preflight rejects bad zt', /не принял токен/.test(msg9), msg9);
 
   console.log(`HUB-CONNECT: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
