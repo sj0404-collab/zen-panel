@@ -15,7 +15,7 @@ Android-панель и GitHub Actions для Zen Agent, OpenCode, NPM Hub и у
   - `agent.yml` — CLI-агент на Linux/Windows, туннель, чат в оверлее
   - `opencode.yml` — OpenCode web на Linux/Windows, туннель, чат в оверлее
   - `hub.yml` — NPM Hub на Linux/Windows, установка CLI одним вызовом npm, туннель, адрес в `session-hub.json`
-  - `desks.yml` — столы Linux (noVNC) и Windows (MJPEG)
+  - `desks.yml` — стол Windows (MJPEG)
   - `panel-apk.yml` — сборка APK и GitHub Release (`v1.{commits}`, versionCode растёт сам)
   - `desktop.yml` — сборка ПК-версии и GitHub Release (`desktop-v1.{commits}`: `.exe` / `.AppImage` / `.deb`)
   - `js-syntax.yml` — `node --check` всего JS (`agent/`, `desktop/`, `npm-hub/`) на каждый push/PR

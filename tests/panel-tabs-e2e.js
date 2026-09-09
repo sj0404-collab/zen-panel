@@ -11,7 +11,7 @@ process.on('unhandledRejection', e => { unhandled.push(String((e && e.message) |
 
 const now = new Date().toISOString();
 const sessions = {
-  'session-linux.json': { deskUrl: 'https://desk.example/vnc.html', url: 'https://desk.example', runId: 111, startedAt: now, state: 'live', repo: 'o/r' },
+  'session-linux.json': { deskUrl: 'https://desk.example/', url: 'https://desk.example', runId: 111, startedAt: now, state: 'live', repo: 'o/r' },
   'session-agent.json': { agentUrl: 'https://agent.example/hub?token=T', url: 'https://agent.example', runId: 222, startedAt: now, state: 'live' },
   'session-hub.json': { hubUrl: 'https://hub.example/', url: 'https://hub.example/', desktop: 'https://hub.example/d', runId: 333, startedAt: now, state: 'live' },
 };
@@ -272,7 +272,7 @@ function stubFetch(url, opts) {
     HUB_TOKENS['hub-linux'] = 'tok123'; previewOpen = false; renderPreview();`);
   const p46src = document.querySelector('#preview iframe')?.src || '';
   eq('p46 preview carries zt', p46src.includes('zt=tok123'), true);
-  eq('p46b preview not vnc', !p46src.includes('vnc.html'), true);
+  eq('p46b preview launcher root', new URL(p46src).pathname, '/');
   dom.window.eval(`delete HUB_TOKENS['hub-linux']; previewOpen = false; renderPreview();`);
   eq('p47 preview no-token hint', (document.getElementById('preview')?.innerHTML || '').includes('Открыть стол'), true);
   dom.window.eval(`LIVE = null; previewOpen = false; renderPreview();`);
