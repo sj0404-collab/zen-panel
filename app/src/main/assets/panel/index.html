@@ -1220,7 +1220,7 @@ async function loadDesks() {
            padding:12px;opacity:.55">
         <b>${title}</b><div class="note" style="margin-top:4px">не запущен</div>
       </div>`;
-    const url = s.deskUrl || s.url || '';
+    const url = (slot === 'hub' || slot.startsWith('hub-')) ? deskSlotUrl(slot) : (s.deskUrl || s.url || '');
     // No live thumbnail. A noVNC iframe or MJPEG in every tile froze the
     // whole WebView on a phone; the desk is opened only when asked.
     return `
@@ -1257,7 +1257,7 @@ async function loadDesks() {
         <div class="row">
           <button class="small" onclick="expandDesk('${slot}')">Открыть чат</button>
           <button class="ghost small"
-                  onclick="window.open('${esc(s.agentUrl || s.url)}','_blank')">
+                  onclick="window.open('${esc((slot === 'hub' || slot.startsWith('hub-')) ? deskSlotUrl(slot) : (s.agentUrl || s.url))}','_blank')">
             В браузере</button>
           <button class="ghost small" onclick="saveSession('${slot}')">Сохранить</button>
           ${s.runId && tok() ? `<button class="ghost small" onclick="stopRun(${s.runId})">Выключить</button>` : ''}
@@ -1305,17 +1305,33 @@ function deskSlotUrl(slot) {
   const s = DESKS[slot];
   if (!s) return '';
   if (slot === 'agent' || slot === 'opencode' || slot.startsWith('agent-') || slot.startsWith('opencode-')) return chatUrlWithQ(s.agentUrl || s.url || '');
-  if (slot === 'hub' || slot.startsWith('hub-')) return hubUrlWithToken(s.hubUrl || s.deskUrl || s.url || '');
+  if (slot === 'hub' || slot.startsWith('hub-')) return hubUrlWithToken(s.hubUrl || s.deskUrl || s.url || '', slot);
   return s.hubUrl || s.deskUrl || s.url || '';
 }
 // The hub lists the account's repos from the browser (api.github.com
 // answers cross-origin); the token rides the URL fragment so it never
 // touches the hub server or its logs - fragments stay in the browser.
-function hubUrlWithToken(url) {
+// Gate tokens for panel-launched hubs, one per slot. Generated at launch,
+// passed to the run as a dispatch input (never written to the repo), kept
+// here and in localStorage so a reloaded panel still opens its hubs.
+let HUB_TOKENS = {};
+try { HUB_TOKENS = JSON.parse(localStorage.getItem('panel_hub_tokens') || '{}'); } catch (e) { HUB_TOKENS = {}; }
+function saveHubTokens() { try { localStorage.setItem('panel_hub_tokens', JSON.stringify(HUB_TOKENS)); } catch (e) {} }
+function genHubToken() {
+  try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, ''); } catch (e) {}
+  const h = '0123456789abcdef';
+  let s = '';
+  for (let i = 0; i < 32; i++) s += h[Math.floor(Math.random() * 16)];
+  return s;
+}
+function hubUrlWithToken(url, slot) {
   if (!url) return url;
+  let base = url.split('#')[0];
+  const zt = (slot && HUB_TOKENS[slot]) || '';
+  if (zt) base += (base.includes('?') ? '&' : '?') + 'zt=' + encodeURIComponent(zt);
   const t = tok();
-  if (!t) return url;
-  return url.split('#')[0] + '#gh=' + encodeURIComponent(t);
+  if (!t) return base;
+  return base + '#gh=' + encodeURIComponent(t);
 }
 
 /**
@@ -1679,7 +1695,10 @@ async function launchHub() {
   btn.dataset.label = btn.dataset.label || btn.textContent;
   busyButtons(true, 'btn-hub');
   try {
-    const r = await dispatchWorkflow('hub.yml', { os: where, label: 'hub' });
+    const hubToken = genHubToken();
+    HUB_TOKENS['hub-' + where] = hubToken;
+    saveHubTokens();
+    const r = await dispatchWorkflow('hub.yml', { os: where, label: 'hub', token: hubToken });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
     await waitAndOpen('hub-' + where);
   } catch (e) {

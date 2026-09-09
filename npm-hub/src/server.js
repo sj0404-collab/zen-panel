@@ -15,6 +15,21 @@ const HOME = os.homedir();
 const PORT = process.env.PORT || 8090;
 const HOST = '0.0.0.0';
 const STATE_FILE = path.join(HOME, '.npm-hub-state.json');
+const HUB_TOKEN = process.env.HUB_TOKEN || '';
+
+// Gate: when HUB_TOKEN is set (a panel-launched run), every request - pages,
+// API and the terminal socket - must carry it (?zt= or x-hub-token). Local
+// runs leave it empty and behave exactly as before.
+function hubTokenOk(req) {
+  if (!HUB_TOKEN) return true;
+  const q = req.query && req.query.zt;
+  const h = req.headers && req.headers['x-hub-token'];
+  return (q || h) === HUB_TOKEN;
+}
+app.use((req, res, next) => {
+  if (hubTokenOk(req)) return next();
+  res.status(401).json({ success: false, error: 'hub token?' });
+});
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -510,7 +525,12 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 const ptys = new Map();
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  if (HUB_TOKEN) {
+    let zt = '';
+    try { zt = new URL(req.url || '/ws', 'http://hub').searchParams.get('zt') || ''; } catch (e) {}
+    if (zt !== HUB_TOKEN) { ws.close(4401, 'hub token?'); return; }
+  }
   let currentPty = null;
   let currentId = null;
 

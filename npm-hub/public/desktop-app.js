@@ -1,3 +1,20 @@
+// zt: when the hub runs behind a gate token (HUB_TOKEN), the panel opens it
+// as /d?zt=… or /m?zt=…. Forward it on every same-origin API call, so the UI
+// keeps working without threading the token through forty fetch sites.
+var __zt = null;
+try { __zt = new URLSearchParams(location.search).get('zt'); } catch (e) { __zt = null; }
+function __ztQ() { return __zt ? '?zt=' + encodeURIComponent(__zt) : ''; }
+if (__zt && typeof window !== 'undefined' && !window.__ztWrapped) {
+  window.__ztWrapped = true;
+  const __fetch0 = window.fetch.bind(window);
+  window.fetch = function (u, o) {
+    if (typeof u === 'string' && u.indexOf('/api') === 0) {
+      u += (u.indexOf('?') === -1 ? '?' : '&') + 'zt=' + encodeURIComponent(__zt);
+    }
+    return __fetch0(u, o);
+  };
+}
+
 let tools = [], homeDir = 'C:\\Users\\virus', accessMode = 'local';
 let tabs = [], activeTab = null, zoomLevel = 100;
 let fmCurrentPath = '', fmSelected = null, fmBackend = 'local';
@@ -318,7 +335,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   }
 
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(`${protocol}//${location.host}/ws`);
+  const socket = new WebSocket(`${protocol}//${location.host}/ws` + __ztQ());
 
   const term = new Terminal({
     theme: { background: '#0a0e14', foreground: '#e6edf3', cursor: '#58a6ff', cursorAccent: '#0a0e14', selectionBackground: '#264f78', black: '#0a0e14', red: '#f85149', green: '#3fb950', yellow: '#d29922', blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39c5cf', white: '#e6edf3', brightBlack: '#484f58', brightRed: '#f85149', brightGreen: '#3fb950', brightYellow: '#d29922', brightBlue: '#58a6ff', brightMagenta: '#bc8cff', brightCyan: '#56d4dd', brightWhite: '#ffffff' },
