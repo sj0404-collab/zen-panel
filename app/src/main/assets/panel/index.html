@@ -1002,6 +1002,13 @@ async function dispatchWorkflow(wf, inputs) {
   return r;
 }
 
+// Runner for a dispatched launch: GitHub-hosted by default, or the labels of
+// the user's own machine (see pc-local/runner) when they pick it.
+function runnerInputs() {
+  const own = confirm('Где выполнять?\n\nОК — раннеры GitHub\nОтмена — свой ПК (self-hosted)') ? '' : 'self-hosted';
+  return { runner_linux: own || 'ubuntu-latest', runner_windows: own || 'windows-latest' };
+}
+
 // ── sessions ────────────────────────────────────────────────────────
 const liveAgents   = rs => rs.filter(r => r.name === 'Zen agent' && r.status !== 'completed');
 const liveOpencode = rs => rs.filter(r => (r.name === 'OpenCode' || r.name === 'opencode')
@@ -1530,7 +1537,8 @@ async function launch(os) {
     const r = await dispatchWorkflow('desks.yml', {
       which: os,
       prepare_build: 'false',
-      label: (acct() && acct().login) || 'session'
+      label: (acct() && acct().login) || 'session',
+      ...runnerInputs()
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
     await waitAndOpen(os);
@@ -1574,7 +1582,8 @@ async function launchDesks(which) {
     const r = await dispatchWorkflow('desks.yml', {
       which,
       prepare_build: 'false',
-      label: (acct() && acct().login) || 'desks'
+      label: (acct() && acct().login) || 'desks',
+      ...runnerInputs()
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
 
@@ -1631,7 +1640,7 @@ async function launchAgent() {
   busyButtons(true, 'btn-agent');
   try {
     const r = await dispatchWorkflow('agent.yml', {
-      os: where, branch: 'agent-work', repos: '', autosave_minutes: '2'
+      os: where, branch: 'agent-work', repos: '', autosave_minutes: '2', ...runnerInputs()
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
     await waitAndOpen('agent-' + where);
@@ -1664,7 +1673,7 @@ async function launchOpencode() {
   busyButtons(true, 'btn-opencode');
   try {
     const r = await dispatchWorkflow('opencode.yml', {
-      os: where, prompt: PENDING_Q, branch: 'opencode-work'
+      os: where, prompt: PENDING_Q, branch: 'opencode-work', ...runnerInputs()
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
     await waitAndOpen('opencode-' + where);
@@ -1698,7 +1707,7 @@ async function launchHub() {
     const hubToken = genHubToken();
     HUB_TOKENS['hub-' + where] = hubToken;
     saveHubTokens();
-    const r = await dispatchWorkflow('hub.yml', { os: where, label: 'hub', token: hubToken });
+    const r = await dispatchWorkflow('hub.yml', { os: where, label: 'hub', token: hubToken, ...runnerInputs() });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
     await waitAndOpen('hub-' + where);
   } catch (e) {

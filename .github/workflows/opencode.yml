@@ -28,6 +28,14 @@ on:
         description: "Working branch (created if absent)"
         type: string
         default: "opencode-work"
+      runner_linux:
+        description: "Runner for the Linux job (a label, or self-hosted - see pc-local/runner)"
+        type: string
+        default: "ubuntu-latest"
+      runner_windows:
+        description: "Runner for the Windows job (a label, or self-hosted - see pc-local/runner)"
+        type: string
+        default: "windows-latest"
 
 permissions:
   contents: write
@@ -35,7 +43,7 @@ permissions:
 jobs:
   opencode-linux:
     if: inputs.os == 'linux'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner_linux }}
     timeout-minutes: 360
 
     steps:
@@ -223,7 +231,7 @@ jobs:
 
   opencode-windows:
     if: inputs.os == 'windows'
-    runs-on: windows-latest
+    runs-on: ${{ inputs.runner_windows }}
     timeout-minutes: 360
 
     steps:

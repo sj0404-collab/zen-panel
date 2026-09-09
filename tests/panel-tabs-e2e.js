@@ -187,6 +187,19 @@ function stubFetch(url, opts) {
   dom.window.eval('HUB_TOKENS["hub-windows"]="ZTTEST"');
   eq('p30 zt in url', dom.window.deskSlotUrl('hub-windows'), /hubwin\.example\/\?zt=ZTTEST#gh=TEST/);
 
+  sessions['session-hub-linux.json'] = { hubUrl: 'https://hublin.example/', url: 'https://hublin.example/', runId: 666, startedAt: now, state: 'live' };
+  dispatches.length = 0; alerts.length = 0; confirmSeq.length = 0;
+  await dom.window.launchHub();
+  const d1 = dispatches[0] || {};
+  eq('p31 launch hub', d1.ref === 'main' && d1.inputs.os === 'linux' && d1.inputs.label === 'hub' &&
+    /^[0-9a-f]{32}$/.test(d1.inputs.token || '') &&
+    d1.inputs.runner_linux === 'ubuntu-latest' && d1.inputs.runner_windows === 'windows-latest' &&
+    dom.window.eval('READY.slot') === 'hub-linux', true);
+  confirmSeq.push(true, false);
+  await dom.window.launchHub();
+  const d2 = (dispatches[1] || {}).inputs || {};
+  eq('p32 self-hosted runner', d2.runner_linux === 'self-hosted' && d2.runner_windows === 'self-hosted', true);
+
   dom.window.close();
   await new Promise(r => setTimeout(r, 500));
   eq('p16 no unhandled rejections', unhandled.length, 0);
