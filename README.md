@@ -7,6 +7,7 @@ Android-панель и GitHub Actions для Zen Agent, OpenCode, NPM Hub и у
 ## Что внутри
 
 - Android WebView-оболочка и панель в `app/src/main/assets/panel/`
+- NPM Hub APK — отдельная оболочка с запуском хаба (`hub/`)
 - CLI-агент и веб-хаб (`agent/`)
 - NPM Hub — дашборд CLI-инструментов, терминалы и файловый менеджер (`npm-hub/`, доки: `npm-hub/README.md`)
 - Десктопная оболочка для Windows/Linux в `desktop/` (Electron, те же страницы панели)
@@ -17,6 +18,7 @@ Android-панель и GitHub Actions для Zen Agent, OpenCode, NPM Hub и у
   - `hub.yml` — NPM Hub на Linux/Windows, установка CLI одним вызовом npm, туннель, адрес в `session-hub.json`
   - `desks.yml` — стол Windows (MJPEG)
   - `panel-apk.yml` — сборка APK и GitHub Release (`v1.{commits}`, versionCode растёт сам)
+  - `hub-apk.yml` — сборка NPM Hub APK и Release (`hub-v1.{commits}`)
   - `desktop.yml` — сборка ПК-версии и GitHub Release (`desktop-v1.{commits}`: `.exe` / `.AppImage` / `.deb`)
   - `js-syntax.yml` — `node --check` всего JS (`agent/`, `desktop/`, `npm-hub/`) на каждый push/PR
   - `tests.yml` — jsdom-регрессии из `tests/` (`npm test`): панель (36 проверок), мобильный и десктопный UI хаба (20+18)

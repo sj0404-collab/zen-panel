@@ -1,0 +1,73 @@
+// Hub APK connect page (jsdom): dispatch carries the gate token, the poll
+// finds the live session, the open URL hits /m with ?zt= and #gh=.
+const fs = require('fs');
+const path = require('path');
+const { JSDOM } = require('jsdom');
+
+const html = fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub/index.html'), 'utf8');
+
+const now = new Date().toISOString();
+const liveSession = { state: 'live', kind: 'NPM-Hub', hubUrl: 'https://hub.local/', url: 'https://hub.local/', startedAt: now };
+function b64(o) { return Buffer.from(JSON.stringify(o)).toString('base64'); }
+
+const dispatches = [];
+let sessionMode = 'live'; // live | missing | flaky
+let polls = 0;
+async function stubFetch(url, opts) {
+  const u = String(url);
+  if (u.includes('/dispatches')) {
+    if (opts.headers.Authorization === 'token BAD') return { ok: false, status: 401, json: async () => ({}) };
+    dispatches.push(JSON.parse(opts.body));
+    return { ok: true, status: 204, json: async () => ({}) };
+  }
+  if (u.includes('session-hub-linux.json')) {
+    polls++;
+    if (sessionMode === 'missing') return { ok: false, status: 404, json: async () => ({}) };
+    if (sessionMode === 'flaky' && polls < 3) return { ok: false, status: 404, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ content: b64(liveSession) }) };
+  }
+  return { ok: false, status: 404, json: async () => ({}) };
+}
+
+const dom = new JSDOM(html, {
+  url: 'https://hub.symbiosis.local/index.html', runScripts: 'dangerously',
+  beforeParse(window) { window.fetch = stubFetch; },
+});
+const { window } = dom;
+
+let pass = 0, fail = 0;
+function check(name, cond, extra) {
+  if (cond) { pass++; console.log('PASS ' + name); }
+  else { fail++; console.log('FAIL ' + name + (extra !== undefined ? ' got=' + JSON.stringify(extra) : '')); }
+}
+
+(async () => {
+  const zt = window.genZt();
+  check('c1 zt is 32 hex', /^[0-9a-f]{32}$/.test(zt), zt);
+
+  await window.dispatchHub('ghp_x', 'zt123');
+  const d = dispatches[0] || {};
+  check('c2 dispatch ref+inputs', d.ref === 'main' && d.inputs && d.inputs.os === 'linux' &&
+    d.inputs.token === 'zt123' && d.inputs.label === 'hub-apk', JSON.stringify(d));
+
+  sessionMode = 'live';
+  const s = await window.readHubSession('ghp_x');
+  check('c3 session parsed', s && s.hubUrl === 'https://hub.local/' && s.state === 'live', JSON.stringify(s));
+
+  sessionMode = 'missing';
+  check('c4 session 404 is null', (await window.readHubSession('ghp_x')) === null);
+
+  check('c5 open url shape', window.buildOpenUrl(liveSession, 'ZZ', 'ghp_x') === 'https://hub.local/m?zt=ZZ#gh=ghp_x',
+    window.buildOpenUrl(liveSession, 'ZZ', 'ghp_x'));
+
+  sessionMode = 'flaky'; polls = 0;
+  const w = await window.waitForHub('ghp_x', Date.now() - 1000, 5);
+  check('c6 poll waits then live', w && w.state === 'live' && polls >= 3, polls);
+
+  let msg = '';
+  try { await window.dispatchHub('BAD', 'zt123'); } catch (e) { msg = e.message; }
+  check('c7 bad token 401', /401/.test(msg), msg);
+
+  console.log(`HUB-CONNECT: ${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+})();
