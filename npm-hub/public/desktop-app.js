@@ -455,17 +455,24 @@ async function fmBrowse(p) {
   document.getElementById('fm-path').value = `${fmBackend === 'local' ? '' : '[' + fmBackend + '] '}${r.path}`;
   const list = document.getElementById('fm-list');
   let html = '';
-  if (r.parent && r.parent !== r.path) html += `<div class="fm-item" ondblclick="fmBrowse('${escAttr(r.parent)}')"><span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span></div>`;
-  html += r.items.map(i => `<div class="fm-item" data-path="${escHtml(i.path)}" data-name="${escHtml(i.name)}" onclick="fmSelect(this)" ondblclick="${i.isDir ? `fmBrowse('${escAttr(i.path)}')` : ''}"><span class="fm-ico">${i.isDir ? '📁' : fileIcon(i.name)}</span><span class="fm-name">${escHtml(i.name)}</span><span class="fm-size">${i.isDir ? '' : formatSize(i.size)}</span></div>`).join('');
+  if (r.parent && r.parent !== r.path) html += `<div class="fm-item" onclick="fmBrowse('${escAttr(r.parent)}')"><span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span></div>`;
+  html += r.items.map(i => `<div class="fm-item" data-path="${escHtml(i.path)}" data-name="${escHtml(i.name)}" data-isdir="${i.isDir ? '1' : '0'}" onclick="fmTap(this)"><span class="fm-ico">${i.isDir ? '📁' : fileIcon(i.name)}</span><span class="fm-name">${escHtml(i.name)}</span><span class="fm-size">${i.isDir ? '' : formatSize(i.size)}</span></div>`).join('');
   list.innerHTML = html || '<div style="padding:20px;color:var(--t3);text-align:center">Пусто</div>';
   document.getElementById('fm-info').textContent = `${r.items.length} элементов | ${fmBackend}:${r.path}`;
 }
 
-function fmSelect(el) {
-  document.querySelectorAll('.fm-item').forEach(e => e.classList.remove('fm-sel'));
+function fmTap(el) {
+  const p = el.dataset.path;
+  if (el.dataset.isdir === '1' && fmSelected === p) {
+    if (fmBackend.indexOf('adb:') === 0) fmBrowseAdbPath(fmBackend.slice(4), p);
+    else fmBrowse(p);
+    return;
+  }
+  document.querySelectorAll('#fm-list .fm-item').forEach(e => e.classList.remove('fm-sel'));
   el.classList.add('fm-sel');
-  fmSelected = el.dataset.path;
+  fmSelected = p;
 }
+function fmSelect(el) { fmTap(el); }
 
 function fmGoUp() {
   const p = fmCurrentPath.split(/[/\\]/);
@@ -510,8 +517,8 @@ async function fmBrowseAdbPath(device, path) {
   if (!r.success) return;
   const list = document.getElementById('fm-list');
   let html = '';
-  if (path !== '/') { const parent = path.split('/').slice(0, -1).join('/') || '/'; html += `<div class="fm-item" ondblclick="fmBrowseAdbPath('${device}','${parent}')"><span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span></div>`; }
-  html += r.items.map(i => `<div class="fm-item" data-path="${escHtml(i.path)}" onclick="fmSelect(this)" ondblclick="${i.isDir ? `fmBrowseAdbPath('${device}','${escAttr(i.path)}')` : ''}"><span class="fm-ico">${i.isDir ? '📁' : '📄'}</span><span class="fm-name">${escHtml(i.name)}</span><span class="fm-size"></span></div>`).join('');
+  if (path !== '/') { const parent = path.split('/').slice(0, -1).join('/') || '/'; html += `<div class="fm-item" onclick="fmBrowseAdbPath('${device}','${parent}')"><span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span></div>`; }
+  html += r.items.map(i => `<div class="fm-item" data-path="${escHtml(i.path)}" data-isdir="${i.isDir ? '1' : '0'}" onclick="fmTap(this)"><span class="fm-ico">${i.isDir ? '📁' : '📄'}</span><span class="fm-name">${escHtml(i.name)}</span><span class="fm-size"></span></div>`).join('');
   list.innerHTML = html;
   document.getElementById('fm-info').textContent = `📱 ${r.items.length} элементов`;
 }
@@ -533,7 +540,7 @@ function setStorageType(type) {
 
 async function saveStorage() {
   const activeBtn = document.querySelector('.storage-type-btn.on');
-  if (!activeBtn) return alert('Выберите тип');
+  if (!activeBtn) { fmInfo('Выберите тип'); return; }
   const type = activeBtn.dataset.type;
   let config = { storageType: type };
 
@@ -549,7 +556,7 @@ async function saveStorage() {
   } else if (type === 'github') {
     const repoUrl = document.getElementById('github-repo').value;
     const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-    if (!match) return alert('Неверный URL репозитория');
+    if (!match) { fmInfo('Неверный URL репозитория'); return; }
     config.owner = match[1];
     config.repo = match[2].replace('.git', '');
     config.token = document.getElementById('github-token').value;
@@ -578,29 +585,80 @@ async function saveStorage() {
     storages.push({ id: r.id, name: config.name, icon: { ftp: '📂', gdrive: '☁️', github: '🐙', http: '🌐', webdav: '📁' }[type] || '📁' });
     initFM();
   } else {
-    alert('Ошибка: ' + r.error);
+    fmInfo('Ошибка: ' + r.error);
   }
 }
 
 // ─── FM FILE OPERATIONS ───
+// ===== FM-МОДАЛКА — ввод имени / подтверждение / инфо (вместо системных диалогов) =====
+let fmOvResolve = null;
+function fmCloseModal(val) {
+  const ov = document.getElementById('fm-ov');
+  if (ov) ov.style.display = 'none';
+  if (fmOvResolve) { const r = fmOvResolve; fmOvResolve = null; r(val); }
+}
+function fmShowModal(title, o) {
+  o = o || {};
+  return new Promise(resolve => {
+    if (fmOvResolve) { resolve(o.input ? null : false); return; }
+    let ov = document.getElementById('fm-ov');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'fm-ov';
+      ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:20px';
+      ov.innerHTML = '<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:16px;width:100%;max-width:340px">' +
+        '<div id="fm-ov-title" style="font-size:14px;font-weight:700;margin-bottom:12px;word-break:break-word"></div>' +
+        '<input id="fm-ov-input" style="width:100%;box-sizing:border-box;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:15px;outline:none;margin-bottom:12px">' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" id="fm-ov-cancel">Отмена</button>' +
+        '<button class="btn btn-p" id="fm-ov-ok">OK</button></div></div>';
+      document.body.appendChild(ov);
+      document.getElementById('fm-ov-cancel').onclick = () => fmCloseModal('__cancel__');
+      document.getElementById('fm-ov-ok').onclick = () => fmCloseModal(document.getElementById('fm-ov-input').value);
+      document.getElementById('fm-ov-input').onkeydown = e => { if (e.key === 'Enter') fmCloseModal(e.target.value); };
+      ov.onclick = e => { if (e.target === ov) fmCloseModal('__cancel__'); };
+    }
+    document.getElementById('fm-ov-title').textContent = title;
+    const inp = document.getElementById('fm-ov-input');
+    inp.style.display = o.input ? 'block' : 'none';
+    inp.value = o.input ? (o.def || '') : '';
+    document.getElementById('fm-ov-ok').textContent = o.ok || 'OK';
+    document.getElementById('fm-ov-cancel').style.display = o.cancel === false ? 'none' : '';
+    ov.style.display = 'flex';
+    fmOvResolve = v => resolve(v === '__cancel__' ? (o.input ? null : false) : (o.input ? v : true));
+    setTimeout(() => { if (o.input) { inp.focus(); inp.select(); } }, 50);
+  });
+}
+function fmAsk(title, def) { return fmShowModal(title, { input: true, def: def || '' }); }
+function fmConfirm(title, ok) { return fmShowModal(title, { ok: ok || 'OK' }); }
+function fmInfo(text) { return fmShowModal(text, { cancel: false }); }
+
+
 async function fmMkdir() {
-  const name = prompt('Имя папки:');
+  const name = await fmAsk('Имя папки:');
   if (!name) return;
   const p = fmCurrentPath + '/' + name;
   await fetch('/api/fs/mkdir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backend: fmBackend, path: p }) });
   fmRefresh();
 }
 
+async function fmCreateFile() {
+  const name = await fmAsk('Имя файла:');
+  if (!name) return;
+  await fetch('/api/fs/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backend: fmBackend, path: fmCurrentPath + '/' + name, content: '' }) });
+  fmRefresh();
+}
+
 async function fmDelete() {
   if (!fmSelected) return;
-  if (!confirm('Удалить?')) return;
+  const nm = fmSelected.split(/[/\\]/).pop();
+  if (!(await fmConfirm('Удалить «' + nm + '»?', 'Удалить'))) return;
   await fetch('/api/fs/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backend: fmBackend, path: fmSelected }) });
   fmRefresh();
 }
 
 async function fmRename() {
   if (!fmSelected) return;
-  const newName = prompt('Новое имя:', fmSelected.split(/[/\\]/).pop());
+  const newName = await fmAsk('Новое имя:', fmSelected.split(/[/\\]/).pop());
   if (!newName) return;
   const dir = fmCurrentPath;
   const newPath = dir + '/' + newName;
@@ -723,7 +781,7 @@ async function selectModelFull(modelId, providerId) {
 async function syncAllModels() {
   if (!modelsFullData) return;
   await selectModelFull(modelsFullData.selected, modelsFullData.provider);
-  alert('Модель синхронизирована ко всем инструментам!');
+  await fmInfo('Модель синхронизирована ко всем инструментам!');
 }
 
 function showApiKeyModal() {
