@@ -1284,7 +1284,7 @@ async function loadDesks() {
 async function ensureHubAccess(slot) {
   const s = DESKS[slot];
   const raw = s && (s.hubUrl || s.deskUrl || s.url || '');
-  const base = String(raw || '').split('#')[0].replace(/\/+$/, '');
+  const base = String(raw || '').split('#')[0].split('?')[0].replace(/\/+$/, '');
   if (!base) return true;
   let ctl = null;
   try { ctl = new AbortController(); } catch (e) {}
@@ -1312,6 +1312,12 @@ async function ensureHubAccess(slot) {
 async function expandDesk(slot) {
   if (slot === 'hub' || slot.startsWith('hub-')) {
     if (!await ensureHubAccess(slot)) return;
+    try {
+      const du = deskSlotUrl(slot);
+      const dh = String(du.split('?')[0]).split('/')[2] || '';
+      const dz = HUB_TOKENS[slot] || '';
+      bootLog('чат ' + slot + ' · ' + dh + ' · zt ' + (dz ? 'ok (' + dz.length + ')' : 'НЕТ'));
+    } catch (e) {}
   }
   deskOpen = slot; loadDesks();
 }
@@ -1370,6 +1376,14 @@ function genHubToken() {
 function hubUrlWithToken(url, slot) {
   if (!url) return url;
   let base = url.split('#')[0];
+  // Idempotent: a stored URL that already carries ?zt= (saved bundle, older
+  // panel) must not gain a second one - Express parses a repeated param as
+  // an array, and an array never equals the token (bare 401).
+  const cut = base.split('?');
+  if (cut.length > 1) {
+    const kept = cut[1].split('&').filter(q => q && !/^zt=/.test(q));
+    base = cut[0] + (kept.length ? '?' + kept.join('&') : '');
+  }
   const zt = (slot && HUB_TOKENS[slot]) || '';
   if (zt) base += (base.includes('?') ? '&' : '?') + 'zt=' + encodeURIComponent(zt);
   const t = tok();

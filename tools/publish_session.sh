@@ -22,7 +22,7 @@
 # TWO DESKS AT ONCE
 #   Pass slot=linux, slot=windows or slot=agent and the entry lands in its own
 #   file - session-linux.json, session-windows.json, session-agent.json,
-session-opencode.json and session-hub.json - so
+#   session-opencode.json and session-hub.json - so
 #   agent/opencode/hub take an -linux/-windows suffix (one file per OS, so two
 #   runners stop overwriting each other); the bare slot stays for old runs.
 #   the two desks and the agent never overwrite each other. Without a slot the

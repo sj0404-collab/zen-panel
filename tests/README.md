@@ -5,7 +5,7 @@ Regression suites for the panel and the hub UIs. Everything runs locally:
 
 | Suite | Covers |
 |---|---|
-| `panel-tabs-e2e.js` | session/model cards, tabbed second layer, no-reload switching, save/stop PUTs, dead-tab drop, 403 backoff (mark/stop/pause/alert), per-OS slots, ETag 304, refresh auto-pause, hub gate tokens (+probe/recovery/reuse) |
+| `panel-tabs-e2e.js` | session/model cards, tabbed second layer, no-reload switching, save/stop PUTs, dead-tab drop, 403 backoff (mark/stop/pause/alert), per-OS slots, ETag 304, refresh auto-pause, hub gate tokens (+probe/recovery/reuse, zt-strip, probe-url, open diagnostic) |
 | `hub-mobile-touch.js` | mobile UI: touch actions, storage ids, browse, clone-and-open, unknown-backend errors |
 | `hub-desktop-touch.js` | same for the desktop UI |
 

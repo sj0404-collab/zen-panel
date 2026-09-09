@@ -27,6 +27,7 @@ function hubTokenOk(req) {
   return (q || h) === HUB_TOKEN;
 }
 app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') return next(); // preflight carries no token by design
   if (hubTokenOk(req)) return next();
   res.status(401).json({ success: false, error: 'hub token?' });
 });
@@ -52,7 +53,7 @@ app.get('/m/*', (req, res) => {
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-hub-token');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
