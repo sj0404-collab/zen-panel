@@ -9,24 +9,13 @@ class AdbStorage extends StorageBase {
     this.deviceId = deviceId || null;
   }
 
-  // Device ids and paths reach the shell: whitelist the id, strip quoting
-  // metachars from paths. Invalid ids throw instead of running adb wrongly.
-  _safeId() {
-    if (!this.deviceId) return null;
-    if (/[^A-Za-z0-9_.:-]/.test(this.deviceId)) throw new Error('Bad ADB device id');
-    return this.deviceId;
-  }
-  _safePath(p) {
-    return String(p).replace(/["$`\\;\n\r]/g, '');
-  }
   _cmd(c) {
-    const id = this._safeId();
-    const prefix = id ? `adb -s ${id}` : 'adb';
+    const prefix = this.deviceId ? `adb -s ${this.deviceId}` : 'adb';
     return `${prefix} ${c}`;
   }
 
   async list(dirPath) {
-    const cmd = this._cmd(`shell ls -la "${this._safePath(dirPath)}"`);
+    const cmd = this._cmd(`shell ls -la "${dirPath}"`);
     const output = execSync(cmd, { stdio: 'pipe', timeout: 10000, encoding: 'utf-8' });
     const lines = output.trim().split('\n').filter(l => l.trim() && !l.startsWith('total'));
     const items = lines.map(l => {
@@ -41,7 +30,7 @@ class AdbStorage extends StorageBase {
 
   async read(filePath) {
     const tmpFile = `/tmp/adb_read_${Date.now()}`;
-    execSync(this._cmd(`pull "${this._safePath(filePath)}" "${tmpFile}"`), { stdio: 'pipe', timeout: 30000 });
+    execSync(this._cmd(`pull "${filePath}" "${tmpFile}"`), { stdio: 'pipe', timeout: 30000 });
     const fs = require('fs');
     const content = fs.readFileSync(tmpFile, 'utf-8');
     fs.unlinkSync(tmpFile);
@@ -52,23 +41,23 @@ class AdbStorage extends StorageBase {
     const fs = require('fs');
     const tmpFile = `/tmp/adb_write_${Date.now()}`;
     fs.writeFileSync(tmpFile, content, 'utf-8');
-    execSync(this._cmd(`push "${tmpFile}" "${this._safePath(filePath)}"`), { stdio: 'pipe', timeout: 30000 });
+    execSync(this._cmd(`push "${tmpFile}" "${filePath}"`), { stdio: 'pipe', timeout: 30000 });
     fs.unlinkSync(tmpFile);
     return { success: true };
   }
 
   async mkdir(dirPath) {
-    execSync(this._cmd(`shell mkdir -p "${this._safePath(dirPath)}"`), { stdio: 'pipe', timeout: 5000 });
+    execSync(this._cmd(`shell mkdir -p "${dirPath}"`), { stdio: 'pipe', timeout: 5000 });
     return { success: true };
   }
 
   async delete(filePath) {
-    execSync(this._cmd(`shell rm -rf "${this._safePath(filePath)}"`), { stdio: 'pipe', timeout: 10000 });
+    execSync(this._cmd(`shell rm -rf "${filePath}"`), { stdio: 'pipe', timeout: 10000 });
     return { success: true };
   }
 
   async rename(oldPath, newPath) {
-    execSync(this._cmd(`shell mv "${this._safePath(oldPath)}" "${this._safePath(newPath)}"`), { stdio: 'pipe', timeout: 5000 });
+    execSync(this._cmd(`shell mv "${oldPath}" "${newPath}"`), { stdio: 'pipe', timeout: 5000 });
     return { success: true };
   }
 
@@ -90,10 +79,8 @@ class AdbStorage extends StorageBase {
   }
 
   static async connectTcp(host, port) {
-    if (!/^[A-Za-z0-9_.-]+$/.test(String(host || ''))) return { success: false, error: 'Bad host' };
-    const p = /^\\d{1,5}$/.test(String(port || '')) ? port : 5555;
     try {
-      execSync(`adb connect ${host}:${p}`, { stdio: 'pipe', timeout: 10000, encoding: 'utf-8' });
+      execSync(`adb connect ${host}:${port || 5555}`, { stdio: 'pipe', timeout: 10000, encoding: 'utf-8' });
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };
@@ -101,7 +88,6 @@ class AdbStorage extends StorageBase {
   }
 
   static async disconnect(deviceId) {
-    if (/[^A-Za-z0-9_.:-]/.test(String(deviceId || ''))) return { success: false, error: 'Bad device id' };
     try {
       execSync(`adb disconnect ${deviceId}`, { stdio: 'pipe', timeout: 5000 });
       return { success: true };
