@@ -86,7 +86,7 @@ function getAccessInfo(req) {
 app.get('/api/tools', (req, res) => {
   const tools = TOOLS.map(t => ({ ...t, installed: isInstalled(t.cmd), version: null }));
   for (const t of tools) if (t.installed) t.version = getVersion(t.cmd);
-  res.json({ success: true, tools });
+  res.json({ success: true, warming: false, tools });
 });
 
 // ─── INFO ───
