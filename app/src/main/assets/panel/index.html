@@ -537,6 +537,12 @@ async function api(url, opts) {
     err.unbanMs = unbanMs(r);
     throw err;
   }
+  if (r.status === 429) {
+    const err = new Error('429: слишком много запросов — GitHub притормозил. Закройте лишние клиенты/VPN и обновите.' + unbanHint(r));
+    err.is403 = true;
+    err.unbanMs = unbanMs(r);
+    throw err;
+  }
   if (r.status === 404) throw new Error('404: не найдено или не видно этому токену.');
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const body = await r.json();
@@ -1070,7 +1076,18 @@ function renderPreview() {
 
   card.style.display = '';
   if (previewTab === 'term' && !term) previewTab = 'screen';
-  const url = previewTab === 'term' ? term : (screen || agent);
+  const liveSlot = (LIVE && LIVE._slot) || '';
+  const isHubLive = liveSlot.startsWith('hub') || (LIVE && (LIVE.hubUrl || /npm-hub/i.test(LIVE.kind || '')));
+  let url0 = previewTab === 'term' ? term : (screen || agent);
+  // Hubs serve no VNC, so desktopUrl() derives a bogus /vnc.html for them;
+  // and session rows never carry ?zt= (gate tokens live only in this
+  // browser's localStorage). Preview the launcher root, wrapped, instead.
+  if (isHubLive && previewTab !== 'term') url0 = (LIVE && (LIVE.hubUrl || LIVE.terminal || LIVE.url)) || url0;
+  const url = (url0 && isHubLive) ? hubUrlWithToken(url0, liveSlot) : url0;
+  const ztMissing = isHubLive && url0 && !(liveSlot && HUB_TOKENS[liveSlot]);
+  const ztHint = ztMissing
+    ? `<div class="note" style="margin-top:8px">Хаб закрыт токеном, которого нет в этом браузере — вместо лаунчера будет ошибка «hub token?». <button class="ghost small" onclick="openDeskInPanel(liveSlotOf('hub'))">Открыть стол</button> — панель предложит перезапустить хаб или ввести токен вручную.</div>`
+    : '';
 
   const tabs = `
     <div class="row" style="margin-bottom:8px">
@@ -1092,7 +1109,8 @@ function renderPreview() {
       <div class="row" style="margin-top:8px">
         <button class="ghost small" onclick="expandPreview()">Развернуть</button>
         <button class="ghost small" onclick="openExternal('${esc(url)}')">Ссылка</button>
-      </div>`;
+      </div>
+      ${ztHint}`;
   } else {
     box.innerHTML = tabs + `
       <iframe src="${esc(url)}" style="border:1px solid var(--line);border-radius:10px;
@@ -1101,7 +1119,8 @@ function renderPreview() {
       <div class="row" style="margin-top:8px">
         <button class="ghost small" onclick="collapsePreview()">Свернуть</button>
         <button class="ghost small" onclick="openExternal('${esc(url)}')">Ссылка</button>
-      </div>`;
+      </div>
+      ${ztHint}`;
   }
 }
 
@@ -2091,7 +2110,10 @@ async function loadCreds(preferSlot) {
     if (s.agentUrl) kv('Агент', s.agentUrl);
     if (s.branch)   kv('Ветка', s.branch);
 
-    const open = s.agentUrl || s.vncUrl || s.url;
+    const openRaw = s.agentUrl || s.vncUrl || s.url;
+    const openSlot = String(s._slot || '');
+    const open = (openRaw && (openSlot.startsWith('hub') || s.hubUrl || /npm-hub/i.test(s.kind || '')))
+      ? hubUrlWithToken(openRaw, s._slot) : openRaw;
     box.innerHTML = rows.join('') +
       (open ? `<button onclick="openExternal('${esc(open)}')">Ссылка</button>` : '') +
       (s.runId && tok()
