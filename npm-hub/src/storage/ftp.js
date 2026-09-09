@@ -6,26 +6,20 @@ class FtpStorage extends StorageBase {
   constructor(config) {
     super(`ftp:${config.host}`, config.name || `FTP: ${config.host}`, '📂');
     this.config = config;
-    if (!config.host || /[\s'"`$;&|<>()\\]/.test(String(config.host))) throw new Error('Bad FTP host');
-    const port = parseInt(config.port || '21', 10);
-    if (!port || port < 1 || port > 65535) throw new Error('Bad FTP port');
     this.host = config.host;
-    this.port = port;
+    this.port = config.port || 21;
     this.user = config.user || 'anonymous';
     this.pass = config.pass || '';
     this.protocol = config.protocol || 'ftp'; // ftp or sftp
   }
 
-  _q(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
-  _qp(p) { return String(p).replace(/["$`\\;\n\r]/g, ''); }
-
   _curl(args) {
-    const auth = this.user !== 'anonymous' ? `-u ${this._q(this.user + ':' + this.pass)}` : '';
+    const auth = this.user !== 'anonymous' ? `-u "${this.user}:${this.pass}"` : '';
     return `curl -s --max-time 15 ${auth} ${args}`;
   }
 
   async list(dirPath) {
-    const url = `${this.protocol}://${this.host}:${this.port}${this._qp(dirPath)}`;
+    const url = `${this.protocol}://${this.host}:${this.port}${dirPath}`;
     const cmd = this._curl(`"${url}"`);
     const output = execSync(cmd, { stdio: 'pipe', timeout: 20000, encoding: 'utf-8' });
     const items = this._parseListing(output, dirPath);
@@ -53,7 +47,7 @@ class FtpStorage extends StorageBase {
   }
 
   async read(filePath) {
-    const url = `${this.protocol}://${this.host}:${this.port}${this._qp(filePath)}`;
+    const url = `${this.protocol}://${this.host}:${this.port}${filePath}`;
     const cmd = this._curl(`"${url}"`);
     return execSync(cmd, { stdio: 'pipe', timeout: 30000, encoding: 'utf-8' });
   }
@@ -62,31 +56,31 @@ class FtpStorage extends StorageBase {
     const fs = require('fs');
     const tmpFile = `/tmp/ftp_write_${Date.now()}`;
     fs.writeFileSync(tmpFile, content, 'utf-8');
-    const url = `${this.protocol}://${this.host}:${this.port}${this._qp(filePath)}`;
-    const auth = this.user !== 'anonymous' ? `-u ${this._q(this.user + ':' + this.pass)}` : '';
+    const url = `${this.protocol}://${this.host}:${this.port}${filePath}`;
+    const auth = this.user !== 'anonymous' ? `-u "${this.user}:${this.pass}"` : '';
     execSync(`curl -s --max-time 30 ${auth} -T "${tmpFile}" "${url}"`, { stdio: 'pipe', timeout: 35000 });
     fs.unlinkSync(tmpFile);
     return { success: true };
   }
 
   async mkdir(dirPath) {
-    const url = `${this.protocol}://${this.host}:${this.port}${this._qp(dirPath)}`;
-    const auth = this.user !== 'anonymous' ? `-u ${this._q(this.user + ':' + this.pass)}` : '';
+    const url = `${this.protocol}://${this.host}:${this.port}${dirPath}`;
+    const auth = this.user !== 'anonymous' ? `-u "${this.user}:${this.pass}"` : '';
     execSync(`curl -s --max-time 10 ${auth} --ftp-create-dirs -X MKD "${url}"`, { stdio: 'pipe', timeout: 15000 });
     return { success: true };
   }
 
   async delete(filePath) {
-    const url = `${this.protocol}://${this.host}:${this.port}${this._qp(filePath)}`;
-    const auth = this.user !== 'anonymous' ? `-u ${this._q(this.user + ':' + this.pass)}` : '';
+    const url = `${this.protocol}://${this.host}:${this.port}${filePath}`;
+    const auth = this.user !== 'anonymous' ? `-u "${this.user}:${this.pass}"` : '';
     execSync(`curl -s --max-time 10 ${auth} -X DELE "${url}"`, { stdio: 'pipe', timeout: 15000 });
     return { success: true };
   }
 
   async rename(oldPath, newPath) {
     const url = `${this.protocol}://${this.host}:${this.port}`;
-    const auth = this.user !== 'anonymous' ? `-u ${this._q(this.user + ':' + this.pass)}` : '';
-    execSync(`curl -s --max-time 10 ${auth} -Q "RNFR ${this._qp(oldPath)}" -Q "RNTO ${this._qp(newPath)}" "${url}"`, { stdio: 'pipe', timeout: 15000 });
+    const auth = this.user !== 'anonymous' ? `-u "${this.user}:${this.pass}"` : '';
+    execSync(`curl -s --max-time 10 ${auth} -Q "RNFR ${oldPath}" -Q "RNTO ${newPath}" "${url}"`, { stdio: 'pipe', timeout: 15000 });
     return { success: true };
   }
 
