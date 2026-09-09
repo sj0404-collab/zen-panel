@@ -170,10 +170,11 @@ function renderDashboard() {
       <div class="card-foot">
         <input type="text" id="cdir-${t.id}" class="card-dir" value="${escHtml(dir)}" placeholder="путь к папке..."
           onclick="event.stopPropagation()" onfocus="this.select()">
-        <div style="position:relative">
-          <button class="btn btn-sm btn-p" onclick="toggleApplyMenu(event,'${t.id}')" ${!t.installed ? 'disabled style="opacity:.4"' : ''}>▶</button>
+        ${t.installed ? `<div style="position:relative">
+          <button class="btn btn-sm btn-p" onclick="toggleApplyMenu(event,'${t.id}')">▶</button>
           <div class="apply-menu" id="amenu-${t.id}"></div>
-        </div>
+        </div>` : (t.pkg ? `<button class="btn btn-sm btn-ok" onclick="installTool('${t.id}')">⬇ Скачать</button>`
+          : `<button class="btn btn-sm" disabled style="opacity:.4">▶</button>`)}
       </div>
     </div>`;
   }).join('');
@@ -762,3 +763,63 @@ showPage = function(p) {
   origShowPage(p);
   if (p === 'models-full') loadModelsFull();
 };
+
+// ===== TOOL INSTALL — кнопка «Скачать» + живой лог =====
+let instPoll = null;
+async function installTool(id) {
+  const tool = tools.find(t => t.id === id);
+  if (!tool || !tool.pkg) return;
+  let ov = document.getElementById('install-ov');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'install-ov';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.75);display:flex;flex-direction:column;padding:14px;gap:10px';
+    ov.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><b id="install-title" style="flex:1;font-size:15px"></b>' +
+      '<button class="btn btn-sm" id="install-x">✕</button></div>' +
+      '<pre id="install-log" style="flex:1;overflow-y:auto;background:#0a0a0f;border:1px solid var(--bdr);border-radius:10px;padding:10px;font:11px/1.5 monospace;white-space:pre-wrap;word-break:break-all;margin:0;-webkit-overflow-scrolling:touch"></pre>' +
+      '<div id="install-status" style="font-size:13px;color:var(--t2)"></div>';
+    document.body.appendChild(ov);
+    document.getElementById('install-x').onclick = closeInstall;
+  }
+  document.getElementById('install-title').textContent = '\u2B07 ' + tool.name;
+  const log = document.getElementById('install-log');
+  const sel = document.getElementById('install-status');
+  log.textContent = ''; sel.textContent = 'запуск…'; ov.style.display = 'flex';
+  if (instPoll) clearInterval(instPoll);
+  let from = 0;
+  try {
+    const r = await (await fetch('/api/tools/install', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })).json();
+    if (!r.success) { sel.textContent = '\u2717 ' + (r.error || 'не вышло'); return; }
+  } catch { sel.textContent = '\u2717 нет связи'; return; }
+  const tick = async () => {
+    try {
+      const s = await (await fetch('/api/tools/install-status?id=' + encodeURIComponent(id) + '&from=' + from)).json();
+      if (!s.success) { if (instPoll) clearInterval(instPoll); sel.textContent = '\u2717 ' + (s.error || ''); return; }
+      if (s.len < from) { from = 0; log.textContent = ''; }
+      if (s.log) { log.textContent += s.log; from = s.len; log.scrollTop = log.scrollHeight; }
+      if (s.status === 'done') {
+        if (instPoll) clearInterval(instPoll);
+        sel.textContent = s.installed ? '\u2713 установлено — можно запускать' : '\u2713 готово, но команда не на PATH';
+        await refreshTools();
+      } else if (s.status === 'error') {
+        if (instPoll) clearInterval(instPoll);
+        sel.textContent = '\u2717 ошибка установки — смотри лог';
+      } else sel.textContent = 'качаю…';
+    } catch { sel.textContent = '…'; }
+  };
+  await tick();
+  instPoll = setInterval(tick, 1000);
+}
+function closeInstall() {
+  if (instPoll) clearInterval(instPoll);
+  instPoll = null;
+  const ov = document.getElementById('install-ov');
+  if (ov) ov.style.display = 'none';
+}
+async function refreshTools() {
+  try {
+    const r = await (await fetch('/api/tools')).json();
+    if (r.tools) { tools = r.tools; renderDashboard(); }
+  } catch {}
+}
