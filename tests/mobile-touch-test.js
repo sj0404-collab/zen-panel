@@ -116,5 +116,48 @@ check('q23 copy buttons', mobHtml.includes('onclick="copySelection()" ontouchend
 check('q24 clip box', mob.includes('function clipBox(') && desk.includes('function clipBox(') &&
   mob.includes('clip-ov') && desk.includes('clip-ov'));
 
+// q25: every inline tap handler is actually defined (the dead-button audit).
+(function () {
+  const builtin = new Set(('if,for,while,switch,catch,function,return,setTimeout,setInterval,' +
+    'clearTimeout,clearInterval,fetch,parseInt,parseFloat,encodeURIComponent,' +
+    'decodeURIComponent,event,this,open,close,focus,blur,select,WebSocket,Terminal,' +
+    'FitAddon,WebLinksAddon,FormData,FileReader,Blob,URL,localStorage,sessionStorage,' +
+    'navigator,location,document,window,console,Error,Promise,requestFullscreen,' +
+    'exitFullscreen,isNaN,isFinite,Math,Date,Object,Array,String,Number,JSON').split(','));
+  let bad = [];
+  for (const [js, ht, tag] of [[mob, mobHtml, 'mob'], [desk, deskHtml, 'desk']]) {
+    const calls = new Set();
+    for (const src of [js, ht]) {
+      const re = /on(?:click|touchend|touchstart|touchmove|keydown|keyup|input|change|submit|focus)\s*=\s*"([^"]*)"/g;
+      let m;
+      while ((m = re.exec(src))) {
+        const re2 = /(?<![\w$.])([A-Za-z_]\w*)\s*\(/g;
+        let c;
+        while ((c = re2.exec(m[1]))) calls.add(c[1]);
+      }
+    }
+    const defs = new Set();
+    for (const mm of js.matchAll(/(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\(/g)) defs.add(mm[1]);
+    for (const mm of js.matchAll(/(?:const|let|var)\s+([A-Za-z_]\w*)\s*=/g)) defs.add(mm[1]);
+    for (const c of calls) {
+      if (!c.startsWith('on') && !builtin.has(c) && !defs.has(c)) bad.push(tag + ':' + c);
+    }
+  }
+  check('q25 all tap handlers defined', bad.length === 0, bad.join(','));
+})();
+
+// q26: the server never spawns a terminal in a missing folder.
+check('q26 pty cwd validated', server.includes('fs.statSync(cwd).isDirectory()'));
+
+// q27: no baked-in Windows home to poison other machines.
+check('q27 no baked home', !/C:[\\/]+Users[\\/]+virus/.test(mob) && !/C:[\\/]+Users[\\/]+virus/.test(desk));
+
+// q28: desktop folder picker exists (was 3 dead buttons).
+check('q28 desktop browser funcs', desk.includes('function openBrowser(') && desk.includes('function browseTo(') &&
+  desk.includes('function browserTap(') && desk.includes('function selectBrowserPath('));
+
+// q29: dashboard rebuild keeps typed folder paths.
+check('q29 dir inputs preserved', mob.includes('dirStash') && desk.includes('dirStash'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
