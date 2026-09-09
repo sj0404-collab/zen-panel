@@ -115,8 +115,7 @@ async function preflightHub(base, zt) {
 }
 function buildOpenUrl(s, zt) {
   const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
-  // No #gh=: the server holds the PAT (gh_token input), the browser needs only ?zt=.
-  return base + '/panel?zt=' + encodeURIComponent(zt);
+  return base + '/m?zt=' + encodeURIComponent(zt);
 }
 function saveLast(url) {
   try { localStorage.setItem('hub_last', JSON.stringify({ url, at: Date.now() })); } catch (e) {}

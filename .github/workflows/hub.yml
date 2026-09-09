@@ -125,6 +125,9 @@ jobs:
             | sudo tee /usr/local/bin/agent >/dev/null
           sudo chmod +x /usr/local/bin/agent
 
+      - name: Create the work folder
+        run: mkdir -p ~/hub-work
+
       - name: Start the hub and open the tunnel
         run: |
           cd "$GITHUB_WORKSPACE/fork/npm-hub"
@@ -345,6 +348,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path $bindir | Out-Null
           @('@echo off', ('node "' + $env:GITHUB_WORKSPACE + '/fork/agent/zen-agent.js" %*')) | Set-Content "$bindir/agent.cmd"
           Add-Content $env:GITHUB_PATH $bindir
+
+      - name: Create the work folder
+        run: New-Item -ItemType Directory -Force "$env:USERPROFILE\hub-work" | Out-Null
 
       - name: Start the hub and open the tunnel
         shell: pwsh

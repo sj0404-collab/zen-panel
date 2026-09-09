@@ -66,27 +66,22 @@ class GithubStorage extends StorageBase {
 
   async write(filePath, content) {
     const file = filePath.replace(/^\//, '');
-    // Updates require the blob sha; without it the API 422s on existing files.
-    let sha;
-    try { const cur = await this._api('GET', `/contents/${file}?ref=${this.branch}`); if (cur && cur.sha) sha = cur.sha; } catch {}
     const body = JSON.stringify({
-      message: `${sha ? 'Update' : 'Create'} ${file}`,
+      message: `Update ${file}`,
       content: Buffer.from(content).toString('base64'),
-      branch: this.branch,
-      ...(sha ? { sha } : {})
+      branch: this.branch
     });
     return this._api('PUT', `/contents/${file}`, body);
   }
 
   async mkdir(dirPath) {
-    // Git has no empty dirs: materialize the directory with a .gitkeep file.
-    const dir = dirPath.replace(/^\//, '').replace(/\/$/, '');
+    const dir = dirPath.replace(/^\//, '');
     const body = JSON.stringify({
       message: `Create directory ${dir}`,
-      content: Buffer.from('\n').toString('base64'),
+      content: '',
       branch: this.branch
     });
-    return this._api('PUT', `/contents/${dir}/.gitkeep`, body);
+    return this._api('PUT', `/contents/${dir}`, body);
   }
 
   async delete(filePath) {

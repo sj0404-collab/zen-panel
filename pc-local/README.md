@@ -22,12 +22,8 @@ pc-local\start.bat       # Windows
 - хаб: `http://localhost:8090/`
 - десктоп: `http://localhost:8090/d`
 - мобильный: `http://localhost:8090/m` (с телефона в том же LAN — по IP этого ПК)
-- панель GitHub: `http://localhost:8090/panel`
 
-Остановка: `pc-local/stop.sh` / `pc-local\stop.bat`. Совет: `HUB_TOKEN=...`
-перед стартом закрывает хаб гейт-токеном (`?zt=`) — как у облачных запусков.
-Вкладкам GitHub панели нужен `GH_TOKEN=...` (PAT с `repo` + `workflow`) —
-иначе «Аккаунт», «Репо», «Actions» и «Сессии» покажут «нет токена».
+Остановка: `pc-local/stop.sh` / `pc-local\stop.bat`.
 
 ## С раннером
 

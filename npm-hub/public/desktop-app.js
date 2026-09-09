@@ -1,31 +1,9 @@
-// zt: when the hub runs behind a gate token (HUB_TOKEN), the panel opens it
-// as /d?zt=… or /m?zt=…. Forward it on every same-origin API call, so the UI
-// keeps working without threading the token through forty fetch sites.
-var __zt = null;
-try { __zt = new URLSearchParams(location.search).get('zt'); } catch (e) { __zt = null; }
-function __ztQ() { return __zt ? '?zt=' + encodeURIComponent(__zt) : ''; }
-if (__zt && typeof window !== 'undefined' && !window.__ztWrapped) {
-  window.__ztWrapped = true;
-  const __fetch0 = window.fetch.bind(window);
-  window.fetch = function (u, o) {
-    if (typeof u === 'string' && u.indexOf('/api') === 0) {
-      u += (u.indexOf('?') === -1 ? '?' : '&') + 'zt=' + encodeURIComponent(__zt);
-    }
-    return __fetch0(u, o);
-  };
-}
-
-let tools = [], homeDir = 'C:\\Users\\virus', accessMode = 'local';
+let tools = [], homeDir = 'C:\\Users\\virus', workDir = '', accessMode = 'local';
 let tabs = [], activeTab = null, zoomLevel = 100;
 let fmCurrentPath = '', fmSelected = null, fmBackend = 'local';
 let recentPaths = [], toolDirs = {};
 let storages = [];
 let models = [], selectedModel = 'openrouter/owl-alpha';
-// A tool is tappable when the server can launch it - directly installed,
-// or on-demand through `npx -y`. Old servers report no `launchable`,
-// which falls back to the previous behaviour.
-function toolUsable(t) { return !!(t && (t.launchable || t.installed)); }
-
 
 document.addEventListener('DOMContentLoaded', init);
 
@@ -52,6 +30,7 @@ async function init() {
   ]);
   if (toolsR.success) tools = toolsR.tools;
   if (infoR.home) homeDir = infoR.home;
+  if (infoR.workDir) workDir = infoR.workDir;
   if (infoR.state?.lastDirs) toolDirs = infoR.state.lastDirs;
   if (histR.success) recentPaths = histR.recentPaths || [];
   if (storR.success) storages = storR.storages || [];
@@ -88,23 +67,7 @@ async function init() {
     window.__tunnelUrl = tunnelR.url;
   }
   renderDashboard(); renderSidebar();
-  loadHealth(); setInterval(loadHealth, 60000);
-  setTimeout(() => { initFM(); fmBrowse(homeDir); }, 300);
-}
-
-async function loadHealth() {
-  try {
-    const r = await fetch('/api/health').then(r => r.json());
-    if (!r.success) return;
-    const up = r.providers.filter(p => p.ok).length;
-    const el = document.getElementById('health-stat');
-    if (el) {
-      el.textContent = `${up}/${r.providers.length}`;
-      el.style.color = up === r.providers.length ? 'var(--ok)' : 'var(--warn)';
-      el.title = r.providers.map(p => `${p.ok ? '🟢' : '🔴'} ${p.name}${p.ms != null ? ' ' + p.ms + 'ms' : ''}`).join('\n') +
-        `\nuptime ${r.self.uptime}s · RAM ${r.self.rssMB}MB · сессий ${r.self.sessions}`;
-    }
-  } catch {}
+  setTimeout(() => { initFM(); fmBrowse(workDir || homeDir); }, 300);
 }
 
 function updateModelButton() {
@@ -134,13 +97,13 @@ function toggleModelMenu(e) {
 
 function renderModelList(list) {
   return list.map(m => `
-    <div class="apply-item" onclick="selectModel('${m.id}','${m.providerId}')" style="flex-direction:column;align-items:flex-start;gap:2px">
+    <div class="apply-item" onclick="selectModel('${m.id}')" style="flex-direction:column;align-items:flex-start;gap:2px">
       <div style="display:flex;align-items:center;gap:6px;width:100%">
         <span style="font-size:11px;flex:1">${m.name}</span>
         ${m.free ? '<span style="font-size:8px;color:var(--ok);background:rgba(63,185,80,.15);padding:1px 5px;border-radius:4px">FREE</span>' : '<span style="font-size:8px;color:var(--warn);background:rgba(210,153,34,.15);padding:1px 5px;border-radius:4px">PAID</span>'}
         ${m.id === selectedModel ? '<span style="font-size:9px;color:var(--acc)">✓</span>' : ''}
       </div>
-      <div style="font-size:9px;color:var(--t3);width:100%">${m.providerName || ''} • ${(m.ctx/1000).toFixed(0)}K ctx</div>
+      <div style="font-size:9px;color:var(--t3);width:100%">${m.desc} • ${(m.ctx/1000).toFixed(0)}K ctx</div>
     </div>
   `).join('');
 }
@@ -150,13 +113,24 @@ function filterModels(q) {
   document.getElementById('model-list').innerHTML = renderModelList(filtered);
 }
 
-async function selectModel(modelId, providerId) {
+async function selectModel(modelId) {
   document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));
-  await fetch('/api/models/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId, providerId }) });
+  await fetch('/api/models/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId }) });
   selectedModel = modelId;
   updateModelButton();
 }
 
+function showApiKeyModal() {
+  document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));
+  document.getElementById('modal-apikey').classList.add('on');
+}
+
+async function saveApiKey() {
+  const key = document.getElementById('apikey-input').value.trim();
+  if (!key) return;
+  await fetch('/api/models/apikey', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: key }) });
+  closeModal('modal-apikey');
+}
 
 // Close model menu on outside click
 document.addEventListener('click', () => { document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on')); });
@@ -166,7 +140,7 @@ function showPage(p) {
   document.getElementById('p-' + p).classList.add('on');
   document.querySelectorAll('.tb').forEach(b => {
     const t = b.textContent.toLowerCase();
-    b.classList.toggle('on', (p === 'dashboard' && t === 'dashboard') || (p === 'terminal' && t === 'терминал') || (p === 'files' && t === 'файлы') || (p === 'repos' && t.includes('repos')) || (p === 'models-full' && t.includes('models')));
+    b.classList.toggle('on', (p === 'dashboard' && t === 'dashboard') || (p === 'terminal' && t === 'терминал') || (p === 'files' && t === 'файлы'));
   });
   if (p === 'terminal') {
     if (activeTab) setTimeout(() => activeTab.fitAddon?.fit(), 50);
@@ -183,8 +157,7 @@ function renderDashboard() {
     <div class="st"><div class="st-v" style="color:var(--acc)">${tools.length}</div><div class="st-l">Всего</div></div>
     <div class="st"><div class="st-v" style="color:var(--ok)">${inst.length}</div><div class="st-l">Установлено</div></div>
     <div class="st"><div class="st-v" style="color:var(--pur)">${tabs.length}</div><div class="st-l">Сессий</div></div>
-    <div class="st"><div class="st-v" style="color:var(--warn)">${m ? m.name : selectedModel}</div><div class="st-l">Модель</div></div>
-    <div class="st"><div class="st-v" id="health-stat" style="color:var(--ok)">…</div><div class="st-l">Мониторинг</div></div>`;
+    <div class="st"><div class="st-v" style="color:var(--warn)">${m ? m.name : selectedModel}</div><div class="st-l">Модель</div></div>`;
 
   document.getElementById('grid').innerHTML = tools.map(t => {
     const dir = toolDirs[t.id] || homeDir;
@@ -198,7 +171,7 @@ function renderDashboard() {
         <input type="text" id="cdir-${t.id}" class="card-dir" value="${escHtml(dir)}" placeholder="путь к папке..."
           onclick="event.stopPropagation()" onfocus="this.select()">
         <div style="position:relative">
-          <button class="btn btn-sm btn-p" onclick="toggleApplyMenu(event,'${t.id}')" ${!toolUsable(t) ? 'disabled style="opacity:.4"' : ''}>▶</button>
+          <button class="btn btn-sm btn-p" onclick="toggleApplyMenu(event,'${t.id}')" ${!t.installed ? 'disabled style="opacity:.4"' : ''}>▶</button>
           <div class="apply-menu" id="amenu-${t.id}"></div>
         </div>
       </div>
@@ -212,7 +185,7 @@ function toggleApplyMenu(e, toolId) {
   const menu = document.getElementById('amenu-' + toolId);
   if (!menu) return;
   const dir = document.getElementById('cdir-' + toolId)?.value?.trim() || homeDir;
-  menu.innerHTML = tools.filter(toolUsable).map(t => `
+  menu.innerHTML = tools.filter(t => t.installed).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();openFromCard('${toolId}','${escAttr(dir)}','${t.id}')">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:18px;height:18px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:800">${t.icon}</div>
       <span>${t.name}</span>
@@ -276,7 +249,7 @@ function openTerminal(dir) {
 }
 
 function renderSidebar() {
-  document.getElementById('tool-list').innerHTML = tools.filter(toolUsable).map(t => {
+  document.getElementById('tool-list').innerHTML = tools.filter(t => t.installed).map(t => {
     const dir = toolDirs[t.id] || homeDir;
     const short = dir.replace(homeDir, '~').split('\\').pop();
     return `<div class="sb-i" onclick="launchTool('${t.id}')">
@@ -299,7 +272,7 @@ function showNewTermModal() {
       <div class="sb-ico" style="background:rgba(88,166,255,.15);color:var(--acc);width:26px;height:26px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9px">&gt;_</div>
       <div><div style="font-size:12px;font-weight:500">Terminal</div><div style="font-size:9px;color:var(--t3)">Пустой терминал</div></div>
     </div>
-  ` + tools.filter(toolUsable).map(t => `
+  ` + tools.filter(t => t.installed).map(t => `
     <div class="newterm-tool" onclick="createTerm('${t.id}')">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:26px;height:26px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9px">${t.icon}</div>
       <div><div style="font-size:12px;font-weight:500">${t.name}</div></div>
@@ -335,7 +308,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   }
 
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(`${protocol}//${location.host}/ws` + __ztQ());
+  const socket = new WebSocket(`${protocol}//${location.host}/ws`);
 
   const term = new Terminal({
     theme: { background: '#0a0e14', foreground: '#e6edf3', cursor: '#58a6ff', cursorAccent: '#0a0e14', selectionBackground: '#264f78', black: '#0a0e14', red: '#f85149', green: '#3fb950', yellow: '#d29922', blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39c5cf', white: '#e6edf3', brightBlack: '#484f58', brightRed: '#f85149', brightGreen: '#3fb950', brightYellow: '#d29922', brightBlue: '#58a6ff', brightMagenta: '#bc8cff', brightCyan: '#56d4dd', brightWhite: '#ffffff' },
@@ -361,7 +334,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   await new Promise(r => setTimeout(r, 30));
   fitAddon.fit();
 
-  const td = { id, toolId, toolName: displayName, color, icon, dirShort, cwd, ws: socket, term, fitAddon, el: panel };
+  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: socket, term, fitAddon, el: panel };
   tabs.push(td);
 
   socket.onopen = () => { socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : toolId, sessionId: id, cwd, cols: term.cols, rows: term.rows })); term.focus(); };
@@ -370,7 +343,6 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   term.onData((d) => { if (socket.readyState === 1) socket.send(JSON.stringify({ type: 'input', data: d })); });
   term.onResize(({ cols, rows }) => { if (socket.readyState === 1) socket.send(JSON.stringify({ type: 'resize', cols, rows })); });
   new ResizeObserver(() => { if (activeTab?.id === id) fitAddon.fit(); }).observe(panel);
-  bindTermHold(panel, id);
 
   const tabEl = document.createElement('div');
   tabEl.className = 'tab';
@@ -417,15 +389,6 @@ function toggleFullscreen() {
 }
 document.addEventListener('fullscreenchange', () => { setTimeout(() => { if (activeTab) activeTab.fitAddon?.fit(); }, 100); });
 
-async function saveTermSession() {
-  const t = activeTab;
-  if (!t) { alert('Нет активной сессии'); return; }
-  try {
-    const r = await fetch('/api/sessions/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: t.id }) }).then(r => r.json());
-    if (!r.success) { alert('Не вышло: ' + (r.error || 'неизвестная')); return; }
-    alert('Сессия сохранена: ' + (r.files || []).join(', ') + (r.pushed ? ' · запушено ✓' : '') + (r.note ? '\n' + r.note : ''));
-  } catch (e) { alert('Не вышло: ' + e.message); }
-}
 function killTerm() {
   if (!activeTab || !activeTab.ws) return;
   if (activeTab.ws.readyState === WebSocket.OPEN) {
@@ -461,48 +424,6 @@ function restartTerm() {
   setTimeout(() => createTerm(toolId, cwd), 100);
 }
 
-// ===== HOLD-TO-OPEN TOOL MENU =====
-// Long-press (touch) or right-click (mouse) on a terminal opens the same
-// tool menu the ▶ buttons show elsewhere: launch anything in this tab's
-// folder without typing the path.
-let lastTermMenuAt = 0;
-function bindTermHold(panel, tabId) {
-  let timer = null, sx = 0, sy = 0;
-  panel.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 1) return;
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
-    timer = setTimeout(() => { timer = null; openTermApplyMenu(tabId); }, 550);
-  }, { passive: true });
-  panel.addEventListener('touchmove', (e) => {
-    if (!timer) return;
-    const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
-    if (dx * dx + dy * dy > 100) { clearTimeout(timer); timer = null; }
-  }, { passive: true });
-  panel.addEventListener('touchend', () => { if (timer) { clearTimeout(timer); timer = null; } });
-  panel.addEventListener('contextmenu', (e) => { e.preventDefault(); openTermApplyMenu(tabId); });
-}
-function openTermApplyMenu(tabId) {
-  const now = Date.now();
-  if (now - lastTermMenuAt < 800) return; // timer + contextmenu both fire on a hold
-  lastTermMenuAt = now;
-  const tab = tabs.find(t => t.id === tabId);
-  if (!tab) return;
-  document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));
-  const menu = document.getElementById('term-apply-menu');
-  if (!menu) return;
-  const dir = tab.cwd || homeDir;
-  menu.innerHTML = `<div class="apply-menu-title">Запустить в ${escHtml(String(dir).replace(homeDir, '~'))}</div>` +
-    tools.filter(toolUsable).map(t => `
-    <div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','${t.id}')">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div>
-      <span>${t.name}</span>
-    </div>`).join('') + `<div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','_terminal')">
-      <div class="sb-ico" style="background:rgba(88,166,255,.15);color:var(--acc);width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">&gt;_</div>
-      <span>Terminal</span>
-    </div>`;
-  menu.classList.add('on');
-}
-
 // ======== FILE MANAGER ========
 async function initFM() {
   const r = await fetch('/api/devices').then(r => r.json());
@@ -527,15 +448,8 @@ function fmSwitchBackend(backend, startPath) {
 }
 
 async function fmBrowse(p) {
-  p = String(p == null ? '' : p);
-  const m = /^\[([^\]]+)\]\s*/.exec(p);
-  if (m) { fmBackend = m[1]; p = p.slice(m[0].length) || '/'; }
-  const r = await fetch(`/api/browse?backend=${encodeURIComponent(fmBackend)}&path=${encodeURIComponent(p)}`).then(r => r.json());
-  if (!r.success) {
-    const info = document.getElementById('fm-info');
-    if (info) info.textContent = 'Ошибка: ' + (r.error || 'неизвестная');
-    return;
-  }
+  const r = await fetch(`/api/browse?backend=${fmBackend}&path=${encodeURIComponent(p)}`).then(r => r.json());
+  if (!r.success) return;
   fmCurrentPath = r.path;
   document.getElementById('fm-path').value = `${fmBackend === 'local' ? '' : '[' + fmBackend + '] '}${r.path}`;
   const list = document.getElementById('fm-list');
@@ -566,19 +480,8 @@ function toggleFmMenu(e) {
   document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));
   const menu = document.getElementById('fm-apply-menu');
   if (!menu) return;
-  if (fmBackend !== 'local') {
-    const s = (storages || []).find(x => x.id === fmBackend);
-    if (!s || s.type !== 'github') { alert('Это удалённое хранилище, а не папка на диске. Откройте локальную папку или клонируйте репозиторий.'); return; }
-    menu.innerHTML = `<div class="apply-menu-title">Репозиторий не на диске</div>
-    <div class="apply-item" onclick="event.stopPropagation();fmCloneOpen('${escAttr(s.id)}')">
-      <div class="sb-ico" style="background:rgba(63,185,80,.15);color:var(--ok);width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800">⬇</div>
-      <span>Клонировать и открыть</span>
-    </div>`;
-    menu.classList.add('on');
-    return;
-  }
   const dir = fmCurrentPath || homeDir;
-  menu.innerHTML = tools.filter(toolUsable).map(t => `
+  menu.innerHTML = tools.filter(t => t.installed).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','${t.id}')">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:18px;height:18px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:800">${t.icon}</div>
       <span>${t.name}</span>
@@ -598,25 +501,11 @@ async function fmOpenIn(dir, toolId) {
   createTerm(toolId, dir);
 }
 
-async function fmCloneOpen(storageId) {
-  document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));
-  const info = document.getElementById('fm-info');
-  if (info) info.textContent = 'Клонирование…';
-  try {
-    const r = await fetch('/api/storages/clone', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: storageId }) }).then(r => r.json());
-    if (!r.success) { alert('Ошибка: ' + (r.error || 'неизвестная')); return; }
-    fmSwitchBackend('local', r.path);
-    toggleFmMenu({ stopPropagation() {} });
-  } finally {
-    if (info && !info.textContent) info.textContent = '';
-  }
-}
-
 async function fmBrowseAdbPath(device, path) {
   fmBackend = `adb:${device}`;
   fmCurrentPath = path;
   document.getElementById('fm-path').value = `[ADB] ${path}`;
-  const r = await fetch(`/api/browse?backend=${encodeURIComponent('adb:' + device)}&path=${encodeURIComponent(path)}`).then(r => r.json());
+  const r = await fetch(`/api/browse?backend=adb:${device}&path=${encodeURIComponent(path)}`).then(r => r.json());
   if (!r.success) return;
   const list = document.getElementById('fm-list');
   let html = '';
@@ -720,7 +609,7 @@ async function fmRename() {
 
 function fmDownload() {
   if (!fmSelected) return;
-  window.open(`/api/fs/download?backend=${encodeURIComponent(fmBackend)}&path=${encodeURIComponent(fmSelected)}`);
+  window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
 }
 
 async function fmUpload() {
@@ -731,6 +620,13 @@ async function fmUpload() {
     for (const file of input.files) {
       const content = await file.text();
       const path = fmCurrentPath + '/' + file.name;
+      await fetch('/api/fs/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: content,
+        // Pass path via query since body is binary
+      });
+      // Re-upload with JSON metadata
       await fetch('/api/fs/write', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -740,37 +636,6 @@ async function fmUpload() {
     fmRefresh();
   };
   input.click();
-}
-
-// ===== BROWSER MODAL =====
-async function openBrowser() {
-  closeModal('modal-newterm');
-  document.getElementById('modal-browser').classList.add('on');
-  const drivesR = await fetch('/api/drives').then(r => r.json());
-  if (drivesR.success) {
-    document.getElementById('browser-drives').innerHTML = drivesR.drives.map(d =>
-      `<button class="drive-btn" onclick="browseTo('${escAttr(d)}')">${d}</button>`
-    ).join('');
-  }
-  browseTo(homeDir);
-}
-
-async function browseTo(p) {
-  const r = await fetch(`/api/browse?backend=local&path=${encodeURIComponent(p)}`).then(r => r.json());
-  if (!r.success) return;
-  document.getElementById('browser-path').value = r.path;
-  const list = document.getElementById('browser-list');
-  let html = '';
-  if (r.parent && r.parent !== r.path) html += `<div class="fm-item" ondblclick="browseTo('${escAttr(r.parent)}')"><span class="fm-ico">📁</span><span class="fm-name">..</span></div>`;
-  html += r.items.filter(i => i.isDir).map(i => `<div class="fm-item" data-path="${escHtml(i.path)}" onclick="document.querySelectorAll('#browser-list .fm-item').forEach(e=>e.classList.remove('fm-sel'));this.classList.add('fm-sel')" ondblclick="browseTo('${escAttr(i.path)}')"><span class="fm-ico">📁</span><span class="fm-name">${escHtml(i.name)}</span></div>`).join('');
-  list.innerHTML = html || '<div style="padding:20px;color:var(--t3);text-align:center">Пусто</div>';
-}
-
-function selectBrowserPath() {
-  const sel = document.querySelector('#browser-list .fm-sel');
-  if (sel) document.getElementById('newterm-cwd').value = sel.dataset.path;
-  closeModal('modal-browser');
-  document.getElementById('modal-newterm').classList.add('on');
 }
 
 // ─── HELPERS ───
@@ -812,7 +677,7 @@ function renderModelsFullProviders(providers) {
         ${p.free ? '<span style="font-size:8px;color:var(--ok);background:rgba(63,185,80,.15);padding:1px 5px;border-radius:4px">FREE</span>' : ''}
         ${p.configured ? '<span style="font-size:8px;color:var(--ok)">✓</span>' : '<span style="font-size:8px;color:var(--err)">⚠️</span>'}
       </div>
-      ${p.keyMasked ? `<div class="tc-key">🔑 ${p.keyMasked}</div>` : ''}
+      ${p.key && p.key !== '(free)' ? `<div class="tc-key">🔑 ${p.key.slice(0,16)}...${p.key.slice(-4)}</div>` : ''}
     </div>
   `).join('');
 }
@@ -831,8 +696,8 @@ function renderModelsFullList(models) {
       <div class="model-id">${m.id}</div>
       <div style="font-size:9px;color:var(--t3);margin-top:2px">${m.providerName} • ${(m.ctx/1000).toFixed(0)}K in / ${(m.out/1000).toFixed(0)}K out</div>
       <div style="margin-top:6px;display:flex;gap:4px">
-        <button class="btn btn-sm btn-ok" onclick="selectModelFull('${escAttr(m.id)}','${m.providerId}')">▶ Выбрать</button> <button class="btn btn-sm" onclick="testModelFull('${escAttr(m.id)}','${m.providerId}')" title="Протестировать модель">🧪</button>
-        ${m.keyMasked ? `<span style="font-size:8px;color:var(--t3);display:flex;align-items:center">🔑 ${m.keyMasked}</span>` : ''}
+        <button class="btn btn-sm btn-ok" onclick="selectModelFull('${escAttr(m.id)}','${m.providerId}')">▶ Выбрать</button>
+        ${m.key && m.key !== '(free)' ? `<span style="font-size:8px;color:var(--t3);display:flex;align-items:center">🔑 ${m.key.slice(0,10)}...</span>` : ''}
       </div>
     </div>
   `).join('');
@@ -854,20 +719,6 @@ async function selectModelFull(modelId, providerId) {
   loadModelsFull();
 }
 
-async function testModelFull(modelId, providerId) {
-  try {
-    const r = await fetch('/api/models/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId, providerId }) }).then(r => r.json());
-    alert(r.ok ? `✓ ${modelId}\nОтвет за ${r.ms}ms` : `✗ ${modelId}\n${r.error || 'ошибка'}`);
-  } catch (e) { alert('✗ ' + e.message); }
-}
-
-async function refreshLiveModels() {
-  const info = document.getElementById('models-full-info');
-  if (info) info.textContent = 'Обновление каталогов…';
-  try { await fetch('/api/models/refresh', { method: 'POST' }); } catch {}
-  loadModelsFull();
-}
-
 async function syncAllModels() {
   if (!modelsFullData) return;
   await selectModelFull(modelsFullData.selected, modelsFullData.provider);
@@ -875,7 +726,6 @@ async function syncAllModels() {
 }
 
 function showApiKeyModal() {
-  document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));
   document.getElementById('modal-apikey').classList.add('on');
 }
 
@@ -888,184 +738,8 @@ async function saveApiKey() {
 }
 
 // Load models-full when page is shown
-// ===== GITHUB REPOS =====
-// The panel opens the hub with #gh=<account token>. A fragment never leaves
-// the browser, so the hub server never sees it - this page lists the
-// account's repos straight from api.github.com, then either browses one
-// through the existing github storage backend or clones it onto the runner.
-let ghReposCache = null;
-function ghToken() {
-  const h = (location.hash || '').match(/gh=([^&]+)/);
-  if (h) {
-    const t = decodeURIComponent(h[1]);
-    try { sessionStorage.setItem('gh_token', t); } catch {}
-    return t;
-  }
-  try { const s = sessionStorage.getItem('gh_token'); if (s) return s; } catch {}
-  const inp = document.getElementById('repos-token');
-  return (inp && inp.value.trim()) || '';
-}
-async function saveReposToken() {
-  const v = (document.getElementById('repos-token')?.value || '').trim();
-  if (!v) return;
-  try { sessionStorage.setItem('gh_token', v); } catch {}
-  loadRepos();
-}
-async function verifyGhToken() {
-  const t = ghToken();
-  const infoEl = document.getElementById('repos-info');
-  if (!t) { if (infoEl) infoEl.textContent = 'Вставь токен выше'; return; }
-  if (infoEl) infoEl.textContent = 'Проверка…';
-  try {
-    const r = await fetch('https://api.github.com/user', { headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + t } });
-    if (!r.ok) throw new Error('GitHub: ' + r.status);
-    const u = await r.json();
-    const scopes = (r.headers.get('x-oauth-scopes') || '').trim() || '—';
-    try { sessionStorage.setItem('gh_token', t); } catch {}
-    if (infoEl) infoEl.textContent = `✓ ${u.login} · scopes: ${scopes}`;
-    loadRepos();
-  } catch (e) {
-    if (infoEl) infoEl.textContent = 'Ошибка: ' + e.message;
-  }
-}
-async function loadRepos() {
-  const listEl = document.getElementById('repos-list');
-  const infoEl = document.getElementById('repos-info');
-  const authEl = document.getElementById('repos-auth');
-  const t = ghToken();
-  if (authEl) authEl.style.display = t ? 'none' : '';
-  if (!t) {
-    if (listEl) listEl.innerHTML = '';
-    if (infoEl) infoEl.textContent = 'Нужен GitHub-токен';
-    return;
-  }
-  if (infoEl) infoEl.textContent = 'Загрузка…';
-  try {
-    const repos = [];
-    let url = 'https://api.github.com/user/repos?per_page=100&sort=updated';
-    for (let page = 0; page < 5 && url; page++) {
-      const r = await fetch(url, { headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + t } });
-      if (!r.ok) throw new Error('GitHub: ' + r.status);
-      repos.push(...(await r.json()));
-      const nx = (r.headers.get('Link') || '').match(/<([^>]+)>;\s*rel="next"/);
-      url = nx ? nx[1] : null;
-    }
-    ghReposCache = repos;
-    const q = document.getElementById('repos-search');
-    if (q) q.value = '';
-    renderRepos(repos);
-    if (infoEl) infoEl.textContent = `${repos.length} репозиториев`;
-  } catch (e) {
-    if (infoEl) infoEl.textContent = 'Ошибка: ' + e.message;
-  }
-}
-function permBadge(pm) {
-  pm = pm || {};
-  const lvl = pm.admin ? 'admin' : pm.maintain ? 'maintain' : pm.push ? 'push' : pm.triage ? 'triage' : 'read';
-  const col = (pm.admin || pm.maintain || pm.push) ? '#3fb950' : 'var(--t3)';
-  return `<span style="font-size:9px;color:${col};padding:2px 6px">⬖ ${lvl}</span>`;
-}
-function renderRepos(repos) {
-  const el = document.getElementById('repos-list');
-  if (!el) return;
-  el.innerHTML = repos.map(r => `
-    <div class="model-card">
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <div class="model-name">🐙 ${escHtml(r.full_name)}</div>
-        ${r.private ? '<span style="font-size:9px;color:var(--warn);background:rgba(210,153,34,.15);padding:2px 6px;border-radius:4px">PRIVATE</span>' : ''}
-        ${r.fork ? '<span style="font-size:9px;color:var(--t3);padding:2px 6px">fork</span>' : ''}
-        ${permBadge(r.permissions)}
-      </div>
-      ${r.description ? `<div style="font-size:11px;color:var(--t2);margin-top:4px">${escHtml(r.description)}</div>` : ''}
-      <div style="font-size:10px;color:var(--t3);margin-top:4px">${escHtml(r.language || '—')} • ⭐ ${r.stargazers_count} • ${String(r.updated_at || '').slice(0, 10)}</div>
-      <div style="margin-top:8px;display:flex;gap:6px">
-        <button class="btn btn-sm btn-ok" onclick="repoOpen('${escAttr(r.full_name)}','${escAttr(r.default_branch || 'main')}',${r.private ? 'true' : 'false'})">▶ Открыть</button>
-        <button class="btn btn-sm btn-ok" onclick="repoBrowse('${escAttr(r.full_name)}','${escAttr(r.default_branch || 'main')}')">📁 Смотреть</button>
-        <button class="btn btn-sm" onclick="repoClone('${escAttr(r.full_name)}',${r.private ? 'true' : 'false'})">⬇ Клонировать</button>
-      </div>
-    </div>`).join('') || '<div style="padding:20px;color:var(--t3);text-align:center">Пусто</div>';
-}
-function filterRepos(q) {
-  if (!ghReposCache) return;
-  q = (q || '').toLowerCase();
-  renderRepos(ghReposCache.filter(r => r.full_name.toLowerCase().includes(q) || (r.description || '').toLowerCase().includes(q)));
-}
-let gitAuthState = null;
-async function ensureGitAuth(loud) {
-  const t = ghToken();
-  if (!t) { if (loud) alert('Сначала нужен GitHub-токен'); return false; }
-  try {
-    const u = await fetch('https://api.github.com/user', { headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + t } }).then(r => {
-      if (!r.ok) throw new Error('GitHub: ' + r.status);
-      return r.json();
-    });
-    const r = await fetch('/api/git/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: t, login: u.login, name: u.name, email: u.email }) }).then(r => r.json());
-    if (!r.success) throw new Error(r.error || 'git auth failed');
-    gitAuthState = u.login;
-    updateGitAuthBtn();
-    if (loud) alert(`✓ Push включён (${u.login}) — агенты могут коммитить и пушить`);
-    return true;
-  } catch (e) {
-    if (loud) alert('Ошибка: ' + e.message);
-    return false;
-  }
-}
-function updateGitAuthBtn() {
-  const b = document.getElementById('git-auth-btn');
-  if (b) {
-    b.textContent = gitAuthState ? `🔑 ${gitAuthState}` : '🔑 Push';
-    b.classList.toggle('btn-ok', !!gitAuthState);
-  }
-}
-async function repoOpen(fullName, branch, isPrivate) {
-  const t = ghToken();
-  if (isPrivate && !t) { alert('Приватный репозиторий: нужен токен'); return; }
-  const infoEl = document.getElementById('repos-info');
-  if (infoEl) infoEl.textContent = 'Открываю ' + fullName + '…';
-  try {
-    const r = await fetch('/api/git/clone', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repo: fullName, branch: branch || undefined, token: t || undefined }) }).then(r => r.json());
-    if (!r.success) { alert('Ошибка: ' + (r.error || 'неизвестная')); return; }
-    if (t) ensureGitAuth(false);
-    showPage('terminal');
-    createTerm('_terminal', r.path, true);
-  } catch (e) { alert('Ошибка: ' + e.message); }
-}
-async function repoBrowse(fullName, branch) {
-  const parts = fullName.split('/');
-  const r = await fetch('/api/storages/add', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ storageType: 'github', owner: parts[0], repo: parts[1], token: ghToken(), branch: branch || 'main', name: 'GitHub: ' + fullName }) }).then(r => r.json());
-  if (!r.success) { alert('Ошибка: ' + (r.error || 'неизвестная')); return; }
-  try {
-    const storR = await fetch('/api/storages').then(r => r.json());
-    if (storR.success) storages = storR.storages || storages;
-  } catch {}
-  showPage('files');
-  initFM();
-  const s = (storages || []).find(x => x.name === 'GitHub: ' + fullName);
-  if (s) fmSwitchBackend(s.id, '/');
-}
-async function repoClone(fullName, isPrivate) {
-  if (isPrivate && !ghToken()) { alert('Приватный репозиторий: нужен токен'); return; }
-  if (!confirm(`Клонировать ${fullName} в ~/repos/?`)) return;
-  const infoEl = document.getElementById('repos-info');
-  if (infoEl) infoEl.textContent = 'Клонирование ' + fullName + '…';
-  try {
-    const r = await fetch('/api/git/clone', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repo: fullName, token: isPrivate ? ghToken() : undefined }) }).then(r => r.json());
-    if (!r.success) { alert('Ошибка: ' + (r.error || 'неизвестная')); return; }
-    if (ghToken()) ensureGitAuth(false);
-    showPage('files');
-    fmSwitchBackend('local', r.path);
-  } finally {
-    if (infoEl && ghReposCache) infoEl.textContent = `${ghReposCache.length} репозиториев`;
-  }
-}
-
 const origShowPage = showPage;
 showPage = function(p) {
   origShowPage(p);
   if (p === 'models-full') loadModelsFull();
-  if (p === 'repos' && !ghReposCache) loadRepos();
 };

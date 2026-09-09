@@ -41,39 +41,28 @@ class StorageManager {
 
   _addBackend(id, config) {
     if (!config || !config.storageType) return;
-    let b = null;
     switch (config.storageType) {
-      case 'adb': b = new AdbStorage(config.deviceId); break;
-      case 'ftp': b = new FtpStorage(config); break;
-      case 'gdrive': b = new GDriveStorage(config); break;
-      case 'github': b = new GithubStorage(config); break;
-      case 'http': b = new HttpStorage(config); break;
-      case 'webdav': b = new WebDavStorage(config); break;
+      case 'adb': return this.backends.set(id, new AdbStorage(config.deviceId));
+      case 'ftp': return this.backends.set(id, new FtpStorage(config));
+      case 'gdrive': return this.backends.set(id, new GDriveStorage(config));
+      case 'github': return this.backends.set(id, new GithubStorage(config));
+      case 'http': return this.backends.set(id, new HttpStorage(config));
+      case 'webdav': return this.backends.set(id, new WebDavStorage(config));
     }
-    // The map key is the one true id: backends invent their own (github
-    // used owner/repo while the key held the display name), so lookups
-    // missed and every browse silently showed the local disk instead.
-    if (b) { b.id = id; b.config = b.config || config; this.backends.set(id, b); }
   }
 
   get(id) {
-    const b = this.backends.get(id);
-    if (!b) throw new Error(`unknown backend: ${id}`);
-    return b;
-  }
-
-  exact(id) {
-    return this.backends.get(id) || null;
+    return this.backends.get(id) || this.backends.get('local');
   }
 
   listAll() {
-    return Array.from(this.backends.entries()).map(([id, b]) => ({
-      id, name: b.name, icon: b.icon, type: (b.config && b.config.storageType) || (id === 'local' ? 'local' : null)
+    return Array.from(this.backends.values()).map(b => ({
+      id: b.id, name: b.name, icon: b.icon
     }));
   }
 
   async addStorage(config) {
-    const id = `${config.storageType}-${Date.now().toString(36)}`;
+    const id = `${config.storageType}:${config.name || config.host || config.url || Date.now()}`;
     this._addBackend(id, config);
     this._save();
     return { success: true, id };
@@ -87,6 +76,7 @@ class StorageManager {
 
   async discoverDevices() {
     const devices = [];
+    devices.push({ type: 'local', id: path.join(HOME, 'hub-work'), name: 'hub-work', icon: '📁' });
     // Local drives
     try {
       if (process.platform === 'win32') {
