@@ -8,6 +8,7 @@
 
 - Desktop UI: `http://localhost:8090/d`
 - Mobile UI: `http://localhost:8090/m`
+- Panel UI: `http://localhost:8090/panel`
 - Launcher: `http://localhost:8090/`
 
 ## Запуск
@@ -48,6 +49,7 @@ Workflow `hub.yml` (вкладка «Сессии» в панели → Hub → 
 | `OPENROUTER_BASE_URL` | override OpenRouter API |
 | `OLLAMA_BASE_URL` | override Ollama (`http://localhost:11434/v1`) |
 | `NGROK_AUTHTOKEN` | токен ngrok (или файл `~/.npm-hub-ngrok-token`) |
+| `GH_TOKEN` | GitHub PAT сервера: питает прокси `/gh/*` (панель) и `git clone` без токена из браузера — на раннере приходит input'ом `gh_token`, на ПК задаётся вручную, в код/репозиторий не пишется |
 | `HUB_TOKEN` | гейт-токен: если задан, каждый запрос (страницы, API, терминал) обязан нести `?zt=` или заголовок `x-hub-token`, иначе 401 |
 
 Никаких ключей в коде нет и быть не должно. Если ключ когда-то попал в
@@ -108,6 +110,7 @@ POST /api/models/select /api/models/key /api/models/apikey /api/models/freeonly
 POST /api/models/refresh  POST /api/models/test   GET /api/health
 GET  /api/path-history    POST /api/path-history /api/last-dir
 GET  /api/tunnel          GET/POST /api/ngrok-token
+GET/POST/DELETE /gh/*  (прокси GitHub API: user, repos, actions, contents, dispatches)
 WS   /ws  {open,input,resize,kill,close}
 ```
 
@@ -126,4 +129,5 @@ WS   /ws  {open,input,resize,kill,close}
 он не пишется), а хаб требует его в каждом запросе. Адреса из панели
 уже содержат `?zt=`, UI пробрасывает его во все вызовы API и в сокет
 терминала. Токен хранится в панели (память + localStorage) — чужая
-вкладка с голым URL получит 401.
+вкладка с голым URL получит 401. PAT от GitHub браузеру не выдаётся
+никогда: все вызовы GitHub идут через серверный прокси `/gh/*`.
