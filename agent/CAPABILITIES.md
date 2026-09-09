@@ -141,9 +141,11 @@ vision_analyze({ path: "…/artifacts/shot-01.png", prompt: "Что на экр�
 
 ## Проверки
 
-Отдельной test-сюиты у capability в репозитории нет (каталога `tests/`
-и `tools/run_tests.sh` не существует). Весь JS агента, включая
-`agent/capabilities.js` и инлайн-скрипт `agent/hub/index.html`,
-прогоняется через `node --check` workflow `js-syntax.yml` на каждый
-push в `main` и каждый PR, затрагивающий `agent/`, `desktop/` или
-`npm-hub/`.
+Проверки двух уровней. Весь JS (`agent/`, `desktop/`, `npm-hub/`, включая
+инлайн-скрипт `agent/hub/index.html`) прогоняется через `node --check`
+workflow `js-syntax.yml` на каждый push в `main` и каждый PR. А каталог
+`tests/` держит jsdom-регрессии с замоканным API: `panel-tabs-e2e.js`
+(карточки сессий, вкладки второго слоя, save/stop, 403-бэкофф, ОС-слоты,
+ETag, гейт-токены), `hub-mobile-touch.js` и `hub-desktop-touch.js`
+(тач-действия, id хранилищ, clone-and-open) — workflow `tests.yml`
+гоняет их (`npm test`) на каждый push/PR по затронутым путям.
