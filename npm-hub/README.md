@@ -102,7 +102,7 @@ POST /api/fs/mkdir /api/fs/delete /api/fs/rename /api/fs/read /api/fs/write /api
 GET  /api/fs/download?backend=&path=
 GET  /api/storages        POST /api/storages/add /api/storages/remove /api/storages/clone
 POST /api/adb/connect /api/adb/disconnect   GET /api/adb/info?device=
-POST /api/git/auth        POST /api/git/clone
+POST /api/git/auth        POST /api/git/clone   POST /api/sessions/save
 GET  /api/models[?freeOnly=true] /api/models/full /api/models/current /api/providers
 POST /api/models/select /api/models/key /api/models/apikey /api/models/freeonly
 POST /api/models/refresh  POST /api/models/test   GET /api/health

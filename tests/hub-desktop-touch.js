@@ -21,6 +21,10 @@ async function stubFetch(url) {
   const u = String(url);
   seen.push(u);
   if (u.includes('/api/storages/clone')) return { ok: true, json: async () => ({ success: true, path: '/home/u/repos/R' }) };
+  if (u.includes('/api/git/clone')) return { ok: true, json: async () => ({ success: true, path: '/home/u/repos/R', existed: false }) };
+  if (u.includes('/api/sessions/save')) return { ok: true, json: async () => ({ success: true, files: ['s.md', 's.diff'], pushed: true, note: '' }) };
+  if (u.includes('/user/repos')) return { ok: true, headers: { get: () => '' }, json: async () => [{ full_name: 'o/R', private: false, fork: false, permissions: { push: true }, description: 'd', language: 'JS', stargazers_count: 1, updated_at: '2026-09-01T00:00:00Z', default_branch: 'main' }] };
+  if (u.includes('api.github.com/user')) return { ok: true, headers: { get: (h) => String(h).toLowerCase() === 'x-oauth-scopes' ? 'repo' : '' }, json: async () => ({ login: 'octo', name: 'O', email: '' }) };
   if (u.includes('boom')) return { ok: true, json: async () => ({ success: false, error: 'nope' }) };
   const body = u.includes('/api/tools') ? { success: true, tools: TOOLS }
     : u.includes('/api/info') ? { success: true, home: '/home/u', mode: 'local', state: {} }
@@ -110,6 +114,31 @@ function check(name, cond, extra) {
   check('t19 back on local', window.eval('fmBackend') === 'local');
   check('t20 tool menu opens', window.document.getElementById('fm-apply-menu').innerHTML.includes('OpenCode'));
 
+
+  // 10. repos: verify + access badges + one-tap open
+  const vbtn = [...window.document.querySelectorAll('button')].filter(b => b.getAttribute('onclick') === 'verifyGhToken()');
+  check('t21 verify btn', vbtn.length === 1, vbtn.length);
+  window.document.getElementById('repos-token').value = 'ghp_x';
+  await window.verifyGhToken();
+  await sleep(50);
+  check('t22 verify saves+renders', window.eval(`sessionStorage.getItem('gh_token')`) === 'ghp_x' && window.document.getElementById('repos-list').innerHTML.includes('o/R') && window.document.getElementById('repos-list').innerHTML.includes('\u2b16 push'));
+  window.renderRepos([{ full_name: 'o/RO', private: true, fork: false, permissions: { pull: true }, description: '', language: '', stargazers_count: 0, updated_at: '', default_branch: 'main' }]);
+  const rl = window.document.getElementById('repos-list').innerHTML;
+  check('t23 read badge + open btn', rl.includes('\u2b16 read') && rl.includes('repoOpen(') && rl.includes('PRIVATE'));
+
+  // 11. one-tap open clones and drops a terminal into the repo
+  seen.length = 0;
+  await window.repoOpen('o/R', 'main', true);
+  check('t24 open clones', seen.some(u => u.includes('/api/git/clone')), seen.join('|'));
+  check('t25 open lands in terminal', window.document.getElementById('p-terminal').classList.contains('on'));
+
+  // 12. manual session save posts the active tab
+  window.eval(`tabs.push({ id: 'term_9' }); activeTab = tabs[tabs.length-1];`);
+  window.__alerts.length = 0;
+  seen.length = 0;
+  await window.saveTermSession();
+  check('t26 save posts id', seen.some(u => u.includes('/api/sessions/save')), seen.join('|'));
+  check('t27 save confirms', window.__alerts.length === 1 && window.__alerts[0].includes('Сессия сохранена') && window.__alerts[0].includes('запушено'), window.__alerts[0]);
   console.log(`HUB-DESK-TOUCH: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

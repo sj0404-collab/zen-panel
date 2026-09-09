@@ -417,6 +417,15 @@ function toggleFullscreen() {
 }
 document.addEventListener('fullscreenchange', () => { setTimeout(() => { if (activeTab) activeTab.fitAddon?.fit(); }, 100); });
 
+async function saveTermSession() {
+  const t = activeTab;
+  if (!t) { alert('Нет активной сессии'); return; }
+  try {
+    const r = await fetch('/api/sessions/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: t.id }) }).then(r => r.json());
+    if (!r.success) { alert('Не вышло: ' + (r.error || 'неизвестная')); return; }
+    alert('Сессия сохранена: ' + (r.files || []).join(', ') + (r.pushed ? ' · запушено ✓' : '') + (r.note ? '\n' + r.note : ''));
+  } catch (e) { alert('Не вышло: ' + e.message); }
+}
 function killTerm() {
   if (!activeTab || !activeTab.ws) return;
   if (activeTab.ws.readyState === WebSocket.OPEN) {
@@ -902,6 +911,23 @@ async function saveReposToken() {
   try { sessionStorage.setItem('gh_token', v); } catch {}
   loadRepos();
 }
+async function verifyGhToken() {
+  const t = ghToken();
+  const infoEl = document.getElementById('repos-info');
+  if (!t) { if (infoEl) infoEl.textContent = 'Вставь токен выше'; return; }
+  if (infoEl) infoEl.textContent = 'Проверка…';
+  try {
+    const r = await fetch('https://api.github.com/user', { headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + t } });
+    if (!r.ok) throw new Error('GitHub: ' + r.status);
+    const u = await r.json();
+    const scopes = (r.headers.get('x-oauth-scopes') || '').trim() || '—';
+    try { sessionStorage.setItem('gh_token', t); } catch {}
+    if (infoEl) infoEl.textContent = `✓ ${u.login} · scopes: ${scopes}`;
+    loadRepos();
+  } catch (e) {
+    if (infoEl) infoEl.textContent = 'Ошибка: ' + e.message;
+  }
+}
 async function loadRepos() {
   const listEl = document.getElementById('repos-list');
   const infoEl = document.getElementById('repos-info');
@@ -933,6 +959,12 @@ async function loadRepos() {
     if (infoEl) infoEl.textContent = 'Ошибка: ' + e.message;
   }
 }
+function permBadge(pm) {
+  pm = pm || {};
+  const lvl = pm.admin ? 'admin' : pm.maintain ? 'maintain' : pm.push ? 'push' : pm.triage ? 'triage' : 'read';
+  const col = (pm.admin || pm.maintain || pm.push) ? '#3fb950' : 'var(--t3)';
+  return `<span style="font-size:9px;color:${col};padding:2px 6px">⬖ ${lvl}</span>`;
+}
 function renderRepos(repos) {
   const el = document.getElementById('repos-list');
   if (!el) return;
@@ -942,10 +974,12 @@ function renderRepos(repos) {
         <div class="model-name">🐙 ${escHtml(r.full_name)}</div>
         ${r.private ? '<span style="font-size:9px;color:var(--warn);background:rgba(210,153,34,.15);padding:2px 6px;border-radius:4px">PRIVATE</span>' : ''}
         ${r.fork ? '<span style="font-size:9px;color:var(--t3);padding:2px 6px">fork</span>' : ''}
+        ${permBadge(r.permissions)}
       </div>
       ${r.description ? `<div style="font-size:11px;color:var(--t2);margin-top:4px">${escHtml(r.description)}</div>` : ''}
       <div style="font-size:10px;color:var(--t3);margin-top:4px">${escHtml(r.language || '—')} • ⭐ ${r.stargazers_count} • ${String(r.updated_at || '').slice(0, 10)}</div>
       <div style="margin-top:8px;display:flex;gap:6px">
+        <button class="btn btn-sm btn-ok" onclick="repoOpen('${escAttr(r.full_name)}','${escAttr(r.default_branch || 'main')}',${r.private ? 'true' : 'false'})">▶ Открыть</button>
         <button class="btn btn-sm btn-ok" onclick="repoBrowse('${escAttr(r.full_name)}','${escAttr(r.default_branch || 'main')}')">📁 Смотреть</button>
         <button class="btn btn-sm" onclick="repoClone('${escAttr(r.full_name)}',${r.private ? 'true' : 'false'})">⬇ Клонировать</button>
       </div>
@@ -983,6 +1017,20 @@ function updateGitAuthBtn() {
     b.textContent = gitAuthState ? `🔑 ${gitAuthState}` : '🔑 Push';
     b.classList.toggle('btn-ok', !!gitAuthState);
   }
+}
+async function repoOpen(fullName, branch, isPrivate) {
+  const t = ghToken();
+  if (isPrivate && !t) { alert('Приватный репозиторий: нужен токен'); return; }
+  const infoEl = document.getElementById('repos-info');
+  if (infoEl) infoEl.textContent = 'Открываю ' + fullName + '…';
+  try {
+    const r = await fetch('/api/git/clone', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo: fullName, branch: branch || undefined, token: t || undefined }) }).then(r => r.json());
+    if (!r.success) { alert('Ошибка: ' + (r.error || 'неизвестная')); return; }
+    if (t) ensureGitAuth(false);
+    showPage('terminal');
+    createTerm('_terminal', r.path, true);
+  } catch (e) { alert('Ошибка: ' + e.message); }
 }
 async function repoBrowse(fullName, branch) {
   const parts = fullName.split('/');
