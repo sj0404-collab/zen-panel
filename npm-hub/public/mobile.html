@@ -233,7 +233,6 @@
           <div class="tabs-row" id="tabs"></div>
           <div class="term-controls">
             <button class="tc-btn" onclick="killTerm()" ontouchend="event.preventDefault();killTerm()" oncontextmenu="event.preventDefault()" title="Стоп">⏹</button>
-            <button class="tc-btn" onclick="saveTermSession()" ontouchend="event.preventDefault();saveTermSession()" oncontextmenu="event.preventDefault()" title="Сохранить сессию">💾</button>
             <button class="tc-btn" onclick="sendEscape()" ontouchend="event.preventDefault();sendEscape()" oncontextmenu="event.preventDefault()" title="Escape">Esc</button>
             <button class="tc-btn" onclick="pasteClipboard()" ontouchend="event.preventDefault();pasteClipboard()" oncontextmenu="event.preventDefault()" title="Вставить">📋</button>
             <button class="tc-btn" onclick="restartTerm()" ontouchend="event.preventDefault();restartTerm()" oncontextmenu="event.preventDefault()" title="Перезапустить">⟲</button>
@@ -245,7 +244,6 @@
           </div>
         </div>
         <div class="term-container" id="term-container">
-          <div class="apply-menu" id="term-apply-menu"></div>
           <div class="term-arrows" id="term-arrows">
             <button class="arr-btn" onclick="sendKey('\x1b[A')" ontouchend="event.preventDefault();sendKey('\x1b[A')" oncontextmenu="event.preventDefault()">▲</button>
             <div class="arr-row">
@@ -295,33 +293,11 @@
         <div class="fm-info" id="fm-info"></div>
       </div>
 
-      <!-- REPOS -->
-      <div class="page" id="p-repos">
-        <div class="ph"><h1>🐙 Repos</h1><p>Репозитории аккаунта — смотреть файлы или клонировать на раннер</p></div>
-        <div id="repos-auth" style="background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:14px;margin-bottom:10px">
-          <label style="font-size:12px;color:var(--t2)">GitHub token</label>
-          <div style="display:flex;gap:8px;margin-top:6px">
-            <input type="password" id="repos-token" placeholder="ghp_..." style="flex:1;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;outline:none">
-            <button class="btn btn-ok" onclick="saveReposToken()">OK</button>
-            <button class="btn" onclick="verifyGhToken()">Проверить</button>
-          </div>
-          <div style="font-size:10px;color:var(--t3);margin-top:6px">Из панели подставляется сам; токен живёт только в браузере</div>
-        </div>
-        <div class="models-full-actions">
-          <input type="text" id="repos-search" placeholder="Поиск..." oninput="filterRepos(this.value)" style="flex:1;min-width:120px;padding:8px 12px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;outline:none">
-          <button class="btn" onclick="loadRepos()">⟳</button>
-          <button class="btn" id="git-auth-btn" onclick="ensureGitAuth(true)">🔑 Push</button>
-          <span id="repos-info"></span>
-        </div>
-        <div id="repos-list"></div>
-      </div>
-
       <!-- MODELS FULL -->
       <div class="page" id="p-models-full">
         <div class="ph"><h1>🔧 Models</h1><p>Все модели всех CLI инструментов</p></div>
         <div class="models-full-actions">
           <button class="btn btn-ok" onclick="syncAllModels()">🔄 Синхронировать</button>
-          <button class="btn" onclick="refreshLiveModels()">🌐 Каталоги</button>
           <button class="btn" onclick="showApiKeyModal()">🔑 API Key</button>
           <span id="models-full-info"></span>
         </div>
@@ -346,10 +322,6 @@
     <button class="nav-btn on" id="nav-files" onclick="showPage('files')">
       <span class="nav-ico">📁</span>
       <span class="nav-label">Файлы</span>
-    </button>
-    <button class="nav-btn" id="nav-repos" onclick="showPage('repos')">
-      <span class="nav-ico">🐙</span>
-      <span class="nav-label">Repos</span>
     </button>
     <button class="nav-btn" id="nav-models-full" onclick="showPage('models-full')">
       <span class="nav-ico">🔧</span>
