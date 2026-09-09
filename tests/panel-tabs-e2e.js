@@ -33,6 +33,8 @@ let contentsGets = 0;
 let hubGate401 = false;
 let promptAnswer = null;
 const fetchUrls = [];
+const promptCalls = [];
+let hubNetFail = false;
 function stub403() {
   return { status: 403, ok: false,
     headers: { get: (h) => h === 'x-ratelimit-reset' ? String(Math.floor(Date.now() / 1000) + 300) : null },
@@ -53,6 +55,7 @@ function stubFetch(url, opts) {
   }
   fetchUrls.push(url);
   if (/^https:\/\/hub[^/]*\//.test(url)) {
+    if (hubNetFail) return Promise.reject(new Error('net down'));
     if (hubGate401) return Promise.resolve({ status: 401, ok: false, json: async () => ({ success: false, error: 'hub token?' }) });
     return Promise.resolve({ status: 200, ok: true, json: async () => ({ success: true }) });
   }
@@ -77,7 +80,7 @@ function stubFetch(url, opts) {
       window.fetch = stubFetch;
       window.alert = m => { alerts.push(String(m)); };
       window.confirm = () => confirmSeq.length ? confirmSeq.shift() : true;
-      window.prompt = () => promptAnswer;
+      window.prompt = (m, d) => { promptCalls.push([m, d]); return promptAnswer; };
       window.scrollTo = () => {};
       window.requestAnimationFrame = cb => setTimeout(cb, 0);
       window.localStorage.setItem('panel_accounts', JSON.stringify(
@@ -251,6 +254,22 @@ function stubFetch(url, opts) {
   eq('p40 probe url clean', fetchUrls.some(u => u === 'https://hub.local/api/tools'), true);
   eq('p41 open diagnostic', (document.getElementById('boot-log')?.textContent || '').includes('hub-linux') &&
     (document.getElementById('boot-log')?.textContent || '').includes('zt ok'), true);
+
+  promptCalls.length = 0;
+  await dom.window.eval('openExternal("https://example.com/x?y=1")');
+  eq('p42 link prompt fallback', promptCalls.length === 1 && promptCalls[0][1] === 'https://example.com/x?y=1', true);
+
+  dom.window.eval(`Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (s) => { window.__clip = s; } }, configurable: true })`);
+  await dom.window.eval('openExternal("https://example.com/z")');
+  eq('p43 link clipboard', dom.window.eval('window.__clip') === 'https://example.com/z', true);
+
+  hubNetFail = true;
+  await dom.window.expandDesk('hub-windows');
+  eq('p44 probe netfail logged', (document.getElementById('boot-log')?.textContent || '').includes('сеть недоступна'), true);
+  eq('p45 open hints vpn', (document.getElementById('boot-log')?.textContent || '').includes('не отвечает (VPN?)'), true);
+  hubNetFail = false;
+  // expandDesk does not await loadDesks; let it land before close()
+  await new Promise(r => setTimeout(r, 400));
 
   dom.window.close();
   await new Promise(r => setTimeout(r, 500));

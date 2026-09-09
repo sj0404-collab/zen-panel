@@ -159,7 +159,7 @@
     <div class="row">
       <button class="ghost" type="button" onclick="pasteToken()">Вставить из буфера</button>
       <button id="btn-add" onclick="addAccount()">Добавить</button>
-      <button class="ghost" onclick="window.open('https://github.com/settings/tokens/new?scopes=repo,workflow&description=Symbiosis%20panel','_blank')">Создать токен</button>
+      <button class="ghost" onclick="openExternal('https://github.com/settings/tokens/new?scopes=repo,workflow&description=Symbiosis%20panel')">Создать токен</button>
     </div>
     <div class="note">
       Аккаунтов может быть несколько — переключайтесь кнопкой выше. Токен
@@ -626,7 +626,7 @@ async function loadAccount() {
         <div class="grow">
           <div style="font-weight:700">${esc(u.login)}</div>
           <div class="note" style="margin:0">${esc(u.name || '')}</div>
-          <a href="${esc(u.html_url)}" target="_blank">${esc(u.html_url)}</a>
+          <a href="#" onclick="openExternal(\'${esc(u.html_url)}\');return false">${esc(u.html_url)}</a>
         </div>
       </div>
       <table style="margin-top:10px">
@@ -741,7 +741,7 @@ async function openPath(path) {
     crumbs.push(`<a onclick="openPath('${esc(acc)}')">${esc(p)}</a>`);
   }
   $('crumb').innerHTML = crumbs.join(' / ') +
-    ` · <a href="https://github.com/${esc(CUR.repo)}/tree/HEAD/${esc(path)}" target="_blank">на GitHub</a>`;
+    ` · <a href="#" onclick="openExternal('https://github.com/${esc(CUR.repo)}/tree/HEAD/${esc(path)}');return false">на GitHub</a>`;
 
   const box = $('files');
   box.innerHTML = '<span class="spin">загрузка…</span>';
@@ -800,7 +800,7 @@ function showFile(f) {
   }
   $('crumb').innerHTML =
     `<a onclick="openPath('${esc(back)}')">↰ назад</a> · ${esc(f.path)} · ${kb(f.size)} ·
-     <a href="${esc(raw)}" target="_blank">на GitHub</a>`;
+     <a href="#" onclick="openExternal(\'${esc(raw)}\');return false">на GitHub</a>`;
   $('files').innerHTML = body;
 }
 
@@ -890,7 +890,7 @@ async function pollWatch() {
             </div>`).join('')}
           </details>
           <div class="row" style="margin-top:6px">
-            <a class="note" href="${esc(r.html_url)}" target="_blank">полный лог на GitHub</a>
+            <a class="note" href="#" onclick="openExternal(\'${esc(r.html_url)}\');return false">полный лог на GitHub</a>
           </div>
         </div>`);
     }
@@ -955,7 +955,7 @@ async function loadActions(force) {
     const rs = d.workflow_runs || [];
     rbox.innerHTML = rs.length ? '<table>' + rs.map(r => `<tr>
       <td>#${r.run_number}</td>
-      <td><a href="${esc(r.html_url)}" target="_blank">${esc(r.name)}</a> ${pill(r)}
+      <td><a href="#" onclick="openExternal(\'${esc(r.html_url)}\');return false">${esc(r.name)}</a> ${pill(r)}
         <div class="note">${ago(r.updated_at)}${
           r.status !== 'completed' && tok()
             ? ` · <a onclick="stopRun(${r.id},'${esc(ACT_REPO)}')">остановить</a>` : ''}</div></td>
@@ -1091,7 +1091,7 @@ function renderPreview() {
       </div>
       <div class="row" style="margin-top:8px">
         <button class="ghost small" onclick="expandPreview()">Развернуть</button>
-        <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">В новой вкладке</button>
+        <button class="ghost small" onclick="openExternal('${esc(url)}')">Ссылка</button>
       </div>`;
   } else {
     box.innerHTML = tabs + `
@@ -1100,7 +1100,7 @@ function renderPreview() {
               sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
       <div class="row" style="margin-top:8px">
         <button class="ghost small" onclick="collapsePreview()">Свернуть</button>
-        <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">В новой вкладке</button>
+        <button class="ghost small" onclick="openExternal('${esc(url)}')">Ссылка</button>
       </div>`;
   }
 }
@@ -1240,11 +1240,11 @@ async function loadDesks() {
         <div style="height:8px"></div>
         <div class="row">
           <button class="small" onclick="expandDesk('${slot}')">Открыть здесь</button>
-          <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">В новой вкладке</button>
+          <button class="ghost small" onclick="openExternal('${esc(url)}')">Ссылка</button>
           <button class="ghost small" onclick="saveSession('${slot}')">Сохранить</button>
         </div>
         ${s.terminal ? `<div class="row" style="margin-top:6px">
-          <button class="ghost small" onclick="window.open('${esc(s.terminal)}','_blank')">Терминал</button></div>` : ''}
+          <button class="ghost small" onclick="openExternal('${esc(s.terminal)}')">Ссылка</button></div>` : ''}
         ${s.runId && tok() ? `<div class="row" style="margin-top:6px">
           <button class="ghost small" onclick="stopRun(${s.runId})">Выключить</button></div>` : ''}
       </div>`;
@@ -1264,8 +1264,8 @@ async function loadDesks() {
         <div class="row">
           <button class="small" onclick="expandDesk('${slot}')">Открыть чат</button>
           <button class="ghost small"
-                  onclick="window.open('${esc((slot === 'hub' || slot.startsWith('hub-')) ? deskSlotUrl(slot) : (s.agentUrl || s.url))}','_blank')">
-            В браузере</button>
+                  onclick="openExternal('${esc((slot === 'hub' || slot.startsWith('hub-')) ? deskSlotUrl(slot) : (s.agentUrl || s.url))}')">
+            Ссылка</button>
           <button class="ghost small" onclick="saveSession('${slot}')">Сохранить</button>
           ${s.runId && tok() ? `<button class="ghost small" onclick="stopRun(${s.runId})">Выключить</button>` : ''}
         </div>
@@ -1281,6 +1281,7 @@ async function loadDesks() {
 // A gated hub plus a panel that lost the token (reinstall, another device,
 // a hand-dispatched run) used to show a bare 401 JSON. Probe first; on a 401
 // offer a relaunch (the panel then holds the token) or manual entry.
+let LAST_PROBE_NETFAIL = false;
 async function ensureHubAccess(slot) {
   const s = DESKS[slot];
   const raw = s && (s.hubUrl || s.deskUrl || s.url || '');
@@ -1295,8 +1296,8 @@ async function ensureHubAccess(slot) {
     const r = await fetch(base + '/api/tools', zt
       ? { headers: { 'x-hub-token': zt }, signal: ctl && ctl.signal }
       : { signal: ctl && ctl.signal });
-    if (r.status !== 401) return true;
-  } catch (e) { return true; }
+    if (r.status !== 401) { try { bootLog('проба ' + slot + ': ' + r.status); } catch (e2) {} LAST_PROBE_NETFAIL = false; return true; }
+  } catch (e) { try { bootLog('проба ' + slot + ': сеть недоступна — туннель/VPN?'); } catch (e2) {} LAST_PROBE_NETFAIL = true; return true; }
   finally { if (to) clearTimeout(to); }
   if (confirm('Хаб закрыт токеном, которого у панели нет (запуск с другого устройства, переустановка или ручной dispatch).\n\nОК — перезапустить хаб (панель получит новый токен)\nОтмена — ввести токен вручную')) {
     await launchHub(slot === 'hub-windows' ? 'windows' : slot === 'hub-linux' ? 'linux' : undefined);
@@ -1316,7 +1317,7 @@ async function expandDesk(slot) {
       const du = deskSlotUrl(slot);
       const dh = String(du.split('?')[0]).split('/')[2] || '';
       const dz = HUB_TOKENS[slot] || '';
-      bootLog('чат ' + slot + ' · ' + dh + ' · zt ' + (dz ? 'ok (' + dz.length + ')' : 'НЕТ'));
+      bootLog('чат ' + slot + ' · ' + dh + ' · zt ' + (dz ? 'ok (' + dz.length + ')' : 'НЕТ') + (LAST_PROBE_NETFAIL ? ' · туннель не отвечает (VPN?)' : ''));
     } catch (e) {}
   }
   deskOpen = slot; loadDesks();
@@ -1335,10 +1336,26 @@ function closeDeskOverlay() {
 }
 
 /** Hand the active tab's address to a real browser tab, on request. */
+// External links must never window.open() from inside the APK: with multiple
+// windows off, _blank loads in the MAIN frame and the panel loses itself
+// (tunnel hosts are "internal" for the iframe, so they stay in-view too -
+// a failed load then shows "assembly damaged"). Copy the link instead.
+async function openExternal(url) {
+  url = String(url || '');
+  if (!url) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(url);
+      alert('Ссылка скопирована — вставь её в браузере.');
+      return;
+    }
+  } catch (e) {}
+  prompt('Скопируй ссылку в браузер:', url);
+}
 function openDeskInBrowser() {
   const f = deskOpen && document.getElementById('desk-frame-' + deskOpen);
   const url = f && f.dataset.url;
-  if (url) window.open(url, '_blank');
+  if (url) openExternal(url);
 }
 
 // Android's back gesture should leave the layer, not the panel. Without this
@@ -1417,7 +1434,7 @@ function renderDeskOverlay() {
                   border-bottom:1px solid var(--line);background:var(--panel);
                   overflow-x:auto;flex:none">
         <div id="desk-tabs" style="display:flex;gap:6px;flex:1"></div>
-        <button class="ghost small" onclick="openDeskInBrowser()">В браузере</button>
+        <button class="ghost small" onclick="openDeskInBrowser()">Ссылка</button>
         <button class="ghost small" id="desk-save-btn">Сохранить</button>
         <button class="ghost small" onclick="collapseDesks()">Закрыть</button>
       </div>
@@ -2076,7 +2093,7 @@ async function loadCreds(preferSlot) {
 
     const open = s.agentUrl || s.vncUrl || s.url;
     box.innerHTML = rows.join('') +
-      (open ? `<button onclick="window.open('${esc(open)}','_blank')">Открыть</button>` : '') +
+      (open ? `<button onclick="openExternal('${esc(open)}')">Ссылка</button>` : '') +
       (s.runId && tok()
         ? `<button class="ghost" onclick="stopRun(${s.runId})">Выключить</button>` : '');
     LIVE = s; renderPreview();
@@ -2192,7 +2209,7 @@ async function loadPanelApk() {
          r.name === 'Build Zen Panel Desktop') && r.conclusion === 'success');
       box.innerHTML = b
         ? `<table><tr><td>Сборка</td><td>#${b.run_number} · ${ago(b.updated_at)}</td></tr>
-           <tr><td>Скачать</td><td><a href="${esc(b.html_url)}" target="_blank">артефакт запуска</a></td></tr></table>`
+           <tr><td>Скачать</td><td><a href="#" onclick="openExternal(\'${esc(b.html_url)}\');return false">артефакт запуска</a></td></tr></table>`
         : (wantDesktopRelease()
           ? '<span class="note">релиза ещё нет — соберите его workflow «Build Zen Panel Desktop»</span>'
           : '<span class="note">релиза ещё нет — нажмите «Собрать и выпустить APK»</span>');
@@ -2205,7 +2222,7 @@ async function loadPanelApk() {
     </table>
     <div class="row" style="margin-top:10px">
       <a href="${esc(file.browser_download_url)}"><button>${newer ? 'Обновить ' + downloadWord() : 'Скачать ' + downloadWord()}</button></a>
-      <button class="ghost" onclick="window.open('${esc(rel.html_url)}','_blank')">Страница релиза</button>
+      <button class="ghost" onclick="openExternal('${esc(rel.html_url)}')">Страница релиза</button>
     </div>
     ${newer ? '<div class="warn">Доступна более новая версия. Скачайте и установите поверх текущей.</div>' : ''}`;
   } catch (e) {
@@ -2288,7 +2305,7 @@ async function refresh() {
         return `<tr><td>#${r.run_number}</td>
           <td><b>${esc(kind)}</b> ${pill(r)}
             <div class="note"><span class="live-age" data-started="${started}">идёт ${used} мин · осталось ~${left} мин</span> ·
-              <a href="${esc(r.html_url)}" target="_blank">журнал</a></div>
+              <a href="#" onclick="openExternal(\'${esc(r.html_url)}\');return false">журнал</a></div>
             <button class="small" onclick="${kind === 'CLI-агент' ? "openDeskInPanel(liveSlotOf('agent'))" : kind === 'OpenCode' ? "openDeskInPanel(liveSlotOf('opencode'))" : 'openLive()'}">Открыть чат</button>
             <button class="ghost small" onclick="stopRun(${r.id})">Выключить</button></td>
           </tr>`;
@@ -2313,7 +2330,7 @@ async function refresh() {
       <tr><td>Сборка</td><td>#${build.run_number} · ${ago(build.updated_at)}</td></tr>
       <tr><td>Артефакт</td><td>${arts.length
         ? (arts[0].size_in_bytes / 1048576).toFixed(1) + ' МБ (сжатый)' : 'истёк'}</td></tr>
-      <tr><td>Ссылка</td><td><a href="${esc(build.html_url)}" target="_blank">сводка —
+      <tr><td>Ссылка</td><td><a href="#" onclick="openExternal(\'${esc(build.html_url)}\');return false">сводка —
         там gofile и MD5</a></td></tr></table>`;
   } catch (e) {
     box.innerHTML = '<span class="note">не удалось прочитать артефакты</span>';
