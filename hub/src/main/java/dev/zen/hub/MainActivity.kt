@@ -124,8 +124,14 @@ class MainActivity : ComponentActivity() {
                 fileChooser?.onReceiveValue(null)
                 fileChooser = callback
                 return try {
-                    filePicker.launch(params?.createIntent())
-                    true
+                    val intent = params?.createIntent()
+                    if (intent == null) {
+                        fileChooser = null
+                        false
+                    } else {
+                        filePicker.launch(intent)
+                        true
+                    }
                 } catch (e: Exception) {
                     fileChooser = null
                     false
