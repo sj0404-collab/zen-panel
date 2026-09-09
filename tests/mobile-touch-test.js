@@ -59,5 +59,21 @@ check('q9 workdir first device', /devices\.push\(\{ type: 'local', id: path\.joi
 // with "the hub did not start" and the site never came up.
 check('q10 tools report warming:false', server.includes('res.json({ success: true, warming: false, tools })'));
 
+// q11: 16+ installable agents on choice (pkg set, bins verified in the registry).
+check('q11 installable agents', (server.match(/pkg: '/g) || []).length >= 16,
+  (server.match(/pkg: '/g) || []).length);
+
+// q12: install endpoints exist.
+check('q12 install endpoints', server.includes("app.post('/api/tools/install'") &&
+  server.includes("app.get('/api/tools/install-status'"));
+
+// q13: mobile cards show the download button + live-log overlay code.
+check('q13 mobile install ui', mob.includes('installTool(') && mob.includes('Скачать') &&
+  mob.includes('install-ov') && mob.includes('/api/tools/install-status'));
+
+// q14: same for desktop.
+check('q14 desktop install ui', desk.includes('installTool(') && desk.includes('Скачать') &&
+  desk.includes('install-ov') && desk.includes('/api/tools/install-status'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

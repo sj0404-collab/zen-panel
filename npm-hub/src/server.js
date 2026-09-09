@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
+const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
 const StorageManager = require('./storage/manager');
@@ -45,14 +46,30 @@ app.use((req, res, next) => {
 });
 
 const TOOLS = [
-  { id: 'opencode', name: 'OpenCode', cmd: 'opencode', color: '#00d4aa', icon: 'OC' },
-  { id: 'ccb', name: 'Claude Code', cmd: 'ccb', color: '#d97706', icon: 'CB' },
-  { id: 'koda', name: 'Koda', cmd: 'koda', color: '#8b5cf6', icon: 'KD' },
-  { id: 'openclaude', name: 'OpenClaude', cmd: 'openclaude', color: '#06b6d4', icon: 'OC' },
-  { id: 'openrouter', name: 'OpenRouter', cmd: 'openrouter', color: '#6366f1', icon: 'OR' },
-  { id: 'qwen', name: 'Qwen Code', cmd: 'qwen', color: '#ef4444', icon: 'QW' },
-  { id: 'http-server', name: 'HTTP Server', cmd: 'http-server', color: '#22c55e', icon: 'HS' },
-  { id: 'cli-agent', name: 'CLI Agent', cmd: 'agent', color: '#f59e0b', icon: 'CA' }
+  { id: 'opencode', name: 'OpenCode', cmd: 'opencode', pkg: 'opencode-ai', color: '#00d4aa', icon: 'OC' },
+  { id: 'ccb', name: 'Claude Code', cmd: 'ccb', pkg: null, color: '#d97706', icon: 'CB' },
+  { id: 'koda', name: 'Koda', cmd: 'koda', pkg: null, color: '#8b5cf6', icon: 'KD' },
+  { id: 'openclaude', name: 'OpenClaude', cmd: 'openclaude', pkg: null, color: '#06b6d4', icon: 'OC' },
+  { id: 'openrouter', name: 'OpenRouter', cmd: 'openrouter', pkg: null, color: '#6366f1', icon: 'OR' },
+  { id: 'qwen', name: 'Qwen Code', cmd: 'qwen', pkg: '@qwen-code/qwen-code', color: '#ef4444', icon: 'QW' },
+  { id: 'http-server', name: 'HTTP Server', cmd: 'http-server', pkg: 'http-server', color: '#22c55e', icon: 'HS' },
+  { id: 'cli-agent', name: 'CLI Agent', cmd: 'agent', pkg: null, color: '#f59e0b', icon: 'CA' },
+  { id: 'claude', name: 'Claude Code', cmd: 'claude', pkg: '@anthropic-ai/claude-code', color: '#d97706', icon: 'CC' },
+  { id: 'gemini', name: 'Gemini CLI', cmd: 'gemini', pkg: '@google/gemini-cli', color: '#58a6ff', icon: 'GE' },
+  { id: 'codex', name: 'Muse', cmd: 'codex', pkg: '@openai/codex', color: '#e6e6e6', icon: 'CX' },
+  { id: 'copilot', name: 'Copilot CLI', cmd: 'copilot', pkg: '@github/copilot', color: '#bc8cff', icon: 'CP' },
+  { id: 'amp', name: 'Amp', cmd: 'amp', pkg: '@sourcegraph/amp', color: '#f778ba', icon: 'AM' },
+  { id: 'codebuff', name: 'Codebuff', cmd: 'codebuff', pkg: 'codebuff', color: '#ffd602', icon: 'CF' },
+  { id: 'claude-flow', name: 'Claude Flow', cmd: 'claude-flow', pkg: 'claude-flow', color: '#ff9e64', icon: 'FL' },
+  { id: 'elizaos', name: 'ElizaOS', cmd: 'elizaos', pkg: '@elizaos/cli', color: '#7ee787', icon: 'EO' },
+  { id: 'how2', name: 'how2', cmd: 'how2', pkg: 'how2', color: '#a5d6ff', icon: 'H2' },
+  { id: 'ai-shell', name: 'AI Shell', cmd: 'ais', pkg: 'ai-shell', color: '#ffa657', icon: 'AS' },
+  { id: 'auggie', name: 'Auggie', cmd: 'auggie', pkg: '@augmentcode/auggie', color: '#79c0ff', icon: 'AU' },
+  { id: 'droid', name: 'Droid', cmd: 'droid', pkg: 'droid', color: '#56d4dd', icon: 'DR' },
+  { id: 'mistral', name: 'Mistral CLI', cmd: 'mi', pkg: 'mistral-cli', color: '#ff7b72', icon: 'MI' },
+  { id: 'n8n', name: 'n8n', cmd: 'n8n', pkg: 'n8n', color: '#ea4b71', icon: 'N8' },
+  { id: 'smithery', name: 'Smithery', cmd: 'smithery', pkg: 'smithery', color: '#d2a8ff', icon: 'SM' },
+  { id: 'mcp-inspector', name: 'MCP Inspector', cmd: 'mcp-inspector', pkg: '@modelcontextprotocol/inspector', color: '#8b949e', icon: 'MC' }
 ];
 
 const storage = new StorageManager();
@@ -87,6 +104,47 @@ app.get('/api/tools', (req, res) => {
   const tools = TOOLS.map(t => ({ ...t, installed: isInstalled(t.cmd), version: null }));
   for (const t of tools) if (t.installed) t.version = getVersion(t.cmd);
   res.json({ success: true, warming: false, tools });
+});
+
+// ─── TOOL INSTALL — one at a time, live log via polling ───
+const installs = new Map(); // id -> { status, log, code }
+app.post('/api/tools/install', (req, res) => {
+  const t = TOOLS.find(x => x.id === (req.body && req.body.id));
+  if (!t || !t.pkg) return res.json({ success: false, error: 'у этого инструмента нет npm-пакета' });
+  const cur = installs.get(t.id);
+  if (cur && cur.status === 'running') return res.json({ success: true, status: 'running' });
+  for (const s of installs.values()) {
+    if (s.status === 'running') return res.json({ success: false, error: 'уже идёт другая установка — дождись' });
+  }
+  const st = { status: 'running', log: '', code: null };
+  installs.set(t.id, st);
+  const push = d => {
+    st.log += String(d);
+    if (st.log.length > 200000) st.log = st.log.slice(-200000);
+  };
+  push('$ npm install -g ' + t.pkg + '\n');
+  let child;
+  try {
+    child = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm',
+      ['install', '-g', '--no-audit', '--no-fund', t.pkg],
+      { shell: process.platform === 'win32' });
+  } catch (e) { st.status = 'error'; push('\n✗ ' + e.message + '\n'); return res.json({ success: true, status: 'error' }); }
+  child.stdout.on('data', push);
+  child.stderr.on('data', push);
+  child.on('error', e => { st.status = 'error'; push('\n✗ ' + e.message + '\n'); });
+  child.on('close', code => {
+    st.code = code;
+    st.status = code === 0 ? 'done' : 'error';
+    push(code === 0 ? '\n✓ готово\n' : '\n✗ ошибка, код ' + code + '\n');
+  });
+  res.json({ success: true, status: 'running' });
+});
+app.get('/api/tools/install-status', (req, res) => {
+  const t = TOOLS.find(x => x.id === req.query.id);
+  if (!t) return res.json({ success: false, error: 'нет такого инструмента' });
+  const st = installs.get(t.id) || { status: 'idle', log: '' };
+  const from = Math.max(0, parseInt(req.query.from || '0', 10) || 0);
+  res.json({ success: true, status: st.status, log: st.log.slice(from), len: st.log.length, installed: isInstalled(t.cmd) });
 });
 
 // ─── INFO ───
