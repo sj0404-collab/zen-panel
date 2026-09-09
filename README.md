@@ -1,6 +1,6 @@
 # Zen Panel
 
-Android-панель и GitHub Actions для Zen Agent, OpenCode и удалённых столов Linux/Windows.
+Android-панель и GitHub Actions для Zen Agent, OpenCode, NPM Hub и удалённых столов Linux/Windows.
 
 Репозиторий самодостаточный: панель, агент (`agent/zen-agent.js`), хаб и workflow живут здесь. Панель поднимает сессии через `workflow_dispatch` в этом репозитории (или в вашем форке).
 
@@ -8,21 +8,46 @@ Android-панель и GitHub Actions для Zen Agent, OpenCode и удалё�
 
 - Android WebView-оболочка и панель в `app/src/main/assets/panel/`
 - CLI-агент и веб-хаб (`agent/`)
+- NPM Hub — дашборд CLI-инструментов, терминалы и файловый менеджер (`npm-hub/`, доки: `npm-hub/README.md`)
 - Десктопная оболочка для Windows/Linux в `desktop/` (Electron, те же страницы панели)
 - Workflow:
   - `agent.yml` — CLI-агент на Linux/Windows, туннель, чат в оверлее
   - `opencode.yml` — OpenCode web на Linux/Windows, туннель, чат в оверлее
+  - `hub.yml` — NPM Hub на Linux/Windows, установка CLI одним вызовом npm, туннель, адрес в `session-hub.json`
   - `desks.yml` — столы Linux (noVNC) и Windows (MJPEG)
   - `panel-apk.yml` — сборка APK и GitHub Release (`v1.{commits}`, versionCode растёт сам)
   - `desktop.yml` — сборка ПК-версии и GitHub Release (`desktop-v1.{commits}`: `.exe` / `.AppImage` / `.deb`)
+  - `js-syntax.yml` — `node --check` всего JS (`agent/`, `desktop/`, `npm-hub/`) на каждый push/PR
 
 ## Как пользоваться
 
 1. Добавьте GitHub-токен с правами `repo` и `workflow`.
-2. На вкладке «Сессии» запустите стол, CLI-агент или OpenCode.
+2. На вкладке «Сессии» запустите стол, CLI-агент, OpenCode или NPM Hub (Linux/Windows на выбор).
 3. После старта панель сама откроет веб-чат в оверлее. Поле «Первая команда» уходит в чат сразу (`?q=` у CLI, `opencode run --attach` у OpenCode).
 
-Адрес сессии публикуется в ветке `session-state` (`session-agent.json`, `session-opencode.json`, `session-linux.json`, `session-windows.json`).
+Адрес сессии публикуется в ветке `session-state`: `session-agent.json`, `session-opencode.json`, `session-hub.json`, `session-linux.json`, `session-windows.json` (плюс старый общий `session.json` для совместимости).
+
+## Вкладки панели
+
+- **Сессии** — запуск новых сессий и список живых: агент, OpenCode, хаб, столы Linux/Windows. После старта адрес открывается сам.
+- **Actions** — живые логи workflow: вотч выбранного рана с автообновлением.
+- **APK** — обновление приложения: на Android ищет релиз `v1.N` с `.apk`, на ПК — `desktop-v1.N` под вашу ОС.
+
+Панель бережёт квоту GitHub API: опрос идёт не чаще раза в 5 секунд, а при ответе 403 (лимит/антиабот) ожидание и вотч встают на паузу и показывают время снятия бана — и не долбят API сквозь него.
+
+## NPM Hub
+
+Дашборд AI CLI-инструментов: автоопределение установленных пакетов, запуск любого в терминале (xterm + PTY), файловый менеджер с бэкендами local/ADB/FTP/GDrive/GitHub/HTTP/WebDAV, реестр моделей всех провайдеров с живыми каталогами, пробами и мониторингом.
+
+Запуск с панели: вкладка «Сессии» → Hub → Linux/Windows. Ран ставит CLI одним вызовом `npm`, поднимает хаб, открывает туннель и публикует адрес в `session-hub.json` (и в summary рана).
+
+Локально:
+
+```bash
+cd npm-hub && npm install && node src/server.js   # http://localhost:8090/ (d — десктоп, m — мобильный UI)
+```
+
+Подробности — в `npm-hub/README.md`: env-переменные, API, модель id хранилищ (`github-xxxxx`), клонирование репозитория в один клик (▶).
 
 ## OpenCode — какой адрес открывать и как выбрать веб-интерфейс
 

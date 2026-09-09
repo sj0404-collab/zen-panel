@@ -23,6 +23,17 @@ Windows: `launch.bat` или `NPM Hub.bat` (меню: local/network/ngrok/cloudf
 Порт по умолчанию `8090` (`PORT=...` для смены; занятый порт
 автоматически сдвигается вверх).
 
+## Запуск в GitHub Actions
+
+Workflow `hub.yml` (вкладка «Сессии» в панели → Hub → Linux/Windows):
+
+1. Ставит все CLI одним вызовом `npm` (параллельные скачивания; при
+   ошибке — поштучный fallback, чтобы один переименованный пакет не
+   отменял остальные; недостающее всё равно стартует через `npx -y`).
+2. Поднимает хаб (`npm ci` + `node src/server.js`), открывает туннель.
+3. Публикует адрес в `session-hub.json` ветки `session-state`
+   (и в summary рана) — панель подхватывает его автоматически.
+
 ## Env
 
 | Переменная | Назначение |
@@ -41,9 +52,9 @@ Windows: `launch.bat` или `NPM Hub.bat` (меню: local/network/ngrok/cloudf
 
 - **Инструменты** (`/api/tools`): автоопределение установленных CLI
   (`opencode`, `claude`, `gemini`, `codex`, `crush`, `copilot`, `aider`,
-  `goose`, `qwen`, `koda`, `openclaude`, `ccb`, `agent`, `http-server`)
-  с версиями; запуск любого в новой PTY-сессии из дашборда, сайдбара,
-  файлменеджера или модалки «Новая сессия».
+  `goose`, `qwen`, `koda`, `openclaude`, `openrouter`, `ccb`, `agent`,
+  `http-server`) с версиями; запуск любого в новой PTY-сессии из
+  дашборда, сайдбара, файлменеджера или модалки «Новая сессия».
 - **Терминал**: вкладки, zoom, fullscreen, SIGINT/Esc/вставка, рестарт;
   в PTY пробрасываются `MODEL` и ключ провайдера выбранной модели.
 - **Модели**: единый реестр free+paid (OpenCode Zen/Go, OpenRouter,
@@ -62,17 +73,26 @@ Windows: `launch.bat` или `NPM Hub.bat` (меню: local/network/ngrok/cloudf
   (uptime/RAM/сессии).
 - **Файлы**: browse/mkdir/delete/rename/read/write/download/upload,
   устройства (локальные диски, ADB), подключаемые хранилища.
+  У каждого хранилища свой id вида `тип-xxxxx` (например,
+  `github-mtt2yqt7`); старые id вида `тип:репо` продолжают открываться.
+  Неизвестный id — громкая ошибка `unknown backend`, а не молчаливый
+  корень локального диска.
+- **GitHub в один клик**: авторизация по токену (`🔑`, `POST
+  /api/git/auth`), просмотр репозитория как хранилища без клона,
+  кнопка ▶ — склонировать (`~/repos/<name>`) и сразу открыть как
+  локальное хранилище (`POST /api/storages/clone`).
 - **Туннели**: ngrok / localtunnel / cloudflared, URL в топбаре.
 
 ## API (кратко)
 
 ```text
 GET  /api/tools /api/info /api/networks /api/drives /api/devices
-GET  /api/browse?backend=&path=
+GET  /api/browse?backend=<id хранилища>&path=
 POST /api/fs/mkdir /api/fs/delete /api/fs/rename /api/fs/read /api/fs/write /api/fs/upload
 GET  /api/fs/download?backend=&path=
-GET  /api/storages        POST /api/storages/add /api/storages/remove
+GET  /api/storages        POST /api/storages/add /api/storages/remove /api/storages/clone
 POST /api/adb/connect /api/adb/disconnect   GET /api/adb/info?device=
+POST /api/git/auth        POST /api/git/clone
 GET  /api/models[?freeOnly=true] /api/models/full /api/models/current /api/providers
 POST /api/models/select /api/models/key /api/models/apikey /api/models/freeonly
 POST /api/models/refresh  POST /api/models/test   GET /api/health
