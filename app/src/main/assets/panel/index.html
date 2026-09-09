@@ -218,12 +218,10 @@
   <div class="card">
     <h2>Столы</h2>
     <div class="note" style="margin-top:0">
-      Два стола рядом, оба в браузере и оба без пароля. Живут до шести часов.
+      Стол Windows в браузере, без пароля. Живёт до шести часов.
     </div>
     <div class="row" style="margin-top:10px">
-      <button id="btn-both" onclick="launchDesks('both')">Оба стола</button>
-      <button class="ghost" id="btn-linux" onclick="launchDesks('linux')">Только Linux</button>
-      <button class="ghost" id="btn-windows" onclick="launchDesks('windows')">Только Windows</button>
+      <button id="btn-windows" onclick="launchDesks()">Стол Windows</button>
     </div>
     <input id="first-cmd" placeholder="Первая команда — уйдёт в чат сразу после запуска"
            autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
@@ -1038,16 +1036,6 @@ async function currentRuns() {
 let LIVE = null;
 let LAST_RUNS = [];
 
-function desktopUrl() {
-  if (!LIVE) return null;
-  if (LIVE.vncUrl) return LIVE.vncUrl;
-  // An agent publishes url + agentUrl and serves no VNC; deriving a desktop
-  // address from it produces the 404 that looked like a black screen.
-  if (LIVE.agentUrl) return null;
-  if (LIVE.url) return LIVE.url + '/vnc.html?autoconnect=1&resize=remote';
-  return null;
-}
-
 let previewOpen = false;
 let previewTab = 'screen';   // screen | term
 
@@ -1056,7 +1044,10 @@ function renderPreview() {
   const card = $('screen-card');
   if (!box || !card) return;
 
-  const screen = desktopUrl();
+  // VNC desks are gone; the only embeddable screen left is a hub launcher root.
+  const liveSlot = (LIVE && LIVE._slot) || '';
+  const isHubLive = liveSlot.startsWith('hub') || (LIVE && (LIVE.hubUrl || /npm-hub/i.test(LIVE.kind || '')));
+  const screen = isHubLive ? (LIVE.hubUrl || LIVE.terminal || LIVE.url || null) : null;
   const term = LIVE && LIVE.terminal ? LIVE.terminal : null;
   const agent = null; // never embed the chat SPA in a 200px preview — it janks the WebView
 
@@ -1076,13 +1067,9 @@ function renderPreview() {
 
   card.style.display = '';
   if (previewTab === 'term' && !term) previewTab = 'screen';
-  const liveSlot = (LIVE && LIVE._slot) || '';
-  const isHubLive = liveSlot.startsWith('hub') || (LIVE && (LIVE.hubUrl || /npm-hub/i.test(LIVE.kind || '')));
-  let url0 = previewTab === 'term' ? term : (screen || agent);
-  // Hubs serve no VNC, so desktopUrl() derives a bogus /vnc.html for them;
-  // and session rows never carry ?zt= (gate tokens live only in this
-  // browser's localStorage). Preview the launcher root, wrapped, instead.
-  if (isHubLive && previewTab !== 'term') url0 = (LIVE && (LIVE.hubUrl || LIVE.terminal || LIVE.url)) || url0;
+  const url0 = previewTab === 'term' ? term : (screen || agent);
+  // Session rows never carry ?zt= (gate tokens live only in this browser's
+  // localStorage); without the wrap the frame shows a bare 401 instead.
   const url = (url0 && isHubLive) ? hubUrlWithToken(url0, liveSlot) : url0;
   const ztMissing = isHubLive && url0 && !(liveSlot && HUB_TOKENS[liveSlot]);
   const ztHint = ztMissing
@@ -1247,7 +1234,7 @@ async function loadDesks() {
         <b>${title}</b><div class="note" style="margin-top:4px">не запущен</div>
       </div>`;
     const url = (slot === 'hub' || slot.startsWith('hub-')) ? deskSlotUrl(slot) : (s.deskUrl || s.url || '');
-    // No live thumbnail. A noVNC iframe or MJPEG in every tile froze the
+    // No live thumbnail. A live iframe or MJPEG in every tile froze the
     // whole WebView on a phone; the desk is opened only when asked.
     return `
       <div style="flex:1;min-width:150px;border:1px solid var(--line);border-radius:10px;
@@ -1576,7 +1563,7 @@ function openDeskInPanel(slot) {
 const KIND_LABEL = { linux: 'Linux', windows: 'Windows', agent: 'CLI-агент', 'agent-linux': 'CLI-агент Linux', 'agent-windows': 'CLI-агент Windows', opencode: 'OpenCode', 'opencode-linux': 'OpenCode Linux', 'opencode-windows': 'OpenCode Windows', hub: 'NPM-Hub', 'hub-linux': 'NPM-Hub Linux', 'hub-windows': 'NPM-Hub Windows' };
 
 function busyButtons(on, which) {
-  for (const id of ['btn-linux', 'btn-windows', 'btn-agent', 'btn-opencode', 'btn-hub', 'btn-both']) {
+  for (const id of ['btn-windows', 'btn-agent', 'btn-opencode', 'btn-hub']) {
     const b = $(id); if (!b) continue;
     b.disabled = on;
   }
@@ -1601,55 +1588,17 @@ function chatUrlWithQ(url) {
   return url + (url.includes('?') ? '&' : '?') + 'q=' + encodeURIComponent(PENDING_Q);
 }
 
-async function launch(os) {
-  if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
-
-  const running = anyLive(await currentRuns());
-  if (running.length) {
-    const mins_ = mins(running[0].created_at);
-    const again = confirm(
-      `Сессия уже идёт (${mins_} мин).\n\n` +
-      'ОК — остановить её и начать заново.\n' +
-      'Отмена — подключиться к текущей.');
-    if (!again) { await refresh(); openLive(); return; }
-    for (const r of running) await cancelRun(r.id);
-    await new Promise(r => setTimeout(r, 8000));
-  }
-
-  const btn = $(os === 'windows' ? 'btn-windows' : 'btn-linux');
-  btn.dataset.label = btn.dataset.label || btn.textContent;
-  busyButtons(true, btn.id);
-  try {
-    const r = await dispatchWorkflow('desks.yml', {
-      which: os,
-      prepare_build: 'false',
-      label: (acct() && acct().login) || 'session',
-      ...runnerInputs()
-    });
-    if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
-    await waitAndOpen(os);
-  } catch (e) {
-    alert('Не вышло: ' + e.message);
-  } finally {
-    busyButtons(false, btn.id);
-    btn.textContent = btn.dataset.label;
-  }
-}
-
 // ── start the desks ─────────────────────────────────────────────────
 //
-// Unlike launch() above, this does NOT stop what is already running. The old
-// rule - one session at a time - existed because free ngrok allows one tunnel,
-// so a second session was unreachable no matter what the panel said.
-// cloudflared quick tunnels have no such limit, which is the whole reason two
-// desks can exist. The Desks workflow runs both as separate jobs of one run.
-async function launchDesks(which) {
+// The Desks workflow runs a single Windows desk; agent/hub/opencode runs are
+// untouched by this button.
+async function launchDesks() {
   if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
 
   const already = (await currentRuns()).filter(
     r => r.name === 'Desks' && r.status !== 'completed');
   if (already.length) {
-    if (!confirm(`Столы уже подняты (${mins(already[0].created_at)} мин).\n\n` +
+    if (!confirm(`Стол уже поднят (${mins(already[0].created_at)} мин).\n\n` +
                  'ОК — остановить и поднять заново.\nОтмена — оставить как есть.')) {
       await refresh(); return;
     }
@@ -1657,26 +1606,24 @@ async function launchDesks(which) {
     await new Promise(r => setTimeout(r, 8000));
   }
 
-  const id = which === 'both' ? 'btn-both' : which === 'windows' ? 'btn-windows' : 'btn-linux';
-  const btn = $(id);
+  const btn = $('btn-windows');
   btn.dataset.label = btn.dataset.label || btn.textContent;
-  for (const b of ['btn-both', 'btn-linux', 'btn-windows']) {
+  for (const b of ['btn-windows']) {
     if ($(b)) $(b).disabled = true;
   }
   btn.textContent = 'Поднимаю…';
   try {
+    const ri = runnerInputs();
     const r = await dispatchWorkflow('desks.yml', {
-      which,
-      prepare_build: 'false',
       label: (acct() && acct().login) || 'desks',
-      ...runnerInputs()
+      runner_windows: ri.runner_windows
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
 
     // A desk takes two to four minutes to install, tunnel and publish. Poll
     // rather than promising it is ready: the tile appears the moment the
     // address lands in the session-state branch.
-    const wantDesks = which === 'both' ? ['linux', 'windows'] : [which];
+    const wantDesks = ['windows'];
     for (let i = 0; i < 90; i++) {
       await new Promise(res => setTimeout(res, 5000));
       let hit = null;
@@ -1698,7 +1645,7 @@ async function launchDesks(which) {
   } catch (e) {
     alert('Не вышло: ' + e.message);
   } finally {
-    for (const b of ['btn-both', 'btn-linux', 'btn-windows']) {
+    for (const b of ['btn-windows']) {
       if ($(b)) { $(b).disabled = false; $(b).textContent = $(b).dataset.label || $(b).textContent; }
     }
   }
@@ -1875,7 +1822,7 @@ async function waitAndOpen(kind) {
     : fam === 'agent' ? 'btn-agent'
     : fam === 'opencode' ? 'btn-opencode'
     : fam === 'hub' ? 'btn-hub'
-    : 'btn-linux';
+    : 'btn-windows';
   const btn = $(btnId);
   const budget = fam === 'windows' || fam === 'opencode' || fam === 'hub' ? 90 : 70;
   const wantName = fam === 'agent' ? 'Zen agent'
@@ -1902,7 +1849,7 @@ async function waitAndOpen(kind) {
         return;
       }
     }
-    const ready = s && (s.agentUrl || s.deskUrl || s.vncUrl || s.rdpHost ||
+    const ready = s && (s.agentUrl || s.deskUrl || s.rdpHost ||
       (fam !== 'agent' && fam !== 'opencode' && s.url));
     if (ready) {
       await refresh();
@@ -1975,7 +1922,6 @@ function openLive() {
     openDeskInPanel(liveSlotOf('hub'));
     return;
   }
-  if (s.vncUrl)   { openDeskInPanel(s.rdpHost ? 'windows' : 'linux'); return; }
   if (s.rdpHost) {
     // RDP is not HTTP: there is nothing to open in a browser, so hand over the
     // details and let the RDP client take them.
@@ -2104,13 +2050,11 @@ async function loadCreds(preferSlot) {
     if (s.rdpHost)  kv('RDP', s.rdpHost);
     if (s.rdpUser)  kv('Логин', s.rdpUser);
     if (s.rdpPass)  kv('Пароль', s.rdpPass);
-    if (s.vncUrl)   kv('VNC', s.vncUrl);
-    if (s.vncPass)  kv('Пароль VNC', s.vncPass);
     if (s.sshCmd)   kv('SSH', s.sshCmd);
     if (s.agentUrl) kv('Агент', s.agentUrl);
     if (s.branch)   kv('Ветка', s.branch);
 
-    const openRaw = s.agentUrl || s.vncUrl || s.url;
+    const openRaw = s.agentUrl || s.url;
     const openSlot = String(s._slot || '');
     const open = (openRaw && (openSlot.startsWith('hub') || s.hubUrl || /npm-hub/i.test(s.kind || '')))
       ? hubUrlWithToken(openRaw, s._slot) : openRaw;

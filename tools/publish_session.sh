@@ -15,7 +15,7 @@
 #   That is the same exposure as the run summary, which is also public - but it
 #   is worth being explicit, because a password on a web page feels different
 #   from one in a log. Everything here dies with the runner within six hours,
-#   and the VNC password is regenerated per run. If that is not acceptable,
+#   and any secret in it is regenerated per run. If that is not acceptable,
 #   make the repository private; the panel reads it with the same token either
 #   way.
 #

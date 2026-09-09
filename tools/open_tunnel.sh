@@ -9,8 +9,7 @@
 #
 #   Measured before this was written, in this workspace, not assumed:
 #     * a quick tunnel came up in about 12 seconds and served a file over it
-#     * websockify behind it completed a WebSocket upgrade (HTTP 101) and the
-#       VNC banner arrived through the tunnel
+#     * a WebSocket service behind it completed an upgrade (HTTP 101)
 #     * no X-Frame-Options and no CSP frame-ancestors on the response, so the
 #       panel can show the desk in an iframe
 #

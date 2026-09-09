@@ -90,7 +90,7 @@ capability_create({ name: "adb", description: "…", runtime: "powershell",
 ```
 
 Сессия Windows поднимается через `Remote session` → `os: windows`. Это всегда
-RDP: браузерного noVNC там нет, а `mode` к Windows не применяется. Машина
+RDP, а `mode` к Windows не применяется. Машина
 мощнее linux-раннера (4 ядра, 16 ГБ), но собрать Android-APK на ней нельзя.
 
 ## Готовые шаблоны
