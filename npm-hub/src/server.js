@@ -329,12 +329,18 @@ app.get('/api/fs/download', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/fs/upload', express.raw({ type: '*/*', limit: '100mb' }), async (req, res) => {
+// Binary-safe upload: raw body (the file bytes) + target in ?path=. This is
+// what the phone's SAF file picker and fmUpload() post to. It writes through
+// the filesystem, so an APK keeps its bytes (the generic StorageBase backends
+// deal in utf-8 text and would mangle a binary).
+app.post('/api/fs/upload', express.raw({ type: '*/*', limit: '200mb' }), async (req, res) => {
   try {
-    const backend = storage.get(req.body.backend || 'local');
-    const filePath = req.body.path;
-    await backend.write(filePath, req.body.toString());
-    res.json({ success: true });
+    const filePath = (req.query && req.query.path) || '';
+    if (!filePath) return res.json({ success: false, error: 'укажи ?path=...' });
+    const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''));
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, buf);
+    res.json({ success: true, size: buf.length });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
@@ -557,6 +563,246 @@ app.get('/api/gh/artifacts', async (req, res) => {
   } catch { return res.json({ success: true, files: [] }); }
 });
 
+// ─── RUNNER: backup / stop / restart ────────────────────────────────────
+// Runs inside a GitHub Actions launch, so process.env carries the run's own
+// identity (GITHUB_*). Locally (pc-local) those are absent and the endpoints
+// answer `actions:false` — the buttons are then disabled in the UI.
+const ghApi = async (method, url, token, body) => {
+  let r;
+  try {
+    r = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {})
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    });
+  } catch (e) { return { status: 0, error: e.message, j: null }; }
+  let j = null;
+  try { j = await r.json(); } catch {}
+  return { status: r.status, j };
+};
+
+const runnerEnv = () => {
+  const onActions = !!process.env.GITHUB_RUN_ID;
+  const wfRef = process.env.GITHUB_WORKFLOW_REF || '';
+  const file = (wfRef.match(/\.github\/workflows\/([^@/]+)/) || [])[1] || '';
+  return {
+    actions: onActions,
+    repo: process.env.GITHUB_REPOSITORY || '',
+    workflow: process.env.GITHUB_WORKFLOW || '',
+    workflowFile: file,
+    runId: process.env.GITHUB_RUN_ID || '',
+    runNumber: process.env.GITHUB_RUN_NUMBER || '',
+    attempt: process.env.GITHUB_RUN_ATTEMPT || '',
+    ref: (process.env.GITHUB_REF || 'main').replace(/^refs\/heads\//, ''),
+    os: process.env.RUNNER_OS || process.platform,
+    workspace: process.env.GITHUB_WORKSPACE || '',
+    hostname: os.hostname(),
+    home: HOME,
+    workDir: WORK_DIR,
+    tunnel: (tunnelInfo && tunnelInfo.url) || null,
+    uptimeSec: Math.round(process.uptime())
+  };
+};
+
+// Size of a directory, via du (fast) with a Node fallback.
+const dirSize = (p) => new Promise((resolve) => {
+  const isWin = process.platform === 'win32';
+  const child = isWin
+    ? spawn('powershell', ['-NoProfile', '-Command',
+        `(Get-ChildItem -LiteralPath '${String(p).replace(/'/g, "''")}' -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum`],
+        { stdio: ['ignore', 'pipe', 'pipe'] })
+    : spawn('du', ['-sb', p], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  child.stdout.on('data', d => { out += String(d); });
+  child.on('error', () => resolve(null));
+  child.on('close', () => {
+    const n = parseInt(out.replace(/\s.*$/, '').replace(/[^\d]/g, ''), 10);
+    resolve(Number.isFinite(n) ? n : null);
+  });
+});
+
+const GITHUB_BASE = (repo) => `https://api.github.com/repos/${repo || process.env.GITHUB_REPOSITORY || 'sj0404-collab/zen-panel'}`;
+
+const runnerToken = () => process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
+
+// Everything the backup may touch — keep it to places the user actually works.
+const runnerRoot = (p) => {
+  const roots = [WORK_DIR];
+  if (process.env.GITHUB_WORKSPACE) roots.push(process.env.GITHUB_WORKSPACE);
+  const resolved = path.resolve(String(p || ''));
+  return roots.some(r => r && (resolved === r || resolved.startsWith(r + path.sep)));
+};
+
+// APKs (a single file, kept a file) and heavy top-level folders (→ tar.xz).
+const scanRunnerFiles = async () => {
+  const apks = [];
+  const folders = [];
+  const walk = (dir, depth) => {
+    if (depth > 6) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (!e || e.name.startsWith('.') || e.name === 'node_modules' || e.name === '__pycache__') continue;
+      const full = path.join(dir, e.name);
+      try {
+        if (e.isDirectory()) {
+          if (depth < 3) walk(full, depth + 1);
+        } else if (/\.apk$/i.test(e.name)) {
+          const st = fs.statSync(full);
+          apks.push({ name: e.name, path: full, size: st.size, isDir: false });
+        }
+      } catch {}
+    }
+  };
+  walk(WORK_DIR, 0);
+  if (process.env.GITHUB_WORKSPACE && process.env.GITHUB_WORKSPACE !== WORK_DIR) walk(process.env.GITHUB_WORKSPACE, 0);
+  // Heavy folders in the work dir (hub-work itself first, then its children).
+  const sizes = [];
+  for (const d of [WORK_DIR, ...(function () {
+    const out = [];
+    try { for (const e of fs.readdirSync(WORK_DIR, { withFileTypes: true })) if (e.isDirectory()) out.push(path.join(WORK_DIR, e.name)); } catch {}
+    return out;
+  })()]) {
+    if (d === WORK_DIR || !['.git', 'node_modules'].some(x => d.endsWith(path.sep + x) || d.endsWith('/' + x))) {
+      const s = await dirSize(d);
+      if (s != null && s > 20 * 1024 * 1024) sizes.push({ name: d === WORK_DIR ? 'hub-work' : path.basename(d), path: d, size: s, isDir: true });
+    }
+  }
+  sizes.sort((a, b) => b.size - a.size);
+  folders.push(...sizes.slice(0, 12));
+  return { apks: apks.slice(0, 30), folders };
+};
+
+app.get('/api/runner', async (req, res) => {
+  try {
+    const env = runnerEnv();
+    const scan = env.actions ? await scanRunnerFiles() : { apks: [], folders: [] };
+    res.json({ success: true, ...env, ...scan });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// POST /api/runner/backup  { items: [{ path, dest: 'phone'|'branch'|'keep' }] }
+//   phone  → client downloads (file → /api/fs/download, dir → /api/fs/archive)
+//   branch → pack dirs to <name>-backup-<ts>.tar.xz, files stay as-is, push to
+//            the session-state branch under artifacts/ (GitHub Contents API)
+//   keep   → leave in place (implicit)
+app.post('/api/runner/backup', express.json({ limit: '5mb' }), async (req, res) => {
+  const items = (req.body && Array.isArray(req.body.items) ? req.body.items : [])
+    .filter(i => i && typeof i.path === 'string');
+  if (!items.length) return res.json({ success: true, results: [] });
+  const token = runnerToken();
+  const repo = process.env.GITHUB_REPOSITORY || '';
+  const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+  const results = [];
+  for (const it of items) {
+    const p = it.path;
+    const entry = { path: p, ok: false };
+    if (!runnerRoot(p)) { entry.error = 'путь вне рабочих папок'; results.push(entry); continue; }
+    let st;
+    try { st = fs.statSync(p); } catch { entry.error = 'путь не найден'; results.push(entry); continue; }
+    const isDir = st.isDirectory();
+    const base = path.basename(p) || 'folder';
+    entry.isDir = isDir; entry.name = base; entry.size = isDir ? null : st.size;
+    const dest = it.dest === 'phone' ? 'phone' : it.dest === 'branch' ? 'branch' : 'keep';
+    entry.action = dest;
+    if (dest === 'phone' || dest === 'keep') { entry.ok = true; results.push(entry); continue; }
+    try {
+      let archivePath = p;
+      let uploadName = base;
+      if (isDir) {
+        const tmp = path.join(os.tmpdir(), `zbak-${Date.now()}-${base.replace(/[^\w.-]/g, '_')}.tar.xz`);
+        if (!await tarXz(p, tmp)) { entry.error = 'tar не смог упаковать (нет xz?)'; results.push(entry); continue; }
+        archivePath = tmp;
+        uploadName = `${base}-backup-${stamp}.tar.xz`;
+      }
+      const buf = fs.readFileSync(archivePath);
+      if (buf.length > 90 * 1024 * 1024) {
+        entry.error = 'слишком большой для ветки (>90 МБ) — выбери «на телефон»';
+        results.push(entry);
+        continue;
+      }
+      if (!token) { entry.error = 'нет GH_TOKEN — вставь gh_token в запуске хаба'; results.push(entry); continue; }
+      const target = `artifacts/${uploadName}`;
+      let sha = '';
+      const existing = await ghApi('GET', `${GITHUB_BASE(repo)}/contents/${target}?ref=session-state`, token);
+      if (existing.status === 200 && existing.j && existing.j.sha) sha = existing.j.sha;
+      const put = await ghApi('PUT', `${GITHUB_BASE(repo)}/contents/${target}`, token, {
+        message: `backup ${uploadName} (${stamp})`,
+        content: buf.toString('base64'),
+        branch: 'session-state',
+        ...(sha ? { sha } : {})
+      });
+      if (put.status >= 200 && put.status < 300) {
+        entry.ok = true;
+        entry.size = buf.length;
+        entry.url = `https://raw.githubusercontent.com/${repo || 'sj0404-collab/zen-panel'}/session-state/${target}`;
+      } else {
+        entry.error = `GitHub ${put.status}${put.j && put.j.message ? ' ' + put.j.message : ''}`;
+      }
+    } catch (e) { entry.error = e.message; }
+    results.push(entry);
+  }
+  res.json({ success: true, results });
+});
+
+// Pack a path into a .tar.xz (falls back to .tar.gz) — returns the ext, or null.
+const tarXz = (p, out) => new Promise((resolve) => {
+  const dir = path.dirname(p);
+  const target = path.basename(p);
+  let child;
+  try {
+    child = spawn('tar', ['-cJf', out, target], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch { return resolve(false); }
+  child.stderr.on('data', () => {});
+  child.on('error', () => resolve(false));
+  child.on('close', (code) => {
+    if (code === 0) return resolve(true);
+    const gz = out.replace(/\.tar\.xz$/, '.tar.gz');
+    let gc;
+    try { gc = spawn('tar', ['-czf', gz, target], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] }); } catch { return resolve(false); }
+    gc.stderr.on('data', () => {});
+    gc.on('error', () => resolve(false));
+    gc.on('close', (c) => {
+      if (c === 0) {
+        try { fs.renameSync(gz, out); return resolve(true); } catch { return resolve(false); }
+      }
+      resolve(false);
+    });
+  });
+});
+
+app.post('/api/runner/stop', async (req, res) => {
+  const env = runnerEnv();
+  if (!env.actions || !env.runId) return res.json({ success: false, actions: false, error: 'не на Actions-раннере' });
+  const token = runnerToken();
+  if (!token) return res.json({ success: false, error: 'нет токена для остановки' });
+  const r = await ghApi('POST', `${GITHUB_BASE(env.repo)}/actions/runs/${env.runId}/cancel`, token);
+  res.json({ success: r.status === 202 || r.status === 409, status: r.status, runId: env.runId, repo: env.repo });
+});
+
+app.post('/api/runner/restart', async (req, res) => {
+  const env = runnerEnv();
+  if (!env.actions || !env.runId) return res.json({ success: false, actions: false, error: 'не на Actions-раннере' });
+  if (!env.workflowFile) return res.json({ success: false, error: 'неизвестен workflow-файл' });
+  const token = runnerToken();
+  if (!token) return res.json({ success: false, error: 'нет токена для перезапуска' });
+  // A fresh dispatch with the inputs we know (os + gh_token). The old run is
+  // cancelled in the background — GitHub can take minutes to actually kill it.
+  const dispatch = await ghApi(
+    'POST', `${GITHUB_BASE(env.repo)}/actions/workflows/${env.workflowFile}/dispatches`, token,
+    { ref: env.ref, inputs: { os: process.platform === 'win32' ? 'windows' : 'linux', gh_token: token } });
+  let cancelOld = false;
+  if (dispatch.status >= 200 && dispatch.status < 300) {
+    const c = await ghApi('POST', `${GITHUB_BASE(env.repo)}/actions/runs/${env.runId}/cancel`, token);
+    cancelOld = c.status === 202 || c.status === 409;
+  }
+  res.json({ success: dispatch.status >= 200 && dispatch.status < 300, status: dispatch.status, mode: 'dispatch', workflow: env.workflowFile, ref: env.ref, repo: env.repo, cancelOld });
+});
+
 // ─── GIT: status / diff / log for a local repo ─────────────────────────
 const gitRun = (repo, args) => new Promise((resolve) => {
   const out = [];
@@ -721,6 +967,7 @@ wss.on('connection', (ws) => {
       }
       case 'input': { if (session) session.pty.write(msg.data); return; }
       case 'resize': { if (session && msg.cols && msg.rows) session.pty.resize(msg.cols, msg.rows); return; }
+      case 'ping': { ws.send(JSON.stringify({ type: 'pong', t: Date.now() })); return; }
       case 'kill': {
         if (!session) return;
         if (process.platform === 'win32') {

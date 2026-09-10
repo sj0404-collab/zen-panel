@@ -19,6 +19,20 @@ window.addEventListener('resize', () => {
   if (activeTab) activeTab.fitAddon?.fit();
 });
 
+// Мгновенный переподъём вкладок после фонизации / потери сети.
+function kickReconnect() {
+  tabs.forEach(t => {
+    if (t.manualClose) return;
+    const s = t.ws;
+    if (s && (s.readyState === WebSocket.OPEN || s.readyState === WebSocket.CONNECTING)) return;
+    if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
+    if (t.connect) { t.lastPong = 0; try { t.connect(); } catch (e) { /* ignore */ } }
+  });
+}
+window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') kickReconnect(); });
+window.addEventListener('focus', () => setTimeout(kickReconnect, 250));
+window.addEventListener('online', kickReconnect);
+
 async function init() {
   const [toolsR, infoR, histR, storR, modelsR, netR, tunnelR] = await Promise.all([
     fetch('/api/tools').then(r => r.json()),
@@ -226,6 +240,141 @@ function renderDashboard() {
   }).join('');
   for (const [id, v] of Object.entries(dirStash)) { const el = document.getElementById(id); if (el) el.value = v; }
   if (focusId) { const f = document.getElementById(focusId); if (f && f.focus) f.focus(); }
+  runnerRender();
+}
+
+// ===== RUNNER CARD — сохранение / выключение / перезапуск ранера =====
+let RUNNER = null;        // last /api/runner answer
+let RUNNER_BUSY = false;  // stop/restart in flight
+function fmtBytes(n) {
+  if (n == null) return '?';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+  return (n / 1073741824).toFixed(2) + ' GB';
+}
+function dlNow(url, name) {
+  try {
+    const a = document.createElement('a');
+    a.href = url; a.download = name || '';
+    document.body.appendChild(a); a.click(); a.remove();
+  } catch (e) { fmInfo('Скачать вручную: ' + url); }
+}
+function runnerRender() {
+  const el = document.getElementById('runner-card');
+  if (!el) return;
+  const onActs = !!(RUNNER && RUNNER.success && RUNNER.actions);
+  const env = RUNNER && RUNNER.success ? RUNNER : null;
+  const info = env ? `<b>${escHtml(env.repo || '?')}</b> #${escHtml(env.runNumber || '')} · ${escHtml(env.os || '')} · ${escHtml(env.workflowFile || env.workflow || '')}`
+    + (env.hostname ? ' · ' + escHtml(env.hostname) : '')
+    + (env.workDir ? '<br>' + escHtml(env.workDir) : '')
+    + (env.tunnel ? '<br>🌐 ' + escHtml(env.tunnel) : '')
+    : 'Запуск вне GitHub Actions (PC-local) — кнопки управления активны только на Actions-раннере.';
+  el.innerHTML = `<div class="runner-box">
+    <div class="runner-h">🎛 Раннер <span class="runner-dot${onActs ? ' on' : ''}"></span></div>
+    <div class="runner-line">${info}</div>
+    <div class="runner-btns">
+      <button class="btn btn-sm" onclick="runnerScan()">🔍 Файлы</button>
+      <button class="btn btn-sm btn-ok" onclick="runnerSave()" id="runner-save" disabled>💾 Сохранить</button>
+      <button class="btn btn-sm btn-ok" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled'}>⟲ Перезапуск</button>
+      <button class="btn btn-sm btn-er" onclick="runnerStop()" id="runner-stop"${onActs ? '' : ' disabled'}>⏻ Выключить</button>
+    </div>
+    <div id="runner-scan"></div>
+    <div id="runner-res"></div>
+  </div>`;
+  if (RUNNER_BUSY) {
+    const s = document.getElementById('runner-scan');
+    if (s) s.innerHTML = '<div class="runner-busy">работаю…</div>';
+  }
+}
+async function runnerScan() {
+  const w = document.getElementById('runner-scan');
+  if (w) w.innerHTML = '<div class="runner-busy">сканирую…</div>';
+  let r = null;
+  try { r = await fetch('/api/runner').then(x => x.json()); } catch (e) { r = { success: false, error: e.message }; }
+  RUNNER = r;
+  runnerRender();
+  if (!r.success) { if (w) w.innerHTML = '<div class="runner-err">' + escHtml(r.error || 'нет ответа') + '</div>'; return; }
+  const items = [];
+  (r.apks || []).forEach(a => items.push({ kind: 'apk', name: a.name, path: a.path, size: a.size, isDir: false }));
+  (r.folders || []).forEach(f => items.push({ kind: 'folder', name: f.name, path: f.path, size: f.size, isDir: true }));
+  const saveBtn = document.getElementById('runner-save');
+  if (!items.length) {
+    if (w) w.innerHTML = '<div class="runner-err">Ничего не нашлось в ~/hub-work. Положи файлы туда вкладкой «Файлы» (⬆), потом сканируй снова.</div>';
+    if (saveBtn) saveBtn.disabled = true;
+    return;
+  }
+  if (w) w.innerHTML = `<div class="runner-list">` + items.map((it) => `
+    <div class="runner-item">
+      <div>${it.kind === 'apk' ? '📦' : '📁'}</div>
+      <div class="runner-name" title="${escAttr(it.path)}">${escHtml(it.name)}<span class="runner-meta">${fmtBytes(it.size)} · ${it.kind === 'apk' ? 'APK' : 'папка'}</span></div>
+      <select class="runner-dest" data-path="${escAttr(it.path)}" data-dir="${it.isDir ? '1' : ''}">
+        <option value="phone"${it.kind === 'apk' ? ' selected' : ''}>на телефон</option>
+        <option value="branch"${it.kind === 'folder' ? ' selected' : ''}>в ветку (tar.xz)</option>
+        <option value="keep">оставить</option>
+        <option value="skip">пропустить</option>
+      </select>
+    </div>`).join('') + `</div>`;
+  if (saveBtn) saveBtn.disabled = false;
+}
+async function runnerSave() {
+  const saveBtn = document.getElementById('runner-save');
+  if (saveBtn && saveBtn.disabled) return;
+  const items = [], dl = [];
+  document.querySelectorAll('.runner-dest').forEach(sel => {
+    const dest = sel.value;
+    if (dest === 'skip') return;
+    items.push({ path: sel.dataset.path, dest });
+    if (dest === 'phone') {
+      const nm = String(sel.dataset.path).split(/[/\\]/).pop();
+      dl.push({ path: sel.dataset.path, name: nm + (sel.dataset.dir ? '.tar.xz' : ''), isDir: !!sel.dataset.dir });
+    }
+  });
+  if (!items.length) return;
+  if (saveBtn) saveBtn.disabled = true;
+  let r = null;
+  try {
+    r = await fetch('/api/runner/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) }).then(x => x.json());
+  } catch (e) { r = { success: false, error: e.message }; }
+  const out = document.getElementById('runner-res');
+  if (!r.success) {
+    if (out) out.innerHTML = '<div class="runner-err">' + escHtml(r.error || 'ошибка') + '</div>';
+    if (saveBtn) saveBtn.disabled = false;
+    return;
+  }
+  const lines = (r.results || []).map(x => {
+    if (x.ok && x.action === 'branch') return '✓ <b>' + escHtml(x.name || '') + '</b> → <a href="' + escAttr(x.url || '#') + '" target="_blank" rel="noreferrer">в ветке</a>';
+    if (x.ok && x.action === 'phone') return '⬇ <b>' + escHtml(x.name || '') + '</b> — скачивается…';
+    if (x.ok && x.action === 'keep') return '○ <b>' + escHtml(x.name || '') + '</b> — остался на ранере';
+    return '✗ ' + escHtml(x.name || '') + ': ' + escHtml(x.error || '?');
+  });
+  if (out) { out.innerHTML = '<div class="runner-res">' + lines.join('<br>') + '</div>'; setTimeout(() => { out.innerHTML = ''; }, 25000); }
+  dl.forEach(d => dlNow(d.isDir ? '/api/fs/archive?path=' + encodeURIComponent(d.path) : '/api/fs/download?path=' + encodeURIComponent(d.path), d.name));
+  if (saveBtn) saveBtn.disabled = false;
+  runnerScan();
+}
+function runnerVisible() { return !!(RUNNER && RUNNER.success && RUNNER.actions && !RUNNER_BUSY); }
+async function runnerStop() {
+  if (!runnerVisible()) { fmInfo('Кнопки активны только на Actions-раннере.'); return; }
+  if (!(await fmConfirm('Выключить ранер? Всё, что не сохранили, пропадёт при его смерти. Сначала «💾 Сохранить».', 'Выключить'))) return;
+  RUNNER_BUSY = true; runnerRender();
+  const r = await fetch('/api/runner/stop', { method: 'POST' }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+  RUNNER_BUSY = false; runnerRender();
+  const out = document.getElementById('runner-res');
+  if (out) out.innerHTML = r.success
+    ? '<div class="runner-res">⏻ Остановка принята — ранер сворачивается ~минуту.</div>'
+    : '<div class="runner-err">' + escHtml(r.error || 'не вышло') + '</div>';
+}
+async function runnerRestart() {
+  if (!runnerVisible()) { fmInfo('Кнопки активны только на Actions-раннере.'); return; }
+  if (!(await fmConfirm('Перезапустить ранер? Подстрахуй файлы «💾 Сохранить» — свежий раннер подхватит их из ветки.', 'Перезапустить'))) return;
+  RUNNER_BUSY = true; runnerRender();
+  const r = await fetch('/api/runner/restart', { method: 'POST' }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+  RUNNER_BUSY = false; runnerRender();
+  const out = document.getElementById('runner-res');
+  if (out) out.innerHTML = r.success
+    ? '<div class="runner-res">⟲ Перезапуск принят: новый ранер поднимается, старый гасится.</div>'
+    : '<div class="runner-err">' + escHtml(r.error || 'не вышло') + '</div>';
 }
 
 function toggleApplyMenu(e, toolId) {
@@ -459,7 +608,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   await new Promise(r => setTimeout(r, 30));
   fitAddon.fit();
 
-  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: null, term, fitAddon, el: panel, manualClose: false, scroll: null };
+  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: null, term, fitAddon, el: panel, manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null, connect: () => {} };
   tabs.push(td);
   td.scroll = attachTermScroll(id, panel);
   setupTermTouch(document.getElementById('term-' + id), term);
@@ -468,15 +617,37 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
     const socket = new WebSocket(`${protocol}//${location.host}/ws`);
     td.ws = socket;
 
-    socket.onopen = () => { socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : toolId, sessionId: id, cwd, cols: term.cols, rows: term.rows })); if (!isTouch) term.focus(); };
-    socket.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } if (m.type === 'output') term.write(m.data); if (m.type === 'exit') term.write(`\r\n\x1b[33m[Exited ${m.code}]\x1b[0m\r\n`); if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`); };
+    socket.onopen = () => {
+      td.lastPong = Date.now();
+      socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : toolId, sessionId: id, cwd, cols: term.cols, rows: term.rows }));
+      if (!isTouch) term.focus();
+    };
+    socket.onmessage = (e) => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (m.type === 'pong') { td.lastPong = Date.now(); return; }
+      if (m.type === 'output') term.write(m.data);
+      if (m.type === 'exit') term.write(`\r\n\x1b[33m[Exited ${m.code}]\x1b[0m\r\n`);
+      if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`);
+    };
     socket.onclose = () => {
       if (td.manualClose) return;
+      if (td.reconnectTimer) { clearTimeout(td.reconnectTimer); td.reconnectTimer = null; }
       term.write('\r\n\x1b[33m[Disconnected — reconnecting...]\x1b[0m\r\n');
-      setTimeout(connect, 3000);
+      td.reconnectTimer = setTimeout(connect, 3000);
     };
     return socket;
   };
+  td.connect = connect;
+  connect();
+
+  // Keepalive: ping/pong + forced close when the socket goes stale (>45s).
+  setInterval(() => {
+    if (td.manualClose || !td.ws) return;
+    if (td.ws.readyState === WebSocket.OPEN) {
+      if (Date.now() - td.lastPong > 45000) td.ws.close();
+      else td.ws.send(JSON.stringify({ type: 'ping' }));
+    }
+  }, 15000);
 
   term.onData((d) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'input', data: d })); });
   term.onResize(({ cols, rows }) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'resize', cols, rows })); });
@@ -901,25 +1072,21 @@ async function fmSaveGithub() {
 }
 
 async function fmUpload() {
+  await fmInfo('Выбери файлы — в APK откроется системный SAF-пикер.');
   const input = document.createElement('input');
   input.type = 'file';
   input.multiple = true;
   input.onchange = async () => {
     for (const file of input.files) {
-      const content = await file.text();
       const path = fmCurrentPath + '/' + file.name;
-      await fetch('/api/fs/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: content,
-        // Pass path via query since body is binary
-      });
-      // Re-upload with JSON metadata
-      await fetch('/api/fs/write', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backend: fmBackend, path, content })
-      });
+      try {
+        // Binary-safe raw upload: APK и архивы доезжают целыми байтами.
+        const r = await fetch('/api/fs/upload?path=' + encodeURIComponent(path), {
+          method: 'POST', body: file
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!j.success) throw new Error(j.error || 'upload failed');
+      } catch (e) { await fmInfo('Ошибка: ' + e.message); }
     }
     fmRefresh();
   };

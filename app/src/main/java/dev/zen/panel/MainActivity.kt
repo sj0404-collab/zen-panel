@@ -27,12 +27,14 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.ValueCallback
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import org.json.JSONObject
 
 /**
@@ -45,6 +47,17 @@ class MainActivity : ComponentActivity() {
     private lateinit var errorView: LinearLayout
 
     private val assets_ by lazy { PanelAssets(this) }
+
+    // <input type=file> in the hub overlay (SAF): without onShowFileChooser
+    // the upload button silently does nothing in a WebView.
+    private var fileChooser: ValueCallback<Array<Uri>>? = null
+    private val filePicker =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+            val uris = WebChromeClient.FileChooserParams.parseResult(res.resultCode, res.data)
+                ?: emptyArray()
+            fileChooser?.onReceiveValue(uris)
+            fileChooser = null
+        }
 
     // A notification tap can arrive before the panel JS has loaded. Queue it.
     private var pendingOpenSlot: String? = null
@@ -128,6 +141,27 @@ class MainActivity : ComponentActivity() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 bar.progress = newProgress
                 bar.visibility = if (newProgress in 1..99) View.VISIBLE else View.GONE
+            }
+
+            override fun onShowFileChooser(
+                view: WebView?, callback: ValueCallback<Array<Uri>>?,
+                params: FileChooserParams?
+            ): Boolean {
+                fileChooser?.onReceiveValue(null)
+                fileChooser = callback
+                return try {
+                    val intent = params?.createIntent()
+                    if (intent == null) {
+                        fileChooser = null
+                        false
+                    } else {
+                        filePicker.launch(intent)
+                        true
+                    }
+                } catch (e: Exception) {
+                    fileChooser = null
+                    false
+                }
             }
         }
 

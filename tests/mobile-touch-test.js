@@ -159,5 +159,46 @@ check('q28 desktop browser funcs', desk.includes('function openBrowser(') && des
 // q29: dashboard rebuild keeps typed folder paths.
 check('q29 dir inputs preserved', mob.includes('dirStash') && desk.includes('dirStash'));
 
+// q30: runner API on the server — scan/backup/stop/restart + binary upload.
+check('q30 runner endpoints', server.includes("app.get('/api/runner'") &&
+  server.includes("app.post('/api/runner/backup'") &&
+  server.includes("app.post('/api/runner/stop'") &&
+  server.includes("app.post('/api/runner/restart'"));
+check('q30b upload binary-safe', server.includes("req.query.path") &&
+  server.includes('upload.single') === false);
+
+// q31: WS keepalive handled by the server (ping → pong).
+check('q31 server ws ping', server.includes("case 'ping'") && server.includes("type: 'pong'"));
+
+// q32: runner card + controls in both UIs.
+check('q32 runner ui', mobHtml.includes('id="runner-card"') && deskHtml.includes('id="runner-card"') &&
+  mob.includes('async function runnerScan(') && desk.includes('async function runnerScan(') &&
+  mob.includes('async function runnerSave(') && desk.includes('async function runnerSave(') &&
+  mob.includes('async function runnerStop(') && desk.includes('async function runnerStop(') &&
+  mob.includes('async function runnerRestart(') && desk.includes('async function runnerRestart('));
+
+// q33: client heartbeat (ping/pong) + instant reconnect on tab return.
+check('q33 keepalive', mob.includes("type: 'ping'") && desk.includes("type: 'ping'") &&
+  mob.includes('lastPong') && desk.includes('lastPong') &&
+  mob.includes('function kickReconnect(') && desk.includes('function kickReconnect(') &&
+  mob.includes("visibilitychange") && desk.includes("visibilitychange"));
+
+// q34: uploads go through the binary /api/fs/upload (no more file.text()).
+check('q34 binary upload client', mob.includes("/api/fs/upload?path='") && desk.includes("/api/fs/upload?path='") &&
+  !mob.includes("const content = await file.text()") && !desk.includes("const content = await file.text()"));
+
+// q35: the panel gets its own runner card + rerun + SAF in its APK shell.
+const panel = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/assets/panel/index.html'), 'utf8');
+const panelKt = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/java/dev/zen/panel/MainActivity.kt'), 'utf8');
+check('q35 panel runner', panel.includes('id="runner-card-panel"') &&
+  panel.includes('async function runnerPanelScan(') &&
+  panel.includes('async function runnerPanelSave(') &&
+  panel.includes('async function runnerPanelRestart(') &&
+  panel.includes('async function runnerPanelStop(') &&
+  panel.includes('async function rerunRun('));
+check('q35b panel rerun link', panel.includes('onclick="rerunRun('));
+check('q35c panel apk file chooser', panelKt.includes('onShowFileChooser') &&
+  panelKt.includes('ActivityResultContracts') && panelKt.includes('filePicker.launch'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

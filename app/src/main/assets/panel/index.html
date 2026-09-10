@@ -253,6 +253,19 @@
     </div>
   </div>
 
+  <div class="card" id="runner-card-panel">
+    <h2>Раннер / файлы</h2>
+    <div class="note" id="runner-line" style="margin-top:0">Живой хаб не найден — файлы пакаются там же, в хабе.</div>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost small" onclick="runnerPanelScan()">🔍 Файлы</button>
+      <button class="ghost small" id="pr-save" onclick="runnerPanelSave()" disabled>💾 Сохранить</button>
+      <button class="ghost small" id="pr-restart" onclick="runnerPanelRestart()" disabled>⟲ Перезапустить</button>
+      <button class="ghost small" id="pr-stop" onclick="runnerPanelStop()" disabled>⏻ Выключить</button>
+    </div>
+    <div id="runner-scan" style="margin-top:8px"></div>
+    <div id="runner-res"></div>
+  </div>
+
   <div class="card">
     <h2>Активная сессия</h2>
     <div id="live"><span class="spin">проверяю…</span></div>
@@ -962,7 +975,9 @@ async function loadActions(force) {
       <td><a href="#" onclick="openExternal(\'${esc(r.html_url)}\');return false">${esc(r.name)}</a> ${pill(r)}
         <div class="note">${ago(r.updated_at)}${
           r.status !== 'completed' && tok()
-            ? ` · <a onclick="stopRun(${r.id},'${esc(ACT_REPO)}')">остановить</a>` : ''}</div></td>
+            ? ` · <a onclick="stopRun(${r.id},'${esc(ACT_REPO)}')">остановить</a>` : ''}${
+          (r.status === 'completed' || r.status === 'cancelled') && tok()
+            ? ` · <a onclick="rerunRun(${r.id},'${esc(ACT_REPO)}')">перезапустить</a>` : ''}</div></td>
       </tr>`).join('') + '</table>' : '<span class="note">запусков нет</span>';
   } catch (e) {
     rbox.innerHTML = `<div class="danger">${esc(e.message)}</div>`;
@@ -1949,6 +1964,166 @@ async function stopRun(id, repo) {
   if (ok) await markSessionEnded(id);
   alert(ok ? 'Остановлено. Раннер сворачивается ~полминуты.' : 'Не вышло.');
   setTimeout(() => { refresh(); if (page === 'act') loadActions(true); }, 4000);
+}
+
+// Rerun keeps the same inputs and the same gate token: cancel the live run,
+// wait for GitHub to mark it finished, then rerun the finished run.
+async function rerunRun(id, repo) {
+  if (!tok()) { alert('Нужен токен, чтобы перезапускать.'); return; }
+  repo = repo || ctlRepo();
+  let d;
+  try { d = await api(`${GH}/repos/${repo}/actions/runs/${id}`); }
+  catch (e) { d = { status: 'error' }; }
+  if (d.status === 'in_progress' || d.status === 'queued' || d.status === 'pending' || d.status === 'waiting') {
+    const c = await fetch(`${GH}/repos/${repo}/actions/runs/${id}/cancel`,
+      { method: 'POST', headers: hdr() });
+    if (c.status !== 202 && c.status !== 409) { alert('Не вышло отменить текущий запуск.'); return; }
+    alert('Отменяю текущий запуск — перезапуск стартует, когда GitHub его закроет.');
+    for (let i = 0; i < 24; i++) {
+      await new Promise(r => setTimeout(r, 2500));
+      try { d = await api(`${GH}/repos/${repo}/actions/runs/${id}`); } catch (e) { break; }
+      if (d.status === 'completed' || d.status === 'cancelled') break;
+    }
+  }
+  if (!(d.status === 'completed' || d.status === 'cancelled' || d.status === 'success'
+      || d.status === 'failure')) {
+    alert('Запуск ещё не завершился — перезапуск станет доступен позже.');
+    return;
+  }
+  const r = await fetch(`${GH}/repos/${repo}/actions/runs/${id}/rerun`,
+    { method: 'POST', headers: hdr() });
+  if (r.status === 201) alert('Перезапуск принят — те же входные данные и токен сессии.');
+  else alert('Не вышло: ' + r.status + ' ' + (await r.text()).slice(0, 200));
+  setTimeout(() => { refresh(); if (page === 'act') loadActions(true); }, 3000);
+}
+
+// ── Раннер: файлы / перезапуск / выключение (через живой хаб) ────────────
+// npm-hub CORS открыт, поэтому панель ходит прямо на URL живого хаба.
+let PRUN = null; // last answer of <hub>/api/runner
+function runnerBase() {
+  const s = DESKS['hub'] || DESKS['hub-linux'] || DESKS['hub-windows'];
+  const raw = (s && (s.url || s.deskUrl || s.hubUrl)) || '';
+  return String(raw || '').split('#')[0].split('?')[0].replace(/\/+$/, '');
+}
+function prFmt(n) {
+  if (n == null) return '?';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+  return (n / 1073741824).toFixed(2) + ' GB';
+}
+function prDl(url, name) {
+  const a = document.createElement('a');
+  a.href = url; a.download = name || '';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+async function runnerPanelScan() {
+  const base = runnerBase();
+  const line = $('runner-line');
+  if (!base) { line.textContent = 'Живой хаб не найден — сначала запусти NPM-Hub.'; return; }
+  const box = $('runner-scan');
+  if (box) box.innerHTML = '<span class="note">сканирую…</span>';
+  let r;
+  try { r = await fetch(`${base}/api/runner`).then(x => x.json()); }
+  catch (e) { r = { success: false, error: 'хаб не ответил по ' + base }; }
+  PRUN = r;
+  if (!r.success) {
+    if (box) box.innerHTML = `<span class="danger">${esc(r.error || 'нет ответа')}</span>`;
+    return;
+  }
+  line.innerHTML = `Хаб: <code>${esc(base)}</code> · ${esc(r.repo || '')} #${esc(r.runNumber || '')} · ${esc(r.os || '')}`
+    + (r.tunnel ? ` · 🌐 <a href="${esc(r.tunnel)}" target="_blank" rel="noreferrer">туннель</a>` : '');
+  const items = [];
+  (r.apks || []).forEach(a => items.push({ name: a.name, path: a.path, size: a.size, isDir: false, kind: 'apk' }));
+  (r.folders || []).forEach(f => items.push({ name: f.name, path: f.path, size: f.size, isDir: true, kind: 'folder' }));
+  const save = $('pr-save');
+  if (!items.length) {
+    if (box) box.innerHTML = '<span class="note">Ничего не нашлось в ~/hub-work. Наполни вкладку «Файлы» в хабе, потом сканируй.</span>';
+    if (save) save.disabled = true;
+    return;
+  }
+  if (box) box.innerHTML = items.map(it => `<div class="item">
+    <div class="ico">${it.kind === 'apk' ? '📦' : '📁'}</div>
+    <div class="grow">
+      <div class="name">${esc(it.name)}</div>
+      <div class="meta">${prFmt(it.size)} · ${it.kind === 'apk' ? 'APK' : 'папка'}</div>
+    </div>
+    <select class="pr-dest" data-path="${esc(it.path)}" data-dir="${it.isDir ? '1' : ''}"
+      style="padding:4px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font-size:11px">
+      <option value="phone"${it.kind === 'apk' ? ' selected' : ''}>на телефон</option>
+      <option value="branch"${it.kind === 'folder' ? ' selected' : ''}>в ветку (tar.xz)</option>
+      <option value="keep">оставить</option>
+      <option value="skip">пропустить</option>
+    </select>
+  </div>`).join('');
+  const onActs = !!(r.actions);
+  const rs = $('pr-restart'), sp = $('pr-stop');
+  if (rs) rs.disabled = !onActs;
+  if (sp) sp.disabled = !onActs;
+  if (onActs === false && line) line.innerHTML += ' <span class="note">(локальный запуск — кнопки управления живут на Actions-раннере)</span>';
+  if (save) save.disabled = false;
+}
+async function runnerPanelSave() {
+  const save = $('pr-save');
+  if (save && save.disabled) return;
+  const base = runnerBase();
+  const items = [], dl = [];
+  document.querySelectorAll('.pr-dest').forEach(sel => {
+    const dest = sel.value;
+    if (dest === 'skip') return;
+    items.push({ path: sel.dataset.path, dest });
+    if (dest === 'phone') {
+      const nm = String(sel.dataset.path).split(/[/\\]/).pop();
+      dl.push({ path: sel.dataset.path, name: nm + (sel.dataset.dir ? '.tar.xz' : ''), isDir: !!sel.dataset.dir });
+    }
+  });
+  if (!items.length) return;
+  if (save) save.disabled = true;
+  let r;
+  try {
+    r = await fetch(`${base}/api/runner/backup`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items })
+    }).then(x => x.json());
+  } catch (e) { r = { success: false, error: e.message }; }
+  const out = $('runner-res');
+  if (!r.success) {
+    if (out) out.innerHTML = `<span class="danger">${esc(r.error || 'ошибка')}</span>`;
+    if (save) save.disabled = false;
+    return;
+  }
+  const lines = (r.results || []).map(x => {
+    if (x.ok && x.action === 'branch') return `✓ ${esc(x.name)} → <a href="${esc(x.url || '#')}" target="_blank" rel="noreferrer">в ветке</a>`;
+    if (x.ok && x.action === 'phone') return `⬇ ${esc(x.name)} — скачивается…`;
+    if (x.ok && x.action === 'keep') return `○ ${esc(x.name)} — остался на ранере`;
+    return `✗ ${esc(x.name)}: ${esc(x.error || '?')}`;
+  });
+  if (out) out.innerHTML = '<span class="ok">' + lines.join('<br>') + '</span>';
+  dl.forEach(d => prDl(d.isDir
+    ? `${base}/api/fs/archive?path=${encodeURIComponent(d.path)}`
+    : `${base}/api/fs/download?path=${encodeURIComponent(d.path)}`, d.name));
+  if (save) save.disabled = false;
+  runnerPanelScan();
+}
+async function runnerPanelStop() {
+  if (!(confirm('Выключить ранер? Несохранённое пропадёт.'))) return;
+  const base = runnerBase();
+  const r = await fetch(`${base}/api/runner/stop`, { method: 'POST' })
+    .then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+  const out = $('runner-res');
+  if (out) out.innerHTML = r.success
+    ? '<span class="ok">⏻ Остановка принята — ранер сворачивается ~минуту.</span>'
+    : `<span class="danger">${esc(r.error || 'не вышло')}</span>`;
+}
+async function runnerPanelRestart() {
+  if (!(confirm('Перезапустить ранер? Несохранённое пропадёт.'))) return;
+  const base = runnerBase();
+  const r = await fetch(`${base}/api/runner/restart`, { method: 'POST' })
+    .then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+  const out = $('runner-res');
+  if (out) out.innerHTML = r.success
+    ? '<span class="ok">⟲ Перезапуск принят: новый ранер поднимается, старый гасится.</span>'
+    : `<span class="danger">${esc(r.error || 'не вышло')}</span>`;
 }
 
 /**
