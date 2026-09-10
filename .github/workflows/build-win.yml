@@ -45,10 +45,14 @@ jobs:
 
       - name: Mask secrets
         shell: bash
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYPASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEYALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          echo "::add-mask::${{ secrets.ANDROID_KEYSTORE_BASE64 }}"
-          echo "::add-mask::${{ secrets.ANDROID_KEY_PASSWORD }}"
-          echo "::add-mask::${{ secrets.ANDROID_KEY_ALIAS }}"
+          [ -n "$KEYSTORE" ] && echo "::add-mask::$KEYSTORE" || true
+          [ -n "$KEYPASS" ] && echo "::add-mask::$KEYPASS" || true
+          [ -n "$KEYALIAS" ] && echo "::add-mask::$KEYALIAS" || true
 
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
