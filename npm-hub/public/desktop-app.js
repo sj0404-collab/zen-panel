@@ -1071,27 +1071,104 @@ async function fmSaveGithub() {
   } catch (e) { await fmInfo('Ошибка: ' + e.message); }
 }
 
-async function fmUpload() {
-  await fmInfo('Выбери файлы — в APK откроется системный SAF-пикер.');
+// Множественный выбор файлов (все виды, картинки — тоже) и целых папок —
+// через нативный пикер или drag & drop мышью. Slots любые — каждый файл
+// уходит сырым телом в /api/fs/upload, родительские папки сервер создаёт сам.
+async function uploadFiles(files, relPaths) {
+  files = (files || []).filter(f => f && typeof f.size === 'number');
+  if (!files.length) return;
+  const info = document.getElementById('fm-info');
+  let ok = 0;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const rel = (relPaths && relPaths[i]) || f.name;
+    const target = fmCurrentPath + '/' + String(rel).replace(/^\/+/, '');
+    try {
+      const r = await fetch('/api/fs/upload?path=' + encodeURIComponent(target), {
+        method: 'POST', body: f
+      });
+      const j = await r.json().catch(() => ({}));
+      if (j && j.success) ok++;
+    } catch (e) { /* keep going — остальные файлы загружаем */ }
+    if (info && files.length > 8 && i % 5 === 0) info.textContent = 'загружаю… ' + (i + 1) + '/' + files.length;
+  }
+  if (info) info.textContent = 'Загружено ' + ok + ' из ' + files.length + (ok === files.length ? '' : ' (ошибки — файлы сломаны или слишком большие)');
+  fmRefresh();
+}
+
+function pickFiles(multiple) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = !!multiple;
+  input.onchange = () => uploadFiles([...input.files]);
+  input.click();
+}
+
+function fmUpload() {
+  const info = document.getElementById('fm-info');
+  if (info) info.textContent = 'Открываю пикер…';
+  pickFiles(true); // синхронный click: браузер требует жест пользователя
+}
+
+function fmUploadFolder() {
   const input = document.createElement('input');
   input.type = 'file';
   input.multiple = true;
-  input.onchange = async () => {
-    for (const file of input.files) {
-      const path = fmCurrentPath + '/' + file.name;
-      try {
-        // Binary-safe raw upload: APK и архивы доезжают целыми байтами.
-        const r = await fetch('/api/fs/upload?path=' + encodeURIComponent(path), {
-          method: 'POST', body: file
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!j.success) throw new Error(j.error || 'upload failed');
-      } catch (e) { await fmInfo('Ошибка: ' + e.message); }
-    }
-    fmRefresh();
+  input.webkitdirectory = true; // выбор папки мышью целиком
+  input.onchange = () => {
+    const files = [...input.files];
+    uploadFiles(files, files.map(f => f.webkitRelativePath || f.name));
   };
   input.click();
 }
+
+function setupDropZone() {
+  const zone = document.getElementById('fm-list');
+  if (!zone || zone.dataset.dz) return;
+  zone.dataset.dz = '1';
+  const paint = on => {
+    zone.style.borderColor = on ? 'var(--acc)' : '';
+    zone.style.background = on ? 'rgba(88,166,255,.08)' : '';
+  };
+  zone.addEventListener('dragover', e => { e.preventDefault(); paint(true); });
+  zone.addEventListener('dragleave', () => paint(false));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); paint(false);
+    const files = [];
+    const reads = [];
+    const walk = (entry, out, base) => {
+      if (!entry) return;
+      if (entry.isFile) {
+        reads.push(new Promise(res => entry.file(f => { files.push({ f, base }); res(); })));
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        reads.push(new Promise(res => {
+          const todo = [];
+          const more = () => reader.readEntries(chunk => {
+            if (!chunk || !chunk.length) { res(); return; }
+            chunk.forEach(c => walk(c, out, (base ? base + c.name + '/' : c.name + '/')));
+            more();
+          }, () => res());
+          more();
+        }));
+      }
+    };
+    const items = [...(e.dataTransfer && e.dataTransfer.items || [])];
+    if (!items.length) {
+      // Старые браузеры / plain files без entries.
+      [...(e.dataTransfer && e.dataTransfer.files || [])].forEach(f => files.push({ f, base: '' }));
+    } else {
+      items.forEach(item => {
+        if (item.kind === 'file') walk(item.webkitGetAsEntry && item.webkitGetAsEntry(), null, '');
+      });
+    }
+    Promise.all(reads).then(() => {
+      const fl = files.map(o => o.f);
+      uploadFiles(fl, files.map(o => (o.base || '') + o.f.name));
+    });
+  });
+}
+document.addEventListener('DOMContentLoaded', () => setTimeout(setupDropZone, 300));
 
 // ─── HELPERS ───
 function formatSize(b) { if (!b) return ''; if (b < 1024) return b + ' B'; if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'; if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB'; return (b / 1073741824).toFixed(1) + ' GB'; }

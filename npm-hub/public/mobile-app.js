@@ -1077,23 +1077,59 @@ async function fmSaveGithub() {
   } catch (e) { await fmInfo('Ошибка: ' + e.message); }
 }
 
+// SAF-пикер на телефоне: множественный выбор любых файлов, включая
+// картинки. У млножественного режима.ACTION_GET_CONTENT открывает
+// полноценный менеджер с галочками — Android готов к этому.
 async function fmUpload() {
-  await fmInfo('Выбери файлы — в APK откроется системный SAF-пикер.');
   const input = document.createElement('input');
   input.type = 'file';
-  input.multiple = true;
+  input.multiple = true; // все виды файлов (accept не задан — включая картинки, APK…)
   input.onchange = async () => {
-    for (const file of input.files) {
-      const path = fmCurrentPath + '/' + file.name;
+    const files = [...input.files];
+    if (!files.length) return;
+    const info = document.getElementById('fm-info');
+    if (info) info.textContent = 'загружаю…';
+    let ok = 0;
+    for (const file of files) {
+      const target = fmCurrentPath + '/' + file.name;
       try {
-        // Binary-safe raw upload: APK и архивы доезжают целыми байтами.
-        const r = await fetch('/api/fs/upload?path=' + encodeURIComponent(path), {
+        const r = await fetch('/api/fs/upload?path=' + encodeURIComponent(target), {
           method: 'POST', body: file
         });
         const j = await r.json().catch(() => ({}));
-        if (!j.success) throw new Error(j.error || 'upload failed');
-      } catch (e) { await fmInfo('Ошибка: ' + e.message); }
+        if (j && j.success) ok++;
+      } catch (e) { /* keep going */ }
     }
+    if (info) info.textContent = ok + ' из ' + files.length + ' загружено' + (ok === files.length ? '' : ' (некоторые не прошли)');
+    fmRefresh();
+  };
+  input.click();
+}
+
+// Папка: работает в браузере (webkitdirectory), в APK пикер не покажет.
+function fmUploadFolder() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.webkitdirectory = true;
+  input.onchange = async () => {
+    const files = [...input.files];
+    if (!files.length) return;
+    const info = document.getElementById('fm-info');
+    if (info) info.textContent = 'загружаю папку…';
+    let ok = 0;
+    for (const file of files) {
+      const rel = file.webkitRelativePath || file.name;
+      const target = fmCurrentPath + '/' + rel.replace(/^\/+/, '');
+      try {
+        const r = await fetch('/api/fs/upload?path=' + encodeURIComponent(target), {
+          method: 'POST', body: file
+        });
+        const j = await r.json().catch(() => ({}));
+        if (j && j.success) ok++;
+      } catch (e) { /* keep going */ }
+    }
+    if (info) info.textContent = 'Папка: ' + ok + ' из ' + files.length + ' загружено';
     fmRefresh();
   };
   input.click();

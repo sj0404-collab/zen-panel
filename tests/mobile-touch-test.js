@@ -187,6 +187,26 @@ check('q33 keepalive', mob.includes("type: 'ping'") && desk.includes("type: 'pin
 check('q34 binary upload client', mob.includes("/api/fs/upload?path='") && desk.includes("/api/fs/upload?path='") &&
   !mob.includes("const content = await file.text()") && !desk.includes("const content = await file.text()"));
 
+// q34b: folder upload (webkitdirectory) on desktop, mobile note "not in APK".
+check('q34b folder upload', mob.includes('function fmUploadFolder(') && desk.includes('function fmUploadFolder(') &&
+  desk.includes('webkitdirectory') && mob.includes('webkitdirectory'));
+
+// q34c: desktop drag-and-drop zone for files + folders (webkitGetAsEntry).
+check('q34c dropzone', desk.includes('function setupDropZone(') && desk.includes('webkitGetAsEntry') &&
+  deskHtml.includes('Перетащи файлы'));
+
+// q34d: fmUpload no longer blocks on a pre-info modal (kept synchronous for
+// Chromium's user-gesture requirement).
+const mobUploadFn = mob.slice(mob.indexOf('async function fmUpload'), mob.indexOf('function fmUploadFolder'));
+const deskUploadFn = desk.slice(desk.indexOf('function fmUpload'), desk.indexOf('function fmUploadFolder'));
+const deskPick = desk.slice(desk.indexOf('function pickFiles'), desk.indexOf('function fmUpload'));
+check('q34d upload sync', !mobUploadFn.includes('await fmInfo') && !deskUploadFn.includes('await fmInfo') &&
+  mobUploadFn.includes('input.click()') && deskPick.includes('input.click()'));
+
+// q34e: html shows both buttons + tip hint.
+check('q34e html buttons', mobHtml.includes('fmUploadFolder()') && deskHtml.includes('fmUploadFolder()') &&
+  deskHtml.includes('⬆📁'));
+
 // q35: the panel gets its own runner card + rerun + SAF in its APK shell.
 const panel = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/assets/panel/index.html'), 'utf8');
 const panelKt = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/java/dev/zen/panel/MainActivity.kt'), 'utf8');
