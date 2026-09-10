@@ -145,9 +145,44 @@ function showPage(p) {
     else if (tabs.length === 0) openTerminal();
   }
   if (p === 'files') initFM();
+  if (p === 'git') loadGit();
 }
 
 showPage('files');
+
+// ===== GIT VIEW =====
+let gitPathRef = '';
+async function loadGit() {
+  const pathEl = document.getElementById('git-path');
+  if (gitPathRef && !pathEl.value) pathEl.value = gitPathRef;
+  const q = pathEl.value.trim();
+  const [st, df, lg, repos] = await Promise.all([
+    fetch('/api/git/status' + (q ? '?path=' + encodeURIComponent(q) : '')).then(r => r.json()),
+    fetch('/api/git/diff' + (q ? '?path=' + encodeURIComponent(q) : '')).then(r => r.json()),
+    fetch('/api/git/log' + (q ? '?path=' + encodeURIComponent(q) : '')).then(r => r.json()),
+    fetch('/api/git/repos').then(r => r.json())
+  ]);
+  if (!pathEl.value && repos && repos.repos && repos.repos[0]) pathEl.value = repos.repos[0];
+  const repoEl = document.getElementById('git-repo');
+  const stEl = document.getElementById('git-status');
+  const dfEl = document.getElementById('git-diff');
+  const lgEl = document.getElementById('git-log');
+  if (!st.success) {
+    if (stEl) stEl.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(st.error || 'нет данных') + '</div>';
+    if (lgEl) lgEl.textContent = '';
+    if (dfEl) dfEl.textContent = '';
+    return;
+  }
+  gitPathRef = st.repo;
+  if (repoEl) repoEl.textContent = st.repo + ' · ' + st.branch + (st.ahead ? ' · ' + st.ahead + ' ahead' : '') + (st.behind ? ' · ' + st.behind + ' behind' : '');
+  if (stEl) stEl.innerHTML =
+    (st.lastCommit ? '<div style="font-size:11px;color:var(--t2);margin-bottom:6px">' + escHtml(st.lastCommit) + '</div>' : '') +
+    (st.files.length
+      ? st.files.map(f => '<div class="git-file"><span class="git-code">' + escHtml(f.code) + '</span><span>' + escHtml(f.path) + '</span></div>').join('')
+      : '<div style="color:var(--ok);font-size:12px">✓ Рабочее дерево чистое</div>');
+  if (dfEl) dfEl.textContent = df.diff ? df.diff : '(нет изменений)';
+  if (lgEl) lgEl.textContent = lg.log ? lg.log : '(нет коммитов)';
+}
 
 // ===== DASHBOARD =====
 function renderDashboard() {

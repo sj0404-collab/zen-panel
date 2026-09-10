@@ -117,6 +117,9 @@
     .modal-drives{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
     .drive-btn{padding:5px 10px;background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;color:var(--t2);font-size:11px;cursor:pointer;transition:all .1s}
     .drive-btn:hover{border-color:var(--acc);color:var(--t1)}
+    .git-pre{background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;padding:12px;overflow:auto;max-height:380px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all}
+    .git-file{display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:12px;font-family:monospace}
+    .git-code{color:var(--warn);width:18px;flex-shrink:0}
     .modal-list{flex:1;overflow-y:auto;max-height:300px;border:1px solid var(--bdr);border-radius:6px;background:var(--bg0)}
     .modal-actions{display:flex;gap:6px;margin-top:12px;justify-content:flex-end}
     .newterm-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
@@ -147,6 +150,7 @@
       <button class="tb on" onclick="showPage('dashboard')">Dashboard</button>
       <button class="tb" onclick="showPage('terminal')">Терминал</button>
       <button class="tb" onclick="showPage('files')">Файлы</button>
+      <button class="tb" onclick="showPage('git')">🐙 Git</button>
       <button class="tb" onclick="showPage('models-full')">🔧 Models</button>
     </div>
     <div class="topbar-right">
@@ -234,6 +238,19 @@
             <div style="padding:4px 0;font-size:10px;color:var(--t3)" id="fm-info"></div>
           </div>
         </div>
+      </div>
+      <div class="page" id="p-git">
+        <div class="ph"><h1>🐙 Git</h1><p>Статус и diff локального репозитория на этом раннере</p></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="git-path" placeholder="путь к репозиторию (папка с .git)" style="min-width:280px;flex:1;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')loadGit()">
+          <button class="btn btn-p" onclick="loadGit()">⟳ Обновить</button>
+          <span id="git-repo" style="font-size:11px;color:var(--t3)"></span>
+        </div>
+        <div id="git-status"></div>
+        <div style="margin-top:16px;margin-bottom:6px;font-size:11px;color:var(--t2);font-weight:600">Diff (незакоммиченные изменения)</div>
+        <pre class="git-pre" id="git-diff"></pre>
+        <div style="margin-top:16px;margin-bottom:6px;font-size:11px;color:var(--t2);font-weight:600">Log (последние коммиты)</div>
+        <pre class="git-pre" id="git-log"></pre>
       </div>
       <div class="page" id="p-models-full">
         <div class="ph"><h1>🔧 Models Full</h1><p>Все модели всех CLI инструментов с ключами и настройками</p></div>

@@ -511,6 +511,88 @@ app.get('/api/gh/artifacts', async (req, res) => {
   } catch { return res.json({ success: true, files: [] }); }
 });
 
+// ─── GIT: status / diff / log for a local repo ─────────────────────────
+const gitRun = (repo, args) => new Promise((resolve) => {
+  const out = [];
+  const child = spawn('git', args, { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
+  child.stdout.on('data', d => out.push(String(d)));
+  child.stderr.on('data', () => {});
+  child.on('close', () => resolve(out.join('').trimEnd()));
+  child.on('error', () => resolve(''));
+});
+
+const repoCandidates = () => {
+  const found = [];
+  const walk = (dir, depth) => {
+    if (depth > 3 || found.length) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (!e.isDirectory() || e.name.startsWith('.') || e.name === 'node_modules' || e.name === 'actions-runner') continue;
+      if (fs.existsSync(path.join(dir, e.name, '.git'))) {
+        found.push(path.join(dir, e.name));
+        return;
+      }
+      if (depth < 3) walk(path.join(dir, e.name), depth + 1);
+    }
+  };
+  walk(WORK_DIR, 1);
+  return found;
+};
+
+const resolveRepo = async (p) => {
+  if (p && fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+    if (fs.existsSync(path.join(p, '.git'))) return p;
+    return null;
+  }
+  const cands = repoCandidates();
+  return cands[0] || null;
+};
+
+app.get('/api/git/repos', (req, res) => {
+  try {
+    const repos = repoCandidates();
+    res.json({ success: true, repos });
+  } catch { res.json({ success: true, repos: [] }); }
+});
+
+app.get('/api/git/status', async (req, res) => {
+  try {
+    const repo = await resolveRepo(req.query.path);
+    if (!repo) return res.json({ success: false, error: 'репозиторий не найден: нужна папка с .git' });
+    const [branch, porcelain, branchLine, lastCommit] = await Promise.all([
+      gitRun(repo, ['rev-parse', '--abbrev-ref', 'HEAD']),
+      gitRun(repo, ['status', '--porcelain=v1']),
+      gitRun(repo, ['status', '-sb']),
+      gitRun(repo, ['log', '-1', '--format=%h %s (%ar)'])
+    ]);
+    const ahead = +(branchLine.match(/ahead (\d+)/) || [])[1] || 0;
+    const behind = +(branchLine.match(/behind (\d+)/) || [])[1] || 0;
+    const files = porcelain ? porcelain.split('\n').filter(Boolean).map(l => ({ code: l.slice(0, 2), path: l.slice(3) })) : [];
+    res.json({ success: true, repo, branch, ahead, behind, lastCommit: lastCommit || null, files, dirty: files.length > 0 });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+app.get('/api/git/diff', async (req, res) => {
+  try {
+    const repo = await resolveRepo(req.query.path);
+    if (!repo) return res.json({ success: false, error: 'репозиторий не найден: нужна папка с .git' });
+    const [unstaged, staged] = await Promise.all([gitRun(repo, ['diff']), gitRun(repo, ['diff', '--cached'])]);
+    const diff = (staged ? '─── СТЕЙДЖЕД ───\n' + staged + '\n\n' : '') + unstaged;
+    res.json({ success: true, repo, diff: diff.trim() || '' });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+app.get('/api/git/log', async (req, res) => {
+  try {
+    const repo = await resolveRepo(req.query.path);
+    if (!repo) return res.json({ success: false, error: 'репозиторий не найден: нужна папка с .git' });
+    const n = Math.min(50, parseInt(req.query.n || '20', 10) || 20);
+    const log = await gitRun(repo, ['log', '-' + n, '--oneline', '--decorate']);
+    res.json({ success: true, repo, log });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 // ─── WEBSOCKET / PTY ───
 // Sessions survive a dropped connection: losing the phone does NOT kill the
 // terminal. The PTY keeps running in the background, its output is buffered,
