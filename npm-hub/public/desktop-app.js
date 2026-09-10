@@ -314,7 +314,6 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   }
 
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(`${protocol}//${location.host}/ws`);
 
   const term = new Terminal({
     theme: { background: '#0a0e14', foreground: '#e6edf3', cursor: '#58a6ff', cursorAccent: '#0a0e14', selectionBackground: '#264f78', black: '#0a0e14', red: '#f85149', green: '#3fb950', yellow: '#d29922', blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39c5cf', white: '#e6edf3', brightBlack: '#484f58', brightRed: '#f85149', brightGreen: '#3fb950', brightYellow: '#d29922', brightBlue: '#58a6ff', brightMagenta: '#bc8cff', brightCyan: '#56d4dd', brightWhite: '#ffffff' },
@@ -340,14 +339,26 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   await new Promise(r => setTimeout(r, 30));
   fitAddon.fit();
 
-  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: socket, term, fitAddon, el: panel };
+  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: null, term, fitAddon, el: panel, manualClose: false };
   tabs.push(td);
 
-  socket.onopen = () => { socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : toolId, sessionId: id, cwd, cols: term.cols, rows: term.rows })); term.focus(); };
-  socket.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } if (m.type === 'output') term.write(m.data); if (m.type === 'exit') term.write(`\r\n\x1b[33m[Exited ${m.code}]\x1b[0m\r\n`); if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`); };
-  socket.onclose = () => term.write('\r\n\x1b[31m[Disconnected]\x1b[0m\r\n');
-  term.onData((d) => { if (socket.readyState === 1) socket.send(JSON.stringify({ type: 'input', data: d })); });
-  term.onResize(({ cols, rows }) => { if (socket.readyState === 1) socket.send(JSON.stringify({ type: 'resize', cols, rows })); });
+  const connect = () => {
+    const socket = new WebSocket(`${protocol}//${location.host}/ws`);
+    td.ws = socket;
+
+    socket.onopen = () => { socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : toolId, sessionId: id, cwd, cols: term.cols, rows: term.rows })); term.focus(); };
+    socket.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } if (m.type === 'output') term.write(m.data); if (m.type === 'exit') term.write(`\r\n\x1b[33m[Exited ${m.code}]\x1b[0m\r\n`); if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`); };
+    socket.onclose = () => {
+      if (td.manualClose) return;
+      term.write('\r\n\x1b[33m[Disconnected — reconnecting...]\x1b[0m\r\n');
+      setTimeout(connect, 3000);
+    };
+    return socket;
+  };
+
+  term.onData((d) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'input', data: d })); });
+  term.onResize(({ cols, rows }) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'resize', cols, rows })); });
+  connect();
   new ResizeObserver(() => { if (activeTab?.id === id) fitAddon.fit(); }).observe(panel);
 
   const tabEl = document.createElement('div');
@@ -377,6 +388,7 @@ function closeTab(id) {
   const idx = tabs.findIndex(t => t.id === id);
   if (idx === -1) return;
   const tab = tabs[idx];
+  tab.manualClose = true;
   tab.ws?.close(); tab.term?.dispose(); tab.el?.remove(); tab.tabEl?.remove();
   tabs.splice(idx, 1);
   if (activeTab?.id === id) { activeTab = tabs[Math.min(idx, tabs.length - 1)] || null; activeTab ? switchTab(activeTab.id) : showPage('dashboard'); }

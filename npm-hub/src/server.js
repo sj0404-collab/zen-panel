@@ -389,13 +389,35 @@ app.post('/api/ngrok-token', (req, res) => {
 });
 
 // ─── WEBSOCKET / PTY ───
+// Sessions survive a dropped connection: losing the phone does NOT kill the
+// terminal. The PTY keeps running in the background, its output is buffered,
+// and any client that returns with the same sessionId resumes the live
+// terminal instead of starting a new one. Sessions end only when the process
+// exits on its own, the user sends `kill`, or the runner itself stops.
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
-const ptys = new Map();
+const sessions = new Map(); // sessionId -> { id, pty, cwd, toolId, clients:Set, output, resumed }
+
+const ptySend = (session, message) => {
+  const payload = JSON.stringify(message);
+  for (const client of [...session.clients]) {
+    if (client.readyState === 1) client.send(payload); else session.clients.delete(client);
+  }
+};
+
+const attachPtyClient = (session, ws) => {
+  session.clients.add(ws);
+  ws.send(JSON.stringify({ type: 'opened', id: session.id, resumed: session.resumed }));
+  if (session.output) ws.send(JSON.stringify({ type: 'output', id: session.id, data: session.output, replay: true }));
+};
+
+const detachPtyClient = (session, ws) => {
+  if (!session) return;
+  session.clients.delete(ws);
+};
 
 wss.on('connection', (ws) => {
-  let currentPty = null;
-  let currentId = null;
+  let session = null;
 
   ws.on('message', (raw) => {
     let msg;
@@ -403,6 +425,14 @@ wss.on('connection', (ws) => {
 
     switch (msg.type) {
       case 'open': {
+        const id = msg.sessionId || ('term_' + Date.now());
+        const existing = sessions.get(id);
+        if (existing) {
+          session = existing;
+          session.resumed = true;
+          attachPtyClient(session, ws);
+          return;
+        }
         const tool = TOOLS.find(t => t.id === msg.toolId);
         const isWin = process.platform === 'win32';
         const shell = isWin ? (process.env.COMSPEC || 'cmd.exe') : (process.env.SHELL || '/bin/sh');
@@ -417,9 +447,8 @@ wss.on('connection', (ws) => {
             cwd: cwd,
             env: { ...process.env, TERM: 'xterm-256color', OPENROUTER_API_KEY: modelManager.getKeyForProvider('openrouter'), MODEL: modelManager.getSelectedModel(), OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1' }
           });
-          currentId = msg.sessionId || ('term_' + Date.now());
-          currentPty = p;
-          ptys.set(currentId, p);
+          session = { id, pty: p, cwd, toolId: tool ? tool.id : null, clients: new Set(), output: '', resumed: false };
+          sessions.set(id, session);
 
           const cdCmd = isWin ? `cd /d "${cwd}"` : `cd "${cwd}"`;
           p.write(cdCmd + '\r');
@@ -427,27 +456,33 @@ wss.on('connection', (ws) => {
             setTimeout(() => { p.write(tool.cmd + '\r'); }, 200);
           }
 
-          p.onData((data) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'output', id: currentId, data })); });
-          p.onExit(({ exitCode }) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'exit', id: currentId, code: exitCode })); ptys.delete(currentId); });
-          ws.send(JSON.stringify({ type: 'opened', id: currentId }));
+          p.onData((data) => {
+            session.output = (session.output + data).slice(-262144);
+            ptySend(session, { type: 'output', id: session.id, data });
+          });
+          p.onExit(({ exitCode }) => {
+            ptySend(session, { type: 'exit', id: session.id, code: exitCode });
+            sessions.delete(session.id);
+          });
+          attachPtyClient(session, ws);
         } catch (err) { ws.send(JSON.stringify({ type: 'error', error: err.message })); }
-        break;
+        return;
       }
-      case 'input': { if (currentPty) currentPty.write(msg.data); break; }
-      case 'resize': { if (currentPty && msg.cols && msg.rows) currentPty.resize(msg.cols, msg.rows); break; }
+      case 'input': { if (session) session.pty.write(msg.data); return; }
+      case 'resize': { if (session && msg.cols && msg.rows) session.pty.resize(msg.cols, msg.rows); return; }
       case 'kill': {
-        if (!currentPty) break;
+        if (!session) return;
         if (process.platform === 'win32') {
-          currentPty.write('\x03');
+          session.pty.write('\x03');
         } else {
-          currentPty.kill(msg.signal || 'SIGINT');
+          session.pty.kill(msg.signal || 'SIGINT');
         }
-        break;
+        return;
       }
-      case 'close': { if (currentPty) { currentPty.kill(); ptys.delete(currentId); currentPty = null; } break; }
+      case 'close': { detachPtyClient(session, ws); return; }
     }
   });
-  ws.on('close', () => { if (currentPty) { currentPty.kill(); ptys.delete(currentId); } });
+  ws.on('close', () => detachPtyClient(session, ws));
 });
 
 // ─── TUNNEL STATE ───
@@ -523,7 +558,7 @@ app.get('/api/tunnel', (req, res) => {
 });
 
 process.on('SIGINT', () => {
-  ptys.forEach(p => p.kill());
+  sessions.forEach(s => { try { s.pty.kill(); } catch {} });
   if (tunnelInfo && tunnelInfo.close) tunnelInfo.close();
   server.close();
   process.exit(0);
