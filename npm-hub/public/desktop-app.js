@@ -755,6 +755,27 @@ function fmDownload() {
   window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
 }
 
+function fmArchive() {
+  if (!fmSelected) return;
+  window.open(`/api/fs/archive?path=${encodeURIComponent(fmSelected)}`);
+}
+
+async function fmSaveGithub() {
+  if (!fmSelected) return;
+  const name = fmSelected.split(/[/\\]/).pop();
+  if (!confirm(`Сохранить «${name}» в GitHub (session-state, artifacts/)?`)) return;
+  try {
+    const r = await fetch('/api/gh/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: fmSelected })
+    }).then(r => r.json());
+    if (r.success) {
+      const link = document.createElement('a'); link.href = r.url; link.target = '_blank'; link.textContent = r.url;
+      alert('✅ Сохранено: ' + r.url);
+    } else alert('Ошибка: ' + (r.error || 'unknown'));
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
 async function fmUpload() {
   const input = document.createElement('input');
   input.type = 'file';

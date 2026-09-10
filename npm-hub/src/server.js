@@ -388,6 +388,129 @@ app.post('/api/ngrok-token', (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// ─── ARCHIVE: tar.xz / tar.gz download ────────────────────────────────
+// GET /api/fs/archive?path=/some/dir  → streams <basename>.tar.xz
+// Falls back to .tar.gz when the system tar has no xz support.
+app.get('/api/fs/archive', (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ error: 'path not found' });
+  const stat = fs.statSync(filePath);
+  const basename = path.basename(filePath);
+  const isDir = stat.isDirectory();
+
+  const { spawn } = require('child_process');
+  const tryXz = (resolve) => {
+    const ext = 'tar.xz';
+    const contentType = 'application/x-xz';
+    const name = basename + '.' + ext;
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.setHeader('Content-Length', '0');          // streaming, unknown size
+    res.removeHeader('Content-Length');             // remove the misleading 0
+
+    let child;
+    const dir = isDir ? path.dirname(filePath) : path.dirname(filePath);
+    const target = isDir ? path.basename(filePath) : path.basename(filePath);
+    try {
+      child = spawn('tar', ['-cJf', '-', target], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch { resolve(false); return; }
+    child.stdout.pipe(res);
+    child.stderr.on('data', () => {});
+    child.on('error', () => resolve(false));
+    child.on('close', () => resolve(true));
+    req.on('close', () => { try { child.kill(); } catch {} });
+  };
+
+  const tryGz = (resolve) => {
+    const ext = 'tar.gz';
+    const contentType = 'application/gzip';
+    const name = basename + '.' + ext;
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    const dir = isDir ? path.dirname(filePath) : path.dirname(filePath);
+    const target = isDir ? path.basename(filePath) : path.basename(filePath);
+    let child;
+    try {
+      child = spawn('tar', ['-czf', '-', target], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch { resolve(false); return; }
+    child.stdout.pipe(res);
+    child.on('error', () => resolve(false));
+    child.on('close', () => resolve(true));
+    req.on('close', () => { try { child.kill(); } catch {} });
+  };
+
+  new Promise(tryXz).then(ok => { if (!ok) new Promise(tryGz); });
+});
+
+// ─── GITHUB SAVE (session-state branch) ───────────────────────────────
+// POST /api/gh/save  { path: "/tmp/foo.apk" }
+// Saves the file to the session-state branch under artifacts/<filename>
+// using the GitHub Contents API. Requires GH_TOKEN env or PAT in body.
+app.post('/api/gh/save', express.json({ limit: '10mb' }), async (req, res) => {
+  const filePath = req.body && req.body.path;
+  if (!filePath || !fs.existsSync(filePath)) return res.json({ success: false, error: 'path not found' });
+  const token = process.env.GH_TOKEN || (req.body && req.body.token) || '';
+  if (!token) return res.json({ success: false, error: 'GH_TOKEN not set; pass token in body or set env' });
+
+  const repo = process.env.GITHUB_REPOSITORY || 'sj0404-collab/zen-panel';
+  const branch = 'session-state';
+  const basename = path.basename(filePath);
+  const target = `artifacts/${basename}`;
+  const apiUrl = `https://api.github.com/repos/${repo}/contents/${target}`;
+
+  try {
+    const data = fs.readFileSync(filePath);
+    const content = data.toString('base64');
+    // Check if file exists (to get sha for overwrite)
+    let sha = '';
+    try {
+      const existing = await fetch(apiUrl + `?ref=${branch}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' }
+      });
+      if (existing.ok) { const j = await existing.json(); sha = j.sha || ''; }
+    } catch {}
+
+    const body = { message: `save ${basename} (${new Date().toISOString()})`, content, branch };
+    if (sha) body.sha = sha;
+
+    const result = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (!result.ok) {
+      const errText = await result.text().catch(() => '');
+      return res.json({ success: false, error: `GitHub API ${result.status}: ${errText.slice(0, 200)}` });
+    }
+
+    const rawUrl = `https://raw.githubusercontent.com/${repo}/${branch}/${target}`;
+    return res.json({ success: true, url: rawUrl, api_url: apiUrl });
+  } catch (e) {
+    return res.json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/gh/artifacts — list files in artifacts/ on session-state branch
+app.get('/api/gh/artifacts', async (req, res) => {
+  const token = process.env.GH_TOKEN || '';
+  if (!token) return res.json({ success: true, files: [] });
+  const repo = process.env.GITHUB_REPOSITORY || 'sj0404-collab/zen-panel';
+  const branch = 'session-state';
+  try {
+    const r = await fetch(
+      `https://api.github.com/repos/${repo}/contents/artifacts?ref=${branch}`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } }
+    );
+    if (!r.ok) return res.json({ success: true, files: [] });
+    const items = await r.json();
+    const files = (Array.isArray(items) ? items : []).map(i => ({
+      name: i.name, size: i.size, url: i.download_url, sha: i.sha
+    }));
+    return res.json({ success: true, files });
+  } catch { return res.json({ success: true, files: [] }); }
+});
+
 // ─── WEBSOCKET / PTY ───
 // Sessions survive a dropped connection: losing the phone does NOT kill the
 // terminal. The PTY keeps running in the background, its output is buffered,
