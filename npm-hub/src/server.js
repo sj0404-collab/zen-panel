@@ -45,31 +45,51 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── tool metadata: local = offline via Ollama/llama.cpp; free = no paid API key needed; keyEnv = env var required for runtime ──
 const TOOLS = [
-  { id: 'opencode', name: 'OpenCode', cmd: 'opencode', pkg: 'opencode-ai', color: '#00d4aa', icon: 'OC' },
-  { id: 'ccb', name: 'Claude Code', cmd: 'ccb', pkg: null, color: '#d97706', icon: 'CB' },
-  { id: 'koda', name: 'Koda', cmd: 'koda', pkg: null, color: '#8b5cf6', icon: 'KD' },
-  { id: 'openclaude', name: 'OpenClaude', cmd: 'openclaude', pkg: null, color: '#06b6d4', icon: 'OC' },
-  { id: 'openrouter', name: 'OpenRouter', cmd: 'openrouter', pkg: null, color: '#6366f1', icon: 'OR' },
-  { id: 'qwen', name: 'Qwen Code', cmd: 'qwen', pkg: '@qwen-code/qwen-code', color: '#ef4444', icon: 'QW' },
-  { id: 'http-server', name: 'HTTP Server', cmd: 'http-server', pkg: 'http-server', color: '#22c55e', icon: 'HS' },
-  { id: 'cli-agent', name: 'CLI Agent', cmd: 'agent', pkg: null, color: '#f59e0b', icon: 'CA' },
-  { id: 'claude', name: 'Claude Code', cmd: 'claude', pkg: '@anthropic-ai/claude-code', color: '#d97706', icon: 'CC' },
-  { id: 'gemini', name: 'Gemini CLI', cmd: 'gemini', pkg: '@google/gemini-cli', color: '#58a6ff', icon: 'GE' },
-  { id: 'codex', name: 'Muse', cmd: 'codex', pkg: '@openai/codex', color: '#e6e6e6', icon: 'CX' },
-  { id: 'copilot', name: 'Copilot CLI', cmd: 'copilot', pkg: '@github/copilot', color: '#bc8cff', icon: 'CP' },
-  { id: 'amp', name: 'Amp', cmd: 'amp', pkg: '@sourcegraph/amp', color: '#f778ba', icon: 'AM' },
-  { id: 'codebuff', name: 'Codebuff', cmd: 'codebuff', pkg: 'codebuff', color: '#ffd602', icon: 'CF' },
-  { id: 'claude-flow', name: 'Claude Flow', cmd: 'claude-flow', pkg: 'claude-flow', color: '#ff9e64', icon: 'FL' },
-  { id: 'elizaos', name: 'ElizaOS', cmd: 'elizaos', pkg: '@elizaos/cli', color: '#7ee787', icon: 'EO' },
-  { id: 'how2', name: 'how2', cmd: 'how2', pkg: 'how2', color: '#a5d6ff', icon: 'H2' },
-  { id: 'ai-shell', name: 'AI Shell', cmd: 'ais', pkg: 'ai-shell', color: '#ffa657', icon: 'AS' },
-  { id: 'auggie', name: 'Auggie', cmd: 'auggie', pkg: '@augmentcode/auggie', color: '#79c0ff', icon: 'AU' },
-  { id: 'droid', name: 'Droid', cmd: 'droid', pkg: 'droid', color: '#56d4dd', icon: 'DR' },
-  { id: 'mistral', name: 'Mistral CLI', cmd: 'mi', pkg: 'mistral-cli', color: '#ff7b72', icon: 'MI' },
-  { id: 'n8n', name: 'n8n', cmd: 'n8n', pkg: 'n8n', color: '#ea4b71', icon: 'N8' },
-  { id: 'smithery', name: 'Smithery', cmd: 'smithery', pkg: 'smithery', color: '#d2a8ff', icon: 'SM' },
-  { id: 'mcp-inspector', name: 'MCP Inspector', cmd: 'mcp-inspector', pkg: '@modelcontextprotocol/inspector', color: '#8b949e', icon: 'MC' }
+  // ── free / local — работают без ключей или через локальные модели ──
+  { id: 'opencode', name: 'OpenCode', cmd: 'opencode', pkg: 'opencode-ai', color: '#00d4aa', icon: 'OC', local: true, free: true, keyEnv: null },
+  { id: 'aider', name: 'Aider', cmd: 'aider', pkg: null, color: '#79c0ff', icon: 'AD', local: true, free: true, keyEnv: null, hint: 'pip install aider-chat' },
+  { id: 'openclaw', name: 'OpenClaw', cmd: 'openclaw', pkg: 'openclaw', color: '#f2c66d', icon: 'CW', local: true, free: true, keyEnv: null },
+  { id: 'continue', name: 'Continue CLI', cmd: 'cn', pkg: '@continuedev/cli', color: '#d2a8ff', icon: 'CN', local: true, free: true, keyEnv: null },
+  { id: 'aish', name: 'AI Shell (offline)', cmd: 'aish', pkg: '@offline-ai/ai-shell', color: '#a5d6ff', icon: 'AH', local: true, free: true, keyEnv: null },
+  { id: 'forge', name: 'Forge Code', cmd: 'forge', pkg: 'forge-code-ai', color: '#ffa657', icon: 'FO', local: true, free: true, keyEnv: null },
+  { id: 'utim', name: 'UTIM', cmd: 'utim', pkg: '@emend-ai/utim', color: '#7ee787', icon: 'UT', local: true, free: true, keyEnv: null },
+  { id: 'goose', name: 'Goose', cmd: 'goose', pkg: null, color: '#8b5cf6', icon: 'GS', local: true, free: true, keyEnv: null, hint: 'curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash' },
+  { id: 'sgpt', name: 'ShellGPT', cmd: 'sgpt', pkg: null, color: '#3fb950', icon: 'SG', local: true, free: true, keyEnv: null, hint: 'pip install shell-gpt' },
+  { id: 'llm', name: 'LLM (SimonW)', cmd: 'llm', pkg: null, color: '#f778ba', icon: 'LM', local: true, free: true, keyEnv: null, hint: 'pip install llm' },
+  { id: 'openhands', name: 'OpenHands', cmd: 'openhands', pkg: null, color: '#e6a23c', icon: 'OH', local: true, free: true, keyEnv: null, hint: 'uv tool install openhands --python 3.12' },
+  { id: 'ollama', name: 'Ollama', cmd: 'ollama', pkg: null, color: '#bc8cff', icon: 'OL', local: true, free: true, keyEnv: null, hint: 'curl -fsSL https://ollama.com/install.sh | sh' },
+  { id: 'cli-agent', name: 'CLI Agent', cmd: 'agent', pkg: null, color: '#f59e0b', icon: 'CA', local: true, free: true, keyEnv: null },
+  // ── роутер / бесплатные провайдеры ──
+  { id: 'omniroute', name: 'OmniRoute', cmd: 'omniroute', pkg: 'omniroute', color: '#ff7b72', icon: 'OM', free: true, keyEnv: 'OPENROUTER_API_KEY' },
+  { id: 'openrouter', name: 'OpenRouter', cmd: 'openrouter', pkg: null, color: '#6366f1', icon: 'OP', free: true, keyEnv: 'OPENROUTER_API_KEY' },
+  // ── бесплатные с бесплатными API-ключами ──
+  { id: 'gemini', name: 'Gemini CLI', cmd: 'gemini', pkg: '@google/gemini-cli', color: '#58a6ff', icon: 'GE', free: true, keyEnv: 'GEMINI_API_KEY' },
+  { id: 'qwen', name: 'Qwen Code', cmd: 'qwen', pkg: '@qwen-code/qwen-code', color: '#ef4444', icon: 'QW', free: true, keyEnv: 'DASHSCOPE_API_KEY' },
+  { id: 'mistral', name: 'Mistral CLI', cmd: 'mi', pkg: 'mistral-cli', color: '#ff7b72', icon: 'MI', free: true, keyEnv: 'MISTRAL_API_KEY' },
+  { id: 'ai-shell', name: 'AI Shell', cmd: 'ais', pkg: 'ai-shell', color: '#ffa657', icon: 'AI', free: true, local: true, keyEnv: null },
+  { id: 'koda', name: 'Koda', cmd: 'koda', pkg: null, color: '#8b5cf6', icon: 'KO', free: true, local: true, keyEnv: null },
+  { id: 'openclaude', name: 'OpenClaude', cmd: 'openclaude', pkg: null, color: '#06b6d4', icon: 'CL', free: true, local: true, keyEnv: null },
+  // ── платные API-ключи ──
+  { id: 'claude', name: 'Claude Code', cmd: 'claude', pkg: '@anthropic-ai/claude-code', color: '#d97706', icon: 'CC', free: false, keyEnv: 'ANTHROPIC_API_KEY' },
+  { id: 'codex', name: 'Muse', cmd: 'codex', pkg: '@openai/codex', color: '#e6e6e6', icon: 'CX', free: false, keyEnv: 'OPENAI_API_KEY' },
+  { id: 'copilot', name: 'Copilot CLI', cmd: 'copilot', pkg: '@github/copilot', color: '#bc8cff', icon: 'CP', free: false, keyEnv: 'GITHUB_TOKEN' },
+  { id: 'ccb', name: 'Claude Code (Rust)', cmd: 'ccb', pkg: null, color: '#d97706', icon: 'CB', free: false, keyEnv: 'ANTHROPIC_API_KEY' },
+  { id: 'cymela', name: 'Cymela', cmd: 'cymela', pkg: 'cymela', color: '#39c5cf', icon: 'CY', free: false, keyEnv: 'OPENROUTER_API_KEY' },
+  { id: 'kode', name: 'Kode', cmd: 'kode', pkg: '@shareai-lab/kode', color: '#79c0ff', icon: 'KD', free: false, keyEnv: 'OPENAI_API_KEY' },
+  { id: 'claude-flow', name: 'Claude Flow', cmd: 'claude-flow', pkg: 'claude-flow', color: '#ff9e64', icon: 'FL', free: false, keyEnv: 'ANTHROPIC_API_KEY' },
+  { id: 'auggie', name: 'Auggie', cmd: 'auggie', pkg: '@augmentcode/auggie', color: '#79c0ff', icon: 'AU', free: false, keyEnv: 'OPENAI_API_KEY' },
+  // ── утилиты / инфраструктура ──
+  { id: 'amp', name: 'Amp', cmd: 'amp', pkg: '@sourcegraph/amp', color: '#f778ba', icon: 'AM', free: true, keyEnv: null },
+  { id: 'codebuff', name: 'Codebuff', cmd: 'codebuff', pkg: 'codebuff', color: '#ffd602', icon: 'CF', free: true, keyEnv: null },
+  { id: 'elizaos', name: 'ElizaOS', cmd: 'elizaos', pkg: '@elizaos/cli', color: '#7ee787', icon: 'EO', free: true, keyEnv: null },
+  { id: 'how2', name: 'how2', cmd: 'how2', pkg: 'how2', color: '#a5d6ff', icon: 'H2', free: true, keyEnv: null },
+  { id: 'droid', name: 'Droid', cmd: 'droid', pkg: 'droid', color: '#56d4dd', icon: 'DR', free: true, keyEnv: null },
+  { id: 'n8n', name: 'n8n', cmd: 'n8n', pkg: 'n8n', color: '#ea4b71', icon: 'N8', free: true, keyEnv: null },
+  { id: 'smithery', name: 'Smithery', cmd: 'smithery', pkg: 'smithery', color: '#d2a8ff', icon: 'SM', free: true, keyEnv: null },
+  { id: 'mcp-inspector', name: 'MCP Inspector', cmd: 'mcp-inspector', pkg: '@modelcontextprotocol/inspector', color: '#8b949e', icon: 'MC', free: true, keyEnv: null },
+  { id: 'http-server', name: 'HTTP Server', cmd: 'http-server', pkg: 'http-server', color: '#22c55e', icon: 'HS', free: true, keyEnv: null }
 ];
 
 const storage = new StorageManager();
@@ -145,6 +165,32 @@ app.get('/api/tools/install-status', (req, res) => {
   const st = installs.get(t.id) || { status: 'idle', log: '' };
   const from = Math.max(0, parseInt(req.query.from || '0', 10) || 0);
   res.json({ success: true, status: st.status, log: st.log.slice(from), len: st.log.length, installed: isInstalled(t.cmd) });
+});
+
+// ─── TOOL TEST — проверка «а работает ли оно»: бинарь + нужен ли ключ ───
+function hasToolKey(k) {
+  if (!k) return true;
+  if (process.env[k]) return true;
+  if (k === 'OPENROUTER_API_KEY' && modelManager.getKeyForProvider('openrouter')) return true;
+  if (k === 'GITHUB_TOKEN' && process.env.GH_TOKEN) return true;
+  return false;
+}
+function probeTool(t) {
+  const installed = isInstalled(t.cmd);
+  const version = installed ? getVersion(t.cmd) : null;
+  const needKey = !!(t.keyEnv && !hasToolKey(t.keyEnv));
+  const ok = installed && !!version && !needKey;
+  return { id: t.id, name: t.name, success: ok, installed, version, needKey, keyEnv: t.keyEnv || null, free: !!t.free, local: !!t.local };
+}
+app.get('/api/tools/test', (req, res) => {
+  const t = TOOLS.find(x => x.id === req.query.id);
+  if (!t) return res.json({ success: false, error: 'нет такого инструмента' });
+  res.json(probeTool(t));
+});
+app.post('/api/tools/test', (req, res) => {
+  const t = TOOLS.find(x => x.id === (req.body && req.body.id));
+  if (!t) return res.json({ success: false, error: 'нет такого инструмента' });
+  res.json(probeTool(t));
 });
 
 // ─── INFO ───

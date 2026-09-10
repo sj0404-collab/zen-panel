@@ -4,6 +4,7 @@ let fmCurrentPath = '', fmSelected = null, fmBackend = 'local';
 let recentPaths = [], toolDirs = {};
 let storages = [];
 let models = [], selectedModel = 'openrouter/owl-alpha';
+const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;
 
 document.addEventListener('DOMContentLoaded', init);
 
@@ -199,21 +200,28 @@ function renderDashboard() {
   const focusId = document.activeElement && document.activeElement.id;
   document.getElementById('grid').innerHTML = tools.map(t => {
     const dir = toolDirs[t.id] || homeDir;
+    const badges = (t.local ? '<span class="mini-badge" style="border-color:var(--ok);color:var(--ok)">LOCAL</span>' : '')
+      + (t.free ? '<span class="mini-badge" style="border-color:#7ee787;color:#7ee787">FREE</span>' : '')
+      + (t.keyEnv ? '<span class="mini-badge" style="border-color:var(--warn);color:var(--warn)" title="нужен ключ: ' + escHtml(t.keyEnv) + '">🔑 KEY</span>' : '');
     return `<div class="card">
       <div class="card-h">
         <div class="card-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div>
         <div><div class="card-n">${t.name}</div><div class="card-v">${t.version || '—'}</div></div>
         <span class="tag ${t.installed ? 'tag-on' : 'tag-off'}" style="margin-left:auto">${t.installed ? 'OK' : '—'}</span>
       </div>
+      <div class="card-badges">${badges || ''}</div>
       <div class="card-foot">
         <input type="text" id="cdir-${t.id}" class="card-dir" value="${escHtml(dir)}" placeholder="путь к папке..."
           onclick="event.stopPropagation()" onfocus="this.select()">
-        ${t.installed ? `<div style="position:relative">
+        ${t.installed ? `<div style="position:relative;display:flex;gap:4px;align-items:center">
+          <button class="btn btn-sm" onclick="testTool('${t.id}')" title="проверить: бинарь + ключ">🧪</button>
           <button class="btn btn-sm btn-p" onclick="toggleApplyMenu(event,'${t.id}')">▶</button>
           <div class="apply-menu" id="amenu-${t.id}"></div>
         </div>` : (t.pkg ? `<button class="btn btn-sm btn-ok" onclick="installTool('${t.id}')">⬇ Скачать</button>`
-          : `<button class="btn btn-sm" disabled style="opacity:.4">▶</button>`)}
+          : (t.hint ? `<button class="btn btn-sm" onclick="copyInstall('${escAttr(t.hint)}')" title="${escAttr(t.hint)}">📋</button>`
+          : `<button class="btn btn-sm" disabled style="opacity:.4">▶</button>`))}
       </div>
+      <div id="tres-${t.id}" class="test-res"></div>
     </div>`;
   }).join('');
   for (const [id, v] of Object.entries(dirStash)) { const el = document.getElementById(id); if (el) el.value = v; }
@@ -291,6 +299,83 @@ function showNewTermModal() {
 
 function closeModal(id) { document.getElementById(id).classList.remove('on'); }
 
+// ===== TERMINAL SCROLLBAR (слайдер) =====
+function attachTermScroll(id, panel) {
+  const termEl = document.getElementById('term-' + id);
+  const vp = termEl.querySelector('.xterm-viewport');
+  const track = panel.querySelector('.term-scroll');
+  const thumb = panel.querySelector('.term-scroll-thumb');
+  if (!vp || !track || !thumb) return null;
+
+  const upd = () => {
+    const max = vp.scrollHeight - vp.clientHeight;
+    if (max <= 2) { thumb.style.display = 'none'; return; }
+    thumb.style.display = 'block';
+    const trackH = track.clientHeight;
+    const th = Math.max(24, trackH * (vp.clientHeight / vp.scrollHeight));
+    const pos = trackH <= th ? 0 : (vp.scrollTop / max) * (trackH - th);
+    thumb.style.height = th + 'px';
+    thumb.style.transform = 'translateY(' + pos + 'px)';
+  };
+  vp.addEventListener('scroll', upd);
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(upd).observe(track);
+  window.addEventListener('resize', upd);
+
+  let dragging = false, startY = 0, startTop = 0;
+  const toTop = (e) => {
+    const max = vp.scrollHeight - vp.clientHeight;
+    if (max <= 0) return;
+    const trackH = track.clientHeight;
+    const th = Math.max(24, trackH * (vp.clientHeight / vp.scrollHeight));
+    const ratio = trackH - th;
+    const dy = e.clientY - startY;
+    const ratioPos = ratio > 0 ? (startTop / max) * ratio + dy : 0;
+    vp.scrollTop = ratio > 0 ? Math.max(0, Math.min(1, ratioPos / ratio)) * max : 0;
+    e.preventDefault();
+  };
+  thumb.addEventListener('pointerdown', (e) => {
+    dragging = true; startY = e.clientY; startTop = vp.scrollTop;
+    try { thumb.setPointerCapture(e.pointerId); } catch {}
+    e.preventDefault();
+  });
+  thumb.addEventListener('pointermove', (e) => { if (dragging) toTop(e); });
+  const endDrag = () => { dragging = false; };
+  thumb.addEventListener('pointerup', endDrag);
+  thumb.addEventListener('pointercancel', endDrag);
+  track.addEventListener('pointerdown', (e) => {
+    if (e.target === thumb) return;
+    const max = vp.scrollHeight - vp.clientHeight;
+    if (max <= 0) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = (e.clientY - rect.top - 14) / rect.height;
+    vp.scrollTop = max * Math.max(0, Math.min(1, ratio));
+    e.preventDefault();
+  });
+
+  upd();
+  return { upd };
+}
+
+// ===== TAP-TO-FOCUS: клавиатура не открывается при прокрутке =====
+function setupTermTouch(termEl, term) {
+  if (!isTouch) return;
+  let startY = 0, startT = 0, scrolled = false;
+  termEl.addEventListener('touchstart', (e) => {
+    startY = e.touches[0].clientY; startT = Date.now(); scrolled = false;
+    term.blur();
+  }, { passive: true });
+  termEl.addEventListener('touchmove', (e) => {
+    if (Math.abs(e.touches[0].clientY - startY) > 8) scrolled = true;
+    if (scrolled) term.blur();
+  }, { passive: true });
+  termEl.addEventListener('touchend', (e) => {
+    if (!scrolled && Date.now() - startT < 500) {
+      e.preventDefault();
+      term.focus();
+    }
+  }, { passive: false });
+}
+
 async function createTerm(toolId, cwdOverride, plainTerminal) {
   closeModal('modal-newterm');
   const tool = tools.find(t => t.id === toolId);
@@ -343,11 +428,21 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   </div>`;
   const termEl = document.createElement('div');
   termEl.className = 'term';
-  panel.appendChild(termEl);
+  termEl.id = 'term-' + id;
+  const wrap = document.createElement('div');
+  wrap.className = 'term-wrap';
+  wrap.appendChild(termEl);
+  const scrollEl = document.createElement('div');
+  scrollEl.className = 'term-scroll';
+  scrollEl.innerHTML = '<div class="term-scroll-thumb"></div>';
+  wrap.appendChild(scrollEl);
+  panel.appendChild(wrap);
   document.getElementById('term-container').appendChild(panel);
 
   term.open(termEl);
   fitAddon.fit();
+  tab.scroll = attachTermScroll(id, panel);
+  setupTermTouch(termEl, term);
 
   const connect = () => {
     const socket = new WebSocket(`${protocol}//${location.host}/ws`);
@@ -355,7 +450,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
 
     socket.onopen = () => {
       socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : toolId, sessionId: id, cwd, cols: term.cols, rows: term.rows }));
-      term.focus();
+      if (!isTouch) term.focus();
     };
 
     socket.onmessage = (e) => {
@@ -406,7 +501,11 @@ function switchTab(id) {
   document.querySelectorAll('.term-panel').forEach(p => p.classList.remove('on'));
   const panel = document.getElementById('panel-' + id);
   if (panel) panel.classList.add('on');
-  if (activeTab) setTimeout(() => { activeTab.fitAddon?.fit(); activeTab.term?.focus(); }, 50);
+  if (activeTab) setTimeout(() => {
+    activeTab.fitAddon?.fit();
+    if (!isTouch) activeTab.term?.focus();
+    activeTab.scroll?.upd?.();
+  }, 50);
   renderSidebar();
 }
 
@@ -1021,3 +1120,37 @@ async function refreshTools() {
     if (r.tools) { tools = r.tools; renderDashboard(); }
   } catch {}
 }
+async function testTool(id) {
+  const el = document.getElementById('tres-' + id);
+  if (el) el.textContent = '⏳ тест…';
+  let r;
+  try {
+    r = await (await fetch('/api/tools/test', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })).json();
+  } catch { if (el) el.textContent = '✗ нет связи'; return; }
+  if (!el) return;
+  if (r.installed === false) { el.textContent = '✗ не установлен'; return; }
+  const parts = [];
+  if (r.version) parts.push('✓ работает · ' + r.version);
+  if (r.needKey) parts.push('⚠ нужен ключ ' + r.keyEnv);
+  el.textContent = parts.join(' · ') || '✗ нет ответа';
+}
+async function copyInstall(cmd) {
+  try { await navigator.clipboard.writeText(cmd); }
+  catch {
+    const ta = document.createElement('textarea');
+    ta.value = cmd; ta.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }
+}
+
+// ===== HOTKEYS: Ctrl+P — новый терминал, Ctrl+X — закрыть вкладку =====
+document.addEventListener('keydown', (e) => {
+  const termPage = document.getElementById('p-terminal');
+  if (!e.ctrlKey || !termPage || !termPage.classList.contains('on')) return;
+  const el = document.activeElement;
+  const inInput = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && !el.classList.contains('xterm-helper-textarea');
+  if (inInput) return;
+  if (e.code === 'KeyP') { e.preventDefault(); showNewTermModal(); }
+  else if (e.code === 'KeyX') { e.preventDefault(); if (activeTab) closeTab(activeTab.id); }
+});
