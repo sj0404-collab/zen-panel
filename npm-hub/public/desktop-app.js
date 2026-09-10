@@ -763,17 +763,15 @@ function fmArchive() {
 async function fmSaveGithub() {
   if (!fmSelected) return;
   const name = fmSelected.split(/[/\\]/).pop();
-  if (!confirm(`Сохранить «${name}» в GitHub (session-state, artifacts/)?`)) return;
+  if (!(await fmConfirm('Сохранить «' + name + '» в GitHub (session-state, artifacts/)?', 'Сохранить'))) return;
   try {
     const r = await fetch('/api/gh/save', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: fmSelected })
     }).then(r => r.json());
-    if (r.success) {
-      const link = document.createElement('a'); link.href = r.url; link.target = '_blank'; link.textContent = r.url;
-      alert('✅ Сохранено: ' + r.url);
-    } else alert('Ошибка: ' + (r.error || 'unknown'));
-  } catch (e) { alert('Ошибка: ' + e.message); }
+    if (r.success) await fmInfo('Сохранено: ' + r.url);
+    else await fmInfo('Ошибка: ' + (r.error || 'unknown'));
+  } catch (e) { await fmInfo('Ошибка: ' + e.message); }
 }
 
 async function fmUpload() {
