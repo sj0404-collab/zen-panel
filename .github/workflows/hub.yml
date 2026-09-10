@@ -226,8 +226,15 @@ jobs:
             PID=$(cat "$PIDFILE" 2>/dev/null || echo)
             EDGE=""
             if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ]; then
-              code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$CUR/" 2>/dev/null || true)
-              case "$code" in 2*|3*|4*) EDGE=1 ;; esac
+              # Даем туннелю 3 попытки с интервалом в 10 секунд и таймаутом 20 секунд
+              for retry in 1 2 3; do
+                code=$(curl -s -o /dev/null -w '%{http_code}' -m 20 "$CUR/" 2>/dev/null || true)
+                if echo "$code" | grep -qE '^[234]'; then
+                  EDGE=1
+                  break
+                fi
+                sleep 10
+              done
             fi
             if [ -n "$EDGE" ]; then continue; fi
             echo "::warning::tunnel dead; reopening."
@@ -471,9 +478,14 @@ jobs:
             try { $cur = (Get-Content "$env:TEMP\hub-url.txt" -Raw -ErrorAction Stop).Trim() } catch { }
             $edgeOk = $false
             if ((Get-Process -Name cloudflared -ErrorAction SilentlyContinue) -and $cur) {
-              try {
-                if ((curl.exe -s -o NUL -w '%{http_code}' -m 10 "$cur/") -match '^[234]') { $edgeOk = $true }
-              } catch { }
+              # 3 попытки с таймаутом 20 секунд
+              foreach ($retry in 1..3) {
+                try {
+                  $code = curl.exe -s -o NUL -w '%{http_code}' -m 20 "$cur/"
+                  if ($code -match '^[234]') { $edgeOk = $true; break }
+                } catch { }
+                Start-Sleep -Seconds 10
+              }
             }
             if ($edgeOk) { continue }
             Write-Host '::warning::tunnel dead; reopening.'
