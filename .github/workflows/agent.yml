@@ -267,13 +267,11 @@ jobs:
           sleep 21000
 
       - name: Clear the published session
-        if: always()
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent-linux" "state=ended" || true
 
       - name: Save the models roster
-        if: always()
         run: |
           # The learned roster (~/.zen_free_models.json) dies with the runner;
           # this copy on the session-state branch outlives it. Secrets cannot
@@ -285,7 +283,6 @@ jobs:
               "json=$HOME/.zen_free_models.json" || true
 
       - name: Final save
-        if: always()
         run: |
           cd "$GITHUB_WORKSPACE/fork" || exit 0
           if [ -n "$(git status --porcelain)" ]; then
@@ -536,14 +533,12 @@ jobs:
           Start-Sleep -Seconds 21000
 
       - name: Clear the published session
-        if: always()
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent-windows" "state=ended"
 
       - name: Save the models roster
-        if: always()
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
@@ -553,7 +548,6 @@ jobs:
             "json=$env:USERPROFILE/.zen_free_models.json"
 
       - name: Final save
-        if: always()
         shell: pwsh
         run: |
           Set-Location "$env:GITHUB_WORKSPACE\fork"

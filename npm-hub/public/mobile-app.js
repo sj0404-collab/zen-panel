@@ -386,7 +386,7 @@ function toggleApplyMenu(e, toolId) {
   menu.innerHTML = `<div class="apply-menu-title">Запустить в</div>` +
     tools.filter(t => t.installed).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();openFromCard('${toolId}','${escAttr(dir)}','${t.id}')">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}') title="Закрыть">✕</span>
       <span>${t.name}</span>
     </div>
   `).join('') + `<div class="apply-item" onclick="event.stopPropagation();openFromCard('${toolId}','${escAttr(dir)}','_terminal')">
@@ -412,14 +412,14 @@ function renderSidebar() {
     const dir = toolDirs[t.id] || homeDir;
     const short = (homeDir ? dir.replace(homeDir, '~') : dir).split('\\').pop();
     return `<div class="sb-i" onclick="launchTool('${t.id}');toggleDrawer()">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}') title="Закрыть">✕</span>
       <div style="overflow:hidden;flex:1"><div>${t.name}</div><div style="font-size:9px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${short}</div></div>
     </div>`;
   }).join('');
 
   document.getElementById('term-list').innerHTML = tabs.map(t => `
     <div class="sb-i ${activeTab?.id === t.id ? 'on' : ''}" onclick="switchTab('${t.id}');toggleDrawer()">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}') title="Закрыть">✕</span>
       <div style="overflow:hidden;flex:1"><div>${t.toolName}</div><div style="font-size:9px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.dirShort}</div></div>
     </div>`).join('');
 }
@@ -433,7 +433,7 @@ function showNewTermModal() {
     </div>
   ` + tools.filter(t => t.installed).map(t => `
     <div class="newterm-tool" onclick="createTerm('${t.id}')">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px">${t.icon}</div>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}') title="Закрыть">✕</span>
       <div><div style="font-size:13px;font-weight:500">${t.name}</div></div>
     </div>`).join('');
 
@@ -826,7 +826,7 @@ async function initFM() {
   if (devR.success) {
     document.getElementById('devices-list').innerHTML = devR.devices.map(d => {
       const icon = d.type === 'phone' ? '📱' : d.type === 'tablet' ? '📟' : '💻';
-      return `<div class="fm-sidebar-item" onclick="fmBrowseAdbPath('${d.id}','/sdcard/')"><span style="font-size:16px">${icon}</span><div><div style="font-size:13px">${d.name}</div><div style="font-size:10px;color:var(--t3)">${d.id}</div></div></div>`;
+      return `<div class="fm-sidebar-item" onclick="fmBrowse('${d.id}')"><span style="font-size:16px">${icon}</span><div><div style="font-size:13px">${d.name}</div><div style="font-size:10px;color:var(--t3)">${d.id}</div></div></div>`;
     }).join('') || '<div style="padding:8px;font-size:12px;color:var(--t3)">Нет устройств</div>';
   }
 
@@ -845,18 +845,60 @@ function fmSwitchBackend(backend, startPath) {
 }
 
 async function fmBrowse(p) {
-  const r = await fetch(`/api/browse?backend=${fmBackend}&path=${encodeURIComponent(p)}`).then(r => r.json());
+  const r = await fetch("/api/browse?backend=" + fmBackend + "&path=" + encodeURIComponent(p)).then(r => r.json());
   if (!r.success) return;
   fmCurrentPath = r.path;
-  document.getElementById('fm-path').value = `${fmBackend === 'local' ? '' : '[' + fmBackend + '] '}${r.path}`;
-  const list = document.getElementById('fm-list');
-  let html = '';
-  if (r.parent && r.parent !== r.path) html += `<div class="fm-item" onclick="fmBrowse('${escAttr(r.parent)}')"><span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span></div>`;
-  html += r.items.map(i => `<div class="fm-item" data-path="${escHtml(i.path)}" data-name="${escHtml(i.name)}" data-isdir="${i.isDir ? '1' : '0'}" onclick="fmTap(this)"><span class="fm-ico">${i.isDir ? '📁' : fileIcon(i.name)}</span><span class="fm-name">${escHtml(i.name)}</span><span class="fm-size">${i.isDir ? '' : formatSize(i.size)}</span></div>`).join('');
-  list.innerHTML = html || '<div style="padding:20px;color:var(--t3);text-align:center">Пусто</div>';
-  document.getElementById('fm-info').textContent = `${r.items.length} элементов | ${fmBackend}:${r.path}`;
-}
-
+  const pathEl = document.getElementById("fm-path");
+  if (pathEl) pathEl.value = fmBackend === "local" ? "" : "[" + fmBackend + "] " + r.path;
+  const list = document.getElementById("fm-list");
+  const infoEl = document.getElementById("fm-info");
+  if (!list || !infoEl) return;
+  
+  // Show loading state
+  list.innerHTML = '<div style="padding:20px;color:var(--t3);text-align:center">Загрузка…</div>';
+  
+  // Build HTML in documentFragment for performance
+  const fragment = document.createDocumentFragment();
+  if (r.parent && r.parent !== r.path) {
+    const div = document.createElement("div");
+    div.className = "fm-item";
+    div.onclick = function() { fmBrowse(r.parent); };
+    div.innerHTML = "<span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span>";
+    fragment.appendChild(div);
+  }
+  
+  const items = r.items || [];
+  for (let i = 0; i < items.length; i++) {
+    const i = items[i];
+    const div = document.createElement("div");
+    div.className = "fm-item";
+    div.dataset.path = escHtml(i.path);
+    div.dataset.name = escHtml(i.name);
+    div.dataset.isDir = i.isDir ? "1" : "0";
+    div.onclick = function() { fmTap(this); };
+    
+    const iconSpan = document.createElement("span");
+    iconSpan.className = "fm-ico";
+    iconSpan.textContent = i.isDir ? "📁" : fileIcon(i.name);
+    
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "fm-name";
+    nameSpan.textContent = escHtml(i.name);
+    
+    const sizeSpan = document.createElement("span");
+    sizeSpan.className = "fm-size";
+    sizeSpan.textContent = i.isDir ? "" : formatSize(i.size);
+    
+    div.appendChild(iconSpan);
+    div.appendChild(nameSpan);
+    div.appendChild(sizeSpan);
+    fragment.appendChild(div);
+  }
+  
+  list.innerHTML = "";
+  list.appendChild(fragment);
+  
+  if (infoEl) infoEl.textContent = r.items ? r.items.length + " элементов | " + fmBackend : "0 элементов | " + fmBackend;
 function fmTap(el) {
   const p = el.dataset.path;
   if (el.dataset.isdir === '1' && fmSelected === p) {
@@ -893,7 +935,7 @@ function toggleFmMenu(e) {
   menu.innerHTML = `<div class="apply-menu-title">Открыть в</div>` +
     tools.filter(t => t.installed).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','${t.id}')">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}') title="Закрыть">✕</span>
       <span>${t.name}</span>
     </div>
   `).join('') + `<div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','_terminal')">
@@ -1053,7 +1095,12 @@ async function fmRename() {
   fmRefresh();
 }
 
-function fmDownload() {
+function fmDownloadMulti() {
+  if (!fmSelected) return;
+  window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
+}
+
+function fmDownloadSingle() {
   if (!fmSelected) return;
   window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
 }
