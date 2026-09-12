@@ -845,18 +845,60 @@ function fmSwitchBackend(backend, startPath) {
 }
 
 async function fmBrowse(p) {
-  const r = await fetch(`/api/browse?backend=${fmBackend}&path=${encodeURIComponent(p)}`).then(r => r.json());
+  const r = await fetch("/api/browse?backend=" + fmBackend + "&path=" + encodeURIComponent(p)).then(r => r.json());
   if (!r.success) return;
   fmCurrentPath = r.path;
-  document.getElementById('fm-path').value = `${fmBackend === 'local' ? '' : '[' + fmBackend + '] '}${r.path}`;
-  const list = document.getElementById('fm-list');
-  let html = '';
-  if (r.parent && r.parent !== r.path) html += `<div class="fm-item" onclick="fmBrowse('${escAttr(r.parent)}')"><span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span></div>`;
-  html += r.items.map(i => `<div class="fm-item" data-path="${escHtml(i.path)}" data-name="${escHtml(i.name)}" data-isdir="${i.isDir ? '1' : '0'}" onclick="fmTap(this)"><span class="fm-ico">${i.isDir ? '📁' : fileIcon(i.name)}</span><span class="fm-name">${escHtml(i.name)}</span><span class="fm-size">${i.isDir ? '' : formatSize(i.size)}</span></div>`).join('');
-  list.innerHTML = html || '<div style="padding:20px;color:var(--t3);text-align:center">Пусто</div>';
-  document.getElementById('fm-info').textContent = `${r.items.length} элементов | ${fmBackend}:${r.path}`;
-}
-
+  const pathEl = document.getElementById("fm-path");
+  if (pathEl) pathEl.value = fmBackend === "local" ? "" : "[" + fmBackend + "] " + r.path;
+  const list = document.getElementById("fm-list");
+  const infoEl = document.getElementById("fm-info");
+  if (!list || !infoEl) return;
+  
+  // Show loading state
+  list.innerHTML = '<div style="padding:20px;color:var(--t3);text-align:center">Загрузка…</div>';
+  
+  // Build HTML in documentFragment for performance
+  const fragment = document.createDocumentFragment();
+  if (r.parent && r.parent !== r.path) {
+    const div = document.createElement("div");
+    div.className = "fm-item";
+    div.onclick = function() { fmBrowse(r.parent); };
+    div.innerHTML = "<span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span>";
+    fragment.appendChild(div);
+  }
+  
+  const items = r.items || [];
+  for (let i = 0; i < items.length; i++) {
+    const i = items[i];
+    const div = document.createElement("div");
+    div.className = "fm-item";
+    div.dataset.path = escHtml(i.path);
+    div.dataset.name = escHtml(i.name);
+    div.dataset.isDir = i.isDir ? "1" : "0";
+    div.onclick = function() { fmTap(this); };
+    
+    const iconSpan = document.createElement("span");
+    iconSpan.className = "fm-ico";
+    iconSpan.textContent = i.isDir ? "📁" : fileIcon(i.name);
+    
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "fm-name";
+    nameSpan.textContent = escHtml(i.name);
+    
+    const sizeSpan = document.createElement("span");
+    sizeSpan.className = "fm-size";
+    sizeSpan.textContent = i.isDir ? "" : formatSize(i.size);
+    
+    div.appendChild(iconSpan);
+    div.appendChild(nameSpan);
+    div.appendChild(sizeSpan);
+    fragment.appendChild(div);
+  }
+  
+  list.innerHTML = "";
+  list.appendChild(fragment);
+  
+  if (infoEl) infoEl.textContent = r.items ? r.items.length + " элементов | " + fmBackend : "0 элементов | " + fmBackend;
 function fmTap(el) {
   const p = el.dataset.path;
   if (el.dataset.isdir === '1' && fmSelected === p) {
