@@ -863,31 +863,31 @@ async function fmBrowse(p) {
     const div = document.createElement("div");
     div.className = "fm-item";
     div.onclick = function() { fmBrowse(r.parent); };
-    div.innerHTML = "<span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span>";
+    div.innerHTML = '<span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span>';
     fragment.appendChild(div);
   }
   
   const items = r.items || [];
   for (let i = 0; i < items.length; i++) {
-    const i = items[i];
+    const item = items[i];
     const div = document.createElement("div");
     div.className = "fm-item";
-    div.dataset.path = escHtml(i.path);
-    div.dataset.name = escHtml(i.name);
-    div.dataset.isDir = i.isDir ? "1" : "0";
+    div.dataset.path = escHtml(item.path);
+    div.dataset.name = escHtml(item.name);
+    div.dataset.isDir = item.isDir ? "1" : "0";
     div.onclick = function() { fmTap(this); };
     
     const iconSpan = document.createElement("span");
     iconSpan.className = "fm-ico";
-    iconSpan.textContent = i.isDir ? "📁" : fileIcon(i.name);
+    iconSpan.textContent = item.isDir ? "📁" : fileIcon(item.name);
     
     const nameSpan = document.createElement("span");
     nameSpan.className = "fm-name";
-    nameSpan.textContent = escHtml(i.name);
+    nameSpan.textContent = escHtml(item.name);
     
     const sizeSpan = document.createElement("span");
     sizeSpan.className = "fm-size";
-    sizeSpan.textContent = i.isDir ? "" : formatSize(i.size);
+    sizeSpan.textContent = item.isDir ? "" : formatSize(item.size);
     
     div.appendChild(iconSpan);
     div.appendChild(nameSpan);
@@ -1402,3 +1402,72 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyP') { e.preventDefault(); showNewTermModal(); }
   else if (e.code === 'KeyX') { e.preventDefault(); if (activeTab) closeTab(activeTab.id); }
 });
+
+// ===== CLOUD PHONE =====
+function cloudPhoneConnect(prefix) {
+  const pfx = prefix || '';
+  const urlEl = document.getElementById(pfx ? 'cp-url-desktop' : 'cp-url');
+  const frame = document.getElementById(pfx ? 'cp-frame-desktop' : 'cp-frame');
+  const ph = document.getElementById(pfx ? 'cp-placeholder-desktop' : 'cp-placeholder');
+  const url = urlEl.value.trim();
+  if (!url) return;
+  localStorage.setItem('cp.server', url);
+  frame.src = url;
+  frame.style.display = 'block';
+  ph.style.display = 'none';
+}
+function cloudPhoneFullscreen(prefix) {
+  const pfx = prefix || '';
+  const frame = document.getElementById(pfx ? 'cp-frame-desktop' : 'cp-frame');
+  if (frame.requestFullscreen) frame.requestFullscreen();
+  else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
+}
+(function() {
+  const saved = localStorage.getItem('cp.server');
+  if (saved) {
+    const urlEl = document.getElementById('cp-url');
+    if (urlEl) urlEl.value = saved;
+  }
+})();
+
+// ===== BROWSER (Chrome / YouTube) =====
+function browserGo(url, prefix) {
+  const pfx = prefix || '';
+  const frame = document.getElementById(pfx ? 'browser-frame-desktop' : 'browser-frame');
+  const urlEl = document.getElementById(pfx ? 'browser-url-desktop' : 'browser-url');
+  frame.src = url;
+  urlEl.value = url;
+}
+
+// ===== PULSE AUDIO =====
+async function pulseStatus() {
+  try {
+    const r = await fetch('/api/pulse/status');
+    const d = await r.json();
+    const el = document.getElementById('pulse-status');
+    el.textContent = d.running ? 'running' : 'stopped';
+    el.className = 'tag ' + (d.running ? 'tag-on' : 'tag-off');
+    const devEl = document.getElementById('pulse-devices');
+    if (d.sinks && d.sinks.length) {
+      devEl.innerHTML = '<b>Sinks:</b><br>' + d.sinks.map(s => '• ' + s).join('<br>') +
+        (d.sources && d.sources.length ? '<br><b>Sources:</b><br>' + d.sources.map(s => '• ' + s).join('<br>') : '');
+    } else {
+      devEl.textContent = 'Нет данных. Нажмите Start.';
+    }
+  } catch(e) {
+    document.getElementById('pulse-status').textContent = 'error';
+    document.getElementById('pulse-status').className = 'tag tag-off';
+  }
+}
+async function pulseStart() {
+  await fetch('/api/pulse/start', {method:'POST'});
+  setTimeout(pulseStatus, 500);
+}
+async function pulseStop() {
+  await fetch('/api/pulse/stop', {method:'POST'});
+  setTimeout(pulseStatus, 500);
+}
+async function pulseSetVol(val) {
+  document.getElementById('pulse-vol-label').textContent = val + '%';
+  await fetch('/api/pulse/volume', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume:parseInt(val)})});
+}

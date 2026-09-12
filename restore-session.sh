@@ -59,14 +59,16 @@ gh api "repos/sj0404-collab/$repo/contents/updates/$newest" \
 RESTORE_DIR="$WORK/restored-from-$repo"
 mkdir -p "$RESTORE_DIR"
 
-find "$TMPDIR" -type f -not -name '*.apk' | while read -r f; do
+count=0
+while read -r f; do
     relpath="${f#$TMPDIR/}"
     case "$relpath" in
         *gradle*|*/gradle/*|*/gradle*) continue ;;
     esac
     mkdir -p "$RESTORE_DIR/$(dirname "$relpath")"
     cp -r "$f" "$RESTORE_DIR/$relpath"
-done
+    count=$((count+1))
+done < <(find "$TMPDIR" -type f -not -name '*.apk')
 
 if [ -f "$TMPDIR/manifest.json" ]; then
     cp "$TMPDIR/manifest.json" "$RESTORE_DIR/"

@@ -176,6 +176,9 @@
       <button class="tb on" onclick="showPage('dashboard')">Dashboard</button>
       <button class="tb" onclick="showPage('terminal')">Терминал</button>
       <button class="tb" onclick="showPage('files')">Файлы</button>
+      <button class="tb" onclick="showPage('cloudphone')">📱 Телефон</button>
+      <button class="tb" onclick="showPage('browser')">🌐 Браузер</button>
+      <button class="tb" onclick="showPage('pulseaudio')">🔊 Аудио</button>
       <button class="tb" onclick="showPage('git')">🐙 Git</button>
       <button class="tb" onclick="showPage('models-full')">🔧 Models</button>
     </div>
@@ -269,6 +272,78 @@
           </div>
         </div>
       </div>
+
+      <!-- CLOUD PHONE -->
+      <div class="page" id="p-cloudphone" style="padding:0;flex-direction:column;height:100%">
+        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0">
+          <input type="text" id="cp-url-desktop" placeholder="noVNC URL (http://host:6080/vnc.html)" style="flex:1;min-width:300px;padding:5px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;outline:none">
+          <button class="btn btn-p" onclick="cloudPhoneConnect('desktop')">Подключить</button>
+          <button class="btn" onclick="cloudPhoneFullscreen('desktop')">⛶</button>
+        </div>
+        <div style="flex:1;position:relative;background:#000">
+          <iframe id="cp-frame-desktop" style="width:100%;height:100%;border:none;display:none" allowfullscreen></iframe>
+          <div id="cp-placeholder-desktop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
+            <div style="font-size:48px;margin-bottom:16px">📱</div>
+            <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Cloud Phone</div>
+            <div style="font-size:13px;max-width:400px">Введите URL noVNC сервера и нажмите "Подключить".<br>Запустите cloud-phone на раннере через launch.sh</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BROWSER (Chrome / YouTube) -->
+      <div class="page" id="p-browser" style="padding:0;flex-direction:column;height:100%">
+        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0">
+          <button class="btn btn-sm" onclick="browserGo('https://www.youtube.com','desktop')" title="YouTube">▶ YouTube</button>
+          <button class="btn btn-sm" onclick="browserGo('https://www.google.com','desktop')" title="Google">🔍 Google</button>
+          <button class="btn btn-sm" onclick="browserGo('https://mail.google.com','desktop')" title="Gmail">✉️ Gmail</button>
+          <button class="btn btn-sm" onclick="browserGo('https://github.com','desktop')" title="GitHub">🐙 GitHub</button>
+          <input type="text" id="browser-url-desktop" placeholder="URL..." value="https://www.youtube.com" style="flex:1;padding:5px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')browserGo(this.value,'desktop')">
+          <button class="btn btn-p" onclick="browserGo(document.getElementById('browser-url-desktop').value,'desktop')">→</button>
+        </div>
+        <div style="flex:1;position:relative;background:#000">
+          <iframe id="browser-frame-desktop" src="https://www.youtube.com" style="width:100%;height:100%;border:none" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+        </div>
+      </div>
+
+      <!-- PULSE AUDIO -->
+      <div class="page" id="p-pulseaudio">
+        <div class="ph"><h1>🔊 PulseAudio</h1><p>Общий аудио-сервер для всех вкладок</p></div>
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-h">
+            <div class="card-ico" style="background:rgba(88,166,255,.15);color:var(--acc)">🔊</div>
+            <div><div class="card-n">PulseAudio Server</div><div class="card-v">shared audio for all tabs</div></div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+            <span class="tag tag-on" id="pulse-status">checking...</span>
+          </div>
+          <div style="font-size:12px;color:var(--t2);margin-bottom:10px">
+            Общий аудио-сервер. Обеспечивает звук для Cloud Phone, браузера и других вкладок.
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-ok" onclick="pulseStart()">▶ Start</button>
+            <button class="btn btn-er" onclick="pulseStop()">⏹ Stop</button>
+            <button class="btn" onclick="pulseStatus()">⟳ Status</button>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-h">
+            <div class="card-ico" style="background:rgba(63,185,80,.15);color:var(--ok)">📋</div>
+            <div><div class="card-n">Sinks & Sources</div></div>
+          </div>
+          <div id="pulse-devices" style="font-size:12px;color:var(--t3)">Нажмите "Status" для обновления</div>
+        </div>
+        <div class="card">
+          <div class="card-h">
+            <div class="card-ico" style="background:rgba(210,153,34,.15);color:var(--warn)">⚡</div>
+            <div><div class="card-n">Volume</div></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input type="range" id="pulse-vol" min="0" max="100" value="80" style="flex:1" oninput="pulseSetVol(this.value)">
+            <span id="pulse-vol-label" style="font-size:12px;font-family:monospace;min-width:40px;text-align:right">80%</span>
+          </div>
+        </div>
+      </div>
+
       <div class="page" id="p-git">
       <div class="page" id="p-nep"></div>
       <div class="page" id="p-nep"></div>

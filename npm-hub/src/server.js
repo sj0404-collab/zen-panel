@@ -885,6 +885,51 @@ app.get('/api/git/log', async (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
+// ─── PULSE AUDIO ───
+const { exec: _exec } = require('child_process');
+const pulseRun = (cmd) => new Promise((resolve) => {
+  _exec(cmd, { timeout: 5000 }, (err, stdout, stderr) => {
+    resolve({ ok: !err, out: (stdout || '').trim(), err: (stderr || '').trim() });
+  });
+});
+
+app.get('/api/pulse/status', async (req, res) => {
+  try {
+    const st = await pulseRun('pulseaudio --check 2>&1; echo $?');
+    const running = st.out.endsWith('0');
+    let sinks = [], sources = [];
+    if (running) {
+      const ls = await pulseRun('pactl list sinks short 2>/dev/null');
+      if (ls.ok && ls.out) sinks = ls.out.split('\n').filter(Boolean).map(l => l.split('\t')[1] || l);
+      const src = await pulseRun('pactl list sources short 2>/dev/null');
+      if (src.ok && src.out) sources = src.out.split('\n').filter(Boolean).map(l => l.split('\t')[1] || l);
+    }
+    res.json({ running, sinks, sources });
+  } catch { res.json({ running: false, sinks: [], sources: [] }); }
+});
+
+app.post('/api/pulse/start', async (req, res) => {
+  try {
+    await pulseRun('pulseaudio --start --disallow-exit --exit-idle-time=-1 2>&1');
+    res.json({ ok: true });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+app.post('/api/pulse/stop', async (req, res) => {
+  try {
+    await pulseRun('pulseaudio --kill 2>&1');
+    res.json({ ok: true });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+app.post('/api/pulse/volume', express.json(), async (req, res) => {
+  try {
+    const vol = Math.max(0, Math.min(100, parseInt(req.body.volume || 80, 10)));
+    await pulseRun(`pactl set-sink-volume @DEFAULT_SINK@ ${vol}% 2>&1`);
+    res.json({ ok: true, volume: vol });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // ─── WEBSOCKET / PTY ───
 // Sessions survive a dropped connection: losing the phone does NOT kill the
 // terminal. The PTY keeps running in the background, its output is buffered,
