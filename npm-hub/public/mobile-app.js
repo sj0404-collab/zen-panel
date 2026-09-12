@@ -880,7 +880,7 @@ async function fmBrowse(p) {
     div.className = "fm-item";
     div.dataset.path = escHtml(item.path);
     div.dataset.name = escHtml(item.name);
-    div.dataset.isDir = item.isDir ? "1" : "0";
+    div.setAttribute('data-isdir', item.isDir ? '1' : '0');
     div.onclick = function() { fmTap(this); };
     
     const iconSpan = document.createElement("span");
@@ -999,7 +999,7 @@ async function fmBrowseAdbPath(device, path) {
     const div = document.createElement('div');
     div.className = 'fm-item';
     div.dataset.path = item.path;
-    div.dataset.isdir = item.isDir ? '1' : '0';
+    div.setAttribute('data-isdir', item.isDir ? '1' : '0');
     div.onclick = function() { fmTap(this); };
     const iconSpan = document.createElement('span');
     iconSpan.className = 'fm-ico';

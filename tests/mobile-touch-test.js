@@ -86,7 +86,8 @@ check('q16 desktop no system dialogs', !/prompt\('/.test(desk) && !/confirm\('/.
 
 // q17: tap-to-enter folders (dblclick is dead on phones).
 check('q17 tap to enter', mob.includes('function fmTap(') && desk.includes('function fmTap(') &&
-  mob.includes('data-isdir=') && desk.includes('data-isdir=') &&
+  (mob.includes('data-isdir=') || mob.includes('dataset.isdir') || mob.includes("setAttribute('data-isdir'")) &&
+  (desk.includes('data-isdir=') || desk.includes('dataset.isdir') || desk.includes("setAttribute('data-isdir'")) &&
   !/ondblclick/.test(mob) && !/ondblclick/.test(desk));
 
 // q18: create-file button exists in both UIs.
