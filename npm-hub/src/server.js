@@ -930,6 +930,39 @@ app.post('/api/pulse/volume', express.json(), async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+app.post('/api/pulse/mute', async (req, res) => {
+  try {
+    await pulseRun('pactl set-sink-mute @DEFAULT_SINK@ toggle 2>&1');
+    const st = await pulseRun('pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null');
+    res.json({ ok: true, muted: st.out.includes('yes') });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+app.get('/api/pulse/sinks', async (req, res) => {
+  try {
+    const ls = await pulseRun('pactl list sinks 2>/dev/null');
+    const sinks = [];
+    if (ls.ok && ls.out) {
+      const blocks = ls.out.split('\n\n');
+      for (const block of blocks) {
+        const nameMatch = block.match(/Name:\s+(.+)/);
+        const descMatch = block.match(/Description:\s+(.+)/);
+        const volMatch = block.match(/Volume:\s+.+?(\d+)%/);
+        const muteMatch = block.match(/Mute:\s+(yes|no)/);
+        if (nameMatch) {
+          sinks.push({
+            name: nameMatch[1].trim(),
+            description: descMatch ? descMatch[1].trim() : '',
+            volume: volMatch ? parseInt(volMatch[1]) : 0,
+            muted: muteMatch ? muteMatch[1] === 'yes' : false
+          });
+        }
+      }
+    }
+    res.json({ success: true, sinks });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
 // ─── WEBSOCKET / PTY ───
 // Sessions survive a dropped connection: losing the phone does NOT kill the
 // terminal. The PTY keeps running in the background, its output is buffered,
@@ -1099,6 +1132,30 @@ app.get('/api/tunnel', (req, res) => {
     res.json({ success: false, url: null, type: null });
   }
 });
+
+// ─── PULSE AUDIO AUTO-START ───
+(async () => {
+  try {
+    const check = await pulseRun('pulseaudio --check 2>&1; echo $?');
+    if (!check.out.endsWith('0')) {
+      console.log('  🔊 Starting PulseAudio daemon...');
+      await pulseRun('pulseaudio --start --disallow-exit --exit-idle-time=-1 2>&1');
+      console.log('  🔊 PulseAudio started');
+    } else {
+      console.log('  🔊 PulseAudio already running');
+      await pulseRun('pactl set-exit-idle-time -1 2>/dev/null');
+    }
+    // Create virtual sinks for hub tabs (cloud phone, browser, etc.)
+    const sinks = ['cloud_phone', 'browser_youtube'];
+    for (const name of sinks) {
+      await pulseRun(`pactl load-module module-null-sink sink_name=${name} sink_properties=device.description="Hub-${name}" 2>/dev/null`);
+    }
+    // Load loopback so any audio on these sinks is audible
+    await pulseRun('pactl load-module module-loopback source=cloud_phone.monitor 2>/dev/null');
+    await pulseRun('pactl load-module module-loopback source=browser_youtube.monitor 2>/dev/null');
+    console.log('  🔊 Virtual audio sinks ready: cloud_phone, browser_youtube');
+  } catch {}
+})();
 
 process.on('SIGINT', () => {
   sessions.forEach(s => { try { s.pty.kill(); } catch {} });

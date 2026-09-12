@@ -1467,7 +1467,111 @@ async function pulseStop() {
   await fetch('/api/pulse/stop', {method:'POST'});
   setTimeout(pulseStatus, 500);
 }
+async function pulseMute() {
+  const r = await fetch('/api/pulse/mute', {method:'POST'});
+  const d = await r.json();
+  if (d.ok) {
+    const el = document.getElementById('pulse-status');
+    el.textContent = d.muted ? 'muted' : 'running';
+    el.className = 'tag ' + (d.muted ? 'tag-off' : 'tag-on');
+  }
+}
 async function pulseSetVol(val) {
   document.getElementById('pulse-vol-label').textContent = val + '%';
   await fetch('/api/pulse/volume', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume:parseInt(val)})});
 }
+
+// ===== AUDIO KEEP-ALIVE (background playback) =====
+let _audioCtx = null;
+let _silentOsc = null;
+let _keepAliveInterval = null;
+
+function _ensureAudioCtx() {
+  if (_audioCtx) return _audioCtx;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    _audioCtx = new AC();
+    // Silent oscillator — keeps AudioContext alive in background
+    _silentOsc = _audioCtx.createOscillator();
+    const gain = _audioCtx.createGain();
+    gain.gain.value = 0;
+    _silentOsc.connect(gain);
+    gain.connect(_audioCtx.destination);
+    _silentOsc.start();
+    return _audioCtx;
+  } catch { return null; }
+}
+
+function _resumeAudio() {
+  try {
+    if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
+  } catch {}
+}
+
+// Resume audio on any user interaction (required by browsers)
+['click','touchstart','keydown','mousedown'].forEach(evt => {
+  document.addEventListener(evt, () => {
+    _ensureAudioCtx();
+    _resumeAudio();
+    // Also resume all iframes (YouTube, noVNC)
+    document.querySelectorAll('iframe').forEach(f => {
+      try { f.contentWindow.postMessage({type:'audio-resume'}, '*'); } catch {}
+    });
+  }, { passive: true });
+});
+
+// Handle visibility change — re-init audio when returning to tab
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    _resumeAudio();
+    // Reconnect any broken WebSocket terminals
+    if (typeof tabs !== 'undefined') {
+      tabs.forEach(t => {
+        if (t.socket && t.socket.readyState > 1 && !t.manualClose) {
+          if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
+          // Trigger reconnect via showPage
+          if (typeof activeTab !== 'undefined' && t === activeTab) {
+            t.term?.writeln?.('\x1b[33m[Reconnecting...]\x1b[0m');
+          }
+        }
+      });
+    }
+  }
+});
+
+// Periodic keep-alive — ping server every 30s to keep tunnel/session alive
+_keepAliveInterval = setInterval(() => {
+  fetch('/api/pulse/status').catch(() => {});
+}, 30000);
+
+// Prevent page sleep (keeps audio + WebSocket alive on mobile)
+(function _preventSleep() {
+  // Init silent audio keep-alive
+  try {
+    const el = document.getElementById('keepalive-audio');
+    if (el) {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      src.connect(ctx.destination);
+      src.start();
+      el._ctx = ctx;
+      el._src = src;
+    }
+  } catch {}
+
+  let wakeLock = null;
+  async function requestWake() {
+    if ('wakeLock' in navigator && !document.hidden) {
+      try { wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+    }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) requestWake();
+    else if (wakeLock) { wakeLock.release(); wakeLock = null; }
+  });
+  requestWake();
+})();

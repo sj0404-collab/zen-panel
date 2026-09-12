@@ -1470,7 +1470,69 @@ async function pulseStop() {
   await fetch('/api/pulse/stop', {method:'POST'});
   setTimeout(pulseStatus, 500);
 }
+async function pulseMute() {
+  const r = await fetch('/api/pulse/mute', {method:'POST'});
+  const d = await r.json();
+  if (d.ok) {
+    const el = document.getElementById('pulse-status');
+    el.textContent = d.muted ? 'muted' : 'running';
+    el.className = 'tag ' + (d.muted ? 'tag-off' : 'tag-on');
+  }
+}
 async function pulseSetVol(val) {
   document.getElementById('pulse-vol-label').textContent = val + '%';
   await fetch('/api/pulse/volume', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume:parseInt(val)})});
 }
+
+// ===== AUDIO KEEP-ALIVE (background playback) =====
+let _audioCtx = null;
+let _silentOsc = null;
+
+function _ensureAudioCtx() {
+  if (_audioCtx) return _audioCtx;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    _audioCtx = new AC();
+    _silentOsc = _audioCtx.createOscillator();
+    const gain = _audioCtx.createGain();
+    gain.gain.value = 0;
+    _silentOsc.connect(gain);
+    gain.connect(_audioCtx.destination);
+    _silentOsc.start();
+    return _audioCtx;
+  } catch { return null; }
+}
+
+function _resumeAudio() {
+  try {
+    if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
+  } catch {}
+}
+
+['click','touchstart','keydown','mousedown'].forEach(evt => {
+  document.addEventListener(evt, () => {
+    _ensureAudioCtx();
+    _resumeAudio();
+    document.querySelectorAll('iframe').forEach(f => {
+      try { f.contentWindow.postMessage({type:'audio-resume'}, '*'); } catch {}
+    });
+  }, { passive: true });
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    _resumeAudio();
+    if (typeof tabs !== 'undefined') {
+      tabs.forEach(t => {
+        if (t.socket && t.socket.readyState > 1 && !t.manualClose) {
+          if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
+        }
+      });
+    }
+  }
+});
+
+setInterval(() => {
+  fetch('/api/pulse/status').catch(() => {});
+}, 30000);
