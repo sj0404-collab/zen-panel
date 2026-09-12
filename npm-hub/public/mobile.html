@@ -314,7 +314,8 @@
           <button class="btn" onclick="fmCreateFile()">📄+</button>
           <button class="btn" onclick="fmRename()">✏️</button>
           <button class="btn" onclick="fmDelete()">🗑️</button>
-          <button class="btn" onclick="fmDownload()">⬇</button>
+          <button class="btn" onclick="fmDownloadMulti()">📥 Multi-download</button>
+          <button class="btn" onclick="fmDownloadSingle()">⬇ Single</button>
           <button class="btn" onclick="fmArchive()" title="Скачать как tar.xz">📦</button>
           <button class="btn" onclick="fmSaveGithub()" title="Сохранить в GitHub">⬆️GH</button>
           <button class="btn" onclick="fmUpload()" title="Файлы (все виды, картинки — тоже, множественный выбор через SAF)">⬆</button>
@@ -326,17 +327,22 @@
         </div>
         <div class="fm-list" id="fm-list"></div>
         <div class="fm-info" id="fm-info"></div>
+        <div class="fm-transfer" id="fm-transfer" style="margin-top:8px;display:none;background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;padding:8px;font-size:11px;color:var(--t3)">
+          <div id="fm-transfer-name"></div>
+          <div style="margin-top:4px"><span id="fm-transfer-speed"></span>/s <span id="fm-transfer-eta"></span> осталось <span id="fm-transfer-time"></span></div>
+          <div style="margin-top:4px"><span id="fm-transfer-transferred"></span> / <span id="fm-transfer-total"></span> файлов</div>
+        </div>
       </div>
 
       <!-- MODELS FULL -->
-      <div class="page" id="p-models-full">
-        <div class="ph"><h1>🔧 Models</h1><p>Все модели всех CLI инструментов</p></div>
+      <div class="page" id="p-account">
+        <div class="ph"><h1>👤 Account</h1><p>Account settings and repository overview</p></div>
         <div class="models-full-actions">
           <button class="btn btn-ok" onclick="syncAllModels()">🔄 Синхронировать</button>
           <button class="btn" onclick="showApiKeyModal()">🔑 API Key</button>
           <span id="models-full-info"></span>
         </div>
-        <div id="models-full-tools"></div>
+        <div id="account-overview"><p>Account overview coming soon...</p></div>
         <div class="ph"><h2>Все модели</h2></div>
         <div id="models-full-list"></div>
       </div>
