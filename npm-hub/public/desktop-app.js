@@ -864,6 +864,32 @@ function fmGoUp() {
 function fmGoHome() { fmBackend = 'local'; fmBrowse(homeDir || '/'); }
 function fmRefresh() { fmBrowse(fmCurrentPath); }
 
+function toggleFileSel(all) {
+  const items = document.querySelectorAll('#fm-list .fm-item');
+  if (!items.length) return;
+  if (all) {
+    const allSel = [...items].every(e => e.classList.contains('fm-sel'));
+    items.forEach(e => {
+      if (allSel) { e.classList.remove('fm-sel'); }
+      else { e.classList.add('fm-sel'); e.dataset.path && (fmSelected = e.dataset.path); }
+    });
+    if (allSel) fmSelected = null;
+  } else {
+    const last = items[items.length - 1];
+    if (last) { last.classList.add('fm-sel'); fmSelected = last.dataset.path; }
+  }
+}
+
+function fmDownloadMulti() {
+  if (!fmSelected) return;
+  window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
+}
+
+function fmDownloadSingle() {
+  if (!fmSelected) return;
+  window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}&single=1`);
+}
+
 function toggleFmMenu(e) {
   e.stopPropagation();
   document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));

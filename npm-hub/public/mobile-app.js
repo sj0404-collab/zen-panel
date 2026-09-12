@@ -899,6 +899,8 @@ async function fmBrowse(p) {
   list.appendChild(fragment);
   
   if (infoEl) infoEl.textContent = r.items ? r.items.length + " элементов | " + fmBackend : "0 элементов | " + fmBackend;
+}
+
 function fmTap(el) {
   const p = el.dataset.path;
   if (el.dataset.isdir === '1' && fmSelected === p) {
@@ -925,6 +927,22 @@ function fmGoUp() {
 
 function fmGoHome() { fmBackend = 'local'; fmBrowse(homeDir || '/'); }
 function fmRefresh() { fmBrowse(fmCurrentPath); }
+
+function toggleFileSel(all) {
+  const items = document.querySelectorAll('#fm-list .fm-item');
+  if (!items.length) return;
+  if (all) {
+    const allSel = [...items].every(e => e.classList.contains('fm-sel'));
+    items.forEach(e => {
+      if (allSel) { e.classList.remove('fm-sel'); }
+      else { e.classList.add('fm-sel'); e.dataset.path && (fmSelected = e.dataset.path); }
+    });
+    if (allSel) fmSelected = null;
+  } else {
+    const last = items[items.length - 1];
+    if (last) { last.classList.add('fm-sel'); fmSelected = last.dataset.path; }
+  }
+}
 
 function toggleFmMenu(e) {
   e.stopPropagation();
