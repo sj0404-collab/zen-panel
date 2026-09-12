@@ -117,7 +117,7 @@ function renderModelList(list) {
         ${m.free ? '<span style="font-size:9px;color:var(--ok);background:rgba(63,185,80,.15);padding:2px 6px;border-radius:4px">FREE</span>' : '<span style="font-size:9px;color:var(--warn);background:rgba(210,153,34,.15);padding:2px 6px;border-radius:4px">PAID</span>'}
         ${m.id === selectedModel ? '<span style="font-size:11px;color:var(--acc)">✓</span>' : ''}
       </div>
-      <div style="font-size:10px;color:var(--t3);width:100%">${m.desc} • ${(m.ctx/1000).toFixed(0)}K ctx</div>
+      <div style="font-size:10px;color:var(--t3);width:100%">${escHtml(m.desc)} • ${(m.ctx/1000).toFixed(0)}K ctx</div>
     </div>
   `).join('');
 }
@@ -151,7 +151,8 @@ document.addEventListener('click', () => { document.querySelectorAll('.apply-men
 // ===== PAGE NAVIGATION =====
 function showPage(p) {
   document.querySelectorAll('.page,.term-page').forEach(e => e.classList.remove('on'));
-  document.getElementById('p-' + p).classList.add('on');
+  const pageEl = document.getElementById('p-' + p);
+  if (pageEl) pageEl.classList.add('on');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('on'));
   const navBtn = document.getElementById('nav-' + p);
   if (navBtn) navBtn.classList.add('on');
@@ -447,6 +448,10 @@ function showNewTermModal() {
 }
 
 function closeModal(id) { document.getElementById(id).classList.remove('on'); }
+
+document.querySelectorAll('.modal-bg').forEach(bg => {
+  bg.addEventListener('click', (e) => { if (e.target === bg) bg.classList.remove('on'); });
+});
 
 // ===== TERMINAL SCROLLBAR (слайдер) =====
 function attachTermScroll(id, panel) {
@@ -979,11 +984,40 @@ async function fmBrowseAdbPath(device, path) {
   const r = await fetch(`/api/browse?backend=adb:${device}&path=${encodeURIComponent(path)}`).then(r => r.json());
   if (!r.success) return;
   const list = document.getElementById('fm-list');
-  let html = '';
-  if (path !== '/') { const parent = path.split('/').slice(0, -1).join('/') || '/'; html += `<div class="fm-item" onclick="fmBrowseAdbPath('${device}','${parent}')"><span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span></div>`; }
-  html += r.items.map(i => `<div class="fm-item" data-path="${escHtml(i.path)}" data-isdir="${i.isDir ? '1' : '0'}" onclick="fmTap(this)"><span class="fm-ico">${i.isDir ? '📁' : '📄'}</span><span class="fm-name">${escHtml(i.name)}</span><span class="fm-size">${i.isDir ? '' : formatSize(i.size)}</span></div>`).join('');
-  list.innerHTML = html || '<div style="padding:20px;color:var(--t3);text-align:center">Пусто</div>';
-  document.getElementById('fm-info').textContent = `${r.items.length} элементов | ADB:${device}:${path}`;
+  const fragment = document.createDocumentFragment();
+  if (path !== '/') {
+    const parent = path.split('/').slice(0, -1).join('/') || '/';
+    const div = document.createElement('div');
+    div.className = 'fm-item';
+    div.onclick = function() { fmBrowseAdbPath(device, parent); };
+    div.innerHTML = '<span class="fm-ico">📁</span><span class="fm-name">..</span><span class="fm-size"></span>';
+    fragment.appendChild(div);
+  }
+  const items = r.items || [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const div = document.createElement('div');
+    div.className = 'fm-item';
+    div.dataset.path = item.path;
+    div.dataset.isdir = item.isDir ? '1' : '0';
+    div.onclick = function() { fmTap(this); };
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'fm-ico';
+    iconSpan.textContent = item.isDir ? '📁' : '📄';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'fm-name';
+    nameSpan.textContent = item.name;
+    const sizeSpan = document.createElement('span');
+    sizeSpan.className = 'fm-size';
+    sizeSpan.textContent = item.isDir ? '' : formatSize(item.size);
+    div.appendChild(iconSpan);
+    div.appendChild(nameSpan);
+    div.appendChild(sizeSpan);
+    fragment.appendChild(div);
+  }
+  list.innerHTML = '';
+  list.appendChild(fragment);
+  document.getElementById('fm-info').textContent = items.length + ' элементов | ADB:' + device + ':' + path;
 }
 
 function showAddStorageModal() {
@@ -1307,10 +1341,10 @@ function renderModelsFullList(models) {
 let providerFilter = null;
 function filterByProvider(providerId) {
   providerFilter = providerFilter === providerId ? null : providerId;
-  const models = providerFilter
+  const filtered = providerFilter
     ? modelsFullData.models.filter(m => m.providerId === providerFilter)
     : modelsFullData.models;
-  renderModelsFullList(models);
+  renderModelsFullList(filtered);
 }
 
 async function selectModelFull(modelId, providerId) {
