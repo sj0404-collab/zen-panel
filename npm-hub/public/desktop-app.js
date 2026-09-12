@@ -1281,7 +1281,7 @@ function selectBrowserPath() {
 }
 
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function escAttr(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+function escAttr(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
 
 function copyTunnelUrl() {
   if (window.__tunnelUrl) {
