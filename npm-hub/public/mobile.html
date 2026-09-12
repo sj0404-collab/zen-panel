@@ -50,7 +50,7 @@
     /* ===== MAIN CONTENT ===== */
     .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
     .content{flex:1;display:flex;flex-direction:column;overflow:hidden;-webkit-overflow-scrolling:touch}
-    .page{display:none;flex:1;overflow-y:auto;padding:14px;-webkit-overflow-scrolling:touch}.page.on{display:block}
+    .page{display:none;flex:1;overflow-y:auto;padding:14px;-webkit-overflow-scrolling:touch}.page.on{display:flex;flex-direction:column}
 
     /* ===== BOTTOM NAV ===== */
     .bottom-nav{height:60px;background:var(--bg2);border-top:1px solid var(--bdr);display:flex;flex-shrink:0;padding-bottom:env(safe-area-inset-bottom)}
@@ -312,8 +312,7 @@
           <button class="btn" onclick="fmGoUp()">↑</button>
           <button class="btn" onclick="fmGoHome()">🏠</button>
           <button class="btn" onclick="fmRefresh()">⟳</button>
-          <button class="btn" onclick="toggleFileSel()">Выделить все</button>
-          <button class="btn" onclick="toggleFileSel(all)">Выделить все</button>
+          <button class="btn" onclick="toggleFileSel(true)">Выделить все</button>
           <button class="btn" onclick="fmMkdir()">📁+</button>
           <button class="btn" onclick="fmCreateFile()">📄+</button>
           <button class="btn" onclick="fmRename()">✏️</button>
@@ -424,8 +423,6 @@
 
       <!-- GIT -->
       <div class="page" id="p-git">
-      <div class="page" id="p-nep"></div>
-      <div class="page" id="p-nep"></div>
         <div class="ph"><h1>🐙 Git</h1><p>Статус и diff репозитория на раннере</p></div>
         <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
           <input type="text" id="git-path" placeholder="путь к репозиторию (с .git)" style="min-width:220px;flex:1;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:13px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')loadGit()">

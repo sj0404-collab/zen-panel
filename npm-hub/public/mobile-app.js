@@ -386,7 +386,7 @@ function toggleApplyMenu(e, toolId) {
   menu.innerHTML = `<div class="apply-menu-title">Запустить в</div>` +
     tools.filter(t => t.installed).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();openFromCard('${toolId}','${escAttr(dir)}','${t.id}')">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}') title="Закрыть">✕</span>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}')" title="Закрыть">✕</span>
       <span>${t.name}</span>
     </div>
   `).join('') + `<div class="apply-item" onclick="event.stopPropagation();openFromCard('${toolId}','${escAttr(dir)}','_terminal')">
@@ -412,14 +412,14 @@ function renderSidebar() {
     const dir = toolDirs[t.id] || homeDir;
     const short = (homeDir ? dir.replace(homeDir, '~') : dir).split('\\').pop();
     return `<div class="sb-i" onclick="launchTool('${t.id}');toggleDrawer()">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}') title="Закрыть">✕</span>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}')" title="Закрыть">✕</span>
       <div style="overflow:hidden;flex:1"><div>${t.name}</div><div style="font-size:9px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${short}</div></div>
     </div>`;
   }).join('');
 
   document.getElementById('term-list').innerHTML = tabs.map(t => `
     <div class="sb-i ${activeTab?.id === t.id ? 'on' : ''}" onclick="switchTab('${t.id}');toggleDrawer()">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}') title="Закрыть">✕</span>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}')" title="Закрыть">✕</span>
       <div style="overflow:hidden;flex:1"><div>${t.toolName}</div><div style="font-size:9px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.dirShort}</div></div>
     </div>`).join('');
 }
@@ -433,7 +433,7 @@ function showNewTermModal() {
     </div>
   ` + tools.filter(t => t.installed).map(t => `
     <div class="newterm-tool" onclick="createTerm('${t.id}')">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}') title="Закрыть">✕</span>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}')" title="Закрыть">✕</span>
       <div><div style="font-size:13px;font-weight:500">${t.name}</div></div>
     </div>`).join('');
 
@@ -561,7 +561,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   const toolColor = isPlain ? '#58a6ff' : tool.color;
   const toolIcon = isPlain ? '>_ ' : tool.icon;
 
-  const tab = { id, toolId, toolName, toolColor, toolIcon, cwd, dirShort, term, fitAddon, socket: null, pty: null, manualClose: false, lastPong: 0, reconnectTimer: null, connect: () => {} };
+  const tab = { id, toolId, toolName, toolColor, toolIcon, cwd, dirShort, term, fitAddon, socket: null, pty: null, manualClose: false, lastPong: 0, reconnectTimer: null, keepAlive: null, connect: () => {} };
   tabs.push(tab);
   activeTab = tab;
 
@@ -626,7 +626,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   connect();
 
   // Keepalive: ping/pong + forced close when the socket goes stale (>45s).
-  setInterval(() => {
+  tab.keepAlive = setInterval(() => {
     if (tab.manualClose || !tab.socket) return;
     if (tab.socket.readyState === WebSocket.OPEN) {
       if (Date.now() - tab.lastPong > 45000) tab.socket.close();
@@ -676,6 +676,7 @@ function closeTab(id) {
   if (idx === -1) return;
   const t = tabs[idx];
   t.manualClose = true;
+  if (t.keepAlive) clearInterval(t.keepAlive);
   t.socket?.close();
   t.term?.dispose();
   document.getElementById('panel-' + id)?.remove();
@@ -953,7 +954,7 @@ function toggleFmMenu(e) {
   menu.innerHTML = `<div class="apply-menu-title">Открыть в</div>` +
     tools.filter(t => t.installed).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','${t.id}')">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}') title="Закрыть">✕</span>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}')" title="Закрыть">✕</span>
       <span>${t.name}</span>
     </div>
   `).join('') + `<div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','_terminal')">
@@ -1114,13 +1115,18 @@ async function fmRename() {
 }
 
 function fmDownloadMulti() {
-  if (!fmSelected) return;
-  window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
+  const sel = [...document.querySelectorAll('#fm-list .fm-item.fm-sel')];
+  if (!sel.length && !fmSelected) return;
+  const items = sel.length ? sel : (fmSelected ? [{ dataset: { path: fmSelected } }] : []);
+  items.forEach(el => {
+    const p = el.dataset.path;
+    if (p) window.open('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p));
+  });
 }
 
 function fmDownloadSingle() {
   if (!fmSelected) return;
-  window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
+  window.open('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(fmSelected));
 }
 
 function fmArchive() {
@@ -1263,7 +1269,7 @@ async function loadModelsFull() {
 }
 
 function renderModelsFullProviders(providers) {
-  const el = document.getElementById('models-full-tools');
+  const el = document.getElementById('account-overview');
   el.innerHTML = providers.map(p => `
     <div class="tool-config-card" style="cursor:pointer" onclick="filterByProvider('${p.id}')">
       <div class="tc-name">${p.icon} ${p.name}</div>

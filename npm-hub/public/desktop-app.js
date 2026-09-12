@@ -611,7 +611,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   await new Promise(r => setTimeout(r, 30));
   fitAddon.fit();
 
-  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: null, term, fitAddon, el: panel, manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null, connect: () => {} };
+  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: null, term, fitAddon, el: panel, manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null, keepAlive: null, connect: () => {} };
   tabs.push(td);
   td.scroll = attachTermScroll(id, panel);
   setupTermTouch(document.getElementById('term-' + id), term);
@@ -644,7 +644,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   connect();
 
   // Keepalive: ping/pong + forced close when the socket goes stale (>45s).
-  setInterval(() => {
+  td.keepAlive = setInterval(() => {
     if (td.manualClose || !td.ws) return;
     if (td.ws.readyState === WebSocket.OPEN) {
       if (Date.now() - td.lastPong > 45000) td.ws.close();
@@ -689,6 +689,7 @@ function closeTab(id) {
   if (idx === -1) return;
   const tab = tabs[idx];
   tab.manualClose = true;
+  if (tab.keepAlive) clearInterval(tab.keepAlive);
   tab.ws?.close(); tab.term?.dispose(); tab.el?.remove(); tab.tabEl?.remove();
   tabs.splice(idx, 1);
   if (activeTab?.id === id) { activeTab = tabs[Math.min(idx, tabs.length - 1)] || null; activeTab ? switchTab(activeTab.id) : showPage('dashboard'); }
@@ -917,13 +918,18 @@ function toggleFileSel(all) {
 }
 
 function fmDownloadMulti() {
-  if (!fmSelected) return;
-  window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
+  const sel = [...document.querySelectorAll('#fm-list .fm-item.fm-sel')];
+  if (!sel.length && !fmSelected) return;
+  const items = sel.length ? sel : (fmSelected ? [{ dataset: { path: fmSelected } }] : []);
+  items.forEach(el => {
+    const p = el.dataset.path;
+    if (p) window.open('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p));
+  });
 }
 
 function fmDownloadSingle() {
   if (!fmSelected) return;
-  window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}&single=1`);
+  window.open('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(fmSelected) + '&single=1');
 }
 
 function toggleFmMenu(e) {
