@@ -13,6 +13,7 @@ const { startTunnel } = require('./tunnel');
 
 const app = express();
 const HOME = os.homedir();
+const safeFilename = (s) => String(s).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
 const WORK_DIR = path.join(HOME, 'hub-work');
 try { fs.mkdirSync(WORK_DIR, { recursive: true }); } catch {}
 const PORT = process.env.PORT || 8090;
@@ -103,13 +104,15 @@ function saveState(s) { fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2))
 
 function isInstalled(cmd) {
   const isWin = process.platform === 'win32';
+  const safe = String(cmd).replace(/[;&|`$()]/g, '');
   try {
-    require('child_process').execSync(`${isWin ? 'where' : 'which'} ${cmd}`, { stdio: 'ignore', timeout: 3000 });
+    require('child_process').execSync(`${isWin ? 'where' : 'which'} ${safe}`, { stdio: 'ignore', timeout: 3000 });
     return true;
   } catch { return false; }
 }
 function getVersion(cmd) {
-  try { return require('child_process').execSync(`${cmd} --version`, { stdio: 'pipe', timeout: 5000 }).toString().trim().split('\n')[0]; }
+  const safe = String(cmd).replace(/[;&|`$()]/g, '');
+  try { return require('child_process').execSync(`${safe} --version`, { stdio: 'pipe', timeout: 5000 }).toString().trim().split('\n')[0]; }
   catch { return null; }
 }
 
@@ -323,7 +326,7 @@ app.get('/api/fs/download', async (req, res) => {
   try {
     const backend = storage.get(req.query.backend || 'local');
     const content = await backend.read(req.query.path);
-    const filename = path.basename(req.query.path);
+    const filename = safeFilename(path.basename(req.query.path));
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(content);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -454,7 +457,7 @@ app.get('/api/fs/archive', (req, res) => {
   const tryXz = (resolve) => {
     const ext = 'tar.xz';
     const contentType = 'application/x-xz';
-    const name = basename + '.' + ext;
+    const name = safeFilename(basename) + '.' + ext;
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
     res.setHeader('Content-Length', '0');          // streaming, unknown size
@@ -476,7 +479,7 @@ app.get('/api/fs/archive', (req, res) => {
   const tryGz = (resolve) => {
     const ext = 'tar.gz';
     const contentType = 'application/gzip';
-    const name = basename + '.' + ext;
+    const name = safeFilename(basename) + '.' + ext;
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
     const dir = isDir ? path.dirname(filePath) : path.dirname(filePath);

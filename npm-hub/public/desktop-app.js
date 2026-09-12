@@ -490,6 +490,10 @@ function showNewTermModal() {
 
 function closeModal(id) { document.getElementById(id).classList.remove('on'); }
 
+document.querySelectorAll('.modal-bg').forEach(bg => {
+  bg.addEventListener('click', (e) => { if (e.target === bg) bg.classList.remove('on'); });
+});
+
 // ===== TERMINAL SCROLLBAR (слайдер) =====
 function attachTermScroll(id, panel) {
   const termEl = document.getElementById('term-' + id);
