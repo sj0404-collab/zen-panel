@@ -826,7 +826,7 @@ async function initFM() {
   if (devR.success) {
     document.getElementById('devices-list').innerHTML = devR.devices.map(d => {
       const icon = d.type === 'phone' ? '📱' : d.type === 'tablet' ? '📟' : '💻';
-      return `<div class="fm-sidebar-item" onclick="fmBrowseAdbPath('${d.id}','/sdcard/')"><span style="font-size:16px">${icon}</span><div><div style="font-size:13px">${d.name}</div><div style="font-size:10px;color:var(--t3)">${d.id}</div></div></div>`;
+      return `<div class="fm-sidebar-item" onclick="fmBrowse('${d.id}')"><span style="font-size:16px">${icon}</span><div><div style="font-size:13px">${d.name}</div><div style="font-size:10px;color:var(--t3)">${d.id}</div></div></div>`;
     }).join('') || '<div style="padding:8px;font-size:12px;color:var(--t3)">Нет устройств</div>';
   }
 
@@ -1053,7 +1053,12 @@ async function fmRename() {
   fmRefresh();
 }
 
-function fmDownload() {
+function fmDownloadMulti() {
+  if (!fmSelected) return;
+  window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
+}
+
+function fmDownloadSingle() {
   if (!fmSelected) return;
   window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
 }
