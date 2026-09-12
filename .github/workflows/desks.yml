@@ -1,0 +1,228 @@
+name: Desks
+
+# Two desks, side by side, with no passwords anywhere.
+#
+# WHAT THIS REPLACES
+#   The old "Remote session" workflow asked you to pick one OS, then handed
+#   back a host, a port, a login and a password to type into an RDP client on a
+#   phone. The Windows half never worked: the server answered
+#   LOGON_FAILED_UPDATE_PASSWORD no matter which of four ways the account was
+#   created, and the log that would have explained it is not served while the
+#   job runs. Four sessions were spent on it.
+#
+#   So the password is gone - not hidden, not generated, gone - and with it the
+#   whole class of failure. The Linux VNC desk was removed with it: the only
+#   desk left is the runner's own console desktop, a GDI grab streamed as
+#   MJPEG in a plain web page, published on a cloudflared quick tunnel, which
+#   needs no account and no token.
+#
+# WHY THIS IS SAFE ENOUGH, STATED PLAINLY
+#   No password means anyone holding the address can drive the desk. The
+#   address is a random trycloudflare.com hostname, unguessable in practice,
+#   published to a branch of this repository - public if the repository is
+#   public. It stops working when the job ends, six hours at most. The runner
+#   holds a checkout of this repository and a GITHUB_TOKEN scoped to it, and
+#   nothing else of yours. If that trade is not acceptable, make the repository
+#   private; everything here keeps working.
+#
+# WHY THE WINDOWS DESK CAN EXIST AT ALL
+#   Measured on a real runner, not assumed. A windows-latest runner logs in as
+#   runneradmin on the console, session 2, with explorer running and a
+#   1024x768 display attached:
+#
+#     whoami: runnervm7vqe0\runneradmin
+#     process session id: 2
+#     >console  runneradmin  2  Active
+#     screen \\.\DISPLAY1 {X=0,Y=0,Width=1024,Height=768}
+#
+#   That is a real desktop, and the desk server runs there as a scheduled task
+#   in that session. As a service it would land in session 0 and serve a
+#   blank one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: "Name for this session"
+        type: string
+        default: "desks"
+      runner_windows:
+        description: "Runner for the Windows job (a label, or self-hosted - see pc-local/runner)"
+        type: string
+        default: "windows-latest"
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Windows desk ───────────────────────────────────────────────────
+  windows:
+    runs-on: ${{ inputs.runner_windows }}
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - name: Start the desk
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Measured on this exact image: only a GDI grab showed the real
+          # desktop, so the desk is built on that path - a GDI grab, streamed
+          # as MJPEG, with mouse and keyboard sent back through SendInput. A
+          # browser is the client, and there is nothing to authenticate.
+          python -m pip install --quiet --disable-pip-version-check pillow
+
+          $script = "$env:GITHUB_WORKSPACE\fork\tools\win_desk_server.py"
+          if (-not (Test-Path $script)) { throw "desk server missing at $script" }
+
+          # A scheduled task in the console session, for two reasons proven by
+          # probe runs: a process started with Start-Process dies when its step
+          # ends, and cmd /c start keeps the step waiting on a server that
+          # never returns. The task must run as the logged-in user - the
+          # desktop worth showing belongs to runneradmin in session 2, and a
+          # SYSTEM task would capture session 0.
+          $me = "$env:USERDOMAIN\$env:USERNAME"
+          $py = (Get-Command python).Source
+          schtasks /Create /TN "symbiosis-desk" /TR "`"$py`" `"$script`" 6080" `
+            /SC ONCE /ST 00:00 /RU $me /IT /F | Out-Null
+          schtasks /Run /TN "symbiosis-desk" | Out-Null
+
+          $ok = $false
+          foreach ($try in 1..30) {
+            Start-Sleep -Seconds 2
+            if ((curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:6080/health") -eq "200") {
+              $ok = $true; break
+            }
+          }
+          if (-not $ok) { throw "the desk server did not come up on 6080" }
+          Write-Host "desk server is up"
+
+      - name: Confirm the picture is a real desktop, not a black rectangle
+        shell: pwsh
+        run: |
+          # A frame that decodes and has one distinct colour is a black screen
+          # dressed as a success, so the desk refuses to be published unless
+          # the picture is real.
+          curl.exe -s -o "$env:TEMP\frame.jpg" -m 30 "http://127.0.0.1:6080/shot"
+          $check = @(
+            'from PIL import Image',
+            'import sys',
+            'im = Image.open(sys.argv[1]).convert("RGB")',
+            'c = im.getcolors(maxcolors=500000)',
+            'n = len(c) if c else 500000',
+            'print("frame", im.size, "distinct colours:", n)',
+            'sys.exit(0 if n > 2 else 1)'
+          ) -join "`n"
+          $check | Out-File -FilePath "$env:TEMP\check.py" -Encoding utf8
+          python "$env:TEMP\check.py" "$env:TEMP\frame.jpg"
+          if ($LASTEXITCODE -ne 0) { throw "the desk is showing a black screen" }
+          Write-Host "the picture is a real desktop"
+
+      - name: Open the tunnel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cf = "$env:TEMP\cloudflared.exe"
+          curl.exe -sL --retry 3 -o $cf `
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          if (-not (Test-Path $cf)) { throw "could not download cloudflared" }
+
+          # A quick tunnel: no account, no token, and as many as we like - which
+          # is why both desks can be up at the same time. ngrok's free plan
+          # allows one, so it could never do this.
+          # Detached, so the step can finish while the tunnel keeps running.
+          $log = "$env:TEMP\cf.log"
+          cmd /c start "" /b "$cf" tunnel --url http://localhost:6080 --no-autoupdate --loglevel info `
+            "1>$log" "2>$env:TEMP\cf.err"
+
+          $url = $null
+          foreach ($try in 1..40) {
+            Start-Sleep -Seconds 2
+            $text = (Get-Content $log,"$env:TEMP\cf.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+            if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+          }
+          if (-not $url) {
+            Get-Content $log,"$env:TEMP\cf.err" -Tail 30 -ErrorAction SilentlyContinue | Write-Host
+            throw "cloudflared did not report an address"
+          }
+
+          # The hostname exists before the edge will serve it; a client that
+          # opens it too early sees 502 and blames the desk.
+          foreach ($try in 1..20) {
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing -Uri "$url/health" -TimeoutSec 15
+              if ($r.StatusCode -eq 200) { break }
+            } catch { Start-Sleep -Seconds 3 }
+          }
+          "DESK_URL=$url" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "desk: $url"
+
+      - name: Publish the address
+        shell: pwsh
+        run: |
+          $open = "$env:DESK_URL/"
+          @(
+            "## Windows desk",
+            "",
+            "**[Open]($open)** - no password, it connects by itself.",
+            "",
+            "This is the runner's own console desktop, session 2."
+          ) -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            "slot=windows" "kind=Стол Windows" "os=windows" `
+            "url=$env:DESK_URL" "deskUrl=$open" `
+            "auth=без пароля" "label=${{ inputs.label }}"
+
+      - name: Hold the desk open
+        shell: pwsh
+        run: |
+          Write-Host "The desk stays up until you cancel this run, or for six hours."
+          $cf = "$env:TEMP\cloudflared.exe"
+          for ($i = 0; $i -lt 1400; $i++) {
+            Start-Sleep -Seconds 15
+
+            # Watch what a visitor would see, not a process id. A dead desk
+            # server behind a live tunnel answers 502, which no PID check
+            # would ever notice - and that is the failure that actually
+            # happened.
+            $local = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:6080/health")
+            if ($local -ne "200") {
+              Write-Host "::warning::the desk server stopped answering ($local); restarting it."
+              schtasks /Run /TN "symbiosis-desk" | Out-Null
+              Start-Sleep -Seconds 8
+            }
+
+            if (Get-Process cloudflared -ErrorAction SilentlyContinue) { continue }
+
+            Write-Host "::warning::the tunnel exited; restarting it."
+            $log = "$env:TEMP\cf2.log"
+            cmd /c start "" /b "$cf" tunnel --url http://localhost:6080 --no-autoupdate --loglevel info `
+              "1>$log" "2>$env:TEMP\cf2.err"
+            $url = $null
+            foreach ($try in 1..30) {
+              Start-Sleep -Seconds 2
+              $text = (Get-Content $log,"$env:TEMP\cf2.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+              if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+            }
+            if ($url) {
+              Write-Host "back up on $url"
+              $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+              bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+                "slot=windows" "kind=Стол Windows" "os=windows" `
+                "url=$url" "deskUrl=$url/" `
+                "auth=без пароля" "label=${{ inputs.label }}"
+            }
+          }
+
+      - name: Clear the published desk
+        if: always()
+        shell: pwsh
+        run: |
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            "slot=windows" "state=ended"

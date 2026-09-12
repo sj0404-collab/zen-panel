@@ -1,0 +1,202 @@
+name: Build & Test (Windows)
+
+# Сборка APK + запуск тестов на Windows-раннере.
+#
+# Использование:
+#   gh workflow run build-win.yml --field job=all
+#   gh workflow run build-win.yml --field job=apk
+#   gh workflow run build-win.yml --field job=tests
+#
+# Self-hosted (32 ГБ):
+#   gh workflow run build-win.yml --field runner_windows=WIN-LABEL --field job=all
+#
+# Workflow.poll: 결과는 GitHub Actions UI, APK-файл → artifacts / GitHub Release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Что собирать: apk / tests / all"
+        type: choice
+        options: [all, apk, tests]
+        default: all
+      runner_windows:
+        description: "Windows-раннер (метка: windows-latest, self-hosted или имя твоего 32GB-ПК)"
+        type: string
+        default: "windows-latest"
+      label:
+        description: "Подпись в списке запусков"
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-win:
+    runs-on: ${{ inputs.runner_windows }}
+    timeout-minutes: 300
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+          fetch-depth: 0
+
+      - name: Mask secrets
+        shell: bash
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYPASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEYALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          [ -n "$KEYSTORE" ] && echo "::add-mask::$KEYSTORE" || true
+          [ -n "$KEYPASS" ] && echo "::add-mask::$KEYPASS" || true
+          [ -n "$KEYALIAS" ] && echo "::add-mask::$KEYALIAS" || true
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      # ── Версия ──────────────────────────────────────────────────────
+      - name: Version from git
+        shell: bash
+        working-directory: fork
+        run: |
+          CODE=$(git rev-list --count HEAD)
+          SHA=$(git rev-parse --short HEAD)
+          echo "VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "VERSION_SHA=$SHA"   >> "$GITHUB_ENV"
+          echo "VERSION_NAME=1.$CODE.$SHA" >> "$GITHUB_ENV"
+
+      # ── Java + Gradle (для APK) ────────────────────────────────────
+      - uses: actions/setup-java@v4
+        if: inputs.job == 'apk' || inputs.job == 'all'
+        with: { distribution: temurin, java-version: "17" }
+
+      - name: Install Gradle 8.9
+        if: inputs.job == 'apk' || inputs.job == 'all'
+        shell: bash
+        run: |
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp/gradle
+          GRADLE=$(cd /tmp/gradle/gradle-8.9/bin && pwd)
+          echo "$GRADLE" >> "$GITHUB_PATH"
+          echo "GRADLE_BIN=$GRADLE" >> "$GITHUB_ENV"
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: inputs.job == 'apk' || inputs.job == 'all'
+
+      - name: Optional release keystore from secrets
+        if: inputs.job == 'apk' || inputs.job == 'all'
+        shell: bash
+        working-directory: fork
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            mkdir -p app/keystore
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/keystore/upload.jks
+          fi
+
+      # ── APK: hub + panel ───────────────────────────────────────────
+      - name: Build Hub APK
+        if: inputs.job == 'apk' || inputs.job == 'all'
+        shell: bash
+        working-directory: fork
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD:      ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          "${GRADLE_BIN:-gradle}" wrapper --gradle-version 8.9 --no-daemon
+          ./gradlew :hub:assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-hub.log
+
+      - name: Build Panel APK
+        if: inputs.job == 'apk' || inputs.job == 'all'
+        shell: bash
+        working-directory: fork
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD:      ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          "${GRADLE_BIN:-gradle}" wrapper --gradle-version 8.9 --no-daemon
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-app.log || true
+
+      - name: Package APKs
+        if: inputs.job == 'apk' || inputs.job == 'all'
+        shell: bash
+        working-directory: fork
+        run: |
+          mkdir -p /tmp/apk-out
+          # Hub APK
+          APK_HUB=$(find hub/build/outputs/apk/release -name '*.apk' 2>/dev/null | head -1)
+          if [ -n "$APK_HUB" ]; then
+            cp "$APK_HUB" "/tmp/apk-out/npm-hub-${VERSION_NAME}.apk"
+          fi
+          # Panel APK
+          APK_PANEL=$(find app/build/outputs/apk/release -name '*.apk' 2>/dev/null | head -1)
+          if [ -n "$APK_PANEL" ]; then
+            cp "$APK_PANEL" "/tmp/apk-out/zen-panel-${VERSION_NAME}.apk"
+          fi
+          ls -lh /tmp/apk-out/
+
+      # ── Тесты ─────────────────────────────────────────────────────
+      - name: Run jsdom tests
+        if: inputs.job == 'tests' || inputs.job == 'all'
+        shell: bash
+        working-directory: fork/tests
+        run: |
+          npm ci 2>/dev/null
+          npm test 2>&1 | tee /tmp/test-results.log || true
+
+      - name: Syntax check (Node)
+        if: inputs.job == 'tests' || inputs.job == 'all'
+        shell: bash
+        working-directory: fork
+        run: |
+          node --check npm-hub/src/server.js
+          node --check npm-hub/public/desktop-app.js
+          node --check npm-hub/public/mobile-app.js
+          node --check agent/zen-agent.js
+
+      # ── Артефакты ─────────────────────────────────────────────────
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-win-apk
+          path: /tmp/apk-out/
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-win-tests
+          path: /tmp/test-results.log
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-win-gradle-log
+          path: /tmp/gradle-hub.log
+          if-no-files-found: warn
+
+      # ── GitHub Release (APK) ───────────────────────────────────────
+      - name: Publish to GitHub Release
+        if: (inputs.job == 'apk' || inputs.job == 'all') && success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-win-${{ github.run_number }}
+          name: "Build ${{ github.run_number }} — ${{ inputs.label || 'Windows' }}"
+          target_commitish: ${{ github.sha }}
+          make_latest: false
+          files: /tmp/apk-out/*
+          body: |
+            Автосборка на Windows (runner: `${{ inputs.runner_windows }}`).
+
+            | | |
+            |---|---|
+            | версия | `${{ env.VERSION_NAME }}` |
+            | job | ${{ inputs.job }} |
+            | runner | ${{ inputs.runner_windows }} |

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d12">
+<title>NPM Hub — запуск</title>
+<style>
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:#0d0d12; color:#e8e8f0;
+         font:15px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif; padding:20px 16px 40px; }
+  .wrap { max-width:480px; margin:0 auto; }
+  .logo { font-size:26px; font-weight:800; text-align:center;
+          background:linear-gradient(135deg,#58a6ff,#bc8cff);
+          -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .sub { font-size:13px; color:#8a8a9e; text-align:center; margin:2px 0 18px; }
+  label { display:block; font-size:13px; color:#8a8a9e; margin-bottom:12px; }
+  input { display:block; width:100%; margin-top:6px; padding:13px 14px; font:inherit;
+          color:#e8e8f0; background:#16161f; border:1px solid #262633; border-radius:10px; }
+  button { display:block; width:100%; font:inherit; font-weight:700; border:0; border-radius:10px;
+           padding:14px; margin:8px 0; cursor:pointer; background:#58a6ff; color:#0d0d12; min-height:50px; }
+  button.ghost { background:transparent; color:#58a6ff; border:1px solid #262633; }
+  button:disabled { opacity:.5; }
+  .log { margin-top:14px; padding:12px 14px; background:#16161f; border:1px solid #262633;
+         border-radius:10px; font-size:13px; min-height:60px; }
+  .log:empty::before { content:"Здесь будет ход запуска…"; color:#55555f; }
+  .err { color:#ff7b72; }
+  .ok { color:#3fb950; }
+  .note { font-size:12px; color:#55555f; margin-top:12px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">◆ NPM Hub</div>
+  <div class="sub">Запуск хаба на GitHub Actions</div>
+  <label>GitHub-токен (repo + workflow)
+    <input id="token" type="password" placeholder="ghp_…" autocomplete="off"
+           autocorrect="off" autocapitalize="none" spellcheck="false">
+  </label>
+  <label>Раннер (пусто = GitHub, иначе метка своего ПК)
+    <input id="runner" type="text" placeholder="" autocomplete="off"
+           autocorrect="off" autocapitalize="none" spellcheck="false">
+  </label>
+  <button id="launch">Запустить хаб</button>
+  <button id="reopen" class="ghost" style="display:none">Открыть последний</button>
+  <div id="log" class="log"></div>
+  <div class="note">Токен хранится только на этом устройстве.</div>
+</div>
+<script>
+const REPO = 'sj0404-collab/zen-panel';
+const GH = 'https://api.github.com';
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+function log(m, cls) {
+  const el = $('log');
+  el.insertAdjacentHTML('beforeend', `<div class="${cls || ''}">${esc(m)}</div>`);
+  el.scrollTop = el.scrollHeight;
+}
+function genZt() {
+  try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, ''); } catch (e) {}
+  const h = '0123456789abcdef';
+  let s = '';
+  for (let i = 0; i < 32; i++) s += h[Math.floor(Math.random() * 16)];
+  return s;
+}
+async function api(path, token, opts) {
+  const o = opts || {};
+  const r = await fetch(GH + path, {
+    method: o.method || 'GET',
+    headers: { Accept: 'application/vnd.github+json', Authorization: 'token ' + token },
+    body: o.body
+  });
+  if (r.status === 401) throw new Error('401: токен недействителен. Вставьте новый.');
+  if (r.status === 403) throw new Error('403: нет прав (нужны repo + workflow) или лимит.');
+  if (r.status === 429) throw new Error('429: слишком много запросов — подождите минуту.');
+  if (r.status === 404) return null;
+  if (r.status === 204) return true;
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+async function dispatchHub(token, zt, runner) {
+  const inputs = { os: 'linux', label: 'hub-apk', token: zt, gh_token: token };
+  if (runner) inputs.runner_linux = runner;
+  await api(`/repos/${REPO}/actions/workflows/hub.yml/dispatches`, token, {
+    method: 'POST',
+    body: JSON.stringify({ ref: 'main', inputs })
+  });
+}
+function parseSessionFile(f) {
+  const raw = decodeURIComponent(escape(atob((f.content || '').replace(/\n/g, ''))));
+  return JSON.parse(raw);
+}
+async function readHubSession(token) {
+  const f = await api(`/repos/${REPO}/contents/session-hub-linux.json?ref=session-state&t=${Date.now()}`, token);
+  if (!f) return null;
+  return parseSessionFile(f);
+}
+async function waitForHub(token, sinceMs, sleepMs) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  for (let i = 0; i < 150; i++) {
+    const s = await readHubSession(token);
+    const born = s && s.startedAt ? new Date(s.startedAt).getTime() : 0;
+    if (s && s.state === 'live' && born > sinceMs - 180000 && (s.hubUrl || s.url)) return s;
+    await sleep(sleepMs || 5000);
+  }
+  throw new Error('Таймаут: хаб не сообщил адрес за 12 минут.');
+}
+async function preflightHub(base, zt) {
+  const r = await fetch(base + '/api/tools?zt=' + encodeURIComponent(zt));
+  const j = await r.json().catch(() => null);
+  if (!j || j.success !== true) throw new Error('Хаб не принял токен (' +
+    ((j && j.error) || ('HTTP ' + r.status)) + '). Перезапустите хаб.');
+  return true;
+}
+function buildOpenUrl(s, zt) {
+  const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
+  return base + '/m?zt=' + encodeURIComponent(zt);
+}
+function saveLast(url) {
+  try { localStorage.setItem('hub_last', JSON.stringify({ url, at: Date.now() })); } catch (e) {}
+}
+function readLast() {
+  try { return JSON.parse(localStorage.getItem('hub_last') || 'null'); } catch (e) { return null; }
+}
+// ── UI ──
+try { $('token').value = localStorage.getItem('hub_gh_token') || ''; } catch (e) {}
+try { $('runner').value = localStorage.getItem('hub_runner') || ''; } catch (e) {}
+(function showReopen() {
+  const last = readLast();
+  if (!last || !last.url) return;
+  const age = Math.max(0, Math.round((Date.now() - (last.at || 0)) / 60000));
+  const b = $('reopen');
+  b.style.display = '';
+  b.textContent = `Открыть последний (${age} мин назад)`;
+  b.onclick = () => { location.href = last.url; };
+})();
+$('launch').onclick = async () => {
+  const token = ($('token').value || '').trim();
+  if (!token) { log('Вставьте GitHub-токен.', 'err'); return; }
+  try { localStorage.setItem('hub_gh_token', token); } catch (e) {}
+  const runner = ($('runner').value || '').trim();
+  try { localStorage.setItem('hub_runner', runner); } catch (e) {}
+  const btn = $('launch');
+  btn.disabled = true;
+  try {
+    const zt = genZt();
+    const since = Date.now();
+    log('Отправляю запуск…');
+    await dispatchHub(token, zt, runner);
+    log('Ран принят. Жду адрес (обычно 1–3 мин)…', 'ok');
+    const s = await waitForHub(token, since);
+    const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
+    log('Проверяю доступ…');
+    await preflightHub(base, zt);
+    const url = buildOpenUrl(s, zt);
+    saveLast(url);
+    log('Хаб жив. Открываю…', 'ok');
+    location.href = url;
+  } catch (e) {
+    log('Не вышло: ' + (e && e.message || e), 'err');
+  } finally {
+    btn.disabled = false;
+  }
+};
+</script>
+</body>
+</html>

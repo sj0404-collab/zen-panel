@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0a0e14">
+  <title>NPM Hub</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    :root{--bg0:#0a0e14;--bg1:#0d1117;--bg2:#161b22;--bg3:#1c2128;--bg4:#21262d;--bdr:#30363d;--t1:#e6edf3;--t2:#8b949e;--t3:#484f58;--acc:#58a6ff;--ok:#3fb950;--err:#f85149;--warn:#d29922;--pur:#bc8cff}
+    html{overscroll-behavior:none}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg0);color:var(--t1);height:100dvh;overflow:hidden;display:flex;flex-direction:column;overscroll-behavior:none;touch-action:manipulation}
+
+    /* ===== TOPBAR ===== */
+    .topbar{height:48px;background:var(--bg2);display:flex;align-items:center;padding:0 12px;gap:8px;border-bottom:1px solid var(--bdr);flex-shrink:0;padding-top:max(0px,env(safe-area-inset-top))}
+    .logo{font-size:16px;font-weight:800;background:linear-gradient(135deg,var(--acc),var(--pur));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .topbar-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+    .access-badge{font-size:11px;padding:4px 10px;border-radius:10px;font-weight:600}
+    .access-local{color:var(--ok);background:rgba(63,185,80,.12)}
+    .access-remote{color:var(--warn);background:rgba(210,153,34,.12)}
+    .tunnel-badge{color:#bc8cff;background:rgba(188,140,255,.12);font-size:11px;padding:4px 10px;border-radius:10px;font-weight:600;cursor:pointer;text-decoration:none}
+    .tunnel-url{font-size:10px;color:var(--pur);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+    .btn{padding:8px 14px;border-radius:8px;border:1px solid var(--bdr);background:var(--bg4);color:var(--t1);font-size:14px;cursor:pointer;transition:all .12s;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+    .btn:active{background:var(--bdr)}.btn-p{background:var(--acc);color:#fff;border-color:var(--acc)}.btn-p:active{opacity:.85}
+    .btn-ok{background:var(--ok);color:#fff;border-color:var(--ok)}.btn-er{background:var(--err);color:#fff;border-color:var(--err)}
+    .btn-sm{padding:6px 10px;font-size:12px}
+    .btn-icon{width:40px;height:40px;padding:0;display:flex;align-items:center;justify-content:center;font-size:18px;border-radius:10px}
+
+    /* ===== SIDEBAR DRAWER ===== */
+    .drawer-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:90}
+    .drawer-overlay.on{display:block}
+    .drawer{position:fixed;top:0;bottom:0;left:-280px;width:280px;background:var(--bg1);border-right:1px solid var(--bdr);z-index:95;display:flex;flex-direction:column;transition:left .25s ease;padding-top:env(safe-area-inset-top)}
+    .drawer.on{left:0}
+    .drawer-header{display:flex;align-items:center;justify-content:space-between;padding:14px 12px;border-bottom:1px solid var(--bdr)}
+    .drawer-header .title{font-size:14px;font-weight:700}
+    .drawer-close{width:32px;height:32px;border-radius:8px;border:1px solid var(--bdr);background:var(--bg3);color:var(--t2);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+    .drawer-body{flex:1;overflow-y:auto;padding:8px;-webkit-overflow-scrolling:touch}
+    .sb-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin:12px 0 6px;padding:0 8px}
+    .sb-i{display:flex;align-items:center;gap:10px;padding:10px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--t2);transition:all .1s;border:1px solid transparent;-webkit-tap-highlight-color:transparent}
+    .sb-i:active{background:var(--bg3);color:var(--t1)}.sb-i.on{background:var(--bg3);color:var(--acc);border-color:var(--bdr)}
+    .sb-ico{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;flex-shrink:0}
+    .drawer-actions{padding:10px;border-top:1px solid var(--bdr);display:flex;gap:8px;padding-bottom:max(10px,env(safe-area-inset-bottom))}
+    .drawer-actions .btn{flex:1;text-align:center;padding:10px;font-size:13px}
+
+    /* ===== MAIN CONTENT ===== */
+    .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+    .content{flex:1;display:flex;flex-direction:column;overflow:hidden;-webkit-overflow-scrolling:touch}
+    .page{display:none;flex:1;overflow-y:auto;padding:14px;-webkit-overflow-scrolling:touch}.page.on{display:block}
+
+    /* ===== BOTTOM NAV ===== */
+    .bottom-nav{height:60px;background:var(--bg2);border-top:1px solid var(--bdr);display:flex;flex-shrink:0;padding-bottom:env(safe-area-inset-bottom)}
+    .nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;background:none;border:none;color:var(--t3);font-size:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all .1s}
+    .nav-btn:active{background:var(--bg4)}
+    .nav-btn.on{color:var(--acc)}
+    .nav-ico{font-size:22px;line-height:1}
+    .nav-label{font-size:10px;font-weight:500}
+
+    /* ===== DASHBOARD ===== */
+    .ph h1{font-size:22px;font-weight:700;margin-bottom:4px}.ph p{font-size:13px;color:var(--t2);margin-bottom:16px}
+    .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px}
+    .st{background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:14px;text-align:center}
+    .st-v{font-size:28px;font-weight:800}.st-l{font-size:11px;color:var(--t2);margin-top:2px}
+    .grid{display:grid;grid-template-columns:1fr;gap:10px}
+    /* ===== RUNNER CARD ===== */
+    #runner-card{margin-top:12px}
+    .runner-box{background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:14px}
+    .runner-h{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;margin-bottom:8px}
+    .runner-dot{width:8px;height:8px;border-radius:50%;background:var(--t3)}
+    .runner-dot.on{background:var(--ok);box-shadow:0 0 8px rgba(63,185,80,.6)}
+    .runner-line{font-size:11.5px;color:var(--t2);margin-bottom:10px;word-break:break-all}
+    .runner-line b{color:var(--t1)}
+    .runner-btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+    .runner-list{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+    .runner-item{display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;padding:8px}
+    .runner-item select{flex:0 0 118px;padding:6px;font-size:11.5px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);outline:none}
+    .runner-name{flex:1;min-width:0;font-size:12px;word-break:break-word}
+    .runner-meta{display:block;font-size:10px;color:var(--t3);margin-top:2px}
+    .runner-res{font-size:12px;color:var(--ok);background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.3);border-radius:8px;padding:8px;margin-bottom:8px}
+    .runner-res a{color:var(--acc)}
+    .runner-err{font-size:12px;color:var(--err);background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.3);border-radius:8px;padding:8px;margin-bottom:8px}
+    .runner-busy{font-size:12px;color:var(--warn);margin-bottom:8px}
+    .card{background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:16px}
+    .card-h{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+    .card-ico{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800}
+    .card-n{font-size:15px;font-weight:600}.card-v{font-size:10px;color:var(--t3);font-family:monospace}
+    .tag{font-size:10px;padding:3px 8px;border-radius:8px;display:inline-block;margin-right:4px}
+    .tag-on{color:var(--ok);background:rgba(63,185,80,.12)}.tag-off{color:var(--err);background:rgba(248,81,73,.12)}
+    .mini-badge{font-size:8px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid;margin-left:4px;vertical-align:2px}
+    .card-badges{height:16px;display:flex;gap:4px;overflow:hidden}
+    .test-res{font-size:10px;color:var(--t3);min-height:14px;padding:5px 0 0;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .card-foot{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid var(--bdr)}
+    .card-dir{flex:1;font-size:14px;color:var(--t2);font-family:monospace;padding:8px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;outline:none;color:var(--t1);width:100%}
+    .card-dir:focus{border-color:var(--acc)}
+    .apply-menu{display:none;position:fixed;bottom:70px;left:10px;right:10px;background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;min-width:200px;z-index:50;box-shadow:0 -4px 24px rgba(0,0,0,.5);max-height:60vh;overflow-y:auto}
+    .apply-menu.on{display:block}
+    .apply-menu-title{padding:12px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--bdr);color:var(--t2)}
+    .apply-item{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;font-size:14px;color:var(--t2);border-bottom:1px solid var(--bdr);-webkit-tap-highlight-color:transparent}
+    .apply-item:last-child{border-bottom:none}
+    .apply-item:active{background:var(--bg3);color:var(--t1)}
+
+    /* ===== TERMINAL ===== */
+    .term-page{display:none;flex:1;flex-direction:column;overflow:hidden}.term-page.on{display:flex}
+    .term-topbar{display:flex;align-items:center;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0}
+    .tabs-row{display:flex;overflow-x:auto;flex:1;-webkit-overflow-scrolling:touch}
+    .tab{display:flex;align-items:center;gap:6px;padding:10px 14px;font-size:13px;color:var(--t2);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;flex-shrink:0;-webkit-tap-highlight-color:transparent}
+    .tab:active{background:var(--bg3)}.tab.on{color:var(--acc);border-bottom-color:var(--acc);background:var(--bg2)}
+    .tab-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+    .tab-x{margin-left:4px;opacity:.4;font-size:15px}.tab-x:active{opacity:1;color:var(--err)}
+    .tab-add{padding:10px 12px;color:var(--t3);cursor:pointer;font-size:18px;flex-shrink:0}.tab-add:active{color:var(--acc)}
+    .term-controls{display:flex;align-items:center;gap:6px;padding:0 10px;border-left:1px solid var(--bdr);flex-shrink:0}
+    .tc-btn{width:36px;height:36px;border-radius:8px;border:1px solid var(--bdr);background:var(--bg3);color:var(--t2);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent}
+    .tc-btn:active{background:var(--bdr);color:var(--t1)}.tc-btn,.arr-btn{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+    .tc-btn:focus{outline:none;-webkit-tap-highlight-color:transparent}
+    .zoom-label{font-size:12px;color:var(--t3);min-width:44px;text-align:center;font-family:monospace}
+    .term-container{flex:1;display:flex;overflow:hidden;background:#000;flex-direction:column;flex-wrap:nowrap;position:relative}
+    .term-arrows{position:absolute;bottom:8px;right:8px;z-index:10;display:flex;flex-direction:column;align-items:center;gap:4px;opacity:.7;transition:opacity .2s}
+    .term-arrows:active{opacity:1}
+    .arr-row{display:flex;gap:4px}
+    .arr-btn{width:42px;height:42px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#e6edf3;font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+    .arr-btn:active{background:rgba(255,255,255,.25)}
+    .arr-center{font-size:10px;width:52px}
+    .arr-extra{display:flex;gap:4px;margin-top:2px}
+    .arr-wide{width:auto;padding:0 14px;font-size:11px}
+    .term-panel{display:none;flex:1;width:100%;flex-direction:column;overflow:hidden;border:1px solid var(--bdr);min-height:200px}
+    .term-panel.on{display:flex}
+    .term-header{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0}
+    .term-header-title{font-size:11px;color:var(--t2);display:flex;align-items:center;gap:6px}
+    .term-info{font-size:10px;color:var(--t3);font-family:monospace}
+    .term{flex:1;background:#000;padding:2px;overflow:hidden}
+    .term .xterm{height:100%}
+    .term .xterm-viewport{overflow-y:auto!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch!important}.term .xterm-viewport{touch-action:pan-x pan-y!important}
+    .term .xterm-viewport::-webkit-scrollbar{width:6px}
+    .term .xterm-viewport::-webkit-scrollbar-track{background:transparent}
+    .term .xterm-viewport::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:3px}
+    .term-wrap{flex:1;display:flex;flex-direction:row;overflow:hidden;min-width:0}
+    .term-wrap .term{flex:1;min-width:0}
+    .term-scroll{width:14px;flex-shrink:0;position:relative;background:rgba(255,255,255,.05);border-radius:7px;margin:2px 4px 2px 2px;touch-action:none;cursor:pointer}
+    .term-scroll-thumb{position:absolute;left:2px;right:2px;top:0;display:none;background:var(--t3);border-radius:5px;touch-action:none}
+    .term-scroll-thumb:active{background:var(--acc)}
+
+    /* ===== FILE MANAGER ===== */
+    .fm-header{display:flex;gap:6px;padding:8px 0;margin-bottom:8px;flex-shrink:0;flex-wrap:wrap}
+    .fm-header .btn{padding:8px 12px;font-size:13px}
+    .fm-path-row{display:flex;gap:6px;margin-bottom:8px;flex-shrink:0}
+    .fm-path-row input{flex:1;padding:8px 12px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;outline:none}
+    .fm-path-row input:focus{border-color:var(--acc)}
+    .fm-sidebar{max-height:140px;overflow-y:auto;background:var(--bg1);border:1px solid var(--bdr);border-radius:10px;margin-bottom:10px}
+    .fm-sidebar-title{padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--t3);border-bottom:1px solid var(--bdr)}
+    .fm-sidebar-item{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:13px;color:var(--t2);cursor:pointer;border-bottom:1px solid var(--bdr);-webkit-tap-highlight-color:transparent}
+    .fm-sidebar-item:active{background:var(--bg3)}
+    .fm-list{flex:1;overflow-y:auto;border:1px solid var(--bdr);border-radius:10px;background:var(--bg0);-webkit-overflow-scrolling:touch}
+    .fm-item{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--bdr);-webkit-tap-highlight-color:transparent}
+    .fm-item:active{background:var(--bg3)}.fm-item.fm-sel{background:rgba(88,166,255,.1)}
+    .fm-ico{font-size:18px;flex-shrink:0;width:24px;text-align:center}
+    .fm-name{flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .fm-size{font-size:11px;color:var(--t3);flex-shrink:0;min-width:60px;text-align:right}
+    .fm-info{padding:6px 0;font-size:11px;color:var(--t3)}
+
+    /* ===== MODELS FULL ===== */
+    .models-full-actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+    .models-full-actions .btn{font-size:13px;padding:8px 12px}
+    #models-full-info{font-size:12px;color:var(--t3);display:flex;align-items:center}
+    .tool-config-card{background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:14px;margin-bottom:10px}
+    .tool-config-card .tc-name{font-size:14px;font-weight:600;margin-bottom:6px}
+    .tool-config-card .tc-key{font-size:10px;color:var(--t3);font-family:monospace;word-break:break-all;margin-top:4px}
+    .model-card{background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:14px;margin-bottom:10px}
+    .model-card:active{border-color:var(--acc)}
+    .model-card.selected{border-color:var(--ok);background:rgba(63,185,80,.05)}
+    .model-card .model-name{font-size:14px;font-weight:600;margin-bottom:4px}
+    .model-card .model-id{font-size:10px;color:var(--t3);font-family:monospace;word-break:break-all}
+
+    /* ===== MODAL ===== */
+    .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:flex-end;justify-content:center}
+    .modal-bg.on{display:flex}
+    .modal{background:var(--bg2);border:1px solid var(--bdr);border-radius:16px 16px 0 0;padding:20px;width:100%;max-height:85dvh;display:flex;flex-direction:column}
+    .modal h2{font-size:18px;font-weight:600;margin-bottom:14px}
+    .modal-bar{display:flex;gap:8px;margin-bottom:12px}
+    .modal-bar input{flex:1;padding:10px 12px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;outline:none}
+    .modal-bar input:focus{border-color:var(--acc)}
+    .modal-drives{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+    .drive-btn{padding:8px 12px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--t2);font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+    .drive-btn:active{border-color:var(--acc);color:var(--t1)}
+    .git-pre{background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;padding:12px;overflow:auto;max-height:50vh;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;-webkit-overflow-scrolling:touch}
+    .git-file{display:flex;gap:8px;align-items:baseline;padding:4px 0;font-size:13px;font-family:monospace}
+    .git-code{color:var(--warn);width:20px;flex-shrink:0}
+    .modal-list{flex:1;overflow-y:auto;max-height:300px;border:1px solid var(--bdr);border-radius:8px;background:var(--bg0);-webkit-overflow-scrolling:touch}
+    .modal-actions{display:flex;gap:8px;margin-top:14px;justify-content:flex-end}
+    .modal-actions .btn{padding:10px 16px;font-size:14px}
+    .newterm-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+    .newterm-tool{display:flex;align-items:center;gap:10px;padding:12px;background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+    .newterm-tool:active{border-color:var(--acc)}.newterm-tool.off{opacity:.35;pointer-events:none}
+    .storage-type-btn{padding:8px 12px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--t2);font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+    .storage-type-btn:active{border-color:var(--acc);color:var(--t1)}.storage-type-btn.on{border-color:var(--acc);color:var(--acc);background:rgba(88,166,255,.1)}
+
+    /* ===== MISC ===== */
+    ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:var(--t3)}
+    input,select,textarea{font-size:16px!important}
+    .model-menu{position:fixed;bottom:70px;left:10px;right:10px;background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;z-index:50;box-shadow:0 -4px 24px rgba(0,0,0,.5);max-height:60vh;overflow-y:auto}
+    .model-menu-title{padding:12px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--bdr);color:var(--t2);display:flex;justify-content:space-between;align-items:center}
+    .model-menu-title input{flex:1;margin-left:10px;padding:6px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:14px;outline:none}
+    .model-menu-list{max-height:300px;overflow-y:auto}
+    .model-menu-foot{padding:10px 14px;border-top:1px solid var(--bdr)}
+    .model-menu-foot .btn{width:100%;text-align:center;font-size:13px}
+  </style>
+</head>
+<body>
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <button class="btn btn-icon" onclick="toggleDrawer()" style="padding:0;width:36px;height:36px;font-size:18px">☰</button>
+    <div class="logo">◆ NPM Hub</div>
+    <div class="topbar-right">
+      <div style="position:relative">
+        <button class="btn btn-sm" onclick="toggleModelMenu(event)" id="model-btn" style="font-size:12px;padding:6px 10px">
+          <span id="model-name">OWL Alpha</span> ▾
+        </button>
+      </div>
+      <span class="access-badge" id="access-mode"></span>
+      <a id="tunnel-link" class="tunnel-badge" style="display:none" target="_blank" rel="noopener">🌐</a>
+      <span id="tunnel-url" class="tunnel-url" style="display:none" onclick="copyTunnelUrl()"></span>
+    </div>
+  </div>
+
+  <!-- DRAWER (sidebar replacement) -->
+  <div class="drawer-overlay" id="drawer-overlay" onclick="toggleDrawer()"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div class="title">Панель</div>
+      <button class="drawer-close" onclick="toggleDrawer()">✕</button>
+    </div>
+    <div class="drawer-body">
+      <div class="sb-lbl">Инструменты</div>
+      <div id="tool-list"></div>
+      <div class="sb-lbl" style="margin-top:14px">Сессии</div>
+      <div id="term-list"></div>
+    </div>
+    <div class="drawer-actions">
+      <button class="btn" onclick="openTerminal();toggleDrawer()">>_ Терминал</button>
+      <button class="btn btn-p" onclick="showNewTermModal();toggleDrawer()">+ Сессия</button>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="content">
+
+      <!-- DASHBOARD -->
+      <div class="page" id="p-dashboard">
+        <div class="ph"><h1>Dashboard</h1><p>AI инструменты — выберите папку и нажмите Применить</p></div>
+        <div class="stats" id="stats"></div>
+        <div class="grid" id="grid"></div>
+        <div id="runner-card"></div>
+      </div>
+
+      <!-- TERMINAL -->
+      <div class="term-page" id="p-terminal">
+        <div class="term-topbar">
+          <div class="tabs-row" id="tabs"></div>
+          <div class="term-controls">
+            <button class="tc-btn" onclick="killTerm()" ontouchend="event.preventDefault();killTerm()" oncontextmenu="event.preventDefault()" title="Стоп">⏹</button>
+            <button class="tc-btn" onclick="sendEscape()" ontouchend="event.preventDefault();sendEscape()" oncontextmenu="event.preventDefault()" title="Escape">Esc</button>
+            <button class="tc-btn" onclick="pasteClipboard()" ontouchend="event.preventDefault();pasteClipboard()" oncontextmenu="event.preventDefault()" title="Вставить">📋</button>
+            <button class="tc-btn" onclick="copySelection()" ontouchend="event.preventDefault();copySelection()" oncontextmenu="event.preventDefault()" title="Копировать">⧉</button>
+            <button class="tc-btn" onclick="restartTerm()" ontouchend="event.preventDefault();restartTerm()" oncontextmenu="event.preventDefault()" title="Перезапустить">⟲</button>
+            <button class="tc-btn" onclick="zoomTerm(-1)" ontouchend="event.preventDefault();zoomTerm(-1)" oncontextmenu="event.preventDefault()">−</button>
+            <span class="zoom-label" id="zoom-label">100%</span>
+            <button class="tc-btn" onclick="zoomTerm(1)" ontouchend="event.preventDefault();zoomTerm(1)" oncontextmenu="event.preventDefault()">+</button>
+            <button class="tc-btn" onclick="zoomTerm(0)" ontouchend="event.preventDefault();zoomTerm(0)" oncontextmenu="event.preventDefault()">⟲</button>
+            <button class="tc-btn" onclick="toggleFullscreen()" ontouchend="event.preventDefault();toggleFullscreen()" oncontextmenu="event.preventDefault()">⛶</button>
+          </div>
+        </div>
+        <div class="term-container" id="term-container">
+          <div class="term-arrows" id="term-arrows">
+            <button class="arr-btn" onclick="sendKey('\x1b[A')" ontouchend="event.preventDefault();sendKey('\x1b[A')" oncontextmenu="event.preventDefault()">▲</button>
+            <div class="arr-row">
+              <button class="arr-btn" onclick="sendKey('\x1b[D')" ontouchend="event.preventDefault();sendKey('\x1b[D')" oncontextmenu="event.preventDefault()">◀</button>
+              <button class="arr-btn arr-center" onclick="sendKey('\t')" ontouchend="event.preventDefault();sendKey('\t')" oncontextmenu="event.preventDefault()">Tab</button>
+              <button class="arr-btn" onclick="sendKey('\x1b[C')" ontouchend="event.preventDefault();sendKey('\x1b[C')" oncontextmenu="event.preventDefault()">▶</button>
+            </div>
+            <button class="arr-btn" onclick="sendKey('\x1b[B')" ontouchend="event.preventDefault();sendKey('\x1b[B')" oncontextmenu="event.preventDefault()">▼</button>
+            <div class="arr-extra">
+              <button class="arr-btn arr-wide" onclick="sendKey('\r')" ontouchend="event.preventDefault();sendKey('\r')" oncontextmenu="event.preventDefault()">Enter</button>
+              <button class="arr-btn arr-wide" onclick="sendKey('/')" ontouchend="event.preventDefault();sendKey('/')" oncontextmenu="event.preventDefault()">/</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FILES -->
+      <div class="page on" id="p-files">
+        <div class="fm-sidebar">
+          <div class="fm-sidebar-title">Устройства</div>
+          <div id="devices-list"></div>
+          <div class="fm-sidebar-title" style="border-top:1px solid var(--bdr)">Хранилища</div>
+          <div id="storages-list"></div>
+          <div style="padding:8px;border-top:1px solid var(--bdr)">
+            <button class="btn" onclick="showAddStorageModal()" style="width:100%;text-align:center;font-size:13px">+ Добавить</button>
+          </div>
+        </div>
+        <div class="fm-path-row">
+          <input type="text" id="fm-path" onkeydown="if(event.key==='Enter')fmBrowse(this.value)">
+          <button class="btn" onclick="fmBrowse(document.getElementById('fm-path').value)">Go</button>
+        </div>
+        <div class="fm-header">
+          <button class="btn" onclick="fmGoUp()">↑</button>
+          <button class="btn" onclick="fmGoHome()">🏠</button>
+          <button class="btn" onclick="fmRefresh()">⟳</button>
+          <button class="btn" onclick="fmMkdir()">📁+</button>
+          <button class="btn" onclick="fmCreateFile()">📄+</button>
+          <button class="btn" onclick="fmRename()">✏️</button>
+          <button class="btn" onclick="fmDelete()">🗑️</button>
+          <button class="btn" onclick="fmDownload()">⬇</button>
+          <button class="btn" onclick="fmArchive()" title="Скачать как tar.xz">📦</button>
+          <button class="btn" onclick="fmSaveGithub()" title="Сохранить в GitHub">⬆️GH</button>
+          <button class="btn" onclick="fmUpload()" title="Файлы (все виды, картинки — тоже, множественный выбор через SAF)">⬆</button>
+          <button class="btn" onclick="fmUploadFolder()" title="Папку целиком — в браузере, не в APK">⬆📁</button>
+          <div style="position:relative;margin-left:auto">
+            <button class="btn btn-p" onclick="toggleFmMenu(event)">▶</button>
+            <div class="apply-menu" id="fm-apply-menu"></div>
+          </div>
+        </div>
+        <div class="fm-list" id="fm-list"></div>
+        <div class="fm-info" id="fm-info"></div>
+      </div>
+
+      <!-- MODELS FULL -->
+      <div class="page" id="p-models-full">
+        <div class="ph"><h1>🔧 Models</h1><p>Все модели всех CLI инструментов</p></div>
+        <div class="models-full-actions">
+          <button class="btn btn-ok" onclick="syncAllModels()">🔄 Синхронировать</button>
+          <button class="btn" onclick="showApiKeyModal()">🔑 API Key</button>
+          <span id="models-full-info"></span>
+        </div>
+        <div id="models-full-tools"></div>
+        <div class="ph"><h2>Все модели</h2></div>
+        <div id="models-full-list"></div>
+      </div>
+
+      <!-- GIT -->
+      <div class="page" id="p-git">
+        <div class="ph"><h1>🐙 Git</h1><p>Статус и diff репозитория на раннере</p></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="git-path" placeholder="путь к репозиторию (с .git)" style="min-width:220px;flex:1;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:13px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')loadGit()">
+          <button class="btn btn-p" onclick="loadGit()">⟳</button>
+        </div>
+        <div id="git-repo" style="font-size:11px;color:var(--t3);margin-bottom:8px"></div>
+        <div id="git-status"></div>
+        <div style="margin-top:16px;margin-bottom:6px;font-size:12px;color:var(--t2);font-weight:600">Diff</div>
+        <pre class="git-pre" id="git-diff"></pre>
+        <div style="margin-top:16px;margin-bottom:6px;font-size:12px;color:var(--t2);font-weight:600">Log</div>
+        <pre class="git-pre" id="git-log"></pre>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- BOTTOM NAV -->
+  <div class="bottom-nav">
+    <button class="nav-btn" id="nav-dashboard" onclick="showPage('dashboard')">
+      <span class="nav-ico">📊</span>
+      <span class="nav-label">Dashboard</span>
+    </button>
+    <button class="nav-btn" id="nav-terminal" onclick="showPage('terminal')">
+      <span class="nav-ico">💻</span>
+      <span class="nav-label">Терминал</span>
+    </button>
+    <button class="nav-btn on" id="nav-files" onclick="showPage('files')">
+      <span class="nav-ico">📁</span>
+      <span class="nav-label">Файлы</span>
+    </button>
+    <button class="nav-btn" id="nav-git" onclick="showPage('git')">
+      <span class="nav-ico">🐙</span>
+      <span class="nav-label">Git</span>
+    </button>
+    <button class="nav-btn" id="nav-models-full" onclick="showPage('models-full')">
+      <span class="nav-ico">🔧</span>
+      <span class="nav-label">Models</span>
+    </button>
+  </div>
+
+  <!-- New Session Modal -->
+  <div class="modal-bg" id="modal-newterm">
+    <div class="modal">
+      <h2>Новая сессия</h2>
+      <div class="newterm-grid" id="newterm-grid"></div>
+      <div style="margin-bottom:12px">
+        <label style="font-size:12px;color:var(--t2)">Рабочая папка:</label>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <input type="text" id="newterm-cwd" placeholder="путь..." style="flex:1;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;outline:none">
+          <button class="btn" onclick="openBrowser()">📁</button>
+        </div>
+        <div id="recent-paths" style="margin-top:8px;max-height:100px;overflow-y:auto"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-newterm')">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Browser Modal -->
+  <div class="modal-bg" id="modal-browser">
+    <div class="modal">
+      <h2>Выберите папку</h2>
+      <div class="modal-bar">
+        <input type="text" id="browser-path" onkeydown="if(event.key==='Enter')browseTo(this.value)">
+        <button class="btn btn-p" onclick="browseTo(document.getElementById('browser-path').value)">Открыть</button>
+      </div>
+      <div class="modal-drives" id="browser-drives"></div>
+      <div class="modal-list" id="browser-list"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-browser')">Отмена</button>
+        <button class="btn btn-ok" onclick="selectBrowserPath()">Выбрать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Storage Modal -->
+  <div class="modal-bg" id="modal-addstorage">
+    <div class="modal">
+      <h2>Добавить хранилище</h2>
+      <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">
+        <button class="btn storage-type-btn on" data-type="adb" onclick="setStorageType('adb')">📱 ADB</button>
+        <button class="btn storage-type-btn" data-type="ftp" onclick="setStorageType('ftp')">📂 FTP</button>
+        <button class="btn storage-type-btn" data-type="gdrive" onclick="setStorageType('gdrive')">☁️ Drive</button>
+        <button class="btn storage-type-btn" data-type="github" onclick="setStorageType('github')">🐙 GitHub</button>
+        <button class="btn storage-type-btn" data-type="http" onclick="setStorageType('http')">🌐 HTTP</button>
+        <button class="btn storage-type-btn" data-type="webdav" onclick="setStorageType('webdav')">📁 WebDAV</button>
+      </div>
+      <div id="form-adb">
+        <div style="display:grid;grid-template-columns:1fr 100px;gap:8px;margin-bottom:10px">
+          <div><label style="font-size:12px;color:var(--t2)">IP адрес</label><input type="text" id="adb-host" placeholder="192.168.1.100" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;margin-top:4px"></div>
+          <div><label style="font-size:12px;color:var(--t2)">Порт</label><input type="text" id="adb-port" value="5555" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;margin-top:4px"></div>
+        </div>
+        <div style="font-size:11px;color:var(--t3)">Подключится к телефону по Wi-Fi (adb connect ip:port)</div>
+      </div>
+      <div id="form-ftp" style="display:none">
+        <form autocomplete="off">
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">Имя</label><input type="text" id="ftp-name" placeholder="My FTP" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;margin-top:4px"></div>
+        <div style="display:grid;grid-template-columns:1fr 80px;gap:8px;margin-bottom:10px">
+          <div><label style="font-size:12px;color:var(--t2)">Хост</label><input type="text" id="ftp-host" placeholder="ftp.example.com" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;margin-top:4px"></div>
+          <div><label style="font-size:12px;color:var(--t2)">Порт</label><input type="text" id="ftp-port" value="21" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;margin-top:4px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          <div><label style="font-size:12px;color:var(--t2)">Логин</label><input type="text" id="ftp-user" placeholder="anonymous" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;margin-top:4px"></div>
+          <div><label style="font-size:12px;color:var(--t2)">Пароль</label><input type="password" id="ftp-pass" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;margin-top:4px"></div>
+        </div>
+        </form>
+      </div>
+      <div id="form-gdrive" style="display:none">
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">Имя</label><input type="text" id="gdrive-name" value="Google Drive" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;margin-top:4px"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">Access Token</label><input type="text" id="gdrive-token" placeholder="ya29...." style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;margin-top:4px"></div>
+      </div>
+      <div id="form-github" style="display:none">
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">Репозиторий (URL)</label><input type="text" id="github-repo" placeholder="https://github.com/user/repo" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;margin-top:4px"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">Branch</label><input type="text" id="github-branch" value="main" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;margin-top:4px"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">Token</label><input type="text" id="github-token" placeholder="ghp_..." style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;margin-top:4px"></div>
+      </div>
+      <div id="form-http" style="display:none">
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">Имя</label><input type="text" id="http-name" placeholder="My HTTP" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;margin-top:4px"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">URL</label><input type="text" id="http-url" placeholder="https://example.com/files/" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;margin-top:4px"></div>
+      </div>
+      <div id="form-webdav" style="display:none">
+        <form autocomplete="off">
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">Имя</label><input type="text" id="webdav-name" placeholder="My WebDAV" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;margin-top:4px"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--t2)">URL</label><input type="text" id="webdav-url" placeholder="https://webdav.example.com/" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;margin-top:4px"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          <div><label style="font-size:12px;color:var(--t2)">Логин</label><input type="text" id="webdav-user" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;margin-top:4px"></div>
+          <div><label style="font-size:12px;color:var(--t2)">Пароль</label><input type="password" id="webdav-pass" style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;margin-top:4px"></div>
+        </div>
+        </form>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-addstorage')">Отмена</button>
+        <button class="btn btn-ok" onclick="saveStorage()">Подключить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- API Key Modal -->
+  <div class="modal-bg" id="modal-apikey">
+    <div class="modal">
+      <h2>🔑 API Key</h2>
+      <div style="margin-bottom:14px">
+        <label style="font-size:12px;color:var(--t2)">OpenRouter API Key</label>
+        <input type="text" id="apikey-input" placeholder="sk-or-v1-..." style="width:100%;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;margin-top:6px;outline:none">
+        <div style="font-size:10px;color:var(--t3);margin-top:6px">Общий ключ для всех инструментов. Получить: openrouter.ai/keys</div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-apikey')">Отмена</button>
+        <button class="btn btn-ok" onclick="saveApiKey()">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Model Menu (mobile bottom sheet) -->
+  <div class="apply-menu" id="model-menu" style="min-width:unset"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="mobile-app.js"></script>
+</body>
+</html>
