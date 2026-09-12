@@ -611,7 +611,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   await new Promise(r => setTimeout(r, 30));
   fitAddon.fit();
 
-  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: null, term, fitAddon, el: panel, manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null, keepAlive: null, connect: () => {} };
+  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: null, term, fitAddon, el: panel, manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null, keepAlive: null, resizeObs: null, connect: () => {} };
   tabs.push(td);
   td.scroll = attachTermScroll(id, panel);
   setupTermTouch(document.getElementById('term-' + id), term);
@@ -655,7 +655,8 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   term.onData((d) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'input', data: d })); });
   term.onResize(({ cols, rows }) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'resize', cols, rows })); });
   connect();
-  new ResizeObserver(() => { if (activeTab?.id === id) fitAddon.fit(); }).observe(panel);
+  td.resizeObs = new ResizeObserver(() => { if (activeTab?.id === id) fitAddon.fit(); });
+  td.resizeObs.observe(panel);
 
   const tabEl = document.createElement('div');
   tabEl.className = 'tab';
@@ -690,6 +691,7 @@ function closeTab(id) {
   const tab = tabs[idx];
   tab.manualClose = true;
   if (tab.keepAlive) clearInterval(tab.keepAlive);
+  if (tab.resizeObs) tab.resizeObs.disconnect();
   tab.ws?.close(); tab.term?.dispose(); tab.el?.remove(); tab.tabEl?.remove();
   tabs.splice(idx, 1);
   if (activeTab?.id === id) { activeTab = tabs[Math.min(idx, tabs.length - 1)] || null; activeTab ? switchTab(activeTab.id) : showPage('dashboard'); }

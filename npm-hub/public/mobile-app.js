@@ -566,7 +566,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   const toolColor = isPlain ? '#58a6ff' : tool.color;
   const toolIcon = isPlain ? '>_ ' : tool.icon;
 
-  const tab = { id, toolId, toolName, toolColor, toolIcon, cwd, dirShort, term, fitAddon, socket: null, pty: null, manualClose: false, lastPong: 0, reconnectTimer: null, keepAlive: null, connect: () => {} };
+  const tab = { id, toolId, toolName, toolColor, toolIcon, cwd, dirShort, term, fitAddon, socket: null, pty: null, manualClose: false, lastPong: 0, reconnectTimer: null, keepAlive: null, resizeObs: null, connect: () => {} };
   tabs.push(tab);
   activeTab = tab;
 
@@ -647,7 +647,8 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
     if (tab.socket && tab.socket.readyState === WebSocket.OPEN) tab.socket.send(JSON.stringify({ type: 'resize', cols, rows }));
   });
 
-  new ResizeObserver(() => { if (activeTab?.id === id) fitAddon.fit(); }).observe(panel);
+  tab.resizeObs = new ResizeObserver(() => { if (activeTab?.id === id) fitAddon.fit(); });
+  tab.resizeObs.observe(panel);
 
   switchTab(id);
 }
@@ -682,6 +683,7 @@ function closeTab(id) {
   const t = tabs[idx];
   t.manualClose = true;
   if (t.keepAlive) clearInterval(t.keepAlive);
+  if (t.resizeObs) t.resizeObs.disconnect();
   t.socket?.close();
   t.term?.dispose();
   document.getElementById('panel-' + id)?.remove();
@@ -1469,6 +1471,7 @@ function cloudPhoneConnect(prefix) {
   const ph = document.getElementById(pfx ? 'cp-placeholder-desktop' : 'cp-placeholder');
   const url = urlEl.value.trim();
   if (!url) return;
+  try { new URL(url); } catch { fmInfo('Некорректный URL'); return; }
   localStorage.setItem('cp.server', url);
   frame.src = url;
   frame.style.display = 'block';
@@ -1493,6 +1496,7 @@ function browserGo(url, prefix) {
   const pfx = prefix || '';
   const frame = document.getElementById(pfx ? 'browser-frame-desktop' : 'browser-frame');
   const urlEl = document.getElementById(pfx ? 'browser-url-desktop' : 'browser-url');
+  try { new URL(url); } catch { return; }
   frame.src = url;
   urlEl.value = url;
 }
