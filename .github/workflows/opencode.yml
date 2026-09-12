@@ -200,14 +200,12 @@ jobs:
           done
 
       - name: Clear the published session
-        if: always()
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
               "slot=opencode-linux" "state=ended" || true
 
       - name: Save the models snapshot
-        if: always()
         run: |
           # Same idea as the agent roster: whatever OpenCode learned about
           # models is copied to the session-state branch before the runner
@@ -220,7 +218,6 @@ jobs:
               "json=$HOME/.config/opencode/opencode.json" || true
 
       - name: Final save
-        if: always()
         run: |
           cd "$GITHUB_WORKSPACE/fork" || exit 0
           if [ -n "$(git status --porcelain)" ]; then
@@ -394,14 +391,12 @@ jobs:
           }
 
       - name: Clear the published session
-        if: always()
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=opencode-windows" "state=ended"
 
       - name: Save the models snapshot
-        if: always()
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
@@ -411,7 +406,6 @@ jobs:
             "json=$env:USERPROFILE/.config/opencode/opencode.json"
 
       - name: Final save
-        if: always()
         shell: pwsh
         run: |
           Set-Location "$env:GITHUB_WORKSPACE\fork"

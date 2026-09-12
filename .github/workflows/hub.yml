@@ -243,13 +243,11 @@ jobs:
           done
 
       - name: Clear the published session
-        if: always()
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=hub-linux" "state=ended" || true
 
       - name: Save the models snapshot
-        if: always()
         run: |
           # Whatever the live registry learned before shutdown, in one small
           # object the panel renders as a line. The hub may already be dead
@@ -498,14 +496,12 @@ jobs:
           }
 
       - name: Clear the published session
-        if: always()
         shell: pwsh
         run: |
           $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" 'slot=hub-windows' 'state=ended'
 
       - name: Save the models snapshot
-        if: always()
         shell: pwsh
         run: |
           try {
