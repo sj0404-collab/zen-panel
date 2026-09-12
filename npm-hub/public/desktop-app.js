@@ -453,7 +453,6 @@ function renderSidebar() {
     return `<div class="sb-i" onclick="launchTool('${t.id}')">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div>
       <div style="overflow:hidden;flex:1"><div>${t.name}</div><div style="font-size:8px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${short}</div></div>
-      <span class="term-close" onclick="event.stopPropagation();closeTab('${t.id}')" title="Закрыть">✕</span>
     </div>`;
   }).join('');
 
@@ -476,7 +475,6 @@ function showNewTermModal() {
     <div class="newterm-tool" onclick="createTerm('${t.id}')">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:26px;height:26px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9px">${t.icon}</div>
       <div><div style="font-size:12px;font-weight:500">${t.name}</div></div>
-      <span class="term-close" onclick="event.stopPropagation();closeTab('${t.id}')" title="Закрыть">✕</span>
     </div>`).join('');
 
   const rp = document.getElementById('recent-paths');
@@ -945,7 +943,6 @@ function toggleFmMenu(e) {
     <div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','${t.id}')">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:18px;height:18px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:800">${t.icon}</div>
       <span>${t.name}</span>
-      <span class="term-close" onclick="event.stopPropagation();closeTab('${t.id}')" title="Закрыть">✕</span>
     </div>
   `).join('') + `<div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','_terminal')">
       <div class="sb-ico" style="background:rgba(88,166,255,.15);color:var(--acc);width:18px;height:18px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:800">&gt;_</div>

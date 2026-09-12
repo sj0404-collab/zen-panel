@@ -387,7 +387,7 @@ function toggleApplyMenu(e, toolId) {
   menu.innerHTML = `<div class="apply-menu-title">Запустить в</div>` +
     tools.filter(t => t.installed).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();openFromCard('${toolId}','${escAttr(dir)}','${t.id}')">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}')" title="Закрыть">✕</span>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div>
       <span>${t.name}</span>
     </div>
   `).join('') + `<div class="apply-item" onclick="event.stopPropagation();openFromCard('${toolId}','${escAttr(dir)}','_terminal')">
@@ -413,7 +413,7 @@ function renderSidebar() {
     const dir = toolDirs[t.id] || homeDir;
     const short = (homeDir ? dir.replace(homeDir, '~') : dir).split('\\').pop();
     return `<div class="sb-i" onclick="launchTool('${t.id}');toggleDrawer()">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}')" title="Закрыть">✕</span>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color}">${t.icon}</div>
       <div style="overflow:hidden;flex:1"><div>${t.name}</div><div style="font-size:9px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${short}</div></div>
     </div>`;
   }).join('');
@@ -434,7 +434,7 @@ function showNewTermModal() {
     </div>
   ` + tools.filter(t => t.installed).map(t => `
     <div class="newterm-tool" onclick="createTerm('${t.id}')">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}')" title="Закрыть">✕</span>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px">${t.icon}</div>
       <div><div style="font-size:13px;font-weight:500">${t.name}</div></div>
     </div>`).join('');
 
@@ -958,7 +958,7 @@ function toggleFmMenu(e) {
   menu.innerHTML = `<div class="apply-menu-title">Открыть в</div>` +
     tools.filter(t => t.installed).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','${t.id}')">
-      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div><span class="term-close" onclick="closeTab('${t.id}')" title="Закрыть">✕</span>
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div>
       <span>${t.name}</span>
     </div>
   `).join('') + `<div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','_terminal')">
