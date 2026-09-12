@@ -513,8 +513,10 @@ function attachTermScroll(id, panel) {
     thumb.style.transform = 'translateY(' + pos + 'px)';
   };
   vp.addEventListener('scroll', upd);
-  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(upd).observe(track);
-  window.addEventListener('resize', upd);
+  let ro = null;
+  if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(upd); ro.observe(track); }
+  const resizeHandler = upd;
+  window.addEventListener('resize', resizeHandler);
 
   let dragging = false, startY = 0, startTop = 0;
   const toTop = (e) => {
@@ -548,27 +550,20 @@ function attachTermScroll(id, panel) {
   });
 
   upd();
-  return { upd };
+  return { upd, destroy() { if (ro) ro.disconnect(); window.removeEventListener('resize', resizeHandler); } };
 }
 
 // ===== TAP-TO-FOCUS: клавиатура не открывается при прокрутке =====
 function setupTermTouch(termEl, term) {
-  if (!isTouch) return;
+  if (!isTouch) return null;
   let startY = 0, startT = 0, scrolled = false;
-  termEl.addEventListener('touchstart', (e) => {
-    startY = e.touches[0].clientY; startT = Date.now(); scrolled = false;
-    term.blur();
-  }, { passive: true });
-  termEl.addEventListener('touchmove', (e) => {
-    if (Math.abs(e.touches[0].clientY - startY) > 8) scrolled = true;
-    if (scrolled) term.blur();
-  }, { passive: true });
-  termEl.addEventListener('touchend', (e) => {
-    if (!scrolled && Date.now() - startT < 500) {
-      e.preventDefault();
-      term.focus();
-    }
-  }, { passive: false });
+  const onStart = (e) => { startY = e.touches[0].clientY; startT = Date.now(); scrolled = false; term.blur(); };
+  const onMove = (e) => { if (Math.abs(e.touches[0].clientY - startY) > 8) scrolled = true; if (scrolled) term.blur(); };
+  const onEnd = (e) => { if (!scrolled && Date.now() - startT < 500) { e.preventDefault(); term.focus(); } };
+  termEl.addEventListener('touchstart', onStart, { passive: true });
+  termEl.addEventListener('touchmove', onMove, { passive: true });
+  termEl.addEventListener('touchend', onEnd, { passive: false });
+  return { destroy() { termEl.removeEventListener('touchstart', onStart); termEl.removeEventListener('touchmove', onMove); termEl.removeEventListener('touchend', onEnd); } };
 }
 
 async function createTerm(toolId, cwdOverride, plainTerminal) {
@@ -615,10 +610,10 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   await new Promise(r => setTimeout(r, 30));
   fitAddon.fit();
 
-  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: null, term, fitAddon, el: panel, manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null, keepAlive: null, resizeObs: null, connect: () => {} };
+  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: null, term, fitAddon, el: panel, manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null, keepAlive: null, resizeObs: null, touchHandler: null, connect: () => {} };
   tabs.push(td);
   td.scroll = attachTermScroll(id, panel);
-  setupTermTouch(document.getElementById('term-' + id), term);
+  td.touchHandler = setupTermTouch(document.getElementById('term-' + id), term);
 
   const connect = () => {
     const socket = new WebSocket(`${protocol}//${location.host}/ws`);
@@ -696,6 +691,8 @@ function closeTab(id) {
   tab.manualClose = true;
   if (tab.keepAlive) clearInterval(tab.keepAlive);
   if (tab.resizeObs) tab.resizeObs.disconnect();
+  if (tab.scroll?.destroy) tab.scroll.destroy();
+  if (tab.touchHandler?.destroy) tab.touchHandler.destroy();
   tab.ws?.close(); tab.term?.dispose(); tab.el?.remove(); tab.tabEl?.remove();
   tabs.splice(idx, 1);
   if (activeTab?.id === id) { activeTab = tabs[Math.min(idx, tabs.length - 1)] || null; activeTab ? switchTab(activeTab.id) : showPage('dashboard'); }
