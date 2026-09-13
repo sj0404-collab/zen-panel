@@ -5441,10 +5441,10 @@ function agentBuildInfo() {
     } catch { return ''; }
   };
   const sha = run(['rev-parse', '--short', 'HEAD']);
-  const count = run(['rev-list', '--count', 'HEAD']);
   const when = run(['log', '-1', '--format=%cI']);
+  const day = (when || '').slice(0, 10).replace(/-/g, '.');
   AGENT_BUILD_CACHE = {
-    version: count && sha ? `${count}.${sha}` : 'dev',
+    version: day && sha ? `${day}.${sha}` : 'dev',
     commit: sha || null,
     committedAt: when || null,
     startedAt: new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString()

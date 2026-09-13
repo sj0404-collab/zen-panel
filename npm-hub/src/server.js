@@ -116,6 +116,25 @@ function getVersion(cmd) {
   catch { return null; }
 }
 
+// Build version from the repo, survived of shallow clones: date.shortSha.
+// Anything goes wrong → falls back to a readable "dev" stamp instead of dying.
+let HUB_BUILD = null;
+function hubBuildInfo() {
+  if (HUB_BUILD) return HUB_BUILD;
+  const run = args => {
+    try {
+      return require('child_process').execSync('git ' + args.join(' '), {
+        cwd: path.join(__dirname, '..', '..'), encoding: 'utf8', timeout: 2500
+      }).trim();
+    } catch { return ''; }
+  };
+  const sha = run(['rev-parse', '--short', 'HEAD']);
+  const when = run(['log', '-1', '--format=%cI']);
+  const day = (when || '').slice(0, 10).replace(/-/g, '.');
+  HUB_BUILD = { version: day && sha ? `${day}.${sha}` : 'dev', commit: sha || null, committedAt: when || null };
+  return HUB_BUILD;
+}
+
 function getAccessInfo(req) {
   const addr = req.socket.remoteAddress || '';
   const isLocal = addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr === '';
@@ -199,7 +218,7 @@ app.post('/api/tools/test', (req, res) => {
 // ─── INFO ───
 app.get('/api/info', (req, res) => {
   const state = loadState();
-  res.json({ home: HOME, workDir: WORK_DIR, platform: process.platform, ...getAccessInfo(req), state });
+  res.json({ home: HOME, workDir: WORK_DIR, platform: process.platform, ...hubBuildInfo(), ...getAccessInfo(req), state });
 });
 
 // ─── NETWORKS — all IPs for phone access ───
@@ -972,9 +991,78 @@ app.get('/api/pulse/sinks', async (req, res) => {
 // and any client that returns with the same sessionId resumes the live
 // terminal instead of starting a new one. Sessions end only when the process
 // exits on its own, the user sends `kill`, or the runner itself stops.
+//
+// On Linux/macOS sessions run inside a detached `tmux` server. tmux outlives
+// this node process, so a restart of the hub does NOT reset running sessions:
+// their output keeps streaming into a log file, and clients reconnecting with
+// the same sessionId pick up exactly where they left off. On Windows (no tmux)
+// we fall back to node-pty sessions that live inside this process.
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
-const sessions = new Map(); // sessionId -> { id, pty, cwd, toolId, clients:Set, output, resumed }
+const sessions = new Map(); // sessionId -> { id, pty?, tmux?, cwd, toolId, clients:Set, output, resumed, offset, logPath, poller? }
+
+const TMUX_PREFIX = 'npmhub-';
+const PTY_DIR = path.join(require('os').tmpdir(), 'npmhub-pty');
+try { fs.mkdirSync(PTY_DIR, { recursive: true }); } catch {}
+
+const tmuxHas = (() => {
+  try { require('child_process').execSync('which tmux', { stdio: 'ignore', timeout: 3000 }); return true; }
+  catch { return false; }
+})();
+
+const safeSessionName = id => TMUX_PREFIX + String(id).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
+const sessionLogPath = id => path.join(PTY_DIR, safeSessionName(id) + '.log');
+
+const tmuxRun = (args, timeout, input) => {
+  try { return require('child_process').spawnSync('tmux', args, { stdio: 'pipe', timeout: timeout || 5000, encoding: 'utf8', input }); }
+  catch { return { status: 1, stdout: '', stderr: '' }; }
+};
+
+const tmuxSessionAlive = id => tmuxRun(['has-session', '-t', safeSessionName(id)], 2000).status === 0;
+
+const tmuxReadLog = (session) => {
+  try {
+    const size = fs.statSync(session.logPath).size;
+    if (size > session.offset) {
+      const fd = fs.openSync(session.logPath, 'r');
+      const buf = Buffer.alloc(size - session.offset);
+      fs.readSync(fd, buf, 0, buf.length, session.offset);
+      fs.closeSync(fd);
+      session.offset = size;
+      const data = buf.toString('utf8');
+      session.output = (session.output + data).slice(-262144);
+      ptySend(session, { type: 'output', id: session.id, data });
+    }
+    return true;
+  } catch { return false; }
+};
+
+const tmuxStartPoller = (session) => {
+  if (session.poller) return;
+  session.poller = setInterval(() => {
+    if (session.clients.size === 0) return; // nothing to stream to, tmux keeps logging
+    const alive = tmuxSessionAlive(session.id);
+    tmuxReadLog(session);
+    if (!alive) {
+      tmuxReadLog(session); // flush whatever was logged last
+      clearInterval(session.poller);
+      session.poller = null;
+      ptySend(session, { type: 'exit', id: session.id, code: 0 });
+      try { fs.unlinkSync(session.logPath); } catch {}
+      sessions.delete(session.id);
+    }
+  }, 120);
+};
+
+const ensureTmuxPipe = (session) => {
+  const cmd = `cat >> ${JSON.stringify(session.logPath)}`;
+  tmuxRun(['pipe-pane', '-t', safeSessionName(session.id), cmd], 3000);
+  tmuxStartPoller(session);
+};
+
+const stopTmuxPollers = () => {
+  sessions.forEach(s => { if (s.poller) { clearInterval(s.poller); s.poller = null; } });
+};
 
 const ptySend = (session, message) => {
   const payload = JSON.stringify(message);
@@ -994,6 +1082,55 @@ const detachPtyClient = (session, ws) => {
   session.clients.delete(ws);
 };
 
+// Reconnect path: a hub restart (or server swap) does not kill tmux sessions.
+// Rebuild the in-memory record from the surviving tmux session + its log file.
+const reviveTmuxSession = (id) => {
+  if (!tmuxSessionAlive(id)) return null;
+  const logPath = sessionLogPath(id);
+  const offset = (() => { try { return fs.statSync(logPath).size; } catch { return 0; } })();
+  const session = { id, tmux: true, cwd: null, toolId: null, clients: new Set(), output: '', resumed: true, offset: 0, logPath, poller: null };
+  sessions.set(id, session);
+  ensureTmuxPipe(session);
+  if (offset > 0) { // replay everything tmux already had
+    try {
+      const got = fs.readFileSync(logPath, 'utf8');
+      session.output = got.slice(-262144);
+      session.offset = offset;
+    } catch {}
+  }
+  return session;
+};
+
+const createTmuxSession = (id, opts, ws) => {
+  const name = safeSessionName(id);
+  const logPath = sessionLogPath(id);
+  try { fs.unlinkSync(logPath); } catch {}
+  const r = tmuxRun(['new-session', '-d', '-s', name, '-x', String(opts.cols || 120), '-y', String(opts.rows || 30), '-c', opts.cwd], 8000);
+  if (r.status !== 0) { ws.send(JSON.stringify({ type: 'error', error: (r.stderr || 'tmux failed').trim() })); return null; }
+  const session = { id, tmux: true, cwd: opts.cwd, toolId: opts.toolId, clients: new Set(), output: '', resumed: false, offset: 0, logPath, poller: null };
+  sessions.set(id, session);
+  ensureTmuxPipe(session);
+  const shell = process.env.SHELL || '/bin/bash';
+  tmuxRun(['send-keys', '-t', name, `export TERM=xterm-256color; cd ${JSON.stringify(opts.cwd)}`, 'Enter'], 3000);
+  if (opts.toolCmd) tmuxRun(['send-keys', '-t', name, opts.toolCmd, 'Enter'], 3000);
+  return session;
+};
+
+// Feed client keystrokes into the tmux pane byte-for-byte. Using load-buffer +
+// paste-buffer keeps arbitrary UTF-8/escape bytes intact (paste-buffer sends
+// them as terminal input, Enter/newline included).
+const tmuxInput = (id, data) => {
+  const name = safeSessionName(id);
+  const bufName = 'npmhub_io_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+  const r = tmuxRun(['load-buffer', '-b', bufName, '-'], 3000, data);
+  if (r.status !== 0) return;
+  tmuxRun(['paste-buffer', '-b', bufName, '-t', name, '-d'], 3000);
+};
+
+// Reschedule all tmux pollers to only run while a client is attached, so idle
+// sessions do not busy-poll forever while still logging via pipe-pane.
+const tmuxWake = (session) => { if (session.tmux && session.clients.size > 0) tmuxStartPoller(session); };
+
 wss.on('connection', (ws) => {
   let session = null;
 
@@ -1005,11 +1142,26 @@ wss.on('connection', (ws) => {
       case 'open': {
         const id = msg.sessionId || ('term_' + Date.now());
         const existing = sessions.get(id);
-        if (existing) {
+        if (existing && (!existing.tmux || tmuxSessionAlive(id))) {
           session = existing;
           session.resumed = true;
           attachPtyClient(session, ws);
+          tmuxWake(session);
           return;
+        }
+        if (existing) {
+          try { fs.unlinkSync(existing.logPath); } catch {}
+          sessions.delete(id); // tmux session died while we were detached
+        }
+        // A session may exist in tmux but not in our (possibly restarted) memory.
+        if (tmuxHas) {
+          const revived = reviveTmuxSession(id);
+          if (revived) {
+            session = revived;
+            attachPtyClient(session, ws);
+            tmuxWake(session);
+            return;
+          }
         }
         const tool = TOOLS.find(t => t.id === msg.toolId);
         const isWin = process.platform === 'win32';
@@ -1018,39 +1170,61 @@ wss.on('connection', (ws) => {
         try { if (!fs.statSync(cwd).isDirectory()) cwd = HOME; } catch { cwd = HOME; }
 
         try {
-          const p = pty.spawn(shell, [], {
-            name: 'xterm-256color',
-            cols: msg.cols || 120,
-            rows: msg.rows || 30,
-            cwd: cwd,
-            env: { ...process.env, TERM: 'xterm-256color', OPENROUTER_API_KEY: modelManager.getKeyForProvider('openrouter'), MODEL: modelManager.getSelectedModel(), OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1' }
-          });
-          session = { id, pty: p, cwd, toolId: tool ? tool.id : null, clients: new Set(), output: '', resumed: false };
-          sessions.set(id, session);
+          if (tmuxHas && !isWin) {
+            // ❗ tmux requires a login shell name (argv[0]) to start bash as an
+            // interactive shell; new-session already does that. Nothing more needed.
+            session = createTmuxSession(id, { cwd, cols: msg.cols, rows: msg.rows, toolId: tool ? tool.id : null, toolCmd: tool && tool.cmd !== '_terminal' ? tool.cmd : null }, ws);
+          } else {
+            const p = pty.spawn(shell, [], {
+              name: 'xterm-256color',
+              cols: msg.cols || 120,
+              rows: msg.rows || 30,
+              cwd: cwd,
+              env: { ...process.env, TERM: 'xterm-256color', OPENROUTER_API_KEY: modelManager.getKeyForProvider('openrouter'), MODEL: modelManager.getSelectedModel(), OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1' }
+            });
+            session = { id, pty: p, cwd, toolId: tool ? tool.id : null, clients: new Set(), output: '', resumed: false };
+            sessions.set(id, session);
 
-          const cdCmd = isWin ? `cd /d "${cwd}"` : `cd "${cwd}"`;
-          p.write(cdCmd + '\r');
-          if (tool && tool.cmd && tool.cmd !== '_terminal') {
-            setTimeout(() => { p.write(tool.cmd + '\r'); }, 200);
+            const cdCmd = isWin ? `cd /d "${cwd}"` : `cd "${cwd}"`;
+            p.write(cdCmd + '\r');
+            if (tool && tool.cmd && tool.cmd !== '_terminal') {
+              setTimeout(() => { p.write(tool.cmd + '\r'); }, 200);
+            }
+
+            p.onData((data) => {
+              session.output = (session.output + data).slice(-262144);
+              ptySend(session, { type: 'output', id: session.id, data });
+            });
+            p.onExit(({ exitCode }) => {
+              ptySend(session, { type: 'exit', id: session.id, code: exitCode });
+              sessions.delete(session.id);
+            });
           }
-
-          p.onData((data) => {
-            session.output = (session.output + data).slice(-262144);
-            ptySend(session, { type: 'output', id: session.id, data });
-          });
-          p.onExit(({ exitCode }) => {
-            ptySend(session, { type: 'exit', id: session.id, code: exitCode });
-            sessions.delete(session.id);
-          });
-          attachPtyClient(session, ws);
+          if (session) attachPtyClient(session, ws);
         } catch (err) { ws.send(JSON.stringify({ type: 'error', error: err.message })); }
         return;
       }
-      case 'input': { if (session) session.pty.write(msg.data); return; }
-      case 'resize': { if (session && msg.cols && msg.rows) session.pty.resize(msg.cols, msg.rows); return; }
+      case 'input': {
+        if (!session) return;
+        if (session.tmux) { tmuxInput(session.id, msg.data); return; }
+        session.pty.write(msg.data);
+        return;
+      }
+      case 'resize': {
+        if (!session || !msg.cols || !msg.rows) return;
+        if (session.tmux) { tmuxRun(['resize-window', '-t', safeSessionName(session.id), '-x', String(msg.cols), '-y', String(msg.rows)], 3000); return; }
+        session.pty.resize(msg.cols, msg.rows);
+        return;
+      }
       case 'ping': { ws.send(JSON.stringify({ type: 'pong', t: Date.now() })); return; }
       case 'kill': {
         if (!session) return;
+        if (session.tmux) {
+          try { tmuxRun(['send-keys', '-t', safeSessionName(session.id), 'C-c'], 2000); } catch {}
+          setTimeout(() => { if (session.clients.size === 0 || true) { tmuxRun(['kill-session', '-t', safeSessionName(session.id)], 2000); try { fs.unlinkSync(session.logPath); } catch {} sessions.delete(session.id); } }, 400);
+          session = null;
+          return;
+        }
         if (process.platform === 'win32') {
           session.pty.write('\x03');
         } else {
@@ -1061,7 +1235,16 @@ wss.on('connection', (ws) => {
       case 'close': { detachPtyClient(session, ws); return; }
     }
   });
-  ws.on('close', () => detachPtyClient(session, ws));
+  ws.on('close', () => {
+    if (session && session.clients) {
+      detachPtyClient(session, ws);
+      // Halt tmux polling while unattached; pipe-pane keeps writing the log.
+      if (session.tmux && session.clients.size === 0 && session.poller) {
+        clearInterval(session.poller);
+        session.poller = null;
+      }
+    }
+  });
 });
 
 // ─── TUNNEL STATE ───
@@ -1161,7 +1344,8 @@ app.get('/api/tunnel', (req, res) => {
 })();
 
 process.on('SIGINT', () => {
-  sessions.forEach(s => { try { s.pty.kill(); } catch {} });
+  stopTmuxPollers();
+  sessions.forEach(s => { if (s.pty) { try { s.pty.kill(); } catch {} } });
   if (tunnelInfo && tunnelInfo.close) tunnelInfo.close();
   server.close();
   process.exit(0);

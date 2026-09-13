@@ -47,6 +47,8 @@ async function init() {
   if (infoR.home) homeDir = infoR.home;
   if (infoR.workDir) workDir = infoR.workDir;
   if (infoR.state?.lastDirs) toolDirs = infoR.state.lastDirs;
+  const verEl = document.getElementById('hub-ver');
+  if (verEl) verEl.textContent = infoR.version || '';
   if (histR.success) recentPaths = histR.recentPaths || [];
   if (storR.success) storages = storR.storages || [];
   if (modelsR.success) {

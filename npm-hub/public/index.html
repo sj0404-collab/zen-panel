@@ -31,6 +31,11 @@
         <div class="card-title">Desktop</div>
         <div class="card-desc">ПК версия<br>Полный функционал</div>
       </a>
+      <a class="card" href="/m" onclick="openNewTab(this, event)" title="Открыть в системном браузере, а не в webview приложения">
+        <div class="card-icon" style="background:rgba(188,140,255,.12);color:#bc8cff">🌐</div>
+        <div class="card-title">Открыть в браузере</div>
+        <div class="card-desc">Кроссплатформенно<br>Без приложения</div>
+      </a>
       <a class="card" href="/m">
         <div class="card-icon" style="background:rgba(63,185,80,.12);color:#3fb950">📱</div>
         <div class="card-title">Mobile</div>
@@ -38,6 +43,24 @@
       </a>
     </div>
   </div>
-  <div class="footer">NPM Hub v1.0</div>
+  <div class="footer">NPM Hub <span id="hub-version">…</span></div>
+  <script>
+    // Open in a real (system) browser tab instead of staying inside the app WebView.
+    function openNewTab(el, event) {
+      if (window.navigator.userAgent.indexOf('NpmHub/') !== -1 && !event.ctrlKey && !event.shiftKey && !event.metaKey) {
+        event.preventDefault();
+        open(el.href, '_blank');
+        return false;
+      }
+      return true;
+    }
+    (async () => {
+      try {
+        const r = await fetch('/api/info');
+        const j = await r.json();
+        document.getElementById('hub-version').textContent = j.version || '';
+      } catch (e) {}
+    })();
+  </script>
 </body>
 </html>
