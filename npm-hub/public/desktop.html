@@ -278,12 +278,15 @@
 
       <!-- CLOUD PHONE -->
       <div class="page" id="p-cloudphone" style="padding:0;flex-direction:column;height:100%">
-        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center">
+        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center;flex-wrap:wrap">
           <span id="cp-status-desktop" class="tag" style="flex-shrink:0">…</span>
           <button class="btn btn-p btn-sm" id="cp-start-desktop" onclick="cloudPhoneStart('desktop')">▶ Старт</button>
           <button class="btn btn-sm" onclick="cloudPhoneStop('desktop')">⏹ Стоп</button>
           <button class="btn btn-sm" onclick="cloudPhoneConnect('desktop')">Подключить</button>
           <button class="btn btn-sm" onclick="cloudPhoneFullscreen('desktop')">⛶</button>
+          <button class="btn btn-sm" onclick="phoneBrowserOpen('https://www.youtube.com','desktop')" title="Открыть YouTube в браузере телефона">▶ YouTube</button>
+          <input type="text" id="cp-url-desktop" placeholder="URL в браузере телефона…" value="https://www.youtube.com" style="flex:1;min-width:160px;padding:5px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')phoneBrowserOpen(this.value,'desktop')">
+          <button class="btn btn-p" onclick="phoneBrowserOpen(document.getElementById('cp-url-desktop').value,'desktop')">Открыть</button>
         </div>
         <div style="flex:1;position:relative;background:#000">
           <iframe id="cp-frame-desktop" style="width:100%;height:100%;border:none;display:none" allowfullscreen></iframe>

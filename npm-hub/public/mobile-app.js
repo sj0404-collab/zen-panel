@@ -1554,9 +1554,33 @@ function cloudPhoneConnect(prefix) {
   const pfx = prefix || '';
   const frame = document.getElementById(pfx ? 'cp-frame-desktop' : 'cp-frame');
   const ph = document.getElementById(pfx ? 'cp-placeholder-desktop' : 'cp-placeholder');
-  frame.src = cloudPhoneUrl('vnc.html?autoconnect=1&path=ws/vnc');
+  frame.src = cloudPhoneUrl('vnc.html?autoconnect=1&path=ws/vnc&reconnect=1&reconnect_delay=3000');
   frame.style.display = 'block';
   if (ph) ph.style.display = 'none';
+}
+async function phoneBrowserOpen(url, prefix) {
+  const pfx = prefix || '';
+  const urlEl = document.getElementById(pfx ? 'cp-url-desktop' : 'cp-url');
+  let val = String(url || (urlEl && urlEl.value) || '').trim();
+  if (!val) return;
+  if (!/^https?:\/\//i.test(val)) val = 'https://' + val;
+  if (urlEl) urlEl.value = val;
+  try { localStorage.setItem('cp.lastUrl', val); } catch {}
+  const d = await cloudPhoneStatus(pfx);
+  if (!d.running) {
+    alert('Телефон не запущен. Нажмите «▶ Старт».');
+    return;
+  }
+  cloudPhoneConnect(pfx);
+  try {
+    const r = await fetch('/api/phone/browser', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: val })
+    });
+    const j = await r.json();
+    if (!j.ok) console.warn('phone browser:', j.error || j.message);
+  } catch (e) { console.warn('phone browser failed:', e.message); }
 }
 function cloudPhoneFullscreen(prefix) {
   const pfx = prefix || '';

@@ -1386,6 +1386,50 @@ app.post('/api/phone/stop', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// Open a URL in the emulator's browser (Kiwi Chrome / default browser via
+// the VIEW intent). The page itself is shown through the same noVNC iframe
+// (/phone/vnc.html), so the UI just switches tabs to the phone view.
+const PHONE_ADB = () => {
+  const sdk = process.env.ANDROID_SDK_ROOT || '/usr/local/lib/android/sdk';
+  return path.join(sdk, 'platform-tools', 'adb');
+};
+
+const phoneAdb = (args, timeoutMs = 15000) => new Promise((resolve) => {
+  const adb = PHONE_ADB();
+  if (!fs.existsSync(adb)) return resolve({ ok: false, out: 'adb not found: ' + adb });
+  try {
+    const p = spawn(adb, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    const timer = setTimeout(() => { try { p.kill(); } catch {} }, timeoutMs);
+    p.stdout.on('data', d => out += d);
+    p.stderr.on('data', d => out += d);
+    p.on('error', e => { clearTimeout(timer); resolve({ ok: false, out: String(e.message || e) }); });
+    p.on('close', code => { clearTimeout(timer); resolve({ ok: code === 0, out: out.trim() }); });
+  } catch (e) { resolve({ ok: false, out: String(e.message || e) }); }
+});
+
+const phoneEnsureBrowser = async () => {
+  // Modern emulator images ship Browser (AOSP). Kiwi is optional; whatever
+  // handles the VIEW intent is fine — we only need it to open a URL.
+  await phoneAdb(['shell', 'getprop', 'sys.boot_completed']).catch(() => {});
+};
+
+app.post('/api/phone/browser', async (req, res) => {
+  try {
+    const url = String((req.body && req.body.url) || '').trim();
+    if (!url || !/^https?:\/\/\S+$/i.test(url)) {
+      return res.status(400).json({ ok: false, error: 'bad url: ' + url });
+    }
+    await phoneEnsureBrowser();
+    const r = await phoneAdb([
+      'shell', 'am', 'start',
+      '-a', 'android.intent.action.VIEW',
+      '-d', url
+    ]);
+    res.json({ ok: r.ok, message: r.out || 'opened: ' + url });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // WebSocket VNC proxy: /ws/vnc  →  tcp://127.0.0.1:5900
 // noVNC connects to  ws(s)://<hub-host>:<hub-port>/ws/vnc  over the hub's own
 // origin (works through the hub tunnel too, WS is same-origin relative).
