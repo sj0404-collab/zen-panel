@@ -80,6 +80,7 @@ for arg in "$@"; do
     slot=hub)      FILE="session-hub.json" ;;
     slot=hub-linux)      FILE="session-hub-linux.json" ;;
     slot=hub-windows)    FILE="session-hub-windows.json" ;;
+    slot=phone)    FILE="session-phone.json" ;;
     slot=*)        ;;   # unknown slot: ignore rather than write a stray file
     file=*)        FILE_OVERRIDE="$arg" ;;
     scrub=0)       SCRUB=0 ;;
