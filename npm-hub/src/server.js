@@ -345,10 +345,14 @@ app.post('/api/fs/write', async (req, res) => {
 app.get('/api/fs/download', async (req, res) => {
   try {
     const backend = storage.get(req.query.backend || 'local');
-    const content = await backend.read(req.query.path);
     const filename = safeFilename(path.basename(req.query.path));
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(content);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    // Binary-safe read: StorageBase.read() forces utf-8, which corrupts APKs
+    // and other binaries. Backends are all local/remote Paths, so stream raw.
+    const data = await backend.readBinary(req.query.path);
+    if (data === null || data === undefined) { res.end(); return; }
+    res.end(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -519,9 +523,12 @@ app.get('/api/fs/archive', (req, res) => {
 
 // ─── GITHUB SAVE (session-state branch) ───────────────────────────────
 // POST /api/gh/save  { path: "/tmp/foo.apk" }
-// Saves the file to the session-state branch under artifacts/<filename>
-// using the GitHub Contents API. Requires GH_TOKEN env or PAT in body.
-app.post('/api/gh/save', express.json({ limit: '10mb' }), async (req, res) => {
+// Saves a file or directory to the session-state branch under artifacts/.
+// GitHub Contents API handles single files only: directories are packed to
+// <name>-<ts>.tar.xz first, oversized sources become a tar.xz too (the API
+// refuses files over 100 MB) — so the branch always receives one binary file.
+// Requires GH_TOKEN env or PAT in body.
+app.post('/api/gh/save', express.json({ limit: '50mb' }), async (req, res) => {
   const filePath = req.body && req.body.path;
   if (!filePath || !fs.existsSync(filePath)) return res.json({ success: false, error: 'path not found' });
   const token = process.env.GH_TOKEN || (req.body && req.body.token) || '';
@@ -529,13 +536,34 @@ app.post('/api/gh/save', express.json({ limit: '10mb' }), async (req, res) => {
 
   const repo = process.env.GITHUB_REPOSITORY || 'sj0404-collab/zen-panel';
   const branch = 'session-state';
+  const stat = fs.statSync(filePath);
+  const isDir = stat.isDirectory();
   const basename = path.basename(filePath);
-  const target = `artifacts/${basename}`;
-  const apiUrl = `https://api.github.com/repos/${repo}/contents/${target}`;
+  const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+  let uploadFile = filePath;
+  let uploadName = basename;
 
   try {
-    const data = fs.readFileSync(filePath);
+    if (isDir || stat.size > 90 * 1024 * 1024) {
+      const ext = isDir ? 'tar.xz' : (path.extname(filePath) || '.bin');
+      const tmp = path.join(os.tmpdir(), `gsave-${Date.now()}-${basename.replace(/[^\w.-]/g, '_')}-${stamp}.${ext}`);
+      const packaged = isDir
+        ? await tarXz(filePath, tmp)
+        : await new Promise((resolve) => {
+            const gz = tmp.replace(/\.bin$/, '.tar.xz');
+            try { resolve(tarXz(filePath, gz)); } catch { resolve(false); }
+          });
+      if (!packaged) return res.json({ success: false, error: 'не смог упаковать в tar.xz' });
+      uploadFile = tmp;
+      uploadName = `${basename}-${stamp}.tar.xz`;
+    }
+    const data = fs.readFileSync(uploadFile);
+    if (data.length > 97 * 1024 * 1024) {
+      return res.json({ success: false, error: 'этот файл больше лимита GitHub (97 МБ) и как архив тоже. Скачай его кнопкой «на телефон».' });
+    }
     const content = data.toString('base64');
+    const target = `artifacts/${uploadName}`;
+    const apiUrl = `https://api.github.com/repos/${repo}/contents/${target}`;
     // Check if file exists (to get sha for overwrite)
     let sha = '';
     try {
@@ -545,7 +573,7 @@ app.post('/api/gh/save', express.json({ limit: '10mb' }), async (req, res) => {
       if (existing.ok) { const j = await existing.json(); sha = j.sha || ''; }
     } catch {}
 
-    const body = { message: `save ${basename} (${new Date().toISOString()})`, content, branch };
+    const body = { message: `save ${uploadName} (${new Date().toISOString()})`, content, branch };
     if (sha) body.sha = sha;
 
     const result = await fetch(apiUrl, {
@@ -560,7 +588,7 @@ app.post('/api/gh/save', express.json({ limit: '10mb' }), async (req, res) => {
     }
 
     const rawUrl = `https://raw.githubusercontent.com/${repo}/${branch}/${target}`;
-    return res.json({ success: true, url: rawUrl, api_url: apiUrl });
+    return res.json({ success: true, url: rawUrl, api_url: apiUrl, packed: isDir || stat.size > 90 * 1024 * 1024 });
   } catch (e) {
     return res.json({ success: false, error: e.message });
   }
@@ -1604,6 +1632,24 @@ function onReady(actualPort) {
   }
 
   try { require('child_process').exec(`start http://localhost:${actualPort}`); } catch {}
+
+  // Keep a readable copy of the opencode chat history in ~/.local/share/
+  // opencode/history/ (a stable dir outside /tmp, which the OS may clean at
+  // any moment) — run once at startup, then daily while the hub lives.
+  // PUBLISH=1 + GH_TOKEN pushes a bundle to the session-state branch too.
+  const backupHistory = (first) => {
+    const { spawn } = require('child_process');
+    const script = path.join(__dirname, '..', '..', 'tools', 'backup-chat-history.sh');
+    if (!fs.existsSync(script)) return;
+    const child = spawn('bash', [script], {
+      env: { ...process.env, PUBLISH: '1' },
+      stdio: ['ignore', 'ignore', 'pipe']
+    });
+    child.on('error', () => {});
+    if (first) console.log('  💾 Chat-history backup scheduled (daily).');
+  };
+  backupHistory(true);
+  setInterval(() => backupHistory(false), 24 * 60 * 60 * 1000);
 }
 
 tryListen(PORT, onReady);

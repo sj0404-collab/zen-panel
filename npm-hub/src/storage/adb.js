@@ -37,6 +37,15 @@ class AdbStorage extends StorageBase {
     return content;
   }
 
+  async readBinary(filePath) {
+    const tmpFile = `/tmp/adb_read_${Date.now()}`;
+    execSync(this._cmd(`pull "${filePath}" "${tmpFile}"`), { stdio: 'pipe', timeout: 30000 });
+    const fs = require('fs');
+    const content = fs.readFileSync(tmpFile);
+    fs.unlinkSync(tmpFile);
+    return content;
+  }
+
   async write(filePath, content) {
     const fs = require('fs');
     const tmpFile = `/tmp/adb_write_${Date.now()}`;

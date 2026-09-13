@@ -983,13 +983,14 @@ function fmDownloadMulti() {
   const items = sel.length ? sel : (fmSelected ? [{ dataset: { path: fmSelected } }] : []);
   items.forEach(el => {
     const p = el.dataset.path;
-    if (p) window.open('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p));
+    if (p) dlNow('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p), String(p).split(/[/\\]/).pop());
   });
 }
 
 function fmDownloadSingle() {
   if (!fmSelected) return;
-  window.open('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(fmSelected) + '&single=1');
+  const name = String(fmSelected).split(/[/\\]/).pop();
+  dlNow('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(fmSelected), name);
 }
 
 function toggleFmMenu(e) {
@@ -1188,13 +1189,16 @@ function fmArchive() {
 async function fmSaveGithub() {
   if (!fmSelected) return;
   const name = fmSelected.split(/[/\\]/).pop();
-  if (!(await fmConfirm('Сохранить «' + name + '» в GitHub (session-state, artifacts/)?', 'Сохранить'))) return;
+  const isDirSel = document.querySelector('#fm-list .fm-item.fm-sel[data-isdir="1"]') != null;
+  const what = isDirSel ? ('папку «' + name + '»') : ('файл «' + name + '»');
+  const note = isDirSel ? '\nПапка будет упакована в tar.xz (GitHub хранит только файлы).' : '';
+  if (!(await fmConfirm('Сохранить ' + what + ' в GitHub (session-state, artifacts/)?' + note, 'Сохранить'))) return;
   try {
     const r = await fetch('/api/gh/save', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: fmSelected })
     }).then(r => r.json());
-    if (r.success) await fmInfo('Сохранено: ' + r.url);
+    if (r.success) await fmInfo((r.packed ? 'Упаковано и сохранено: ' : 'Сохранено: ') + r.url);
     else await fmInfo('Ошибка: ' + (r.error || 'unknown'));
   } catch (e) { await fmInfo('Ошибка: ' + e.message); }
 }
