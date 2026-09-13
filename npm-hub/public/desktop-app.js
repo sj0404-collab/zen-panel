@@ -92,6 +92,63 @@ function updateModelButton() {
   document.getElementById('model-name').textContent = m ? m.name : selectedModel;
 }
 
+// Manual update from GitHub. Every fix gets a new commit on main; the hub
+// numbers itself <date>.<sha>, so the build shown in the topbar is exactly
+// the code that runs. Checking for a newer commit and applying it here keeps
+// working even when the tunnel re-publishes something unexpected.
+async function hubUpdate() {
+  const btn = document.getElementById('hub-update-btn');
+  const badge = document.getElementById('hub-update-badge');
+  const busy = t => { if (btn) btn.textContent = t; };
+  busy('…');
+  let check;
+  try { check = await fetch('/api/update').then(r => r.json()); }
+  catch (e) { check = { success: false, error: e.message }; }
+  if (!check.success) {
+    busy('🔄');
+    fmInfo('Обновление: ' + (check.error || 'не удалось проверить'));
+    return;
+  }
+  if (check.same) {
+    busy('🔄');
+    fmInfo(`Актуальная версия (${check.version}), обновлений нет.`);
+    return;
+  }
+  const want = `На GitHub есть новая версия: сейчас ${check.current}, доступно ${check.latest} (+${check.behind} коммит.)\n\nОбновить сейчас? Терминалы и туннель переживут рестарт.`;
+  if (!confirm(want)) { busy('🔄'); return; }
+  try {
+    const apply = await fetch('/api/update', { method: 'POST' }).then(r => r.json());
+    if (!apply.success) {
+      busy('🔄');
+      fmInfo('Обновление: ' + (apply.error || 'не удалось применить'));
+      return;
+    }
+    busy('♻');
+    fmInfo('Обновление применено, хаб перезапускается…');
+    // The server exits after responding, then the workflow keep-alive
+    // relaunches it on the new code. Wait until /api/info reports a new
+    // build before refreshing the page.
+    let tries = 0;
+    const poll = async () => {
+      tries++;
+      try {
+        const r = await fetch('/api/info').then(r => r.json());
+        if (r.version && r.version !== check.version) {
+          busy('🔄');
+          location.reload();
+          return;
+        }
+        if (tries > 60) { busy('🔄'); location.reload(); return; }
+      } catch (e) {}
+      setTimeout(poll, 1500);
+    };
+    setTimeout(poll, 1200);
+  } catch (e) {
+    busy('🔄');
+    fmInfo('Обновление: ошибка — ' + e.message);
+  }
+}
+
 function toggleModelMenu(e) {
   e.stopPropagation();
   document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));

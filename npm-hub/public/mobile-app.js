@@ -46,6 +46,8 @@ async function init() {
   if (infoR.home) homeDir = infoR.home;
   if (infoR.workDir) workDir = infoR.workDir;
   if (infoR.state?.lastDirs) toolDirs = infoR.state.lastDirs;
+  const verEl = document.getElementById('hub-ver');
+  if (verEl) verEl.textContent = infoR.version || '';
   if (histR.success) recentPaths = histR.recentPaths || [];
   if (storR.success) storages = storR.storages || [];
   if (modelsR.success) {
@@ -89,6 +91,38 @@ function toggleDrawer() {
 }
 
 // ===== MODEL MENU (bottom sheet) =====
+function hubUpdate() {
+  // Same logic as desktop-app.js
+  const btn = document.getElementById('hub-update-btn');
+  const busy = t => { if (btn) btn.textContent = t; };
+  busy('…');
+  (async () => {
+    let check;
+    try { check = await fetch('/api/update').then(r => r.json()); }
+    catch (e) { check = { success: false, error: e.message }; }
+    if (!check.success) { busy('🔄'); fmInfo('Обновление: ' + (check.error || 'не удалось проверить')); return; }
+    if (check.same) { busy('🔄'); fmInfo(`Актуальная версия (${check.version}), обновлений нет.`); return; }
+    const want = `На GitHub есть новая версия: сейчас ${check.current}, доступно ${check.latest} (+${check.behind} коммит.)\n\nОбновить сейчас? Терминалы переживут рестарт.`;
+    if (!confirm(want)) { busy('🔄'); return; }
+    try {
+      const apply = await fetch('/api/update', { method: 'POST' }).then(r => r.json());
+      if (!apply.success) { busy('🔄'); fmInfo('Обновление: ' + (apply.error || 'не удалось применить')); return; }
+      busy('♻');
+      fmInfo('Обновление применено, хаб перезапускается…');
+      let tries = 0;
+      const poll = async () => {
+        tries++;
+        try {
+          const r = await fetch('/api/info').then(r => r.json());
+          if (r.version && tries > 3) { location.reload(); return; }
+          if (r.version && r.version !== check.version) { location.reload(); return; }
+        } catch (e) {}
+        setTimeout(poll, 1500);
+      };
+      setTimeout(poll, 1200);
+    } catch (e) { busy('🔄'); fmInfo('Обновление: ошибка — ' + e.message); }
+  })();
+}
 function toggleModelMenu(e) {
   e.stopPropagation();
   document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));

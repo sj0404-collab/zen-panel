@@ -826,6 +826,19 @@ app.post('/api/runner/restart', async (req, res) => {
 });
 
 // ─── GIT: status / diff / log for a local repo ─────────────────────────
+// This repository root: the runner checkout (workspace/fork) when on Actions,
+// otherwise the first repo discovered in the work dir.
+const GIT_ROOT = (() => {
+  if (process.env.GITHUB_WORKSPACE) {
+    const p = path.join(process.env.GITHUB_WORKSPACE, 'fork');
+    if (fs.existsSync(path.join(p, '.git'))) return p;
+    const cands = (() => { const f = []; const w = dir => { let e; try { e = fs.readdirSync(w, { withFileTypes: true }); } catch { return; } for (const x of e) { if (!x.isDirectory() || x.name === 'node_modules' || x.name === 'actions-runner') continue; if (fs.existsSync(path.join(w, x.name, '.git'))) { f.push(path.join(w, x.name)); return; } } }; w(process.env.GITHUB_WORKSPACE); return f; })();
+    if (cands[0]) return cands[0];
+  }
+  const cands = repoCandidates() || [];
+  return cands[0] || WORK_DIR;
+})();
+
 const gitRun = (repo, args) => new Promise((resolve) => {
   const out = [];
   const child = spawn('git', args, { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -1245,6 +1258,62 @@ wss.on('connection', (ws) => {
       }
     }
   });
+});
+
+// Manual update from GitHub: pull main, then exit so the workflow keep-alive
+// loop restarts the hub on the new code. tmux sessions and the tunnel live
+// outside this process, so they survive the restart untouched.
+const gitQ = (args) => new Promise((resolve) => {
+  const out = [];
+  const child = spawn('git', args, { cwd: GIT_ROOT, stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
+  child.stdout.on('data', d => out.push(String(d)));
+  child.stderr.on('data', () => {});
+  child.on('close', (code) => resolve({ code, out: out.join('').trimEnd() }));
+  child.on('error', () => resolve({ code: -1, out: '' }));
+});
+
+const GIT_BRANCH = (process.env.GITHUB_REF || '').replace(/^refs\/heads\//, '') || 'main';
+
+app.get('/api/update', async (req, res) => {
+  const { code, out } = await gitQ(['fetch', 'origin', GIT_BRANCH]);
+  if (code !== 0) return res.json({ success: false, error: 'fetch не удался: git exited ' + code + ' — ' + out.slice(0, 300) });
+  const head = (await gitQ(['rev-parse', 'HEAD'])).out;
+  const remote = (await gitQ(['rev-parse', `origin/${GIT_BRANCH}`])).out;
+  const behindN = (await gitQ(['rev-list', '--count', `${head}..origin/${GIT_BRANCH}`])).out || '0';
+  const localSha = (await gitQ(['rev-parse', '--short', 'HEAD'])).out;
+  const remoteSha = (await gitQ(['rev-parse', '--short', `origin/${GIT_BRANCH}`])).out;
+  res.json({
+    success: true, branch: GIT_BRANCH,
+    current: localSha, latest: remoteSha, same: head === remote,
+    behind: parseInt(behindN, 10) || 0,
+    version: hubBuildInfo().version || ''
+  });
+});
+
+app.post('/api/update', async (req, res) => {
+  const check = await gitQ(['fetch', 'origin', GIT_BRANCH]);
+  if (check.code !== 0) return res.json({ success: false, error: 'fetch не удался: ' + check.out.slice(0, 300) });
+  const head = (await gitQ(['rev-parse', 'HEAD'])).out;
+  const remote = (await gitQ(['rev-parse', `origin/${GIT_BRANCH}`])).out;
+  const behindN = parseInt((await gitQ(['rev-list', '--count', `${head}..origin/${GIT_BRANCH}`])).out, 10) || 0;
+  if (head === remote) {
+    return res.json({ success: true, updated: false, behind: 0, message: 'уже на последней версии' });
+  }
+  // Accept local uncommitted changes rather than nuking them: -X theirs keeps
+  // our work while still pulling the upstream snapshot. If that is impossible
+  // (merge conflict), fall back to a hard reset — a runner checkout is
+  // disposable anyway.
+  const pull = await gitQ(['pull', '--no-edit', '--no-rebase', '--strategy-option', 'theirs', 'origin', GIT_BRANCH]);
+  if (pull.code !== 0) {
+    const junk = await gitQ(['reset', '--hard', `origin/${GIT_BRANCH}`]);
+    if (junk.code !== 0) return res.json({ success: false, error: 'pull и reset не удались: ' + pull.out.slice(0, 300) });
+  }
+  const newSha = (await gitQ(['rev-parse', '--short', 'HEAD'])).out;
+  console.log(`[updater] pulled ${head.slice(0, 7)}..${newSha} (${behindN} commits); restarting hub`);
+  res.json({ success: true, updated: true, behind: behindN, current: newSha, restarting: true });
+  // Breathe so the response reaches the browser, then exit: the workflow
+  // keep-alive loop notices the dead process and relaunches it on this code.
+  setTimeout(() => { try { server.close(); } catch (e) {} process.exit(0); }, 400);
 });
 
 // ─── TUNNEL STATE ───

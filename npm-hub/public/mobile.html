@@ -19,6 +19,7 @@
     /* ===== TOPBAR ===== */
     .topbar{height:48px;background:var(--bg2);display:flex;align-items:center;padding:0 12px;gap:8px;border-bottom:1px solid var(--bdr);flex-shrink:0;padding-top:max(0px,env(safe-area-inset-top))}
     .logo{font-size:16px;font-weight:800;background:linear-gradient(135deg,var(--acc),var(--pur));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .logo .hub-ver{font-size:9px;font-weight:600;color:var(--t3);-webkit-text-fill-color:var(--t3);background:none;margin-left:4px;vertical-align:super}
     .topbar-right{margin-left:auto;display:flex;align-items:center;gap:6px}
     .access-badge{font-size:11px;padding:4px 10px;border-radius:10px;font-weight:600}
     .access-local{color:var(--ok);background:rgba(63,185,80,.12)}
@@ -214,8 +215,9 @@
   <!-- TOPBAR -->
   <div class="topbar">
     <button class="btn btn-icon" onclick="toggleDrawer()" style="padding:0;width:36px;height:36px;font-size:18px">☰</button>
-    <div class="logo">◆ NPM Hub</div>
+    <div class="logo">◆ NPM Hub <span id="hub-ver" class="hub-ver"></span></div>
     <div class="topbar-right">
+      <button class="btn btn-sm" onclick="hubUpdate()" id="hub-update-btn" style="font-size:12px;padding:6px 8px" title="Проверить обновления на GitHub">🔄</button>
       <div style="position:relative">
         <button class="btn btn-sm" onclick="toggleModelMenu(event)" id="model-btn" style="font-size:12px;padding:6px 10px">
           <span id="model-name">OWL Alpha</span> ▾
