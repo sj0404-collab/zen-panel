@@ -1543,6 +1543,10 @@ function cloudPhoneWsUrl() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   return proto + '://' + location.pathname.replace(/[^/]*$/, '') + 'ws/vnc';
 }
+function phoneMsg(msg) {
+  const el = document.getElementById('cp-status-desktop');
+  if (el) { el.textContent = msg; el.className = 'tag tag-off'; }
+}
 async function cloudPhoneStatus(prefix) {
   const pfx = prefix || '';
   const el = document.getElementById('cp-status-desktop');
@@ -1580,11 +1584,11 @@ async function cloudPhoneStart(prefix) {
         if (s.running) { clearInterval(poll); cloudPhoneConnect(pfx); }
       }, 4000);
     } else {
-      alert('Не удалось запустить телефон:\n' + (j.message || j.error || ''));
+      phoneMsg('Не удалось запустить телефон:\n' + (j.message || j.error || ''));
     }
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = '▶ Старт'; }
-    alert('Ошибка запуска: ' + e.message);
+    phoneMsg('Ошибка запуска: ' + e.message);
   }
 }
 async function cloudPhoneStop(prefix) {
@@ -1596,7 +1600,7 @@ async function cloudPhoneStop(prefix) {
     const ph = document.getElementById('cp-placeholder-desktop');
     if (ph) ph.style.display = 'flex';
     cloudPhoneStatus(pfx);
-  } catch (e) { alert('Ошибка: ' + e.message); }
+  } catch (e) { phoneMsg('Ошибка: ' + e.message); }
 }
 function cloudPhoneConnect(prefix) {
   const pfx = prefix || '';
@@ -1624,7 +1628,7 @@ async function phoneBrowserOpen(url, prefix) {
   try { localStorage.setItem('cp.lastUrl', val); } catch {}
   const d = await cloudPhoneStatus(pfx);
   if (!d.running) {
-    alert('Телефон не запущен. Нажмите «▶ Старт».');
+    phoneMsg('Телефон не запущен. Нажмите «▶ Старт».');
     return;
   }
   cloudPhoneConnect(pfx);
