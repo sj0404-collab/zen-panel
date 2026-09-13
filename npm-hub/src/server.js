@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
+const net = require('net');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
@@ -1011,7 +1012,15 @@ app.get('/api/pulse/sinks', async (req, res) => {
 // the same sessionId pick up exactly where they left off. On Windows (no tmux)
 // we fall back to node-pty sessions that live inside this process.
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ noServer: true });
+server.on('upgrade', (req, socket, head) => {
+  // Route the single 'upgrade' event: /ws → PTY, /ws/vnc → cloud phone.
+  let pathname = '';
+  try { pathname = new URL(req.url, 'http://' + (req.headers.host || 'localhost')).pathname; }
+  catch { return; }
+  if (pathname === '/ws/vnc') return; // handled below (VNC proxy block)
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+});
 const sessions = new Map(); // sessionId -> { id, pty?, tmux?, cwd, toolId, clients:Set, output, resumed, offset, logPath, poller? }
 
 const TMUX_PREFIX = 'npmhub-';
@@ -1316,6 +1325,92 @@ app.post('/api/update', async (req, res) => {
   setTimeout(() => { try { server.close(); } catch (e) {} process.exit(0); }, 400);
 });
 
+// ─── CLOUD PHONE (Android emulator + VNC) ───
+// The phone runs on the same runner (Xvfb + Android emulator + x11vnc:5900 +
+// websockify:6080 alt). We bypass the raw 6080 port and serve the noVNC client
+// ourselves (/phone/*) with a WebSocket VNC proxy (/ws/vnc → localhost:5900),
+// so the phone works through the hub's own tunnel/port without extra exposure.
+const PHONE_DIR = path.join(__dirname, '..', 'public', 'novnc');
+const PHONE_ROOT = process.env.PHONE_ROOT || path.join(HOME, 'android-cloud-phone');
+const PHONE_VNC_PORT = 5900;
+const PHONE_ADB_PORT = 5555;
+const PHONE_CTL = process.env.PHONE_CTL || path.join(PHONE_ROOT, 'scripts', 'control.sh');
+
+app.use('/phone', express.static(PHONE_DIR, { fallthrough: false }));
+app.get('/phone', (req, res) => res.redirect('/phone/vnc.html'));
+app.get('/phone/', (req, res) => res.redirect('/phone/vnc.html'));
+
+const phoneCtrl = (sub, timeoutMs = 90000) => new Promise((resolve) => {
+  try {
+    const p = spawn('bash', [PHONE_CTL, sub], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    const timer = setTimeout(() => { try { p.kill(); } catch {} }, timeoutMs);
+    p.stdout.on('data', d => out += d);
+    p.stderr.on('data', d => out += d);
+    p.on('error', e => { clearTimeout(timer); resolve({ ok: false, out: String(e.message || e) }); });
+    p.on('close', code => { clearTimeout(timer); resolve({ ok: code === 0, out: out.trim() }); });
+  } catch (e) { resolve({ ok: false, out: String(e.message || e) }); }
+});
+
+const phonePortOpen = (port, timeoutMs = 1200) => new Promise((resolve) => {
+  const s = net.connect(port, '127.0.0.1');
+  const t = setTimeout(() => { try { s.destroy(); } catch {} resolve(false); }, timeoutMs);
+  s.on('connect', () => { clearTimeout(t); s.destroy(); resolve(true); });
+  s.on('error', () => { clearTimeout(t); resolve(false); });
+});
+
+const phoneStatus = async () => {
+  const [vnc, adb, ctl] = await Promise.all([
+    phonePortOpen(PHONE_VNC_PORT),
+    phonePortOpen(PHONE_ADB_PORT),
+    phoneCtrl('status', 8000).catch(e => ({ ok: false, out: String(e.message || e) }))
+  ]);
+  return { running: vnc, adb, noVncPort: 6080, control: ctl };
+};
+
+app.get('/api/phone/status', async (req, res) => {
+  try { res.json(await phoneStatus()); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.post('/api/phone/start', async (req, res) => {
+  try {
+    const r = await phoneCtrl('start');
+    res.json({ ok: r.ok, message: r.out });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.post('/api/phone/stop', async (req, res) => {
+  try {
+    const r = await phoneCtrl('stop');
+    res.json({ ok: r.ok, message: r.out });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// WebSocket VNC proxy: /ws/vnc  →  tcp://127.0.0.1:5900
+// noVNC connects to  ws(s)://<hub-host>:<hub-port>/ws/vnc  over the hub's own
+// origin (works through the hub tunnel too, WS is same-origin relative).
+// eslint-disable-next-line no-unused-vars
+// WebSocket VNC proxy: /ws/vnc  →  tcp://127.0.0.1:5900
+// One ws server per http server would fight over the 'upgrade' event, so
+// use noServer:true + our own upgrade listener for the VNC path.
+const vncWss = new WebSocketServer({ noServer: true });
+server.on('upgrade', (req, socket, head) => {
+  let u;
+  try { u = new URL(req.url, 'http://' + (req.headers.host || 'localhost')); }
+  catch { return; }
+  if (u.pathname !== '/ws/vnc') return; // let the main /ws WSS handle it
+  vncWss.handleUpgrade(req, socket, head, (ws) => {
+    const tcp = net.connect(PHONE_VNC_PORT, '127.0.0.1');
+    const destroy = () => { try { tcp.destroy(); } catch {} try { ws.terminate(); } catch {} };
+    tcp.on('error', () => destroy());
+    tcp.on('data', (d) => { if (ws.readyState === 1) ws.send(d, { binary: true }); });
+    ws.on('message', (d) => { try { tcp.write(d); } catch {} });
+    ws.on('close', () => destroy());
+    ws.on('error', () => destroy());
+    vncWss.emit('connection', ws, req);
+  });
+});
+
 // ─── TUNNEL STATE ───
 let tunnelInfo = null; // { url, type, close }
 
@@ -1400,14 +1495,15 @@ app.get('/api/tunnel', (req, res) => {
       console.log('  🔊 PulseAudio already running');
       await pulseRun('pactl set-exit-idle-time -1 2>/dev/null');
     }
-    // Create virtual sinks for hub tabs (cloud phone, browser, etc.)
+    // Create virtual sinks for hub tabs (cloud phone, browser, etc.) — only
+    // if not present yet, so repeated hub restarts don't stack duplicate sinks.
     const sinks = ['cloud_phone', 'browser_youtube'];
     for (const name of sinks) {
-      await pulseRun(`pactl load-module module-null-sink sink_name=${name} sink_properties=device.description="Hub-${name}" 2>/dev/null`);
+      await pulseRun(`pactl load-module module-null-sink sink_name=${name} sink_properties=device.description="Hub-${name}" 2>/dev/null || true`);
     }
     // Load loopback so any audio on these sinks is audible
-    await pulseRun('pactl load-module module-loopback source=cloud_phone.monitor 2>/dev/null');
-    await pulseRun('pactl load-module module-loopback source=browser_youtube.monitor 2>/dev/null');
+    await pulseRun('pactl load-module module-loopback source=cloud_phone.monitor 2>/dev/null || true');
+    await pulseRun('pactl load-module module-loopback source=browser_youtube.monitor 2>/dev/null || true');
     console.log('  🔊 Virtual audio sinks ready: cloud_phone, browser_youtube');
   } catch {}
 })();

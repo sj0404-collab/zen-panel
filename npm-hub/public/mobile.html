@@ -354,17 +354,19 @@
 
       <!-- CLOUD PHONE -->
       <div class="page" id="p-cloudphone" style="padding:0;flex-direction:column;height:100%">
-        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap">
-          <input type="text" id="cp-url" placeholder="noVNC URL (http://host:6080/vnc.html)" style="flex:1;min-width:200px;padding:8px 12px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:13px;font-family:monospace;outline:none">
-          <button class="btn btn-p" onclick="cloudPhoneConnect()">Подключить</button>
-          <button class="btn" onclick="cloudPhoneFullscreen()">⛶</button>
+        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
+          <span id="cp-status" class="tag">…</span>
+          <button class="btn btn-p btn-sm" id="cp-start" onclick="cloudPhoneStart()">▶ Старт</button>
+          <button class="btn btn-sm" onclick="cloudPhoneStop()">⏹ Стоп</button>
+          <button class="btn btn-sm" onclick="cloudPhoneConnect()">Подключить</button>
+          <button class="btn btn-sm" onclick="cloudPhoneFullscreen()">⛶</button>
         </div>
         <div style="flex:1;position:relative;background:#000">
           <iframe id="cp-frame" style="width:100%;height:100%;border:none;display:none" allowfullscreen></iframe>
           <div id="cp-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
             <div style="font-size:48px;margin-bottom:16px">📱</div>
             <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Cloud Phone</div>
-            <div style="font-size:13px;max-width:300px">Введите URL noVNC сервера и нажмите "Подключить".<br>Запустите cloud-phone на раннере через launch.sh</div>
+            <div style="font-size:13px;max-width:300px">Android эмулятор на раннере.<br>Нажмите «▶ Старт», дождитесь загрузки, затем «Подключить».</div>
           </div>
         </div>
       </div>

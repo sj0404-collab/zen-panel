@@ -1495,18 +1495,68 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ===== CLOUD PHONE =====
+function cloudPhoneUrl(suffix) {
+  const proto = location.protocol === 'https:' ? 'https' : 'http';
+  return proto + '://' + location.host + '/phone/' + (suffix || 'vnc.html');
+}
+async function cloudPhoneStatus(prefix) {
+  const pfx = prefix || '';
+  const el = document.getElementById(pfx ? 'cp-status-desktop' : 'cp-status');
+  const btn = document.getElementById(pfx ? 'cp-start-desktop' : 'cp-start');
+  try {
+    if (el) { el.textContent = 'проверка…'; el.className = 'tag'; }
+    const r = await fetch('/api/phone/status');
+    const d = await r.json();
+    const ok = d.running && d.adb;
+    if (el) {
+      el.textContent = ok ? '● запущен' : '○ выключен';
+      el.className = 'tag ' + (ok ? 'tag-on' : 'tag-off');
+    }
+    if (btn) btn.textContent = d.running ? '→ Закрыть' : '▶ Старт';
+    return d;
+  } catch (e) {
+    if (el) { el.textContent = '? ошибка'; el.className = 'tag tag-off'; }
+    return { running: false };
+  }
+}
+async function cloudPhoneStart(prefix) {
+  const pfx = prefix || '';
+  const d = await cloudPhoneStatus(pfx);
+  const btn = document.getElementById(pfx ? 'cp-start-desktop' : 'cp-start');
+  if (d.running && d.adb) { cloudPhoneConnect(pfx); return; }
+  if (btn) { btn.textContent = '▶ Запуск…'; btn.disabled = true; }
+  try {
+    const r = await fetch('/api/phone/start', { method: 'POST' });
+    const j = await r.json();
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Старт'; }
+    if (j.ok) {
+      const poll = setInterval(async () => {
+        const s = await cloudPhoneStatus(pfx);
+        if (s.running) { clearInterval(poll); cloudPhoneConnect(pfx); }
+      }, 4000);
+    } else {
+      alert('Не удалось запустить телефон:\n' + (j.message || j.error || ''));
+    }
+  } catch (e) { alert('Ошибка запуска: ' + e.message); }
+}
+async function cloudPhoneStop(prefix) {
+  const pfx = prefix || '';
+  try {
+    await fetch('/api/phone/stop', { method: 'POST' });
+    const frame = document.getElementById(pfx ? 'cp-frame-desktop' : 'cp-frame');
+    if (frame) { frame.src = 'about:blank'; frame.style.display = 'none'; }
+    const ph = document.getElementById(pfx ? 'cp-placeholder-desktop' : 'cp-placeholder');
+    if (ph) ph.style.display = 'flex';
+    cloudPhoneStatus(pfx);
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
 function cloudPhoneConnect(prefix) {
   const pfx = prefix || '';
-  const urlEl = document.getElementById(pfx ? 'cp-url-desktop' : 'cp-url');
   const frame = document.getElementById(pfx ? 'cp-frame-desktop' : 'cp-frame');
   const ph = document.getElementById(pfx ? 'cp-placeholder-desktop' : 'cp-placeholder');
-  const url = urlEl.value.trim();
-  if (!url) return;
-  try { new URL(url); } catch { fmInfo('Некорректный URL'); return; }
-  localStorage.setItem('cp.server', url);
-  frame.src = url;
+  frame.src = cloudPhoneUrl('vnc.html?autoconnect=1&path=ws/vnc');
   frame.style.display = 'block';
-  ph.style.display = 'none';
+  if (ph) ph.style.display = 'none';
 }
 function cloudPhoneFullscreen(prefix) {
   const pfx = prefix || '';
@@ -1514,13 +1564,14 @@ function cloudPhoneFullscreen(prefix) {
   if (frame.requestFullscreen) frame.requestFullscreen();
   else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
 }
-(function() {
+if (document.getElementById('p-cloudphone')) {
+  cloudPhoneStatus();
   const saved = localStorage.getItem('cp.server');
   if (saved) {
     const urlEl = document.getElementById('cp-url');
     if (urlEl) urlEl.value = saved;
   }
-})();
+}
 
 // ===== BROWSER (Chrome / YouTube) =====
 function browserGo(url, prefix) {
