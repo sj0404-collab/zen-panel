@@ -1602,10 +1602,17 @@ function cloudPhoneConnect(prefix) {
   const pfx = prefix || '';
   const frame = document.getElementById('cp-frame-desktop');
   const ph = document.getElementById('cp-placeholder-desktop');
-  const url = cloudPhoneUrl() + '?autoconnect=1&path=ws/vnc&reconnect=1&reconnect_delay=3000';
-  frame.src = url;
-  frame.style.display = 'block';
-  if (ph) ph.style.display = 'none';
+  // Remote mode: the phone lives on its own runner and exposes a tunnel URL
+  // (full noVNC page). Local fallback: serve the bundled noVNC through the
+  // hub's /ws/vnc proxy.
+  cloudPhoneStatus(pfx).then(d => {
+    const url = d.url
+      ? d.url
+      : cloudPhoneUrl() + '?autoconnect=1&path=ws/vnc&reconnect=1&reconnect_delay=3000';
+    frame.src = url;
+    frame.style.display = 'block';
+    if (ph) ph.style.display = 'none';
+  });
 }
 async function phoneBrowserOpen(url, prefix) {
   const pfx = prefix || '';

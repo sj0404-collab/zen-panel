@@ -1554,9 +1554,14 @@ function cloudPhoneConnect(prefix) {
   const pfx = prefix || '';
   const frame = document.getElementById(pfx ? 'cp-frame-desktop' : 'cp-frame');
   const ph = document.getElementById(pfx ? 'cp-placeholder-desktop' : 'cp-placeholder');
-  frame.src = cloudPhoneUrl('vnc.html?autoconnect=1&path=ws/vnc&reconnect=1&reconnect_delay=3000');
-  frame.style.display = 'block';
-  if (ph) ph.style.display = 'none';
+  cloudPhoneStatus(pfx).then(d => {
+    const url = d.url
+      ? d.url
+      : cloudPhoneUrl('vnc.html?autoconnect=1&path=ws/vnc&reconnect=1&reconnect_delay=3000');
+    frame.src = url;
+    frame.style.display = 'block';
+    if (ph) ph.style.display = 'none';
+  });
 }
 async function phoneBrowserOpen(url, prefix) {
   const pfx = prefix || '';

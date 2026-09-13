@@ -1326,19 +1326,77 @@ app.post('/api/update', async (req, res) => {
 });
 
 // ─── CLOUD PHONE (Android emulator + VNC) ───
-// The phone runs on the same runner (Xvfb + Android emulator + x11vnc:5900 +
-// websockify:6080 alt). We bypass the raw 6080 port and serve the noVNC client
-// ourselves (/phone/*) with a WebSocket VNC proxy (/ws/vnc → localhost:5900),
-// so the phone works through the hub's own tunnel/port without extra exposure.
+// The phone runs on its OWN runner (android-cloud-phone repo, cloud-phone.yml
+// workflow, dedicated self-hosted runner labelled `emulator`). That runner
+// installs everything itself on every start (install_deps.sh), boots the
+// Android emulator and serves noVNC on a cloudflared tunnel. The hub only:
+//   - dispatches the workflow (start/stop) via the GitHub API,
+//   - reads the live URL from the android-cloud-phone `session-state` branch
+//     (session-phone.json) so the panel knows what to open.
+// A local fallback (`PHONE_REPO=` empty or control.sh present) still works for
+// a phone sharing the hub's own runner.
 const PHONE_DIR = path.join(__dirname, '..', 'public', 'novnc');
 const PHONE_ROOT = process.env.PHONE_ROOT || path.join(HOME, 'android-cloud-phone');
 const PHONE_VNC_PORT = 5900;
 const PHONE_ADB_PORT = 5555;
+const PHONE_NO_VNC_PORT = 6080;
 const PHONE_CTL = process.env.PHONE_CTL || path.join(PHONE_ROOT, 'scripts', 'control.sh');
+const PHONE_REPO = (process.env.PHONE_REPO || 'sj0404-collab/android-cloud-phone').trim();
+const PHONE_WF = 'cloud-phone.yml';
+const phoneToken = () => runnerToken();
 
 app.use('/phone', express.static(PHONE_DIR, { fallthrough: false }));
 app.get('/phone', (req, res) => res.redirect('/phone/vnc.html'));
 app.get('/phone/', (req, res) => res.redirect('/phone/vnc.html'));
+
+const remotePhoneAvailable = () => Boolean(PHONE_REPO && phoneToken());
+
+// Raw GitHub dispatch — POST /repos/{repo}/actions/workflows/{wf}/dispatches.
+const dispatchPhone = (command, browserUrl) => new Promise(async (resolve) => {
+  const token = phoneToken();
+  if (!remotePhoneAvailable()) return resolve({ ok: false, out: 'нет GH_TOKEN / PHONE_REPO для remote-телефона' });
+  try {
+    const inputs = { command, runner: process.env.PHONE_RUNNER || 'emulator' };
+    if (browserUrl) inputs.browser_url = browserUrl;
+    const url = `${GITHUB_BASE(PHONE_REPO)}/actions/workflows/${PHONE_WF}/dispatches`;
+    const r = await ghApi('POST', url, token, {
+      ref: 'main',
+      inputs
+    });
+    if (r.status >= 200 && r.status < 300) return resolve({ ok: true, out: `workflow ${command} dispatched` });
+    resolve({ ok: false, out: `dispatch ${command} failed (${r.status}): ${JSON.stringify(r.j || r.error || '')}` });
+  } catch (e) { resolve({ ok: false, out: String(e.message || e) }); }
+});
+
+const dispatchPhoneBrowser = (url) => dispatchPhone('start', url);
+
+// Read session-phone.json from the android-cloud-phone session-state branch.
+const phoneRemoteStatus = async () => {
+  const token = phoneToken();
+  if (!token) return { url: null, raw: null };
+  try {
+    const url = `${GITHUB_BASE(PHONE_REPO)}/contents/session-phone.json?ref=session-state`;
+    const r = await ghApi('GET', url, token);
+    if (r.status !== 200 || !r.j || !r.j.content) return { url: null, raw: null };
+    let text = '';
+    try { text = Buffer.from(r.j.content, 'base64').toString('utf8'); } catch { return { url: null, raw: null }; }
+    const d = JSON.parse(text);
+    const live = d && d.state !== 'ended';
+    return {
+      url: live ? (d.url || d.rawUrl || null) : null,
+      raw: d
+    };
+  } catch { return { url: null, raw: null }; }
+};
+
+const phoneLocalStatus = async () => {
+  const [vnc, adb, ctl] = await Promise.all([
+    phonePortOpen(PHONE_VNC_PORT),
+    phonePortOpen(PHONE_ADB_PORT),
+    phoneCtrl('status', 8000).catch(e => ({ ok: false, out: String(e.message || e) }))
+  ]);
+  return { vnc, adb, control: ctl };
+};
 
 const phoneCtrl = (sub, timeoutMs = 90000) => new Promise((resolve) => {
   try {
@@ -1360,12 +1418,26 @@ const phonePortOpen = (port, timeoutMs = 1200) => new Promise((resolve) => {
 });
 
 const phoneStatus = async () => {
-  const [vnc, adb, ctl] = await Promise.all([
-    phonePortOpen(PHONE_VNC_PORT),
-    phonePortOpen(PHONE_ADB_PORT),
-    phoneCtrl('status', 8000).catch(e => ({ ok: false, out: String(e.message || e) }))
-  ]);
-  return { running: vnc, adb, noVncPort: 6080, control: ctl };
+  if (remotePhoneAvailable()) {
+    const s = await phoneRemoteStatus();
+    // Tunnel first, raw runner URL second, local /phone fallback last.
+    const url = s.url;
+    return {
+      running: Boolean(url || s.raw && s.raw.state === 'live'),
+      remote: true, url,
+      raw: s.raw,
+      noVncPort: PHONE_NO_VNC_PORT,
+      adb: Boolean(s.raw && s.raw.adbPort),
+      control: { ok: true, out: s.raw && s.raw.state === 'live' ? 'remote: live' : 'remote: idle' }
+    };
+  }
+  const s = await phoneLocalStatus();
+  return {
+    running: s.vnc, adb: s.adb,
+    remote: false, url: null,
+    noVncPort: PHONE_NO_VNC_PORT,
+    control: s.control
+  };
 };
 
 app.get('/api/phone/status', async (req, res) => {
@@ -1374,15 +1446,23 @@ app.get('/api/phone/status', async (req, res) => {
 
 app.post('/api/phone/start', async (req, res) => {
   try {
+    if (remotePhoneAvailable()) {
+      const r = await dispatchPhone('start');
+      return res.json({ ok: r.ok, message: r.out, remote: true });
+    }
     const r = await phoneCtrl('start');
-    res.json({ ok: r.ok, message: r.out });
+    res.json({ ok: r.ok, message: r.out, remote: false });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post('/api/phone/stop', async (req, res) => {
   try {
+    if (remotePhoneAvailable()) {
+      const r = await dispatchPhone('stop');
+      return res.json({ ok: r.ok, message: r.out, remote: true });
+    }
     const r = await phoneCtrl('stop');
-    res.json({ ok: r.ok, message: r.out });
+    res.json({ ok: r.ok, message: r.out, remote: false });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
@@ -1419,6 +1499,16 @@ app.post('/api/phone/browser', async (req, res) => {
     const url = String((req.body && req.body.url) || '').trim();
     if (!url || !/^https?:\/\/\S+$/i.test(url)) {
       return res.status(400).json({ ok: false, error: 'bad url: ' + url });
+    }
+    if (remotePhoneAvailable()) {
+      // Phone lives on another runner: hand the URL to that runner, which
+      // opens it in the emulator browser after boot (cloud-phone.yml).
+      const st = await phoneRemoteStatus();
+      if (!(st.raw && st.raw.state === 'live')) {
+        return res.json({ ok: false, info: 'телефон не запущен — сначала «▶ Старт»' });
+      }
+      const r = await dispatchPhoneBrowser(url);
+      return res.json({ ok: r.ok, message: r.out, remote: true, url });
     }
     await phoneEnsureBrowser();
     const r = await phoneAdb([
