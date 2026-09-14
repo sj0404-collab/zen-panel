@@ -1603,11 +1603,9 @@ function cloudPhoneFullscreen(prefix) {
 }
 if (document.getElementById('p-cloudphone')) {
   cloudPhoneStatus();
-  const saved = localStorage.getItem('cp.server');
-  if (saved) {
-    const urlEl = document.getElementById('cp-url');
-    if (urlEl) urlEl.value = saved;
-  }
+  const last = localStorage.getItem('cp.lastUrl');
+  const urlEl = document.getElementById('cp-url');
+  if (urlEl && last) urlEl.value = last;
 }
 
 // ===== BROWSER (Chrome / YouTube) =====

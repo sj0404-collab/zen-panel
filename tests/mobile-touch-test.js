@@ -221,5 +221,13 @@ check('q35b panel rerun link', panel.includes('onclick="rerunRun('));
 check('q35c panel apk file chooser', panelKt.includes('onShowFileChooser') &&
   panelKt.includes('ActivityResultContracts') && panelKt.includes('filePicker.launch'));
 
+// q36: cloud-phone last URL is saved and restored (cp.lastUrl, not the stale
+// cp.server key) in both clients.
+check('q36 cp lastUrl restore', mob.includes("localStorage.setItem('cp.lastUrl'") &&
+  mob.includes("localStorage.getItem('cp.lastUrl')") &&
+  !/cp\.server/.test(mob) &&
+  desk.includes("localStorage.setItem('cp.lastUrl'") &&
+  desk.includes("localStorage.getItem('cp.lastUrl')"));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
