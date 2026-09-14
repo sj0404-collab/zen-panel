@@ -180,6 +180,7 @@
       <button class="tb" onclick="showPage('files')">Файлы</button>
       <button class="tb" onclick="showPage('cloudphone')">📱 Телефон</button>
       <button class="tb" onclick="showPage('browser')">🌐 Браузер</button>
+      <button class="tb" onclick="showPage('linux')">🖥 Экран</button>
       <button class="tb" onclick="showPage('pulseaudio')">🔊 Аудио</button>
       <button class="tb" onclick="showPage('git')">🐙 Git</button>
       <button class="tb" onclick="showPage('models-full')">🔧 Models</button>
@@ -310,6 +311,25 @@
         </div>
         <div style="flex:1;position:relative;background:#000">
           <iframe id="browser-frame-desktop" src="https://www.youtube.com" style="width:100%;height:100%;border:none" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen></iframe>
+        </div>
+      </div>
+
+      <!-- LINUX DESKTOP (VNC) -->
+      <div class="page" id="p-linux" style="padding:0;flex-direction:column;height:100%">
+        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center;flex-wrap:wrap">
+          <span id="linux-status-desktop" class="tag" style="flex-shrink:0">…</span>
+          <button class="btn btn-p btn-sm" onclick="linuxConnect('desktop')">Открыть экран</button>
+          <button class="btn btn-sm" onclick="linuxFullscreen('desktop')">⛶</button>
+          <div style="flex:1"></div>
+          <span style="font-size:11px;color:var(--t3)">openbox + xterm · Mesa (llvmpipe)</span>
+        </div>
+        <div style="flex:1;position:relative;background:#000">
+          <iframe id="linux-frame-desktop" style="width:100%;height:100%;border:none;display:none" allow="clipboard-read; clipboard-write" allowfullscreen></iframe>
+          <div id="linux-placeholder-desktop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
+            <div style="font-size:48px;margin-bottom:16px">🖥</div>
+            <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Linux Screen</div>
+            <div style="font-size:13px;max-width:420px">Рабочий стол Linux на втором раннере.<br>Запущен вместе с hub — нажмите «Открыть экран».</div>
+          </div>
         </div>
       </div>
 

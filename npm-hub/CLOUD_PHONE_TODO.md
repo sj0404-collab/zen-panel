@@ -1,10 +1,12 @@
 # Cloud Phone — доработки и план
 
 ## Текущее состояние (коммиты)
-- **npm-hub** (репозиторий `zen-panel`, origin/main = `214e027`):
+- **npm-hub** (репозиторий `zen-panel`):
   - вкладка **Телефон**: кнопки Старт/Стоп/Подключить/⛶, статус, iframe noVNC через `/phone/vnc.html?autoconnect=1&path=ws/vnc`
   - сервер: `/api/phone/status|start|stop`, WS-прокси `/ws/vnc → tcp://127.0.0.1:5900`
   - пульс: sinks `cloud_phone`, `browser_youtube`, loopback'и
+  - вкладка **Экран (Linux Desktop)**: параллельный раннер `vnc` в `hub.yml`, который с первой секунды поднимает headless-рабочий стол (openbox + xterm + tint2, Mesa/llvmpipe) на Xvfb :99 и отдаёт его через x11vnc + noVNC + cloudflared-туннель
+  - сервер: `/api/vnc/status` читает `session-vnc.json` со ветки `session-state`, `/desktop-vnc` — редирект на живой адрес
 - **android-cloud-phone** (origin/main = `5c3c417`):
   - `launch.sh`: Xvfb :99 1080×2400, AVD `phone` (Pixel 7, Android 14, x86_64), KVM, `-no-audio` убран, `QEMU_AUDIO_DRV=alsa`
   - `scripts/control.sh start|stop|status` — управляет стеком (эмулятор, x11vnc, websockify)
@@ -115,12 +117,13 @@ cd /home/runner/work/zen-panel/zen-panel/fork/npm-hub && node src/server.js
 | # | Задача | Статус |
 |---|--------|--------|
 | 1 | KVM + GPU ускорение | ✅ KVM работает, GPU — swiftshader |
-| 2 | x11vnc флаги для FPS | 🔄 нужно добавить `-nodri -noshm -copyrect` |
-| 3 | ANR авто-закрытие | 🔄 добавить в `wait_for_boot` |
+| 2 | x11vnc флаги для FPS | ✅ добавлены в `launch.sh` (android-cloud-phone) |
+| 3 | ANR авто-закрытие | ✅ `dismiss_anr()` в `wait_for_boot` |
 | 4 | Аудио в sink `cloud_phone` | 🔄 текущая попытка ALSA→Pulse |
-| 5 | Вкладка «Браузер» API + UI | ⏳ не начато |
-| 6 | Вкладка «Телефон» — авто-реконнект | ⏳ частично |
+| 5 | Вкладка «Браузер» API + UI | ✅ выполнено + восстановление `cp.lastUrl` |
+| 6 | Вкладка «Телефон» — авто-реконнект | ✅ noVNC `reconnect=1` |
 | 7 | Документация запуска для CI | ✅ `install_deps.sh`, `control.sh` |
+| 8 | Linux Desktop (Экран) — паралл. раннер | ✅ `vnc` job в `hub.yml`, `start_desktop.sh`, кнопка в UI |
 
 ---
 

@@ -229,5 +229,27 @@ check('q36 cp lastUrl restore', mob.includes("localStorage.setItem('cp.lastUrl'"
   desk.includes("localStorage.setItem('cp.lastUrl'") &&
   desk.includes("localStorage.getItem('cp.lastUrl')"));
 
+// q37: Linux desktop VNC is wired end-to-end: server endpoint + remote status
+// reader, page + nav in both UIs, connect handlers in both clients.
+check('q37 vnc endpoint', server.includes("app.get('/api/vnc/status'") &&
+  server.includes('session-vnc.json') &&
+  server.includes('vncRemoteStatus('));
+check('q37b vnc server route', server.includes("app.get('/desktop-vnc'"));
+check('q37c vnc publish slot', fs.readFileSync(path.join(__dirname, '..', 'tools/publish_session.sh'), 'utf8')
+  .includes('slot=vnc)      FILE="session-vnc.json"'));
+check('q37d vnc mobile ui', mobHtml.includes('id="p-linux"') &&
+  mobHtml.includes('id="nav-linux"') &&
+  mobHtml.includes('onclick="linuxConnect()"') &&
+  mobHtml.includes('onclick="linuxFullscreen()"') &&
+  mob.includes('function linuxConnect(') && mob.includes('function linuxStatus('));
+check('q37e vnc desktop ui', deskHtml.includes('id="p-linux"') &&
+  deskHtml.includes('onclick="showPage(\'linux\')"') &&
+  deskHtml.includes("linuxConnect('desktop')") &&
+  deskHtml.includes("linuxFullscreen('desktop')") &&
+  desk.includes('function linuxConnect(') && desk.includes('function linuxStatus('));
+check('q37f vnc workflow', /job|vnc:/.test(fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8')) &&
+  fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8').includes('start_desktop.sh') &&
+  fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8').includes('slot=vnc'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

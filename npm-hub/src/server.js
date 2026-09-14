@@ -1548,6 +1548,53 @@ app.post('/api/phone/browser', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// ─── LINUX DESKTOP VNC (parallel runner) ───
+// The hub.yml `vnc` job runs a headless Linux desktop (openbox + xterm + Mesa)
+// on a second runner and publishes its noVNC address to session-vnc.json on the
+// session-state branch of this repo. The hub only reads that file and hands the
+// address to the panel's «Linux screen» button — same pattern as the phone.
+const VNC_REPO = (process.env.VNC_REPO || process.env.GITHUB_REPOSITORY || 'sj0404-collab/zen-panel').trim();
+
+const vncRemoteStatus = async () => {
+  const token = runnerToken();
+  if (!token) return { url: null, raw: null };
+  try {
+    const url = `${GITHUB_BASE(VNC_REPO)}/contents/session-vnc.json?ref=session-state`;
+    const r = await ghApi('GET', url, token);
+    if (r.status !== 200 || !r.j || !r.j.content) return { url: null, raw: null };
+    let text = '';
+    try { text = Buffer.from(r.j.content, 'base64').toString('utf8'); } catch { return { url: null, raw: null }; }
+    const d = JSON.parse(text);
+    const url2 = d && d.state !== 'ended' ? (d.url || d.novncUrl || null) : null;
+    return { url: url2, raw: d };
+  } catch { return { url: null, raw: null }; }
+};
+
+const vncStatus = async () => {
+  const s = await vncRemoteStatus();
+  const url = s.url;
+  return {
+    running: Boolean(url || s.raw && s.raw.state === 'live'),
+    url,
+    remote: true,
+    raw: s.raw
+  };
+};
+
+app.get('/api/vnc/status', async (req, res) => {
+  try { res.json(await vncStatus()); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// If the desktop is live, mirror its noVNC page behind the hub's own origin so
+// the panel can embed it in an iframe even through the hub's tunnel.
+app.get('/desktop-vnc', async (req, res) => {
+  try {
+    const s = await vncStatus();
+    if (!s.url) return res.status(404).send('VNC desktop is not running');
+    res.redirect(s.url);
+  } catch (e) { res.status(500).send(String(e.message || e)); }
+});
+
 // WebSocket VNC proxy: /ws/vnc  →  tcp://127.0.0.1:5900
 // noVNC connects to  ws(s)://<hub-host>:<hub-port>/ws/vnc  over the hub's own
 // origin (works through the hub tunnel too, WS is same-origin relative).

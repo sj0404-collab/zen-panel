@@ -196,6 +196,7 @@ function showPage(p) {
   }
   if (p === 'files') initFM();
   if (p === 'git') loadGit();
+  if (p === 'linux') linuxStatus();
 }
 
 showPage('files');
@@ -1607,6 +1608,43 @@ if (document.getElementById('p-cloudphone')) {
   const urlEl = document.getElementById('cp-url');
   if (urlEl && last) urlEl.value = last;
 }
+
+// ===== LINUX DESKTOP (VNC) =====
+async function linuxStatus() {
+  const el = document.getElementById('linux-status');
+  const btn = document.getElementById('linux-open');
+  try {
+    if (el) { el.textContent = 'проверка…'; el.className = 'tag'; }
+    const r = await fetch('/api/vnc/status');
+    const d = await r.json();
+    const ok = d.running && d.url;
+    if (el) {
+      el.textContent = ok ? '● запущен' : '○ выключен';
+      el.className = 'tag ' + (ok ? 'tag-on' : 'tag-off');
+    }
+    return d;
+  } catch (e) {
+    if (el) { el.textContent = '? ошибка'; el.className = 'tag tag-off'; }
+    if (btn) { btn.textContent = 'Открыть экран'; }
+    return { running: false, url: null };
+  }
+}
+async function linuxConnect() {
+  const d = await linuxStatus();
+  if (!d.url) { linuxStatus(); return; }
+  const frame = document.getElementById('linux-frame');
+  const ph = document.getElementById('linux-placeholder');
+  frame.src = d.url;
+  frame.style.display = 'block';
+  frame.allow = 'clipboard-read; clipboard-write';
+  if (ph) ph.style.display = 'none';
+}
+function linuxFullscreen() {
+  const frame = document.getElementById('linux-frame');
+  if (frame.requestFullscreen) frame.requestFullscreen();
+  else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
+}
+if (document.getElementById('p-linux')) linuxStatus();
 
 // ===== BROWSER (Chrome / YouTube) =====
 function browserGo(url, prefix) {

@@ -388,6 +388,25 @@
         </div>
       </div>
 
+      <!-- LINUX DESKTOP (VNC) -->
+      <div class="page" id="p-linux" style="padding:0;flex-direction:column;height:100%">
+        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
+          <span id="linux-status" class="tag">…</span>
+          <button class="btn btn-p btn-sm" id="linux-open" onclick="linuxConnect()">Открыть экран</button>
+          <button class="btn btn-sm" onclick="linuxFullscreen()">⛶</button>
+          <div style="flex:1"></div>
+          <span style="font-size:11px;color:var(--t3)">openbox + xterm · Mesa</span>
+        </div>
+        <div style="flex:1;position:relative;background:#000">
+          <iframe id="linux-frame" style="width:100%;height:100%;border:none;display:none" allowfullscreen></iframe>
+          <div id="linux-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
+            <div style="font-size:48px;margin-bottom:16px">🖥</div>
+            <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Linux Screen</div>
+            <div style="font-size:13px;max-width:300px">Рабочий стол Linux на втором раннере.<br>Запущен вместе с hub — нажмите «Открыть экран».</div>
+          </div>
+        </div>
+      </div>
+
       <!-- PULSE AUDIO -->
       <div class="page" id="p-pulseaudio">
         <div class="ph"><h1>🔊 PulseAudio</h1><p>Общий аудио-сервер для всех вкладок</p></div>
@@ -467,6 +486,10 @@
     <button class="nav-btn" id="nav-browser" onclick="showPage('browser')">
       <span class="nav-ico">🌐</span>
       <span class="nav-label">Браузер</span>
+    </button>
+    <button class="nav-btn" id="nav-linux" onclick="showPage('linux')">
+      <span class="nav-ico">🖥</span>
+      <span class="nav-label">Экран</span>
     </button>
     <button class="nav-btn" id="nav-pulseaudio" onclick="showPage('pulseaudio')">
       <span class="nav-ico">🔊</span>

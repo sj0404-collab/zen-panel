@@ -522,3 +522,108 @@ jobs:
             'slot=hub-windows' 'file=models-hub-windows.json' `
             'kind=NPM-Hub' 'os=windows' `
             "json=$env:TEMP\hub-models.json"
+
+  # ── Linux Desktop VNC (parallel runner) ────────────────────────────────
+  # A second, independent job next to `hub`. It stands up a headless Linux
+  # desktop (openbox + xterm, Mesa software rendering) and exposes it through
+  # x11vnc + noVNC + a cloudflared tunnel from the very start of the run, so
+  # the hub gets a working graphical shell (an "Open the Linux screen" button)
+  # without ever pressing Start. Kept alive by the same watchdog pattern as
+  # the hub: dead desktop/tunnel gets restarted in-place.
+  vnc:
+    if: inputs.os == 'linux'
+    runs-on: ${{ inputs.runner_linux }}
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - name: Install the desktop + VNC stack
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            xvfb openbox xterm tint2 x11vnc websockify novnc dbus-x11 \
+            mesa-utils libgl1-mesa-dri libgl1 libegl1 libgles2 \
+            libglu1-mesa libgbm1 x11-utils x11-xserver-utils
+
+      - name: Start the Linux desktop and open the tunnel
+        run: |
+          export VNC_PORT=5901 NOVNC_PORT=6081
+          bash "$GITHUB_WORKSPACE/fork/tools/start_desktop.sh" || {
+            echo "::error::the Linux desktop VNC did not start."
+            tail -30 /tmp/xvfb.log /tmp/openbox.log /tmp/x11vnc.log 2>/dev/null
+            exit 1
+          }
+
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 6081 /tmp/vnc-tunnel.log)
+          if [ -z "$URL" ]; then
+            echo "::error::no tunnel for the VNC desktop."
+            tail -25 /tmp/vnc-tunnel.log
+            exit 1
+          fi
+          echo "$URL" > /tmp/vnc-url
+
+          # Pre-warm: the noVNC page must answer over the tunnel edge before
+          # we hand the address to the panel.
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$URL/vnc.html" || true)
+            case "$code" in 2*|3*|4*) break ;; esac
+            sleep 3
+          done
+
+          {
+            echo "## Linux Desktop (VNC)"
+            echo ""
+            echo "**[Open the Linux screen]($URL/vnc.html)** - openbox + xterm + Mesa."
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| noVNC | \`$URL/vnc.html\` |"
+            echo "| VNC | \`127.0.0.1:5901\` (on the runner) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "=================================================="
+          echo " Linux Desktop VNC: $URL/vnc.html"
+          echo "=================================================="
+
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "slot=vnc" "kind=Linux-VNC" "os=linux" \
+              "url=$URL/vnc.html" "novncUrl=$URL/vnc.html" \
+              "label=${{ inputs.label }}"
+
+      - name: Keep the VNC session alive
+        run: |
+          PIDFILE=/tmp/cloudflared-6081.pid
+          for i in $(seq 1 1400); do
+            sleep 15
+            if ! curl -sf -o /dev/null -m 10 "http://127.0.0.1:6081/vnc.html"; then
+              echo "::warning::desktop VNC stopped answering; restarting it."
+              pkill -f "websockify.*6081" 2>/dev/null || true
+              export VNC_PORT=5901 NOVNC_PORT=6081
+              bash "$GITHUB_WORKSPACE/fork/tools/start_desktop.sh" || true
+            fi
+            CUR=$(cat /tmp/vnc-url 2>/dev/null || echo)
+            PID=$(cat "$PIDFILE" 2>/dev/null || echo)
+            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ]; then
+              code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$CUR/vnc.html" 2>/dev/null || true)
+              case "$code" in 2*|3*|4*) continue ;; esac
+            fi
+            echo "::warning::VNC tunnel dead; reopening."
+            URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 6081 /tmp/vnc-tunnel2.log) || continue
+            [ -n "$URL" ] || continue
+            echo "$URL" > /tmp/vnc-url
+            echo "VNC back up on $URL/vnc.html"
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+                "slot=vnc" "kind=Linux-VNC" "os=linux" \
+                "url=$URL/vnc.html" "novncUrl=$URL/vnc.html" \
+                "label=${{ inputs.label }}"
+          done
+
+      - name: Clear the published VNC session
+        run: |
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=vnc" "state=ended" || true
