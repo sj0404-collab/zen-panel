@@ -289,7 +289,10 @@ async function ghLoadRepos() {
 async function ghOpenRepo(fullName) {
   ghCurrentRepo = fullName;
   ghCurrentPath = '';
-  document.getElementById('gh-repo-detail').style.display = 'block';
+  const section = document.getElementById('gh-repos-section');
+  if (section) section.style.display = 'none';
+  const detail = document.getElementById('gh-repo-detail');
+  detail.style.display = 'block';
   document.getElementById('gh-repo-name').textContent = fullName;
   try {
     const r = await fetch('/api/gh/repos/' + fullName);
@@ -298,11 +301,14 @@ async function ghOpenRepo(fullName) {
     document.getElementById('gh-repo-name').innerHTML = escHtml(fullName) + (d.language ? ' <span style="font-size:11px;color:var(--t3);font-weight:400">' + escHtml(d.language) + '</span>' : '');
   } catch {}
   ghShowTab('contents', document.querySelector('.gh-tab'));
-  setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 100);
+  setTimeout(() => detail.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
 }
 
 function ghBackToList() {
+  const section = document.getElementById('gh-repos-section');
+  if (section) section.style.display = '';
   document.getElementById('gh-repo-detail').style.display = 'none';
+  if (section) section.scrollIntoView({ block: 'start' });
   ghCurrentRepo = null;
 }
 

@@ -1811,7 +1811,10 @@ async function ghOpenRepo(fullName) {
   ghCurrentRepo = fullName;
   ghCurrentPath = '';
   ghCurrentBranch = '';
-  document.getElementById('gh-repo-detail').style.display = 'block';
+  const section = document.getElementById('gh-repos-section');
+  if (section) section.style.display = 'none';
+  const detail = document.getElementById('gh-repo-detail');
+  detail.style.display = 'block';
   document.getElementById('gh-repo-name').textContent = fullName;
   // Load repo info + contents
   try {
@@ -1821,10 +1824,17 @@ async function ghOpenRepo(fullName) {
     document.getElementById('gh-repo-name').innerHTML = escHtml(fullName) + (d.language ? ' <span style="font-size:11px;color:var(--t3);font-weight:400">' + escHtml(d.language) + '</span>' : '');
   } catch {}
   ghShowTab('contents', document.querySelector('.gh-tab'));
+  detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function ghBackToList() {
+  const section = document.getElementById('gh-repos-section');
+  if (section) section.style.display = '';
   document.getElementById('gh-repo-detail').style.display = 'none';
+  if (ghCurrentRepo) {
+    const el = document.querySelector('#gh-repos-section');
+    if (el) el.scrollIntoView({ block: 'start' });
+  }
   ghCurrentRepo = null;
 }
 
