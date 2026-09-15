@@ -235,6 +235,284 @@ async function loadGit() {
   if (lgEl) lgEl.textContent = lg.log ? lg.log : '(нет коммитов)';
 }
 
+// ===== LINUX DESKTOP: launch browser on VNC =====
+async function linuxRunBrowser(url) {
+  if (!url) return;
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  try {
+    const r = await fetch('/api/linux/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'browser', url })
+    });
+    const d = await r.json();
+    if (!d.ok) console.warn('linuxRunBrowser:', d.error);
+  } catch (e) { console.warn('linuxRunBrowser failed:', e.message); }
+}
+
+// ===== GITHUB REPO BROWSER =====
+let ghRepos = [];
+let ghCurrentRepo = null;
+let ghCurrentPath = '';
+let ghCurrentBranch = '';
+
+async function ghLoadRepos() {
+  const grid = document.getElementById('gh-repos-grid');
+  if (!grid) return;
+  if (grid.dataset.loaded && !ghRepos.length) return;
+  grid.innerHTML = '<div style="color:var(--t3);font-size:12px">Загрузка...</div>';
+  try {
+    const r = await fetch('/api/gh/repos?per_page=50');
+    const d = await r.json();
+    if (!d.success) { grid.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(d.error || 'ошибка') + '</div>'; return; }
+    ghRepos = d.repos || [];
+    const cnt = document.getElementById('gh-repos-count');
+    if (cnt) cnt.textContent = ghRepos.length + ' репозиториев';
+    grid.innerHTML = ghRepos.map(r => `
+      <div class="card" style="cursor:pointer;padding:12px" onclick="ghOpenRepo('${escAttr(r.full_name)}')">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-size:14px">${r.private ? '🔒' : '📂'}</span>
+          <span style="font-size:14px;font-weight:600;color:var(--acc)">${escHtml(r.full_name)}</span>
+        </div>
+        <div style="font-size:12px;color:var(--t2);margin-bottom:4px">${escHtml(r.description || '(нет описания)')}</div>
+        <div style="display:flex;gap:8px;font-size:10px;color:var(--t3)">
+          ${r.language ? '<span>' + escHtml(r.language) + '</span>' : ''}
+          ${r.stargazers_count ? '<span>⭐ ' + r.stargazers_count + '</span>' : ''}
+          <span>🌿 ${escHtml(r.default_branch)}</span>
+        </div>
+      </div>
+    `).join('');
+    grid.dataset.loaded = '1';
+  } catch (e) { grid.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>'; }
+}
+
+async function ghOpenRepo(fullName) {
+  ghCurrentRepo = fullName;
+  ghCurrentPath = '';
+  document.getElementById('gh-repo-detail').style.display = 'block';
+  document.getElementById('gh-repo-name').textContent = fullName;
+  try {
+    const r = await fetch('/api/gh/repos/' + fullName);
+    const d = await r.json();
+    document.getElementById('gh-repo-desc').textContent = d.description || '';
+    document.getElementById('gh-repo-name').innerHTML = escHtml(fullName) + (d.language ? ' <span style="font-size:11px;color:var(--t3);font-weight:400">' + escHtml(d.language) + '</span>' : '');
+  } catch {}
+  ghShowTab('contents', document.querySelector('.gh-tab'));
+  setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 100);
+}
+
+function ghBackToList() {
+  document.getElementById('gh-repo-detail').style.display = 'none';
+  ghCurrentRepo = null;
+}
+
+function ghShowTab(tab, btn) {
+  document.querySelectorAll('.gh-tab').forEach(b => b.classList.remove('on'));
+  if (btn) btn.classList.add('on');
+  ['contents','branches','commits','workflows','runs','releases'].forEach(t => {
+    const el = document.getElementById('gh-repo-' + t);
+    if (el) el.style.display = t === tab ? 'block' : 'none';
+  });
+  if (!ghCurrentRepo) return;
+  if (tab === 'contents') ghLoadContents();
+  if (tab === 'branches') ghLoadBranches();
+  if (tab === 'commits') ghLoadCommits();
+  if (tab === 'workflows') ghLoadWorkflows();
+  if (tab === 'runs') ghLoadRuns();
+  if (tab === 'releases') ghLoadReleases();
+}
+
+async function ghLoadContents(path) {
+  if (path !== undefined) ghCurrentPath = path;
+  const el = document.getElementById('gh-repo-contents');
+  if (!el || !ghCurrentRepo) return;
+  el.innerHTML = '<div style="color:var(--t3);font-size:12px">Загрузка...</div>';
+  try {
+    let url = '/api/gh/repos/' + ghCurrentRepo + '/contents';
+    if (ghCurrentPath) url += '?path=' + encodeURIComponent(ghCurrentPath);
+    const r = await fetch(url);
+    const d = await r.json();
+    if (d.error) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(d.error) + '</div>'; return; }
+    const items = d.items || [];
+    let breadcrumb = '<div style="margin-bottom:8px;font-size:12px"><span style="cursor:pointer;color:var(--acc)" onclick="ghLoadContents(\'\')">📁 корень</span>';
+    if (ghCurrentPath) {
+      const parts = ghCurrentPath.split('/');
+      parts.forEach((p, i) => {
+        const pth = parts.slice(0, i + 1).join('/');
+        breadcrumb += ' / <span style="cursor:pointer;color:var(--acc)" onclick="ghLoadContents(\'' + escAttr(pth) + '\')">' + escHtml(p) + '</span>';
+      });
+    }
+    breadcrumb += '</div>';
+    items.sort((a, b) => (a.type === 'dir' ? -1 : 1) - (b.type === 'dir' ? -1 : 1));
+    el.innerHTML = breadcrumb + items.map(it => {
+      const icon = it.type === 'dir' ? '📁' : fileIcon(it.name);
+      const click = it.type === 'dir' ? `ghLoadContents('${escAttr(it.path)}')` : `ghViewFile('${escAttr(it.path)}')`;
+      return `<div style="display:flex;align-items:center;gap:8px;padding:10px 8px;border-radius:8px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--bdr)" onclick="${click}">
+        <span>${icon}</span>
+        <span style="flex:1;color:var(--t1)">${escHtml(it.name)}</span>
+        <span style="font-size:10px;color:var(--t3)">${it.size ? formatSize(it.size) : ''}</span>
+      </div>`;
+    }).join('');
+  } catch (e) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>'; }
+}
+
+async function ghViewFile(path) {
+  const el = document.getElementById('gh-repo-contents');
+  if (!el || !ghCurrentRepo) return;
+  el.innerHTML = '<div style="color:var(--t3);font-size:12px">Загрузка файла...</div>';
+  try {
+    const r = await fetch('/api/gh/repos/' + ghCurrentRepo + '/contents?path=' + encodeURIComponent(path));
+    const d = await r.json();
+    if (d.error) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(d.error) + '</div>'; return; }
+    let content = '';
+    if (d.download_url) {
+      const fr = await fetch(d.download_url);
+      content = await fr.text().catch(() => '(не удалось загрузить)');
+    }
+    el.innerHTML = `
+      <div style="margin-bottom:8px;font-size:12px">
+        <span style="cursor:pointer;color:var(--acc)" onclick="ghLoadContents('${escAttr(ghCurrentPath)}')">← Назад</span>
+        <span style="margin-left:8px;font-weight:600">${escHtml(path)}</span>
+      </div>
+      <pre style="background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;padding:12px;font-size:12px;font-family:monospace;color:var(--t1);overflow:auto;max-height:60vh;white-space:pre-wrap">${escHtml(content)}</pre>`;
+  } catch (e) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>'; }
+}
+
+async function ghLoadBranches() {
+  const el = document.getElementById('gh-repo-branches');
+  if (!el || !ghCurrentRepo) return;
+  el.innerHTML = '<div style="color:var(--t3);font-size:12px">Загрузка...</div>';
+  try {
+    const r = await fetch('/api/gh/repos/' + ghCurrentRepo + '/branches');
+    const d = await r.json();
+    if (d.error) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(d.error) + '</div>'; return; }
+    el.innerHTML = (d.branches || []).map(b => `
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 8px;border-radius:8px;font-size:13px;border:1px solid var(--bdr);margin-bottom:6px">
+        <span>🌿</span>
+        <span style="color:var(--acc)">${escHtml(b.name)}</span>
+        <span style="font-size:10px;color:var(--t3);margin-left:auto;font-family:monospace">${b.sha || ''}</span>
+      </div>
+    `).join('') || '<div style="color:var(--t3);font-size:12px">Нет веток</div>';
+  } catch (e) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>'; }
+}
+
+async function ghLoadCommits() {
+  const el = document.getElementById('gh-repo-commits');
+  if (!el || !ghCurrentRepo) return;
+  el.innerHTML = '<div style="color:var(--t3);font-size:12px">Загрузка...</div>';
+  try {
+    const r = await fetch('/api/gh/repos/' + ghCurrentRepo + '/commits?per_page=30');
+    const d = await r.json();
+    if (d.error) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(d.error) + '</div>'; return; }
+    el.innerHTML = (d.commits || []).map(c => `
+      <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 8px;border-radius:8px;font-size:12px;border:1px solid var(--bdr);margin-bottom:6px">
+        <span style="font-family:monospace;font-size:11px;color:var(--pur);min-width:50px">${escHtml(c.sha || '')}</span>
+        <div style="flex:1">
+          <div style="color:var(--t1)">${escHtml(c.message || '')}</div>
+          <div style="font-size:10px;color:var(--t3);margin-top:2px">${escHtml(c.author || '')} · ${c.date ? new Date(c.date).toLocaleString('ru') : ''}</div>
+        </div>
+      </div>
+    `).join('') || '<div style="color:var(--t3);font-size:12px">Нет коммитов</div>';
+  } catch (e) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>'; }
+}
+
+async function ghLoadWorkflows() {
+  const el = document.getElementById('gh-repo-workflows');
+  if (!el || !ghCurrentRepo) return;
+  el.innerHTML = '<div style="color:var(--t3);font-size:12px">Загрузка...</div>';
+  try {
+    const r = await fetch('/api/gh/repos/' + ghCurrentRepo + '/workflows');
+    const d = await r.json();
+    if (d.error) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(d.error) + '</div>'; return; }
+    el.innerHTML = (d.workflows || []).map(w => `
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 8px;border-radius:8px;font-size:12px;border:1px solid var(--bdr);margin-bottom:6px">
+        <span style="font-size:16px">${w.state === 'active' ? '🟢' : '⚪'}</span>
+        <div style="flex:1">
+          <div style="color:var(--t1);font-weight:500">${escHtml(w.name)}</div>
+          <div style="font-size:10px;color:var(--t3)">${escHtml(w.path)}</div>
+        </div>
+        <span class="tag ${w.state === 'active' ? 'tag-on' : 'tag-off'}">${escHtml(w.state)}</span>
+      </div>
+    `).join('') || '<div style="color:var(--t3);font-size:12px">Нет workflow</div>';
+  } catch (e) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>'; }
+}
+
+async function ghLoadRuns() {
+  const el = document.getElementById('gh-repo-runs');
+  if (!el || !ghCurrentRepo) return;
+  el.innerHTML = '<div style="color:var(--t3);font-size:12px">Загрузка...</div>';
+  try {
+    const r = await fetch('/api/gh/repos/' + ghCurrentRepo + '/runs?per_page=20');
+    const d = await r.json();
+    if (d.error) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(d.error) + '</div>'; return; }
+    el.innerHTML = (d.runs || []).map(run => {
+      const icon = run.conclusion === 'success' ? '✅' : run.conclusion === 'failure' ? '❌' : run.status === 'in_progress' ? '🔄' : '⏳';
+      return `
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 8px;border-radius:8px;font-size:12px;border:1px solid var(--bdr);margin-bottom:6px">
+        <span style="font-size:16px">${icon}</span>
+        <div style="flex:1">
+          <div style="color:var(--t1);font-weight:500">${escHtml(run.name)} #${run.run_number}</div>
+          <div style="font-size:10px;color:var(--t3)">🌿 ${escHtml(run.head_branch || '')} · ${run.created_at ? new Date(run.created_at).toLocaleString('ru') : ''}</div>
+        </div>
+        <button class="btn btn-sm" onclick="ghLoadArtifacts('${run.id}',this.parentElement)" title="Артефакты">📦</button>
+      </div>`;
+    }).join('') || '<div style="color:var(--t3);font-size:12px">Нет сборок</div>';
+  } catch (e) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>'; }
+}
+
+async function ghLoadArtifacts(runId, container) {
+  if (!ghCurrentRepo) return;
+  const existing = container.querySelector('.gh-artifacts');
+  if (existing) { existing.remove(); return; }
+  try {
+    const r = await fetch('/api/gh/repos/' + ghCurrentRepo + '/runs/' + runId + '/artifacts');
+    const d = await r.json();
+    const div = document.createElement('div');
+    div.className = 'gh-artifacts';
+    div.style.cssText = 'padding:6px 8px;margin-top:4px;background:var(--bg3);border-radius:6px;font-size:11px';
+    if (d.artifacts && d.artifacts.length) {
+      div.innerHTML = d.artifacts.map(a => `
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 0;flex-wrap:wrap">
+          <span>📄 ${escHtml(a.name)}</span>
+          <span style="color:var(--t3)">${formatSize(a.size_in_bytes)}</span>
+          <a href="/api/gh/repos/${escAttr(ghCurrentRepo)}/artifacts/${a.id}/download" class="btn btn-sm" style="margin-left:auto;text-decoration:none;font-size:10px" download>📥 Скачать</a>
+        </div>
+      `).join('');
+    } else {
+      div.innerHTML = '<div style="color:var(--t3)">Нет артефактов</div>';
+    }
+    container.appendChild(div);
+  } catch {}
+}
+
+async function ghLoadReleases() {
+  const el = document.getElementById('gh-repo-releases');
+  if (!el || !ghCurrentRepo) return;
+  el.innerHTML = '<div style="color:var(--t3);font-size:12px">Загрузка...</div>';
+  try {
+    const r = await fetch('/api/gh/repos/' + ghCurrentRepo + '/releases');
+    const d = await r.json();
+    if (d.error) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(d.error) + '</div>'; return; }
+    el.innerHTML = (d.releases || []).map(rel => `
+      <div style="padding:12px;border-radius:8px;border:1px solid var(--bdr);margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+          <span style="font-size:14px">📦</span>
+          <span style="font-size:14px;font-weight:600;color:var(--t1)">${escHtml(rel.name || rel.tag_name)}</span>
+          <span class="tag tag-on">${escHtml(rel.tag_name)}</span>
+        </div>
+        <div style="font-size:10px;color:var(--t3);margin-bottom:6px">${rel.created_at ? new Date(rel.created_at).toLocaleString('ru') : ''}</div>
+        ${(rel.assets || []).map(a => `
+          <div style="display:flex;align-items:center;gap:6px;padding:6px 0;font-size:11px;flex-wrap:wrap">
+            <span>📄 ${escHtml(a.name)}</span>
+            <span style="color:var(--t3)">${formatSize(a.size)}</span>
+            <a href="${escAttr(a.browser_download_url)}" class="btn btn-sm" style="margin-left:auto;text-decoration:none;font-size:10px" download>📥 Скачать</a>
+          </div>
+        `).join('')}
+      </div>
+    `).join('') || '<div style="color:var(--t3);font-size:12px">Нет релизов</div>';
+  } catch (e) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>'; }
+}
+
 // ===== DASHBOARD =====
 function renderDashboard() {
   const inst = tools.filter(t => t.installed);
@@ -1402,7 +1680,7 @@ async function syncAllModels() {
 const origShowPage = showPage;
 showPage = function(p) {
   origShowPage(p);
-  if (p === 'models-full') loadModelsFull();
+  if (p === 'git') ghLoadRepos();
 };
 
 // ===== TOOL INSTALL — кнопка «Скачать» + живой лог =====
@@ -1602,11 +1880,14 @@ function cloudPhoneFullscreen(prefix) {
   if (frame.requestFullscreen) frame.requestFullscreen();
   else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
 }
-if (document.getElementById('p-cloudphone')) {
+if (document.getElementById('p-linux')) {
   cloudPhoneStatus();
-  const last = localStorage.getItem('cp.lastUrl');
-  const urlEl = document.getElementById('cp-url');
-  if (urlEl && last) urlEl.value = last;
+  (function() {
+    const last = localStorage.getItem('cp.lastUrl');
+    const urlEl = document.getElementById('cp-url');
+    if (urlEl && last) urlEl.value = last;
+    pulseStatus();
+  })();
 }
 
 // ===== LINUX DESKTOP (VNC) =====

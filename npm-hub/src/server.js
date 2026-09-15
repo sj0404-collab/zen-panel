@@ -1620,6 +1620,316 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
+// ─── LINUX DESKTOP: run apps on the VNC desktop ───
+// POST /api/linux/run  { action: 'browser'|'phone'|'terminal', url? }
+// Launches apps inside the Linux VNC desktop (DISPLAY=:99) so the user sees
+// them through the noVNC iframe — no HTML site iframes needed.
+app.post('/api/linux/run', express.json(), async (req, res) => {
+  const { action, url } = req.body || {};
+  const display = process.env.VNC_DISPLAY || ':99';
+  const hasXvfb = fs.existsSync('/tmp/.X11-unix/X99') || fs.existsSync('/tmp/.X11-lock');
+  if (!hasXvfb) return res.json({ ok: false, error: 'Linux VNC desktop не запущен на этом раннере (нет X11 display)' });
+
+  const runOnDisplay = (cmd, timeoutMs = 8000) => new Promise((resolve) => {
+    try {
+      const p = _exec(`DISPLAY=${display} ${cmd}`, { timeout: timeoutMs }, (err, stdout, stderr) => {
+        resolve({ ok: !err, out: (stdout || '').trim(), err: (stderr || '').trim() });
+      });
+    } catch (e) { resolve({ ok: false, error: e.message }); }
+  });
+
+  try {
+    switch (action) {
+      case 'browser': {
+        if (!url) return res.json({ ok: false, error: 'url required' });
+        const escaped = String(url).replace(/'/g, "'\\''");
+        // Try chromium, then firefox, then xdg-open
+        let r = await runOnDisplay(`(which chromium-browser || which chromium || which google-chrome) >/dev/null 2>&1 && (chromium-browser --no-sandbox --disable-gpu '${escaped}' &>/dev/null &)`, 5000);
+        if (!r.ok || r.err) r = await runOnDisplay(`(which firefox >/dev/null 2>&1 && firefox '${escaped}' &>/dev/null &) || (xdg-open '${escaped}' &>/dev/null &)`, 5000);
+        return res.json({ ok: true, message: `Браузер запущен: ${url}` });
+      }
+      case 'phone': {
+        // Try to start Android emulator on the local display
+        const sdk = process.env.ANDROID_SDK_ROOT || '/usr/local/lib/android/sdk';
+        const emulator = path.join(sdk, 'emulator', 'emulator');
+        const avd = process.env.ANDROID_AVD || 'pixel_7_api34';
+        if (fs.existsSync(emulator)) {
+          await runOnDisplay(`${emulator} -avd ${avd} -no-window -no-audio &`, 3000);
+          return res.json({ ok: true, message: `Эмулятор ${avd} запускается...` });
+        }
+        // Fallback: try the cloud-phone workflow dispatch
+        if (remotePhoneAvailable()) {
+          const r = await dispatchPhone('start');
+          return res.json({ ok: r.ok, message: r.out, remote: true });
+        }
+        return res.json({ ok: false, error: 'Android SDK не найден на этом раннере' });
+      }
+      case 'terminal': {
+        await runOnDisplay(`xterm -geometry 120x30+100+100 &`, 3000);
+        return res.json({ ok: true, message: 'Терминал открыт на рабочем столе' });
+      }
+      case 'files': {
+        await runOnDisplay(`(pcmanfm || nautilus || xdg-open ~/hub-work) &`, 3000);
+        return res.json({ ok: true, message: 'Файловый менеджер открыт' });
+      }
+      default:
+        return res.json({ ok: false, error: 'unknown action: ' + action });
+    }
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ─── GITHUB: browse repos, contents, commits, workflows, builds ───
+// All endpoints use GH_TOKEN to call the GitHub REST API directly.
+// Provides full repo browsing for the linked GitHub account.
+const ghHeaders = () => ({
+  Authorization: `Bearer ${runnerToken()}`,
+  Accept: 'application/vnd.github+json',
+  'User-Agent': 'zen-panel-hub',
+  'X-GitHub-Api-Version': '2022-11-28'
+});
+
+// GET /api/gh/repos — all repos for the authenticated user
+app.get('/api/gh/repos', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.json({ success: true, repos: [] });
+  try {
+    const page = parseInt(req.query.page || '1', 10);
+    const perPage = Math.min(100, parseInt(req.query.per_page || '50', 10));
+    const r = await fetch(
+      `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=updated&affiliation=owner,collaborator,organization_member`,
+      { headers: ghHeaders() }
+    );
+    if (!r.ok) return res.json({ success: false, error: `GitHub API ${r.status}` });
+    const repos = await r.json();
+    res.json({
+      success: true,
+      repos: repos.map(r => ({
+        full_name: r.full_name,
+        private: !!r.private,
+        description: r.description || '',
+        default_branch: r.default_branch,
+        updated_at: r.updated_at,
+        pushed_at: r.pushed_at,
+        language: r.language,
+        html_url: r.html_url,
+        stargazers_count: r.stargazers_count,
+        forks_count: r.forks_count,
+        open_issues_count: r.open_issues_count,
+        size: r.size,
+        topics: r.topics || []
+      })),
+      page, perPage
+    });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// GET /api/gh/repos/:owner/:repo — repo info
+app.get('/api/gh/repos/:owner/:repo', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'no GH_TOKEN' });
+  try {
+    const { owner, repo } = req.params;
+    const r = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}`,
+      { headers: ghHeaders() }
+    );
+    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    const d = await r.json();
+    res.json({
+      full_name: d.full_name, private: d.private, description: d.description,
+      default_branch: d.default_branch, html_url: d.html_url,
+      pushed_at: d.pushed_at, language: d.language,
+      stargazers_count: d.stargazers_count, forks_count: d.forks_count,
+      open_issues_count: d.open_issues_count, size: d.size,
+      topics: d.topics || [], license: d.license && d.license.spdx_id
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/gh/repos/:owner/:repo/contents?path=&ref= — browse file tree
+app.get('/api/gh/repos/:owner/:repo/contents', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'no GH_TOKEN' });
+  try {
+    const { owner, repo } = req.params;
+    const p = req.query.path || '';
+    const ref = req.query.ref || '';
+    const q = `?ref=${encodeURIComponent(ref)}`;
+    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURI(p)}${ref ? q : ''}`;
+    const r = await fetch(url, { headers: ghHeaders() });
+    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    const data = await r.json();
+    const items = Array.isArray(data) ? data : [data];
+    res.json({
+      items: items.map(it => ({
+        name: it.name, path: it.path, type: it.type,
+        size: it.size, sha: it.sha, download_url: it.download_url
+      })),
+      path: p, repo: `${owner}/${repo}`
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/gh/repos/:owner/:repo/commits — list recent commits
+app.get('/api/gh/repos/:owner/:repo/commits', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'no GH_TOKEN' });
+  try {
+    const { owner, repo } = req.params;
+    const perPage = Math.min(100, parseInt(req.query.per_page || '20', 10));
+    const path = req.query.path || '';
+    let url = `https://api.github.com/repos/${owner}/${repo}/commits?per_page=${perPage}`;
+    if (path) url += `&path=${encodeURIComponent(path)}`;
+    const r = await fetch(url, { headers: ghHeaders() });
+    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    const data = await r.json();
+    res.json({
+      commits: (Array.isArray(data) ? data : []).map(c => ({
+        sha: c.sha && c.sha.slice(0, 7),
+        message: (c.commit && c.commit.message || '').split('\n')[0],
+        author: c.commit && c.commit.author && c.commit.author.name,
+        date: c.commit && c.commit.author && c.commit.author.date,
+        html_url: c.html_url
+      })),
+      repo: `${owner}/${repo}`
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/gh/repos/:owner/:repo/branches — list branches
+app.get('/api/gh/repos/:owner/:repo/branches', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'no GH_TOKEN' });
+  try {
+    const { owner, repo } = req.params;
+    const r = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/branches?per_page=50`,
+      { headers: ghHeaders() }
+    );
+    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    const data = await r.json();
+    res.json({
+      branches: data.map(b => ({ name: b.name, sha: b.commit && b.commit.sha })),
+      repo: `${owner}/${repo}`
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/gh/repos/:owner/:repo/workflows — list workflows
+app.get('/api/gh/repos/:owner/:repo/workflows', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'no GH_TOKEN' });
+  try {
+    const { owner, repo } = req.params;
+    const r = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/actions/workflows?per_page=30`,
+      { headers: ghHeaders() }
+    );
+    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    const data = await r.json();
+    res.json({
+      workflows: (data.workflows || []).map(w => ({
+        id: w.id, name: w.name, path: w.path, state: w.state,
+        updated_at: w.updated_at, html_url: w.html_url
+      })),
+      repo: `${owner}/${repo}`
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/gh/repos/:owner/:repo/runs — list recent workflow runs
+app.get('/api/gh/repos/:owner/:repo/runs', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'no GH_TOKEN' });
+  try {
+    const { owner, repo } = req.params;
+    const perPage = Math.min(100, parseInt(req.query.per_page || '20', 10));
+    const r = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=${perPage}`,
+      { headers: ghHeaders() }
+    );
+    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    const data = await r.json();
+    res.json({
+      runs: (data.workflow_runs || []).map(r => ({
+        id: r.id, name: r.name, status: r.status, conclusion: r.conclusion,
+        html_url: r.html_url, created_at: r.created_at,
+        run_number: r.run_number, head_branch: r.head_branch
+      })),
+      repo: `${owner}/${repo}`
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/gh/repos/:owner/:repo/runs/:runId/artifacts — list artifacts for a run
+app.get('/api/gh/repos/:owner/:repo/runs/:runId/artifacts', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'no GH_TOKEN' });
+  try {
+    const { owner, repo, runId } = req.params;
+    const r = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}/artifacts`,
+      { headers: ghHeaders() }
+    );
+    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    const data = await r.json();
+    res.json({
+      artifacts: (data.artifacts || []).map(a => ({
+        id: a.id, name: a.name, size_in_bytes: a.size_in_bytes,
+        created_at: a.created_at, expired: a.expired,
+        archive_download_url: a.archive_download_url
+      })),
+      repo: `${owner}/${repo}`, runId
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/gh/repos/:owner/:repo/artifacts/:id/download — download artifact
+// Proxies the GitHub artifact download URL through the hub server so the
+// user's device can download the build artifact without CORS issues.
+app.get('/api/gh/repos/:owner/:repo/artifacts/:id/download', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'no GH_TOKEN' });
+  try {
+    const { owner, repo, id } = req.params;
+    const r = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/actions/artifacts/${id}/zip`,
+      { headers: ghHeaders(), redirect: 'follow' }
+    );
+    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="artifact-${id}.zip"`);
+    const buffer = await r.arrayBuffer();
+    res.send(Buffer.from(buffer));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/gh/repos/:owner/:repo/releases — list releases
+app.get('/api/gh/repos/:owner/:repo/releases', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'no GH_TOKEN' });
+  try {
+    const { owner, repo } = req.params;
+    const r = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/releases?per_page=10`,
+      { headers: ghHeaders() }
+    );
+    if (!r.ok) return res.status(r.status).json({ error: await r.text() });
+    const data = await r.json();
+    res.json({
+      releases: (Array.isArray(data) ? data : []).map(rel => ({
+        tag_name: rel.tag_name, name: rel.name, created_at: rel.created_at,
+        html_url: rel.html_url, draft: rel.draft, prerelease: rel.prerelease,
+        assets: (rel.assets || []).map(a => ({
+          name: a.name, size: a.size, browser_download_url: a.browser_download_url,
+          content_type: a.content_type
+        }))
+      })),
+      repo: `${owner}/${repo}`
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── TUNNEL STATE ───
 let tunnelInfo = null; // { url, type, close }
 
@@ -1628,8 +1938,9 @@ function tryListen(port, onReady) {
   const srv = server.listen(port, HOST, () => onReady(port, srv));
   srv.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-      console.log(`  ⚠ Port ${port} is busy, trying ${port + 1}...`);
-      tryListen(port + 1, onReady);
+      const next = Number(port) + 1;
+      console.log(`  ⚠ Port ${port} is busy, trying ${next}...`);
+      tryListen(next, onReady);
     } else {
       console.error(`  ❌ Server error: ${err.message}`);
       process.exit(1);

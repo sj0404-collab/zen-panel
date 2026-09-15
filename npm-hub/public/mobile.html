@@ -339,119 +339,53 @@
         </div>
       </div>
 
-      <!-- MODELS FULL -->
-      <div class="page" id="p-account">
-        <div class="ph"><h1>👤 Account</h1><p>Account settings and repository overview</p></div>
-        <div class="models-full-actions">
-          <button class="btn btn-ok" onclick="syncAllModels()">🔄 Синхронировать</button>
-          <button class="btn" onclick="showApiKeyModal()">🔑 API Key</button>
-          <span id="models-full-info"></span>
-        </div>
-        <div id="account-overview"><p>Account overview coming soon...</p></div>
-        <div class="ph"><h2>Все модели</h2></div>
-        <div id="models-full-list"></div>
-      </div>
-
-      <!-- CLOUD PHONE -->
-      <div class="page" id="p-cloudphone" style="padding:0;flex-direction:column;height:100%">
-        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
-          <span id="cp-status" class="tag">…</span>
-          <button class="btn btn-p btn-sm" id="cp-start" onclick="cloudPhoneStart()">▶ Старт</button>
-          <button class="btn btn-sm" onclick="cloudPhoneStop()">⏹ Стоп</button>
-          <button class="btn btn-sm" onclick="cloudPhoneConnect()">Подключить</button>
-          <button class="btn btn-sm" onclick="cloudPhoneFullscreen()">⛶</button>
-          <button class="btn btn-sm" onclick="phoneBrowserOpen('https://www.youtube.com')" title="Открыть YouTube в браузере телефона">▶ YT</button>
-          <input type="text" id="cp-url" placeholder="URL в браузере телефона…" value="https://www.youtube.com" style="flex:1;min-width:140px;padding:8px 12px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:13px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')phoneBrowserOpen(this.value)">
-          <button class="btn btn-p" onclick="phoneBrowserOpen(document.getElementById('cp-url').value)">→</button>
-        </div>
-        <div style="flex:1;position:relative;background:#000">
-          <iframe id="cp-frame" style="width:100%;height:100%;border:none;display:none" allowfullscreen></iframe>
-          <div id="cp-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
-            <div style="font-size:48px;margin-bottom:16px">📱</div>
-            <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Cloud Phone</div>
-            <div style="font-size:13px;max-width:300px">Android эмулятор на раннере.<br>Нажмите «▶ Старт», дождитесь загрузки, затем «Подключить».</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- BROWSER (Chrome / YouTube) -->
-      <div class="page" id="p-browser" style="padding:0;flex-direction:column;height:100%">
-        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0">
-          <button class="btn btn-sm" onclick="browserGo('https://www.youtube.com')" title="YouTube">▶ YT</button>
-          <button class="btn btn-sm" onclick="browserGo('https://www.google.com')" title="Google">🔍</button>
-          <button class="btn btn-sm" onclick="browserGo('https://mail.google.com')" title="Gmail">✉️</button>
-          <input type="text" id="browser-url" placeholder="URL..." value="https://www.youtube.com" style="flex:1;padding:8px 12px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:13px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')browserGo(this.value)">
-          <button class="btn btn-p" onclick="browserGo(document.getElementById('browser-url').value)">→</button>
-        </div>
-        <div style="flex:1;position:relative;background:#000">
-          <iframe id="browser-frame" src="https://www.youtube.com" style="width:100%;height:100%;border:none" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen></iframe>
-        </div>
-      </div>
-
-      <!-- LINUX DESKTOP (VNC) -->
+<!-- LINUX DESKTOP (VNC) + Phone + Browser + Audio — merged -->
       <div class="page" id="p-linux" style="padding:0;flex-direction:column;height:100%">
         <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
           <span id="linux-status" class="tag">…</span>
           <button class="btn btn-p btn-sm" id="linux-open" onclick="linuxConnect()">Открыть экран</button>
           <button class="btn btn-sm" onclick="linuxFullscreen()">⛶</button>
           <div style="flex:1"></div>
-          <span style="font-size:11px;color:var(--t3)">openbox + xterm · Mesa</span>
+          <span style="font-size:11px;color:var(--t3)">openbox · xterm · Mesa</span>
+        </div>
+        <div style="display:flex;gap:4px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
+          <span id="cp-status" class="tag" style="font-size:10px">📱</span>
+          <button class="btn btn-sm" id="cp-start" onclick="cloudPhoneStart()">▶ Старт</button>
+          <button class="btn btn-sm" onclick="cloudPhoneStop()">⏹ Стоп</button>
+          <button class="btn btn-sm" onclick="cloudPhoneConnect()">Подключить</button>
+          <input type="text" id="cp-url" placeholder="URL в телефоне…" value="https://www.youtube.com" style="flex:1;min-width:110px;padding:6px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')phoneBrowserOpen(this.value)">
+          <button class="btn btn-sm" onclick="phoneBrowserOpen(document.getElementById('cp-url').value)">→</button>
+        </div>
+        <div style="display:flex;gap:4px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
+          <input type="text" id="browser-url" placeholder="URL на рабочем столе…" value="https://www.youtube.com" style="flex:1;min-width:110px;padding:6px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')linuxRunBrowser(this.value)">
+          <button class="btn btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url').value)" title="Открыть браузер на рабочем столе">🖥🌐</button>
+          <span id="pulse-status" class="tag" style="font-size:10px">🔊</span>
+          <button class="btn btn-sm" onclick="pulseStart()" title="Старт PulseAudio">▶</button>
+          <button class="btn btn-sm" onclick="pulseStop()" title="Стоп PulseAudio">⏹</button>
+          <button class="btn btn-sm" onclick="pulseMute()" title="Mute/Unmute">🔇</button>
+          <button class="btn btn-sm" onclick="pulseStatus()" title="Обновить">⟳</button>
+        </div>
+        <div style="display:flex;gap:6px;padding:0 8px 6px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center">
+          <input type="range" id="pulse-vol" min="0" max="100" value="80" style="flex:1" oninput="pulseSetVol(this.value)">
+          <span id="pulse-vol-label" style="font-size:12px;font-family:monospace;min-width:40px;text-align:right">80%</span>
         </div>
         <div style="flex:1;position:relative;background:#000">
-          <iframe id="linux-frame" style="width:100%;height:100%;border:none;display:none" allowfullscreen></iframe>
+          <iframe id="linux-frame" style="width:100%;height:100%;border:none;display:none" allow="clipboard-read; clipboard-write" allowfullscreen></iframe>
           <div id="linux-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
             <div style="font-size:48px;margin-bottom:16px">🖥</div>
             <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Linux Screen</div>
-            <div style="font-size:13px;max-width:300px">Рабочий стол Linux на втором раннере.<br>Запущен вместе с hub — нажмите «Открыть экран».</div>
+            <div style="font-size:13px;max-width:300px;line-height:1.5">Браузер и терминал запускаются здесь — на рабочем столе.<br>Телефон — отдельное VNC-окно.<br>Нажмите «Открыть экран».</div>
+            <div id="pulse-devices" style="margin-top:12px;font-size:11px;color:var(--t3);text-align:left"></div>
           </div>
         </div>
+        <iframe id="cp-frame" style="position:absolute;width:1px;height:1px;border:none;opacity:0;pointer-events:none" allowfullscreen></iframe>
       </div>
 
-      <!-- PULSE AUDIO -->
-      <div class="page" id="p-pulseaudio">
-        <div class="ph"><h1>🔊 PulseAudio</h1><p>Общий аудио-сервер для всех вкладок</p></div>
-        <div class="card" style="margin-bottom:12px">
-          <div class="card-h">
-            <div class="card-ico" style="background:rgba(88,166,255,.15);color:var(--acc)">🔊</div>
-            <div><div class="card-n">PulseAudio Server</div><div class="card-v">shared audio for all tabs</div></div>
-          </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-            <span class="tag tag-on" id="pulse-status">checking...</span>
-          </div>
-          <div style="font-size:12px;color:var(--t2);margin-bottom:10px">
-            Общий аудио-сервер. Обеспечивает звук для Cloud Phone, браузера и других вкладок.
-          </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn btn-ok" onclick="pulseStart()">▶ Start</button>
-            <button class="btn btn-er" onclick="pulseStop()">⏹ Stop</button>
-            <button class="btn" onclick="pulseMute()">🔇 Mute</button>
-            <button class="btn" onclick="pulseStatus()">⟳ Status</button>
-          </div>
-        </div>
-        <div class="card" style="margin-bottom:12px">
-          <div class="card-h">
-            <div class="card-ico" style="background:rgba(63,185,80,.15);color:var(--ok)">📋</div>
-            <div><div class="card-n">Sinks & Sources</div></div>
-          </div>
-          <div id="pulse-devices" style="font-size:12px;color:var(--t3)">Нажмите "Status" для обновления</div>
-        </div>
-        <div class="card">
-          <div class="card-h">
-            <div class="card-ico" style="background:rgba(210,153,34,.15);color:var(--warn)">⚡</div>
-            <div><div class="card-n">Volume</div></div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px">
-            <input type="range" id="pulse-vol" min="0" max="100" value="80" style="flex:1" oninput="pulseSetVol(this.value)">
-            <span id="pulse-vol-label" style="font-size:13px;font-family:monospace;min-width:40px;text-align:right">80%</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- GIT -->
+      <!-- GIT — local + GitHub repos + builds -->
       <div class="page" id="p-git">
-        <div class="ph"><h1>🐙 Git</h1><p>Статус и diff репозитория на раннере</p></div>
+        <div class="ph"><h1>🐙 Git</h1><p>Локальный репозиторий + GitHub: все репозитории, ветки, коммиты, сборки</p></div>
         <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
-          <input type="text" id="git-path" placeholder="путь к репозиторию (с .git)" style="min-width:220px;flex:1;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:13px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')loadGit()">
+          <input type="text" id="git-path" placeholder="путь к локальному репозиторию (с .git)" style="min-width:180px;flex:1;padding:10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:13px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')loadGit()">
           <button class="btn btn-p" onclick="loadGit()">⟳</button>
         </div>
         <div id="git-repo" style="font-size:11px;color:var(--t3);margin-bottom:8px"></div>
@@ -460,8 +394,40 @@
         <pre class="git-pre" id="git-diff"></pre>
         <div style="margin-top:16px;margin-bottom:6px;font-size:12px;color:var(--t2);font-weight:600">Log</div>
         <pre class="git-pre" id="git-log"></pre>
-      </div>
 
+        <!-- GitHub repos -->
+        <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr)">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+            <h2 style="font-size:16px;font-weight:700">GitHub — Репозитории</h2>
+            <button class="btn btn-p btn-sm" onclick="ghLoadRepos()">⟳ Обновить</button>
+            <span id="gh-repos-count" style="font-size:11px;color:var(--t3)"></span>
+          </div>
+          <div id="gh-repos-grid" style="display:grid;grid-template-columns:1fr;gap:10px"></div>
+        </div>
+
+        <!-- Repo detail -->
+        <div id="gh-repo-detail" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--bdr)">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+            <button class="btn btn-sm" onclick="ghBackToList()">← Назад</button>
+            <h2 id="gh-repo-name" style="font-size:16px;font-weight:700"></h2>
+            <span id="gh-repo-desc" style="font-size:12px;color:var(--t2)"></span>
+          </div>
+          <div style="display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap">
+            <button class="btn btn-sm gh-tab on" onclick="ghShowTab('contents',this)">📁 Файлы</button>
+            <button class="btn btn-sm gh-tab" onclick="ghShowTab('branches',this)">🌿 Ветки</button>
+            <button class="btn btn-sm gh-tab" onclick="ghShowTab('commits',this)">📝 Коммиты</button>
+            <button class="btn btn-sm gh-tab" onclick="ghShowTab('workflows',this)">⚙ Workflows</button>
+            <button class="btn btn-sm gh-tab" onclick="ghShowTab('runs',this)">🚀 Сборки</button>
+            <button class="btn btn-sm gh-tab" onclick="ghShowTab('releases',this)">📦 Релизы</button>
+          </div>
+          <div id="gh-repo-contents"></div>
+          <div id="gh-repo-branches" style="display:none"></div>
+          <div id="gh-repo-commits" style="display:none"></div>
+          <div id="gh-repo-workflows" style="display:none"></div>
+          <div id="gh-repo-runs" style="display:none"></div>
+          <div id="gh-repo-releases" style="display:none"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -479,29 +445,13 @@
       <span class="nav-ico">📁</span>
       <span class="nav-label">Файлы</span>
     </button>
-    <button class="nav-btn" id="nav-cloudphone" onclick="showPage('cloudphone')">
-      <span class="nav-ico">📱</span>
-      <span class="nav-label">Телефон</span>
-    </button>
-    <button class="nav-btn" id="nav-browser" onclick="showPage('browser')">
-      <span class="nav-ico">🌐</span>
-      <span class="nav-label">Браузер</span>
-    </button>
     <button class="nav-btn" id="nav-linux" onclick="showPage('linux')">
       <span class="nav-ico">🖥</span>
       <span class="nav-label">Экран</span>
     </button>
-    <button class="nav-btn" id="nav-pulseaudio" onclick="showPage('pulseaudio')">
-      <span class="nav-ico">🔊</span>
-      <span class="nav-label">Аудио</span>
-    </button>
     <button class="nav-btn" id="nav-git" onclick="showPage('git')">
       <span class="nav-ico">🐙</span>
       <span class="nav-label">Git</span>
-    </button>
-    <button class="nav-btn" id="nav-models-full" onclick="showPage('models-full')">
-      <span class="nav-ico">🔧</span>
-      <span class="nav-label">Models</span>
     </button>
   </div>
 
