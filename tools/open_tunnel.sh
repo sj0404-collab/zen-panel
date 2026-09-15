@@ -28,6 +28,14 @@ HUB_TMP="$HOME/.npm-hub/tmp"
 mkdir -p "$HUB_LOGS" "$HUB_TMP"
 LOG="${2:-$HUB_LOGS/cloudflared-$PORT.log}"
 
+# Idempotent: never stack a second cloudflared on the same local port. The
+# watchdog can call this while a previous tunnel is still alive (or dying);
+# a leftover instance steals the port and the "new" tunnel never becomes the
+# one this log's URL describes. Bracket pattern: a plain match would pkill
+# the parent shell running this script.
+pkill -f "cloudflared [t]unnel --url http://localhost:$PORT" 2>/dev/null || true
+sleep 1
+
 if ! command -v cloudflared >/dev/null 2>&1; then
   curl -sL --retry 3 -o "$HUB_TMP/cloudflared" \
     https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64

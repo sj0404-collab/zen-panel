@@ -209,7 +209,11 @@ jobs:
           # opens". Either one is restarted here; a new tunnel address is
           # republished so the panel never points at a corpse.
           HUBDIR="$GITHUB_WORKSPACE/fork/npm-hub"
-          PIDFILE=/tmp/cloudflared-8090.pid
+          # open_tunnel.sh writes the pid under ~/.npm-hub/logs/; reading
+          # those paths is what lets the watchdog verify the tunnel instead
+          # of re-opening it every loop (the /tmp path never existed -> the
+          # tunnel was declared dead every ~90s and reconnected endlessly).
+          PIDFILE="$HOME/.npm-hub/logs/cloudflared-8090.pid"
           for i in $(seq 1 1400); do
             sleep 15
             if ! curl -sf -o /dev/null -m 10 -H "x-hub-token: ${{ inputs.token }}" http://127.0.0.1:8090/api/tools; then
@@ -230,6 +234,13 @@ jobs:
               case "$code" in 2*|3*|4*) EDGE=1 ;; esac
             fi
             if [ -n "$EDGE" ]; then continue; fi
+            # Drop the stale cloudflared before a fresh one takes the port:
+            # stacking instances leaks processes and burns tunnel names.
+            # Bracket pattern - a plain "cloudflared tunnel..." match is
+            # suicide against this shell's own command line.
+            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then kill "$PID" 2>/dev/null || true; fi
+            pkill -f "cloudflared [t]unnel --url http://localhost:8090" 2>/dev/null || true
+            sleep 1
             echo "::warning::tunnel dead; reopening."
             URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 /tmp/tunnel2.log) || continue
             [ -n "$URL" ] || continue
@@ -596,7 +607,7 @@ jobs:
 
       - name: Keep the VNC session alive
         run: |
-          PIDFILE=/tmp/cloudflared-6081.pid
+          PIDFILE="$HOME/.npm-hub/logs/cloudflared-6081.pid"
           for i in $(seq 1 1400); do
             sleep 15
             if ! curl -sf -o /dev/null -m 10 "http://127.0.0.1:6081/vnc.html"; then
@@ -611,6 +622,11 @@ jobs:
               code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$CUR/vnc.html" 2>/dev/null || true)
               case "$code" in 2*|3*|4*) continue ;; esac
             fi
+            # Same stale-cloudflared cleanup as the hub job above; bracket
+            # pattern so pkill never matches this shell's own command line.
+            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then kill "$PID" 2>/dev/null || true; fi
+            pkill -f "cloudflared [t]unnel --url http://localhost:6081" 2>/dev/null || true
+            sleep 1
             echo "::warning::VNC tunnel dead; reopening."
             URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 6081 /tmp/vnc-tunnel2.log) || continue
             [ -n "$URL" ] || continue
