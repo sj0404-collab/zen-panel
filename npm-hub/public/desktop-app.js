@@ -1784,17 +1784,23 @@ async function ghLoadRepos() {
     ghRepos = d.repos || [];
     document.getElementById('gh-repos-count').textContent = ghRepos.length + ' репозиториев';
     grid.innerHTML = ghRepos.map(r => `
-      <div class="card" style="cursor:pointer;padding:12px" onclick="ghOpenRepo('${escAttr(r.full_name)}')">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+      <div class="card" style="cursor:pointer;padding:12px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;cursor:pointer" onclick="ghOpenRepo('${escAttr(r.full_name)}')">
           <span style="font-size:14px">${r.private ? '🔒' : '📂'}</span>
           <span style="font-size:13px;font-weight:600;color:var(--acc)">${escHtml(r.full_name)}</span>
         </div>
-        <div style="font-size:11px;color:var(--t2);margin-bottom:4px;min-height:28px">${escHtml(r.description || '(нет описания)')}</div>
-        <div style="display:flex;gap:8px;font-size:10px;color:var(--t3)">
+        <div style="font-size:11px;color:var(--t2);margin-bottom:4px;min-height:28px;cursor:pointer" onclick="ghOpenRepo('${escAttr(r.full_name)}')">${escHtml(r.description || '(нет описания)')}</div>
+        <div style="display:flex;gap:8px;font-size:10px;color:var(--t3);cursor:pointer" onclick="ghOpenRepo('${escAttr(r.full_name)}')">
           ${r.language ? '<span>' + escHtml(r.language) + '</span>' : ''}
           ${r.stargazers_count ? '<span>⭐ ' + r.stargazers_count + '</span>' : ''}
           <span>🌿 ${escHtml(r.default_branch)}</span>
           <span>${r.updated_at ? new Date(r.updated_at).toLocaleDateString('ru') : ''}</span>
+        </div>
+        <div class="gh-repo-actions" onclick="event.stopPropagation()">
+          <button class="btn btn-sm gh-repo-btn-open" onclick="ghOpenInRepo('${escAttr(r.full_name)}','${escAttr(r.default_branch)}')" title="Клонировать и открыть в CLI-агенте">▶ Открыть в</button>
+          <button class="btn btn-sm gh-repo-btn-dl" onclick="ghDownloadRepo('${escAttr(r.full_name)}')" title="Скачать zip-архив репозитория">📥 Скачать</button>
+          <button class="btn btn-sm" onclick="ghDownloadReleaseModal('${escAttr(r.full_name)}')" title="Скачать файл из релиза по тегу">📦 Релиз</button>
+          <button class="btn btn-sm gh-repo-btn-del" onclick="ghDeleteRepoModal('${escAttr(r.full_name)}')" title="Удалить репозиторий">🗑</button>
         </div>
       </div>
     `).join('');
@@ -1844,6 +1850,11 @@ async function ghLoadContents(path) {
   if (!el || !ghCurrentRepo) return;
   el.innerHTML = '<div style="color:var(--t3);font-size:12px">Загрузка...</div>';
   try {
+    // Get default branch if not set
+    if (!ghCurrentBranch) {
+      const repoInfo = await fetch('/api/gh/repos/' + ghCurrentRepo).then(r => r.json());
+      ghCurrentBranch = repoInfo.default_branch || 'main';
+    }
     let url = '/api/gh/repos/' + ghCurrentRepo + '/contents';
     if (ghCurrentPath) url += '?path=' + encodeURIComponent(ghCurrentPath);
     const r = await fetch(url);
@@ -1865,10 +1876,14 @@ async function ghLoadContents(path) {
     el.innerHTML = breadcrumb + items.map(it => {
       const icon = it.type === 'dir' ? '📁' : fileIcon(it.name);
       const click = it.type === 'dir' ? `ghLoadContents('${escAttr(it.path)}')` : `ghViewFile('${escAttr(it.path)}','${escAttr(it.sha)}')`;
-      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:12px;border:1px solid transparent;transition:all .1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="${click}">
+      return `<div class="gh-file-row" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:12px;border:1px solid transparent;transition:all .1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="${click}">
         <span>${icon}</span>
         <span style="flex:1;color:var(--t1)">${escHtml(it.name)}</span>
         <span style="font-size:10px;color:var(--t3)">${it.size ? formatSize(it.size) : ''}</span>
+        ${it.type !== 'dir' ? `<div class="gh-file-actions" onclick="event.stopPropagation()">
+          <button class="btn btn-sm" onclick="ghDownloadFile('${escAttr(ghCurrentRepo)}','${escAttr(it.path)}','${escAttr(ghCurrentBranch || 'main')}')" title="Скачать файл">📥</button>
+          <button class="btn btn-sm gh-repo-btn-del" onclick="ghDeleteFile('${escAttr(ghCurrentRepo)}','${escAttr(it.name)}','${escAttr(it.path)}','${escAttr(it.sha || '')}')" title="Удалить файл">🗑</button>
+        </div>` : ''}
       </div>`;
     }).join('');
   } catch (e) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>'; }
@@ -2039,6 +2054,182 @@ async function ghLoadReleases() {
   } catch (e) { el.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>'; }
 }
 
+// ===== GITHUB REPO: CLONE + OPEN IN AGENT =====
+let ghCloneFullName = '';
+let ghCloneBranch = '';
+
+async function ghOpenInRepo(fullName, defaultBranch) {
+  ghCloneFullName = fullName;
+  ghCloneBranch = defaultBranch || 'main';
+  const btn = document.getElementById('clone-title');
+  const info = document.getElementById('clone-repo-info');
+  const dirInput = document.getElementById('clone-dir');
+  const branchInput = document.getElementById('clone-branch');
+  const status = document.getElementById('clone-status');
+  const agents = document.getElementById('clone-agents');
+  btn.textContent = '▶ Открыть репозиторий';
+  info.textContent = fullName;
+  dirInput.value = fullName.split('/')[1];
+  branchInput.value = ghCloneBranch;
+  status.textContent = '';
+  // Load auto-approve state from the hub so the checkbox matches reality.
+  try {
+    const rr = await fetch('/api/auto-approve'); const dd = await rr.json();
+    document.getElementById('clone-auto-approve').checked = !!dd.enabled;
+  } catch {}
+  // Show available agents (installed CLI tools)
+  const installed = tools.filter(t => t.installed);
+  const cells = installed.map(t => `
+    <div class="newterm-tool" onclick="cloneAndOpen('${escAttr(fullName)}','${t.id}')">
+      <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:26px;height:26px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9px">${t.icon}</div>
+      <div><div style="font-size:12px;font-weight:500">${t.name}</div></div>
+    </div>`).join('');
+  agents.innerHTML = cells + (installed.length ? '' : '<div style="color:var(--t3);font-size:11px;grid-column:1/-1">Нет установленных CLI-агентов. Сначала установи инструмент на вкладке Dashboard.</div>');
+  document.getElementById('modal-clone').classList.add('on');
+}
+
+async function cloneAndOpen(fullName, toolId) {
+  const branch = document.getElementById('clone-branch').value.trim() || 'main';
+  const status = document.getElementById('clone-status');
+  status.textContent = 'Клонирую ' + fullName + ' (' + branch + ')...';
+  status.style.color = 'var(--warn)';
+  try {
+    const r = await fetch('/api/gh/clone', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ full_name: fullName, branch })
+    });
+    const d = await r.json();
+    if (!d.success) {
+      status.textContent = '✗ ' + (d.error || 'не удалось клонировать');
+      status.style.color = 'var(--err)';
+      return;
+    }
+    status.textContent = '✓ Клонировано в ' + d.path + (d.pulled ? ' (обновлено)' : '');
+    status.style.color = 'var(--ok)';
+    // Persist and push the auto-approve toggle to the hub before the agent starts.
+    const autoOn = document.getElementById('clone-auto-approve').checked;
+    fetch('/api/auto-approve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: autoOn }) }).catch(() => {});
+    // Register path in history + last-dir
+    await fetch('/api/path-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ p: d.path }) });
+    if (!recentPaths.includes(d.path)) recentPaths.unshift(d.path);
+    toolDirs[toolId] = d.path;
+    await fetch('/api/last-dir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toolId, dir: d.path }) });
+    setTimeout(() => {
+      closeModal('modal-clone');
+      showPage('terminal');
+      createTerm(toolId, d.path);
+    }, 800);
+  } catch (e) {
+    status.textContent = '✗ ' + e.message;
+    status.style.color = 'var(--err)';
+  }
+}
+
+// ===== GITHUB REPO: DOWNLOAD ZIP =====
+function ghDownloadRepo(fullName) {
+  dlNow('/api/gh/download-repo?full_name=' + encodeURIComponent(fullName), fullName.split('/')[1] + '.zip');
+}
+
+// ===== GITHUB REPO: DELETE =====
+let ghDeleteFullName = '';
+function ghDeleteRepoModal(fullName) {
+  ghDeleteFullName = fullName;
+  document.getElementById('delrepo-info').textContent = 'Вы уверены, что хотите удалить ' + fullName + '?';
+  document.getElementById('delrepo-confirm').value = '';
+  document.getElementById('delrepo-confirm').oninput = function() {
+    document.getElementById('delrepo-btn').disabled = this.value.trim() !== fullName;
+  };
+  document.getElementById('delrepo-btn').disabled = true;
+  document.getElementById('modal-delrepo').classList.add('on');
+}
+
+async function confirmDeleteRepo() {
+  const btn = document.getElementById('delrepo-btn');
+  btn.disabled = true;
+  btn.textContent = 'Удаляю...';
+  try {
+    const r = await fetch('/api/gh/delete-repo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ full_name: ghDeleteFullName })
+    });
+    const d = await r.json();
+    if (d.success) {
+      closeModal('modal-delrepo');
+      await fmInfo('Репозиторий ' + ghDeleteFullName + ' удалён.');
+      ghLoadRepos();
+    } else {
+      await fmInfo('Ошибка: ' + (d.error || 'не удалось удалить'));
+      btn.textContent = 'Удалить навсегда';
+      btn.disabled = false;
+    }
+  } catch (e) {
+    await fmInfo('Ошибка: ' + e.message);
+    btn.textContent = 'Удалить навсегда';
+    btn.disabled = false;
+  }
+}
+
+// ===== GITHUB REPO: DELETE FILE =====
+async function ghDeleteFile(fullName, fileName, filePath, sha) {
+  if (!(await fmConfirm('Удалить файл «' + fileName + '» из ' + fullName + '?', 'Удалить'))) return;
+  try {
+    const r = await fetch('/api/gh/delete-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ full_name: fullName, path: filePath, branch: ghCurrentBranch || 'main' })
+    });
+    const d = await r.json();
+    if (d.success) {
+      await fmInfo('Файл удалён.');
+      ghLoadContents();
+    } else {
+      await fmInfo('Ошибка: ' + (d.error || 'не удалось удалить'));
+    }
+  } catch (e) {
+    await fmInfo('Ошибка: ' + e.message);
+  }
+}
+
+// ===== GITHUB REPO: DOWNLOAD FILE =====
+function ghDownloadFile(fullName, filePath, branch) {
+  const ref = branch || ghCurrentBranch || 'main';
+  dlNow('/api/gh/download-file?full_name=' + encodeURIComponent(fullName) + '&path=' + encodeURIComponent(filePath) + '&ref=' + encodeURIComponent(ref), filePath.split('/').pop());
+}
+
+// ===== GITHUB REPO: DOWNLOAD RELEASE ASSET =====
+let ghReleaseRepo = '';
+async function ghDownloadReleaseModal(fullName) {
+  ghReleaseRepo = fullName;
+  const list = document.getElementById('release-dl-list');
+  list.innerHTML = '<div style="color:var(--t3);font-size:12px">Загрузка релизов...</div>';
+  document.getElementById('modal-release-dl').classList.add('on');
+  try {
+    const r = await fetch('/api/gh/repos/' + fullName + '/releases?per_page=10');
+    const d = await r.json();
+    if (d.releases && d.releases.length) {
+      list.innerHTML = d.releases.map(rel => `
+        <div style="padding:8px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <span style="font-size:13px;font-weight:600;color:var(--t1)">${escHtml(rel.name || rel.tag_name)}</span>
+            <span class="tag tag-on" style="font-size:9px">${escHtml(rel.tag_name)}</span>
+          </div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">
+            <a class="btn btn-sm btn-ok" style="text-decoration:none" href="/api/gh/download-release-asset?full_name=${encodeURIComponent(fullName)}&tag=${encodeURIComponent(rel.tag_name)}" download title="Исходники (tar.gz)">📦 Исходники</a>
+            ${(rel.assets || []).map(a => `
+              <a class="btn btn-sm" style="text-decoration:none" href="/api/gh/download-release-asset?full_name=${encodeURIComponent(fullName)}&tag=${encodeURIComponent(rel.tag_name)}&asset_id=${a.id}" download title="${escAttr(a.name)}">${escHtml(a.name)} (${formatSize(a.size)})</a>
+            `).join('')}
+          </div>
+        </div>
+      `).join('') || '<div style="color:var(--t3);font-size:12px">Релизов нет</div>';
+    } else {
+      list.innerHTML = '<div style="color:var(--t3);font-size:12px">Релизов нет</div>';
+    }
+  } catch (e) {
+    list.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>';
+  }
+}
 // ===== AUDIO KEEP-ALIVE (background playback) =====
 let _audioCtx = null;
 let _silentOsc = null;

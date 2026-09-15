@@ -11,6 +11,9 @@
 
 set -uo pipefail
 
+HUB_TMP="$HOME/.npm-hub/tmp"
+mkdir -p "$HUB_TMP"
+
 JOB="${1:-all}"
 RUNNER="${2:-windows-latest}"
 REPO="${GITHUB_REPOSITORY:-sj0404-collab/zen-panel}"
@@ -37,12 +40,12 @@ if [ -n "$LAST_ID" ]; then
   echo "📊 Результаты: https://github.com/$REPO/actions/runs/$LAST_ID"
   echo ""
   # Скачиваем артефакты если есть
-  gh run download "$LAST_ID" --repo "$REPO" -D /tmp/build-win-artifacts 2>/dev/null && {
+  gh run download "$LAST_ID" --repo "$REPO" -D "$HUB_TMP/build-win-artifacts" 2>/dev/null && {
     echo "📦 Артефакты:"
-    ls -lh /tmp/build-win-artifacts/ 2>/dev/null
+    ls -lh "$HUB_TMP/build-win-artifacts/" 2>/dev/null
     echo ""
     echo "Копирую APK в ~/hub-work …"
-    cp /tmp/build-win-artifacts/*.apk ~/hub-work/ 2>/dev/null
+    cp "$HUB_TMP/build-win-artifacts/"*.apk ~/hub-work/ 2>/dev/null
   } || echo "(артефакты ещё не готовы — проверьте позже)"
 fi
 

@@ -1,6 +1,7 @@
 const { execSync } = require('child_process');
 const StorageBase = require('./base');
 const path = require('path');
+const hubTmp = require('./hub-tmp');
 
 class FtpStorage extends StorageBase {
   constructor(config) {
@@ -54,7 +55,7 @@ class FtpStorage extends StorageBase {
 
   async write(filePath, content) {
     const fs = require('fs');
-    const tmpFile = `/tmp/ftp_write_${Date.now()}`;
+    const tmpFile = path.join(hubTmp(), `ftp_write_${Date.now()}`);
     fs.writeFileSync(tmpFile, content, 'utf-8');
     const url = `${this.protocol}://${this.host}:${this.port}${filePath}`;
     const auth = this.user !== 'anonymous' ? `-u "${this.user}:${this.pass}"` : '';

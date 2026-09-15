@@ -3,6 +3,10 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Ensure transparent log directories: nothing lives in /tmp.
+HUB_LOGS="$HOME/.npm-hub/logs"
+mkdir -p "$HUB_LOGS"
+
 command -v node >/dev/null || { echo "Node.js 20+ is required: https://nodejs.org/"; exit 1; }
 major=$(node -p "process.versions.node.split('.')[0]")
 [ "$major" -ge 20 ] || { echo "Node.js 20+ is required (found $(node --version))"; exit 1; }
@@ -17,14 +21,14 @@ if [ -z "${HUB_TOKEN:-}" ]; then
   echo "tip: HUB_TOKEN=... $0  to gate the hub with a token (?zt=)"
 fi
 echo "== starting npm-hub on :$PORT =="
-PORT="$PORT" nohup node "$ROOT/npm-hub/src/server.js" > /tmp/zen-hub.log 2>&1 &
-echo "$!" > /tmp/zen-hub.pid
-echo "hub pid $! (log /tmp/zen-hub.log, stop with pc-local/stop.sh)"
+PORT="$PORT" nohup node "$ROOT/npm-hub/src/server.js" > "$HUB_LOGS/zen-hub.log" 2>&1 &
+echo "$!" > "$HUB_LOGS/zen-hub.pid"
+echo "hub pid $! (log $HUB_LOGS/zen-hub.log, stop with pc-local/stop.sh)"
 
 if [ -n "${DISPLAY:-}" ] || [ "$(uname -s)" = "Darwin" ]; then
   if [ -d "$ROOT/desktop/node_modules" ]; then
     echo "== opening the desktop panel =="
-    (cd "$ROOT/desktop" && nohup npm start > /tmp/zen-panel.log 2>&1 &)
+    (cd "$ROOT/desktop" && nohup npm start > "$HUB_LOGS/zen-panel.log" 2>&1 &)
   else
     echo "desktop shell not installed - opening the hub in the browser instead."
     echo "install it later: cd desktop && npm install && npm start"

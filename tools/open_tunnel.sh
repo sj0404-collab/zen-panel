@@ -22,21 +22,25 @@
 set -uo pipefail
 
 PORT="${1:?usage: open_tunnel.sh <local-port> [log]}"
-LOG="${2:-/tmp/cloudflared-$PORT.log}"
+# Pids/logs and the cloudflared download live under ~/.npm-hub, never /tmp.
+HUB_LOGS="$HOME/.npm-hub/logs"
+HUB_TMP="$HOME/.npm-hub/tmp"
+mkdir -p "$HUB_LOGS" "$HUB_TMP"
+LOG="${2:-$HUB_LOGS/cloudflared-$PORT.log}"
 
 if ! command -v cloudflared >/dev/null 2>&1; then
-  curl -sL --retry 3 -o /tmp/cloudflared \
+  curl -sL --retry 3 -o "$HUB_TMP/cloudflared" \
     https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-  chmod +x /tmp/cloudflared
-  sudo mv /tmp/cloudflared /usr/local/bin/cloudflared 2>/dev/null || {
-    mkdir -p "$HOME/.local/bin"; mv /tmp/cloudflared "$HOME/.local/bin/cloudflared"
+  chmod +x "$HUB_TMP/cloudflared"
+  sudo mv "$HUB_TMP/cloudflared" /usr/local/bin/cloudflared 2>/dev/null || {
+    mkdir -p "$HOME/.local/bin"; mv "$HUB_TMP/cloudflared" "$HOME/.local/bin/cloudflared"
     export PATH="$HOME/.local/bin:$PATH"
   }
 fi
 
 nohup cloudflared tunnel --url "http://localhost:$PORT" \
   --no-autoupdate --loglevel info > "$LOG" 2>&1 &
-echo $! > "/tmp/cloudflared-$PORT.pid"
+echo $! > "$HUB_LOGS/cloudflared-$PORT.pid"
 
 # Poll rather than sleep for a fixed span: the tunnel is usually up in ten
 # seconds but occasionally takes thirty, and a fixed wait either wastes time or

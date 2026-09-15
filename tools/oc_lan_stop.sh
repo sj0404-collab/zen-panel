@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Stop the OpenCode LAN stack started by tools/oc_lan_start.sh.
 set -u
-for f in /tmp/oc-gateway.pid /tmp/oc-serve.pid; do
+HUB_LOGS="$HOME/.npm-hub/logs"
+for f in "$HUB_LOGS/oc-gateway.pid" "$HUB_LOGS/oc-serve.pid"; do
   if [ -f "$f" ]; then
     PID="$(cat "$f" 2>/dev/null || true)"
     if [ -n "${PID}" ]; then

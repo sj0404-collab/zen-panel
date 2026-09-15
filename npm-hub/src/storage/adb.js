@@ -1,6 +1,7 @@
 const { execSync } = require('child_process');
 const StorageBase = require('./base');
 const path = require('path');
+const hubTmp = require('./hub-tmp');
 
 class AdbStorage extends StorageBase {
   constructor(deviceId) {
@@ -29,7 +30,7 @@ class AdbStorage extends StorageBase {
   }
 
   async read(filePath) {
-    const tmpFile = `/tmp/adb_read_${Date.now()}`;
+    const tmpFile = path.join(hubTmp(), `adb_read_${Date.now()}`);
     execSync(this._cmd(`pull "${filePath}" "${tmpFile}"`), { stdio: 'pipe', timeout: 30000 });
     const fs = require('fs');
     const content = fs.readFileSync(tmpFile, 'utf-8');
@@ -38,7 +39,7 @@ class AdbStorage extends StorageBase {
   }
 
   async readBinary(filePath) {
-    const tmpFile = `/tmp/adb_read_${Date.now()}`;
+    const tmpFile = path.join(hubTmp(), `adb_read_${Date.now()}`);
     execSync(this._cmd(`pull "${filePath}" "${tmpFile}"`), { stdio: 'pipe', timeout: 30000 });
     const fs = require('fs');
     const content = fs.readFileSync(tmpFile);
@@ -48,7 +49,7 @@ class AdbStorage extends StorageBase {
 
   async write(filePath, content) {
     const fs = require('fs');
-    const tmpFile = `/tmp/adb_write_${Date.now()}`;
+    const tmpFile = path.join(hubTmp(), `adb_write_${Date.now()}`);
     fs.writeFileSync(tmpFile, content, 'utf-8');
     execSync(this._cmd(`push "${tmpFile}" "${filePath}"`), { stdio: 'pipe', timeout: 30000 });
     fs.unlinkSync(tmpFile);

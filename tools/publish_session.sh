@@ -111,8 +111,8 @@ export JSON_MERGE="$(printf '%s\n' "${JSON_FILES[@]}")"
 # A unique staging file per invocation. A fixed /tmp/session.json is shared by
 # every caller on the machine, and two publishes running at once overwrote each
 # other's payload - caught by a local race test, where the Windows entry ended
-# up carrying the Linux address.
-STAGE="$(mktemp -t session.XXXXXX.json)"
+# up carrying the Linux address. Staged under ~/.npm-hub/tmp, never /tmp.
+STAGE="$(TMPDIR="$HOME/.npm-hub/tmp" mktemp -t session.XXXXXX.json)"
 trap 'rm -f "$STAGE"' EXIT
 
 python3 - "$@" <<'PY' > "$STAGE"

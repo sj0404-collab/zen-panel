@@ -16,6 +16,12 @@ const { execSync, execFileSync, spawn } = require('child_process');
 const os = require('os');
 const crypto = require('crypto');
 const vm = require('vm');
+// Everything transparent: ephemeral files live in ~/.npm-hub/tmp (visible on
+// the runner, shared with the hub), never in the OS /tmp. The misdirected
+// os.tmpdir() was one of the reasons builds vanished after reboots.
+const HUB_TMP = path.join(os.homedir(), '.npm-hub', 'tmp');
+try { fs.mkdirSync(HUB_TMP, { recursive: true }); } catch {}
+const authTmpFile = () => path.join(HUB_TMP, `zen_${Date.now()}_${Math.random().toString(36).slice(2)}`);
 // Capabilities: agent-authored tools that run as real processes. Kept in a
 // sibling file because, unlike custom_tool_*/plugin_*, they are deliberately
 // NOT sandboxed - adb, RDP and GUI screenshots cannot exist without spawn().
@@ -1810,7 +1816,7 @@ function archiveCreateTool(args) {
   try {
     fs.mkdirSync(path.dirname(destination.path), { recursive: true });
     // Создаём архив вне исходной папки: иначе tar пытается читать файл, который сам же дописывает.
-    const temporary = path.join(os.tmpdir(), `zen_archive_${Date.now()}_${Math.random().toString(36).slice(2)}.tar.gz`);
+    const temporary = path.join(HUB_TMP, `zen_archive_${Date.now()}_${Math.random().toString(36).slice(2)}.tar.gz`);
     try {
       execFileSync('tar', ['-czf', temporary, '-C', source.path, '.'], { timeout: safeCommandTimeout(args.timeout, 120000), stdio: ['ignore', 'pipe', 'pipe'] });
       try { fs.renameSync(temporary, destination.path); }
@@ -2127,7 +2133,7 @@ async function audioTranscribeTool(args) {
   const resolved = mcpPathOrError(args.path, 'path', true);
   if (resolved.error) return resolved;
   if (!hasTool('ffmpeg')) return { error: 'Расшифровка аудио требует ffmpeg. Поставь в окружении (apt-get install ffmpeg).' };
-  const wav = path.join(os.tmpdir(), 'zen_audio_' + Date.now() + '.wav');
+  const wav = path.join(HUB_TMP, 'zen_audio_' + Date.now() + '.wav');
   try {
     execFileSync('ffmpeg', ['-y', '-i', resolved.path, '-ar', '16000', '-ac', '1', wav], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 120000 });
     const audio = fs.readFileSync(wav);
@@ -3597,7 +3603,7 @@ async function zenChatOnce(body) {
   // Site is a compact project editor: request a direct final response rather
   // than spending its answer budget on a visible reasoning channel.
   if (CONFIG.reasoningEffort && !body.siteMode) payload.reasoning_effort = CONFIG.reasoningEffort;
-  const tmpFile = path.join(os.tmpdir(), 'zen_req_' + Date.now() + '_' + Math.random().toString(36).slice(2) + '.json');
+  const tmpFile = authTmpFile() + '.json';
   fs.writeFileSync(tmpFile, JSON.stringify(payload), 'utf8');
   return await new Promise((resolve, reject) => {
     const args = ['-s', '--connect-timeout', '10', '--max-time', '60', ...(CONFIG.proxy ? ['-x', CONFIG.proxy] : []), ...(CONFIG.curlIpv4 ? ['--ipv4'] : []), '-X', 'POST', 'https://opencode.ai/zen/v1/chat/completions', '-H', 'Content-Type: application/json', '-d', '@' + tmpFile];
@@ -3655,7 +3661,7 @@ function streamOnce(body, res) {
     const payload = { model: body.model || CONFIG.defaultModel, messages, max_tokens: body.max_tokens || CONFIG.maxTokens, temperature: body.temperature || CONFIG.temperature, stream: true };
     if (CONFIG.reasoningEffort && !body.siteMode) payload.reasoning_effort = CONFIG.reasoningEffort;
     const data = JSON.stringify(payload);
-    const tmpFile = path.join(os.tmpdir(), 'zen_req_' + Date.now() + '_' + Math.random().toString(36).slice(2) + '.json');
+    const tmpFile = authTmpFile() + '.json';
     fs.writeFileSync(tmpFile, data, 'utf8');
     let flushed = false, buffer = '', cleanedUp = false, done = false;
     const cleanup = () => { if (!cleanedUp) { cleanedUp = true; try { fs.unlinkSync(tmpFile); } catch {} } };
@@ -4875,7 +4881,7 @@ async function callZenDirect(messages, model = currentModel, stream = false) {
   if (stream) {
     return new Promise((resolve, reject) => {
       let outputShown = false, fullText = '', usage = {}, thinking = '', sseBuffer = '', settled = false, rawHead = '';
-      const tmpFile = path.join(os.tmpdir(), 'zen_cli_req_' + Date.now() + '.json');
+      const tmpFile = authTmpFile() + '.json';
       fs.writeFileSync(tmpFile, data, 'utf8');
       startAiStream('Zen', model);
       const curlProc = spawn(curlPath(), [
@@ -4932,7 +4938,7 @@ async function callZenDirect(messages, model = currentModel, stream = false) {
       curlProc.on('error', err => finish(err));
     });
   } else {
-    const tmpFile = path.join(os.tmpdir(), 'zen_cli_req_' + Date.now() + '.json');
+    const tmpFile = authTmpFile() + '.json';
     fs.writeFileSync(tmpFile, data, 'utf8');
     // Не execSync: event loop остаётся живым, поэтому индикатор, /correct и /abort не «зависают».
     return await new Promise((resolve, reject) => {

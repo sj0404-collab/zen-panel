@@ -33,7 +33,9 @@ ok(store.mimeFor('index.html').startsWith('text/html'), 'html mime');
 ok(store.mimeFor('manifest.webmanifest').startsWith('application/json'), 'manifest mime');
 
 // Build info.
-const fakeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zen-panel-test-'));
+const hubTmp = path.join(os.homedir(), '.npm-hub', 'tmp');
+fs.mkdirSync(hubTmp, { recursive: true });
+const fakeDir = fs.mkdtempSync(path.join(hubTmp, 'zen-panel-test-'));
 ok(store.readBuildInfo('/nonexistent-dir-xyz').versionCode === 0, 'missing build-info falls back');
 fs.writeFileSync(path.join(fakeDir, 'build-info.json'), JSON.stringify({ versionCode: 41, versionName: '1.41.abc', sha: 'abc' }));
 const bi = store.readBuildInfo(fakeDir);

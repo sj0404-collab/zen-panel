@@ -25,6 +25,10 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$HOME/bin:$PATH"
 
+# Ephemeral logs and pids live in ~/.npm-hub/logs, not the OS /tmp.
+HUB_LOGS="$HOME/.npm-hub/logs"
+mkdir -p "$HUB_LOGS"
+
 SERVE_PORT="${OC_SERVE_PORT:-4096}"
 GW_PORT="${OC_LAN_PORT:-4100}"
 UI="${OC_UI:-web}"
@@ -64,9 +68,9 @@ if curl -sf -o /dev/null -m 4 "http://127.0.0.1:${SERVE_PORT}/global/health" 2>/
 else
   echo "Starting opencode serve (127.0.0.1:${SERVE_PORT}, workdir ${WORKSPACE_DIR}) ..."
   (cd "${WORKSPACE_DIR}" && nohup opencode serve --port "${SERVE_PORT}" --hostname 127.0.0.1 --cors '*' \
-    >/tmp/oc-serve.log 2>&1 & echo $! >/tmp/oc-serve.pid)
+    >"$HUB_LOGS/oc-serve.log" 2>&1 & echo $! >"$HUB_LOGS/oc-serve.pid")
   # If the server was already running, record that it may not use our workdir.
-  [ -s /tmp/oc-serve.pid ] || echo "$$" >/tmp/oc-serve.pid
+  [ -s "$HUB_LOGS/oc-serve.pid" ] || echo "$$" >"$HUB_LOGS/oc-serve.pid"
 fi
 
 # oc-gateway: 0.0.0.0 so the phone can reach it on the LAN. Prefer an existing
@@ -76,8 +80,8 @@ if curl -sf -o /dev/null -m 3 "http://127.0.0.1:${GW_PORT}/" 2>/dev/null; then
 else
   echo "Starting oc-gateway (0.0.0.0:${GW_PORT}, UI=${UI}) -> 127.0.0.1:${SERVE_PORT} ..."
   OC_PORT="${GW_PORT}" OC_UP_PORT="${SERVE_PORT}" OC_UI="${UI}" \
-    nohup node "${HERE}/agent/oc-gateway.js" >/tmp/oc-gateway.log 2>&1 &
-  echo $! >/tmp/oc-gateway.pid
+    nohup node "${HERE}/agent/oc-gateway.js" >"$HUB_LOGS/oc-gateway.log" 2>&1 &
+  echo $! >"$HUB_LOGS/oc-gateway.pid"
 fi
 
 # Wait for both to answer.
@@ -107,5 +111,5 @@ echo "  ---------------------------------------------------------------"
 echo "  Остановить: tools/oc_lan_stop.sh"
 echo "=================================================================="
 if ! curl -sf -o /dev/null -m 3 "http://127.0.0.1:${GW_PORT}/" 2>/dev/null; then
-  echo "::error:: oc-gateway не отвечает."; tail -20 /tmp/oc-gateway.log
+  echo "::error:: oc-gateway не отвечает."; tail -20 "$HUB_LOGS/oc-gateway.log"
 fi

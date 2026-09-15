@@ -24,6 +24,9 @@ RESOLUTION="${VNC_RESOLUTION:-1920x1080}"
 VNC_PORT="${VNC_PORT:-5901}"
 NOVNC_PORT="${NOVNC_PORT:-6081}"
 
+HUB_LOGS="$HOME/.npm-hub/logs"
+mkdir -p "$HUB_LOGS"
+
 log() { echo "[+] $*"; }
 warn() { echo "[!] $*"; }
 err() { echo "[x] $*"; exit 1; }
@@ -51,7 +54,7 @@ sleep 1
 
 SCR="${RESOLUTION}x24"
 log "Xvfb $DISPLAY_NUM ($SCR)"
-Xvfb "$DISPLAY_NUM" -screen 0 "$SCR" -nolisten tcp >/tmp/xvfb.log 2>&1 &
+Xvfb "$DISPLAY_NUM" -screen 0 "$SCR" -nolisten tcp >"$HUB_LOGS/xvfb.log" 2>&1 &
 XVFB_PID=$!
 export DISPLAY=$DISPLAY_NUM
 sleep 2
@@ -62,15 +65,15 @@ if [ -x "$(command -v xrdb)" ]; then
 fi
 
 log "openbox + xterm + tint2"
-openbox >/tmp/openbox.log 2>&1 &
+openbox >"$HUB_LOGS/openbox.log" 2>&1 &
 sleep 1
 xterm -geometry 160x40+40+40 -title "Hub Linux Desktop" >/dev/null 2>&1 &
 sleep 1
-if command -v tint2 >/dev/null 2>&1; then tint2 >/tmp/tint2.log 2>&1 & sleep 1; fi
+if command -v tint2 >/dev/null 2>&1; then tint2 >"$HUB_LOGS/tint2.log" 2>&1 & sleep 1; fi
 
 # Sanity: confirm the display actually renders (both X and the WM answered).
 if ! xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1 && command -v xdpyinfo >/dev/null 2>&1; then
-  err "Xvfb on $DISPLAY_NUM did not come up (see /tmp/xvfb.log)"
+  err "Xvfb on $DISPLAY_NUM did not come up (see $HUB_LOGS/xvfb.log)"
 fi
 if ! command -v x11vnc >/dev/null 2>&1; then
   err "x11vnc not found"
@@ -78,9 +81,9 @@ fi
 
 log "x11vnc -> $VNC_PORT"
 x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -rfbport "$VNC_PORT" \
-  -noxdamage -wirecopyrect top -alwaysshared >/tmp/x11vnc.log 2>&1 || \
+  -noxdamage -wirecopyrect top -alwaysshared >"$HUB_LOGS/x11vnc.log" 2>&1 || \
   x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -rfbport "$VNC_PORT" \
-  >/tmp/x11vnc.log 2>&1
+  >"$HUB_LOGS/x11vnc.log" 2>&1
 
 # noVNC via websockify (noVNC on Ubuntu ships /usr/share/novnc). If the
 # package is missing, still usable through any VNC client on port VNC_PORT.
@@ -90,7 +93,7 @@ for d in /usr/share/novnc /usr/share/novnc/utils /usr/local/share/novnc; do
 done
 if [ -n "$NOVNC_WEB" ]; then
   log "noVNC -> $NOVNC_PORT (web $NOVNC_WEB)"
-  websockify --web "$NOVNC_WEB" "$NOVNC_PORT" 127.0.0.1:"$VNC_PORT" >/tmp/websockify.log 2>&1 &
+  websockify --web "$NOVNC_WEB" "$NOVNC_PORT" 127.0.0.1:"$VNC_PORT" >"$HUB_LOGS/websockify.log" 2>&1 &
   NOVNC_PID=$!
   sleep 2
 else
@@ -110,4 +113,4 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 
-err "desktop VNC did not come up (see /tmp/x11vnc.log)"
+err "desktop VNC did not come up (see $HUB_LOGS/x11vnc.log)"

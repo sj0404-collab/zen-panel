@@ -15,8 +15,31 @@ const { startTunnel } = require('./tunnel');
 const app = express();
 const HOME = os.homedir();
 const safeFilename = (s) => String(s).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
+const mimeForPath = (p) => {
+  const ext = (path.extname(p) || '').toLowerCase();
+  return ({ '.apk': 'application/vnd.android.package-archive', '.zip': 'application/zip',
+    '.tar': 'application/x-tar', '.xz': 'application/x-xz', '.gz': 'application/gzip',
+    '.deb': 'application/x-debian-package', '.png': 'image/png', '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg', '.pdf': 'application/pdf', '.html': 'text/html',
+    '.htm': 'text/html', '.json': 'application/json', '.txt': 'text/plain',
+    '.md': 'text/plain', '.log': 'text/plain', '.js': 'application/javascript',
+    '.css': 'text/css', '.mp4': 'video/mp4', '.webm': 'video/webm',
+    '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.webp': 'image/webp',
+    '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff',
+    '.ttf': 'font/ttf', '.otf': 'font/otf',
+  })[ext] || 'application/octet-stream';
+};
 const WORK_DIR = path.join(HOME, 'hub-work');
-try { fs.mkdirSync(WORK_DIR, { recursive: true }); } catch {}
+// Home dirs under ~/.npm-hub: the runner works transparently here and never
+// uses the OS /tmp (which the machine may wipe and is invisible to CLI agents).
+const DATA_DIR = path.join(HOME, '.npm-hub');
+const TMP_DIR = path.join(DATA_DIR, 'tmp');
+const LOG_DIR = path.join(DATA_DIR, 'logs');
+try {
+  fs.mkdirSync(WORK_DIR, { recursive: true });
+  fs.mkdirSync(TMP_DIR, { recursive: true });
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+} catch {}
 const PORT = process.env.PORT || 8090;
 const HOST = '0.0.0.0';
 const STATE_FILE = path.join(HOME, '.npm-hub-state.json');
@@ -362,9 +385,9 @@ app.post('/api/fs/write', async (req, res) => {
 app.get('/api/fs/download', async (req, res) => {
   try {
     const backend = storage.get(req.query.backend || 'local');
-    const filename = safeFilename(path.basename(req.query.path));
+    const filename = path.basename(req.query.path).replace(/[\r\n"]/g, '_');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Type', mimeForPath(filename));
     // Binary-safe read: StorageBase.read() forces utf-8, which corrupts APKs
     // and other binaries. Backends are all local/remote Paths, so stream raw.
     const data = await backend.readBinary(req.query.path);
@@ -465,6 +488,31 @@ app.get('/api/last-dir/:toolId', (req, res) => {
   res.json({ success: true, dir: state.lastDirs?.[req.params.toolId] || HOME });
 });
 
+// ─── AUTO-APPROVE TOGGLE ────────────────────────────────────────────────
+// Persisted in STATE_FILE. When enabled, the hub writes /autoon into CLI
+// agent sessions that support it (/autooff to disable), so builds run
+// without manual confirmation on every tool call.
+const AGENT_SUPPORTS_SLASH = new Set(['cli-agent', 'agent']);
+app.get('/api/auto-approve', (req, res) => {
+  const state = loadState();
+  res.json({ success: true, enabled: !!state.autoApprove });
+});
+app.post('/api/auto-approve', (req, res) => {
+  const enabled = !!req.body.enabled;
+  const state = loadState();
+  state.autoApprove = enabled;
+  saveState(state);
+  // Send command to every live agent session right now.
+  for (const s of sessions.values()) {
+    if (s.toolId && AGENT_SUPPORTS_SLASH.has(s.toolId)) {
+      const cmd = (enabled ? '/autoon' : '/autooff') + '\r';
+      if (s.tmux) tmuxInput(s.id, cmd);
+      else if (s.pty) s.pty.write(cmd);
+    }
+  }
+  res.json({ success: true, enabled });
+});
+
 // ─── NGROK TOKEN ───
 const NGROK_TOKEN_FILE = path.join(HOME, '.npm-hub-ngrok-token');
 
@@ -484,58 +532,37 @@ app.post('/api/ngrok-token', (req, res) => {
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// ─── ARCHIVE: tar.xz / tar.gz download ────────────────────────────────
+// ─── ARCHIVE: tar.xz download ───────────────────────────────────────────
 // GET /api/fs/archive?path=/some/dir  → streams <basename>.tar.xz
-// Falls back to .tar.gz when the system tar has no xz support.
+// Folders are always packed as tar.xz — never renamed to a different ext.
 app.get('/api/fs/archive', (req, res) => {
   const filePath = req.query.path;
   if (!filePath || !fs.existsSync(filePath)) return res.status(404).json({ error: 'path not found' });
   const stat = fs.statSync(filePath);
   const basename = path.basename(filePath);
   const isDir = stat.isDirectory();
+  const name = safeFilename(basename) + '.tar.xz';
 
   const { spawn } = require('child_process');
-  const tryXz = (resolve) => {
-    const ext = 'tar.xz';
-    const contentType = 'application/x-xz';
-    const name = safeFilename(basename) + '.' + ext;
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
-    res.setHeader('Content-Length', '0');          // streaming, unknown size
-    res.removeHeader('Content-Length');             // remove the misleading 0
+  res.setHeader('Content-Type', 'application/x-xz');
+  res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+  res.removeHeader('Content-Length');
 
-    let child;
-    const dir = isDir ? path.dirname(filePath) : path.dirname(filePath);
-    const target = isDir ? path.basename(filePath) : path.basename(filePath);
-    try {
-      child = spawn('tar', ['-cJf', '-', target], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch { resolve(false); return; }
-    child.stdout.pipe(res);
-    child.stderr.on('data', () => {});
-    child.on('error', () => resolve(false));
-    child.on('close', () => resolve(true));
-    req.on('close', () => { try { child.kill(); } catch {} });
-  };
-
-  const tryGz = (resolve) => {
-    const ext = 'tar.gz';
-    const contentType = 'application/gzip';
-    const name = safeFilename(basename) + '.' + ext;
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
-    const dir = isDir ? path.dirname(filePath) : path.dirname(filePath);
-    const target = isDir ? path.basename(filePath) : path.basename(filePath);
-    let child;
-    try {
-      child = spawn('tar', ['-czf', '-', target], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch { resolve(false); return; }
-    child.stdout.pipe(res);
-    child.on('error', () => resolve(false));
-    child.on('close', () => resolve(true));
-    req.on('close', () => { try { child.kill(); } catch {} });
-  };
-
-  new Promise(tryXz).then(ok => { if (!ok) new Promise(tryGz); });
+  const dir = isDir ? path.dirname(filePath) : path.dirname(filePath);
+  const target = isDir ? path.basename(filePath) : path.basename(filePath);
+  let child;
+  try {
+    child = spawn('tar', ['-cJf', '-', target], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+    return;
+  }
+  child.stdout.pipe(res);
+  child.stderr.on('data', () => {});
+  child.on('error', () => {
+    if (!res.headersSent) res.status(500).json({ error: 'tar failed' });
+  });
+  req.on('close', () => { try { child.kill(); } catch {} });
 });
 
 // ─── GITHUB SAVE (session-state branch) ───────────────────────────────
@@ -563,7 +590,7 @@ app.post('/api/gh/save', express.json({ limit: '50mb' }), async (req, res) => {
   try {
     if (isDir || stat.size > 90 * 1024 * 1024) {
       const ext = isDir ? 'tar.xz' : (path.extname(filePath) || '.bin');
-      const tmp = path.join(os.tmpdir(), `gsave-${Date.now()}-${basename.replace(/[^\w.-]/g, '_')}-${stamp}.${ext}`);
+      const tmp = path.join(TMP_DIR, `gsave-${Date.now()}-${basename.replace(/[^\w.-]/g, '_')}-${stamp}.${ext}`);
       const packaged = isDir
         ? await tarXz(filePath, tmp)
         : await new Promise((resolve) => {
@@ -782,7 +809,7 @@ app.post('/api/runner/backup', express.json({ limit: '5mb' }), async (req, res) 
       let archivePath = p;
       let uploadName = base;
       if (isDir) {
-        const tmp = path.join(os.tmpdir(), `zbak-${Date.now()}-${base.replace(/[^\w.-]/g, '_')}.tar.xz`);
+        const tmp = path.join(TMP_DIR, `zbak-${Date.now()}-${base.replace(/[^\w.-]/g, '_')}.tar.xz`);
         if (!await tarXz(p, tmp)) { entry.error = 'tar не смог упаковать (нет xz?)'; results.push(entry); continue; }
         archivePath = tmp;
         uploadName = `${base}-backup-${stamp}.tar.xz`;
@@ -1069,7 +1096,7 @@ server.on('upgrade', (req, socket, head) => {
 const sessions = new Map(); // sessionId -> { id, pty?, tmux?, cwd, toolId, clients:Set, output, resumed, offset, logPath, poller? }
 
 const TMUX_PREFIX = 'npmhub-';
-const PTY_DIR = path.join(require('os').tmpdir(), 'npmhub-pty');
+const PTY_DIR = path.join(TMP_DIR, 'pty');
 try { fs.mkdirSync(PTY_DIR, { recursive: true }); } catch {}
 
 const tmuxHas = (() => {
@@ -1180,6 +1207,10 @@ const createTmuxSession = (id, opts, ws) => {
   const shell = process.env.SHELL || '/bin/bash';
   tmuxRun(['send-keys', '-t', name, `export TERM=xterm-256color; cd ${JSON.stringify(opts.cwd)}`, 'Enter'], 3000);
   if (opts.toolCmd) tmuxRun(['send-keys', '-t', name, opts.toolCmd, 'Enter'], 3000);
+  // Auto-approve: after the agent starts, send /autoon if the setting is on.
+  if (opts.toolCmd && AGENT_SUPPORTS_SLASH.has(opts.toolId)) {
+    try { if (loadState().autoApprove) tmuxRun(['send-keys', '-t', name, '/autoon', 'Enter'], 3000); } catch {}
+  }
   return session;
 };
 
@@ -1256,6 +1287,10 @@ wss.on('connection', (ws) => {
             p.write(cdCmd + '\r');
             if (tool && tool.cmd && tool.cmd !== '_terminal') {
               setTimeout(() => { p.write(tool.cmd + '\r'); }, 200);
+              // Auto-approve: if the setting is on, send /autoon after the agent is ready.
+              if (AGENT_SUPPORTS_SLASH.has(tool.id)) {
+                try { if (loadState().autoApprove) setTimeout(() => { p.write('/autoon\r'); }, 1000); } catch {}
+              }
             }
 
             p.onData((data) => {
@@ -1738,6 +1773,322 @@ app.get('/api/gh/repos', async (req, res) => {
       page, perPage
     });
   } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// Manifests describe a repo's workspace so CLI agents know exactly where to
+// work (clone, tmp, branch) and are told to never touch the OS /tmp.
+const manifestFor = (fullName, repoDir, targetDir, tmpDir, ref) => `# Репозиторий: ${fullName}
+
+Рабочая папка этого репозитория на раннере. Всё лежит на виду —
+никакие файлы не прячутся в системном /tmp.
+
+- **Клон (работай здесь):** ${targetDir}
+- **Ветка:** ${ref || 'main'}
+- **Только твои временные файлы (сборки, кеши, артефакты):** ${tmpDir}
+- **Манифест:** ${path.join(repoDir, 'MANIFEST.md')}
+
+## Правила для CLI-агентов
+1. НИКОГДА не создавай файлы в /tmp или os.tmpdir() — это не твоя папка.
+2. Временные файлы создавай ТОЛЬКО в ${tmpDir}.
+3. Исходники и изменения делай в ${targetDir}; пуши в git оттуда.
+4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи
+   и не логируй его значение.
+5. Готовые сборки/артефакты клади в ${tmpDir} — их видно вкладкой «Файлы».
+`;
+const writeRepoManifest = (fullName, repoDir, targetDir, tmpDir, ref) => {
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.writeFileSync(path.join(repoDir, 'MANIFEST.md'), manifestFor(fullName, repoDir, targetDir, tmpDir, ref));
+  } catch {}
+};
+
+// POST /api/gh/clone — clone a repo into hub-work using the linked GH_TOKEN
+app.post('/api/gh/clone', express.json(), async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.json({ success: false, error: 'нет GH_TOKEN — привяжи токен в настройках' });
+  const { full_name, branch } = req.body;
+  if (!full_name || !full_name.includes('/')) return res.json({ success: false, error: 'укажи full_name (user/repo)' });
+  const repoName = full_name.split('/')[1];
+  const repoDir = path.join(WORK_DIR, repoName);
+  const targetDir = path.join(repoDir, 'code');
+  const tmpDir = path.join(repoDir, 'tmp');
+  writeRepoManifest(full_name, repoDir, targetDir, tmpDir, branch || 'main');
+  const cleanUrl = `https://github.com/${full_name}.git`;
+  // Auth via credential helper that reads GH_TOKEN from env at call time —
+  // the token value is NEVER written to .git/config, only the clean URL is.
+  const gitAuth = ['-c', 'credential.username=x-access-token',
+    '-c', 'credential.helper=!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'];
+  // Already cloned?
+  if (fs.existsSync(path.join(targetDir, '.git'))) {
+    // Pull latest (the helper was saved by the first clone, runs with env GH_TOKEN)
+    try {
+      await new Promise((resolve, reject) => {
+        const child = spawn('git', ['pull'], { cwd: targetDir, stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        child.stdout.on('data', d => { out += String(d); });
+        child.stderr.on('data', d => { out += String(d); });
+        child.on('close', code => code === 0 ? resolve(out.trim()) : reject(new Error(out)));
+        child.on('error', reject);
+      });
+      return res.json({ success: true, path: targetDir, pulled: true });
+    } catch (e) {
+      return res.json({ success: true, path: targetDir, pulled: false, pullError: e.message });
+    }
+  }
+  const ref = branch || 'main';
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn('git', [...gitAuth, 'clone', '--depth', '1', '-b', ref, cleanUrl, targetDir], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      let out = '';
+      child.stdout.on('data', d => { out += String(d); });
+      child.stderr.on('data', d => { out += String(d); });
+      child.on('close', code => code === 0 ? resolve(out.trim()) : reject(new Error(out)));
+      child.on('error', reject);
+    });
+    // Verify .git exists
+    const gitDir = path.join(targetDir, '.git');
+    if (!fs.existsSync(gitDir)) {
+      return res.json({ success: false, error: 'clone прошёл, но .git не найден — возможно shallow clone не удался' });
+    }
+    // Sanity: make sure the token isn't in the remote URL (it never should be)
+    try {
+      const cfg = fs.readFileSync(path.join(targetDir, '.git', 'config'), 'utf8');
+      const originUrl = (cfg.match(/\[remote "origin"\][\s\S]*?url = (.*)/) || [])[1];
+      if (originUrl && originUrl.includes('@github.com')) {
+        await new Promise((resolve) => {
+          const child = spawn('git', ['remote', 'set-url', 'origin', cleanUrl], { cwd: targetDir });
+          child.on('close', () => resolve());
+        });
+      }
+    } catch {}
+    // Persist the credential helper in the repo config so every later git call
+    // (opencode's pull/push included) authenticates from $GH_TOKEN in the env —
+    // the helper string references the env var, never the token value.
+    await new Promise((resolve) => {
+      const child = spawn('git', ['config', 'credential.helper', '!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'], { cwd: targetDir });
+      child.on('close', () => resolve());
+    });
+    res.json({ success: true, path: targetDir });
+  } catch (e) {
+    // Fallback: try without --depth and -b (maybe default branch isn't 'main')
+    try {
+      await new Promise((resolve, reject) => {
+        const child = spawn('git', [...gitAuth, 'clone', cleanUrl, targetDir], {
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+        let out = '';
+        child.stdout.on('data', d => { out += String(d); });
+        child.stderr.on('data', d => { out += String(d); });
+        child.on('close', code => code === 0 ? resolve(out.trim()) : reject(new Error(out)));
+        child.on('error', reject);
+      });
+      const gitDir = path.join(targetDir, '.git');
+      if (!fs.existsSync(gitDir)) {
+        return res.json({ success: false, error: 'clone прошёл, но .git не найден' });
+      }
+      res.json({ success: true, path: targetDir });
+    } catch (e2) {
+      res.json({ success: false, error: 'clone не удался: ' + (e2.message || e.message) });
+    }
+  }
+});
+
+// GET /api/gh/token-status — check if a GitHub token is available
+app.get('/api/gh/token-status', (req, res) => {
+  const token = runnerToken();
+  res.json({ success: true, hasToken: !!token, masked: token ? token.slice(0, 6) + '...' + token.slice(-4) : '' });
+});
+
+// DELETE /api/gh/delete-repo — delete a repo from the linked account
+app.post('/api/gh/delete-repo', express.json(), async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.json({ success: false, error: 'нет GH_TOKEN' });
+  const { full_name } = req.body;
+  if (!full_name || !full_name.includes('/')) return res.json({ success: false, error: 'укажи full_name' });
+  try {
+    const r = await fetch(`https://api.github.com/repos/${full_name}`, {
+      method: 'DELETE',
+      headers: ghHeaders()
+    });
+    if (r.status === 204) return res.json({ success: true });
+    const txt = await r.text().catch(() => '');
+    res.json({ success: false, error: `GitHub ${r.status}: ${txt.slice(0, 200)}` });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// DELETE /api/gh/delete-file — delete a file in a repo
+app.post('/api/gh/delete-file', express.json(), async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.json({ success: false, error: 'нет GH_TOKEN' });
+  const { full_name, path: filePath, message, branch } = req.body;
+  if (!full_name || !filePath) return res.json({ success: false, error: 'укажи full_name и path' });
+  try {
+    // Get file sha first
+    const getUrl = `https://api.github.com/repos/${full_name}/contents/${encodeURI(filePath)}${branch ? '?ref=' + encodeURIComponent(branch) : ''}`;
+    const getR = await fetch(getUrl, { headers: ghHeaders() });
+    if (!getR.ok) return res.json({ success: false, error: `файл не найден: GitHub ${getR.status}` });
+    const fileData = await getR.json();
+    const sha = fileData.sha;
+    // Delete
+    const delUrl = `https://api.github.com/repos/${full_name}/contents/${encodeURI(filePath)}`;
+    const body = { message: message || `delete ${filePath}`, sha, branch: branch || undefined };
+    const delR = await fetch(delUrl, {
+      method: 'DELETE',
+      headers: { ...ghHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (delR.ok || delR.status === 204) return res.json({ success: true });
+    const txt = await delR.text().catch(() => '');
+    res.json({ success: false, error: `GitHub ${delR.status}: ${txt.slice(0, 200)}` });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// GET /api/gh/download-repo?full_name=user/repo&ref=main — download repo as zip
+app.get('/api/gh/download-repo', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'нет GH_TOKEN' });
+  const fullName = req.query.full_name;
+  const ref = req.query.ref || '';
+  if (!fullName) return res.status(400).json({ error: 'укажи full_name' });
+  try {
+    const url = `https://api.github.com/repos/${fullName}/zipball${ref ? '?ref=' + encodeURIComponent(ref) : ''}`;
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'zen-panel-hub' },
+      redirect: 'manual'
+    });
+    // Follow redirect manually to get the actual download
+    if (r.status >= 300 && r.status < 400 && r.headers.get('location')) {
+      const r2 = await fetch(r.headers.get('location'), {
+        headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'zen-panel-hub' }
+      });
+      if (r2.ok) {
+        const ct = r2.headers.get('content-type') || 'application/zip';
+        const cd = r2.headers.get('content-disposition') || `attachment; filename="${fullName.split('/').pop()}.zip"`;
+        res.setHeader('Content-Type', ct);
+        res.setHeader('Content-Disposition', cd);
+        const buf = Buffer.from(await r2.arrayBuffer());
+        res.end(buf);
+        return;
+      }
+    }
+    if (r.ok) {
+      const ct = r.headers.get('content-type') || 'application/zip';
+      const cd = r.headers.get('content-disposition') || `attachment; filename="${fullName.split('/').pop()}.zip"`;
+      res.setHeader('Content-Type', ct);
+      res.setHeader('Content-Disposition', cd);
+      const buf = Buffer.from(await r.arrayBuffer());
+      res.end(buf);
+      return;
+    }
+    res.status(r.status).json({ error: `GitHub ${r.status}` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/gh/download-release-asset — download a specific release asset or source archive
+// ?full_name=user/repo&tag=v1.0&asset_id=123  or  ?full_name=user/repo&tag=v1.0&asset_name=app.apk
+// If no asset_id/name → downloads source tarball
+app.get('/api/gh/download-release-asset', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'нет GH_TOKEN' });
+  const { full_name, tag, asset_id, asset_name } = req.query;
+  if (!full_name || !tag) return res.status(400).json({ error: 'укажи full_name и tag' });
+  try {
+    // If asset_id or asset_name given → find and download the asset
+    if (asset_id || asset_name) {
+      const relsR = await fetch(`https://api.github.com/repos/${full_name}/releases/tags/${encodeURIComponent(tag)}`, { headers: ghHeaders() });
+      if (!relsR.ok) return res.status(relsR.status).json({ error: `релиз не найден: ${relsR.status}` });
+      const rel = await relsR.json();
+      let asset = null;
+      if (asset_id) asset = (rel.assets || []).find(a => String(a.id) === String(asset_id));
+      else if (asset_name) asset = (rel.assets || []).find(a => a.name === asset_name);
+      if (!asset) return res.status(404).json({ error: 'asset не найден' });
+      // Download asset
+      const dlR = await fetch(asset.url, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/octet-stream', 'User-Agent': 'zen-panel-hub' },
+        redirect: 'manual'
+      });
+      if (dlR.status >= 300 && dlR.status < 400 && dlR.headers.get('location')) {
+        const r2 = await fetch(dlR.headers.get('location'), { headers: { 'User-Agent': 'zen-panel-hub' } });
+        if (r2.ok) {
+          res.setHeader('Content-Type', r2.headers.get('content-type') || 'application/octet-stream');
+          res.setHeader('Content-Disposition', `attachment; filename="${asset.name}"`);
+          const buf = Buffer.from(await r2.arrayBuffer());
+          res.end(buf);
+          return;
+        }
+      }
+      if (dlR.ok) {
+        res.setHeader('Content-Type', dlR.headers.get('content-type') || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${asset.name}"`);
+        const buf = Buffer.from(await dlR.arrayBuffer());
+        res.end(buf);
+        return;
+      }
+      return res.status(dlR.status).json({ error: `GitHub ${dlR.status}` });
+    }
+    // No asset specified → download source tarball
+    const url = `https://api.github.com/repos/${full_name}/tarball/${encodeURIComponent(tag)}`;
+    const r = await fetch(url, {
+      headers: { ...ghHeaders(), Accept: 'application/vnd.github+json' },
+      redirect: 'manual'
+    });
+    if (r.status >= 300 && r.status < 400 && r.headers.get('location')) {
+      const r2 = await fetch(r.headers.get('location'), { headers: { 'User-Agent': 'zen-panel-hub' } });
+      if (r2.ok) {
+        res.setHeader('Content-Type', r2.headers.get('content-type') || 'application/gzip');
+        res.setHeader('Content-Disposition', `attachment; filename="${full_name.split('/').pop()}-${tag}.tar.gz"`);
+        const buf = Buffer.from(await r2.arrayBuffer());
+        res.end(buf);
+        return;
+      }
+    }
+    if (r.ok) {
+      res.setHeader('Content-Type', r.headers.get('content-type') || 'application/gzip');
+      res.setHeader('Content-Disposition', `attachment; filename="${full_name.split('/').pop()}-${tag}.tar.gz"`);
+      const buf = Buffer.from(await r.arrayBuffer());
+      res.end(buf);
+      return;
+    }
+    res.status(r.status).json({ error: `GitHub ${r.status}` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/gh/download-file — download any file from a repo by path+ref
+// ?full_name=user/repo&path=src/main.js&ref=main
+app.get('/api/gh/download-file', async (req, res) => {
+  const token = runnerToken();
+  if (!token) return res.status(401).json({ error: 'нет GH_TOKEN' });
+  const { full_name, path: filePath, ref } = req.query;
+  if (!full_name || !filePath) return res.status(400).json({ error: 'укажи full_name и path' });
+  try {
+    const q = `?ref=${encodeURIComponent(ref || 'main')}`;
+    const r = await fetch(`https://api.github.com/repos/${full_name}/contents/${encodeURI(filePath)}${q}`, {
+      headers: { ...ghHeaders(), Accept: 'application/vnd.github.raw' },
+      redirect: 'manual'
+    });
+    if (r.status >= 300 && r.status < 400 && r.headers.get('location')) {
+      const r2 = await fetch(r.headers.get('location'), { headers: { 'User-Agent': 'zen-panel-hub' } });
+      if (r2.ok) {
+        const fname = filePath.split('/').pop();
+        res.setHeader('Content-Type', r2.headers.get('content-type') || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+        const buf = Buffer.from(await r2.arrayBuffer());
+        res.end(buf);
+        return;
+      }
+    }
+    if (r.ok) {
+      const fname = filePath.split('/').pop();
+      res.setHeader('Content-Type', r.headers.get('content-type') || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+      const buf = Buffer.from(await r.arrayBuffer());
+      res.end(buf);
+      return;
+    }
+    res.status(r.status).json({ error: `GitHub ${r.status}` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // GET /api/gh/repos/:owner/:repo — repo info

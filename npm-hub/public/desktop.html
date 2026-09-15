@@ -68,6 +68,16 @@
     .runner-busy{font-size:12px;color:var(--warn);margin-bottom:8px}
     .card{background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:16px;transition:all .15s}
     .card:hover{border-color:var(--bdr)}
+    .gh-repo-actions{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+    .gh-repo-actions .btn{font-size:10px;padding:3px 8px}
+    .gh-repo-btn-del{color:var(--err);border-color:rgba(248,81,73,.3)}.gh-repo-btn-del:hover{background:rgba(248,81,73,.15)}
+    .gh-repo-btn-dl{color:var(--ok);border-color:rgba(63,185,80,.3)}.gh-repo-btn-dl:hover{background:rgba(63,185,80,.15)}
+    .gh-repo-btn-open{color:var(--acc);border-color:rgba(88,166,255,.3)}.gh-repo-btn-open:hover{background:rgba(88,166,255,.15)}
+    .gh-file-actions{display:flex;gap:3px;opacity:.6;transition:opacity .12s}
+    .gh-file-row:hover .gh-file-actions{opacity:1}
+    .gh-dl-menu{display:none;position:absolute;top:100%;right:0;background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;min-width:200px;z-index:60;margin-top:4px;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+    .gh-dl-menu.on{display:block}
+    .gh-dl-menu .apply-item{font-size:11px;padding:6px 10px}
     .card-h{display:flex;align-items:center;gap:10px;margin-bottom:8px}
     .card-ico{width:36px;height:36px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800}
     .card-n{font-size:14px;font-weight:600}.card-v{font-size:9px;color:var(--t3);font-family:monospace}
@@ -474,6 +484,62 @@
       <div class="modal-actions">
         <button class="btn" onclick="closeModal('modal-addstorage')">Отмена</button>
         <button class="btn btn-ok" onclick="saveStorage()">Подключить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Clone + Open In Modal -->
+  <div class="modal-bg" id="modal-clone">
+    <div class="modal">
+      <h2 id="clone-title">Открыть репозиторий</h2>
+      <div id="clone-repo-info" style="font-size:12px;color:var(--t2);margin-bottom:12px"></div>
+      <div style="margin-bottom:10px">
+        <label style="font-size:10px;color:var(--t2)">Ветка:</label>
+        <input type="text" id="clone-branch" placeholder="main" value="main" style="width:100%;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none;margin-top:4px">
+      </div>
+      <div style="margin-bottom:10px">
+        <label style="font-size:10px;color:var(--t2)">Папка (hub-work/):</label>
+        <input type="text" id="clone-dir" placeholder="repo-name" style="width:100%;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none;margin-top:4px">
+      </div>
+      <div id="clone-status" style="font-size:11px;color:var(--t3);min-height:18px;margin-bottom:10px"></div>
+      <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="clone-auto-approve" style="width:16px;height:16px;accent-color:var(--ok)">
+        <label for="clone-auto-approve" style="font-size:11px;color:var(--t2);cursor:pointer">Авто-одобрение — агент выполняет всё без вопросов</label>
+      </div>
+      <div style="font-size:11px;color:var(--t2);margin-bottom:8px;font-weight:600">Открыть в:</div>
+      <div id="clone-agents" class="newterm-grid" style="max-height:200px;overflow-y:auto"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-clone')">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Repo Confirm Modal -->
+  <div class="modal-bg" id="modal-delrepo">
+    <div class="modal" style="width:420px">
+      <h2 style="color:var(--err)">Удалить репозиторий?</h2>
+      <div id="delrepo-info" style="font-size:12px;color:var(--t2);margin-bottom:12px"></div>
+      <div style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.3);border-radius:8px;padding:10px;font-size:11px;color:var(--err);margin-bottom:12px">
+        Это действие необратимо. Репозиторий и все его данные будут удалены навсегда.
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="font-size:10px;color:var(--t2)">Введите имя репозитория для подтверждения:</label>
+        <input type="text" id="delrepo-confirm" placeholder="user/repo-name" style="width:100%;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none;margin-top:4px">
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-delrepo')">Отмена</button>
+        <button class="btn btn-er" id="delrepo-btn" onclick="confirmDeleteRepo()" disabled>Удалить навсегда</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Download Release Asset Modal -->
+  <div class="modal-bg" id="modal-release-dl">
+    <div class="modal" style="width:500px">
+      <h2>Скачать из релиза</h2>
+      <div id="release-dl-list" style="max-height:400px;overflow-y:auto"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-release-dl')">Закрыть</button>
       </div>
     </div>
   </div>

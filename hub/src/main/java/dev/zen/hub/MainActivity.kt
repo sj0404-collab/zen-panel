@@ -10,6 +10,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -179,13 +180,20 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        web.setDownloadListener { url, _, _, mime, _ ->
+        web.setDownloadListener { url, _, contentDisposition, mimeType, _ ->
             runCatching {
                 val request = DownloadManager.Request(Uri.parse(url)).apply {
                     setNotificationVisibility(
                         DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
                     )
-                    setMimeType(mime)
+                    // Android guesses filenames from URL+MIME and mangles real
+                    // extensions (apk → .bin / .ts1). Use the server's filename
+                    // from Content-Disposition and store into Downloads with it.
+                    val name = dispositionFilename(contentDisposition) ?: urlFilename(url)
+                    setDestinationInExternalPublicDir(
+                        Environment.DIRECTORY_DOWNLOADS, name
+                    )
+                    setMimeType(mimeType ?: mimeForName(name))
                 }
                 val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
                 dm.enqueue(request)
@@ -193,6 +201,41 @@ class MainActivity : ComponentActivity() {
             }.onFailure {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
             }
+        }
+    }
+
+    // Pulls "foo.apk" out of `attachment; filename="foo.apk"; filename*=UTF-8''foo.apk`.
+    private fun dispositionFilename(cd: String?): String? {
+        if (cd == null) return null
+        var name = Regex("""filename\*?=(?:UTF-8''|")?([^";]+)""")
+            .find(cd)?.groupValues?.getOrNull(1)
+            ?.replace("\"", "")?.trim()
+        if (name.isNullOrBlank() || name.equals("download", ignoreCase = true)) return null
+        name = name.replace(Regex("""[/\\:*?"<>|%{}]"""), "_").trim()
+        return name.ifBlank { null }
+    }
+
+    private fun urlFilename(url: String?): String {
+        val clean = url?.substringBefore('?') ?: return "download.bin"
+        return clean.substringAfterLast('/').ifBlank { "download.bin" }
+    }
+
+    private fun mimeForName(name: String): String {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return when (ext) {
+            "apk" -> "application/vnd.android.package-archive"
+            "zip" -> "application/zip"
+            "tar" -> "application/x-tar"
+            "xz" -> "application/x-xz"
+            "gz" -> "application/gzip"
+            "deb" -> "application/x-debian-package"
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "pdf" -> "application/pdf"
+            "html", "htm" -> "text/html"
+            "json" -> "application/json"
+            "txt", "md", "log" -> "text/plain"
+            else -> "application/octet-stream"
         }
     }
 
