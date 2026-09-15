@@ -56,6 +56,9 @@ on:
 permissions:
   contents: write
 
+env:
+  HUB_LOGS: $HOME/.npm-hub/logs
+
 jobs:
   # ── Hub on Linux ───────────────────────────────────────────────────
   hub:
@@ -104,11 +107,11 @@ jobs:
           # rest. Whatever lands on PATH the hub picks up; anything missing
           # still launches through `npx -y` at click time.
           PKGS="opencode-ai @anthropic-ai/claude-code @google/gemini-cli @openai/codex @github/copilot @qwen-code/qwen-code http-server"
-          npm install -g $PKGS >/tmp/npm-i.log 2>&1 || \
-            for p in $PKGS; do npm install -g "$p" >/tmp/npm-i.log 2>&1 \
+          npm install -g $PKGS >$HUB_LOGS/npm-i.log 2>&1 || \
+            for p in $PKGS; do npm install -g "$p" >$HUB_LOGS/npm-i.log 2>&1 \
               && echo "installed $p" || echo "skipped $p"; done
-          pip install --quiet aider-chat goose-ai >/tmp/pip-i.log 2>&1 || \
-            for p in aider-chat goose-ai; do pip install --quiet "$p" >/tmp/pip-i.log 2>&1 \
+          pip install --quiet aider-chat goose-ai >$HUB_LOGS/pip-i.log 2>&1 || \
+            for p in aider-chat goose-ai; do pip install --quiet "$p" >$HUB_LOGS/pip-i.log 2>&1 \
               && echo "installed $p" || echo "skipped $p"; done
           echo "--- on PATH now ---"
           for c in opencode claude gemini codex copilot qwen aider goose http-server; do
@@ -131,7 +134,7 @@ jobs:
       - name: Start the hub and open the tunnel
         run: |
           cd "$GITHUB_WORKSPACE/fork/npm-hub"
-          HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 nohup node src/server.js > /tmp/hub.log 2>&1 &
+          HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 nohup node src/server.js > $HUB_LOGS/hub.log 2>&1 &
           for i in $(seq 1 60); do
             body=$(curl -s -m 15 -H "x-hub-token: ${{ inputs.token }}" "http://127.0.0.1:8090/api/tools" || true)
             echo "$body" | grep -q '"warming":false' && break
@@ -140,18 +143,18 @@ jobs:
           body=$(curl -s -m 15 -H "x-hub-token: ${{ inputs.token }}" "http://127.0.0.1:8090/api/tools" || true)
           if ! echo "$body" | grep -q '"warming":false'; then
             echo "::error::the hub did not start."
-            tail -40 /tmp/hub.log
+            tail -40 $HUB_LOGS/hub.log
             exit 1
           fi
           echo "hub is up on 8090"
 
-          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 /tmp/tunnel.log)
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 $HUB_LOGS/tunnel.log)
           if [ -z "$URL" ]; then
             echo "::error::no tunnel came up."
-            tail -25 /tmp/tunnel.log
+            tail -25 $HUB_LOGS/tunnel.log
             exit 1
           fi
-          echo "$URL" > /tmp/hub-url
+          echo "$URL" > $HUB_LOGS/hub-url
 
           TOOLS=$(python3 -c "
           import json, urllib.request
@@ -209,7 +212,7 @@ jobs:
           # opens". Either one is restarted here; a new tunnel address is
           # republished so the panel never points at a corpse.
           HUBDIR="$GITHUB_WORKSPACE/fork/npm-hub"
-          PIDFILE=/tmp/cloudflared-8090.pid
+          PIDFILE=$HUB_LOGS/cloudflared-8090.pid
           for i in $(seq 1 1400); do
             sleep 15
             if ! curl -sf -o /dev/null -m 10 -H "x-hub-token: ${{ inputs.token }}" http://127.0.0.1:8090/api/tools; then
@@ -219,10 +222,10 @@ jobs:
               # suicide - measured the hard way.
               pkill -f "src/server[.]js" 2>/dev/null || true
               cd "$HUBDIR"
-              HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 nohup node src/server.js >> /tmp/hub.log 2>&1 &
+              HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 nohup node src/server.js >> $HUB_LOGS/hub.log 2>&1 &
               sleep 5
             fi
-            CUR=$(cat /tmp/hub-url 2>/dev/null || echo)
+            CUR=$(cat $HUB_LOGS/hub-url 2>/dev/null || echo)
             PID=$(cat "$PIDFILE" 2>/dev/null || echo)
             EDGE=""
             if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ]; then
@@ -231,9 +234,9 @@ jobs:
             fi
             if [ -n "$EDGE" ]; then continue; fi
             echo "::warning::tunnel dead; reopening."
-            URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 /tmp/tunnel2.log) || continue
+            URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 $HUB_LOGS/tunnel2.log) || continue
             [ -n "$URL" ] || continue
-            echo "$URL" > /tmp/hub-url
+            echo "$URL" > $HUB_LOGS/hub-url
             echo "back up on $URL"
             GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
               bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
@@ -253,7 +256,7 @@ jobs:
           # object the panel renders as a line. The hub may already be dead
           # here (cancelled mid-run) - then the file stays empty and json=
           # is skipped with a warning.
-          python3 - > /tmp/hub-models.json <<'PY' || true
+          python3 - > $HUB_LOGS/hub-models.json <<'PY' || true
           import json, urllib.request
           _zt = urllib.request.Request('http://127.0.0.1:8090/api/models/full', headers={'x-hub-token': '${{ inputs.token }}'})
           d = json.load(urllib.request.urlopen(_zt, timeout=20))
@@ -271,7 +274,7 @@ jobs:
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
               "slot=hub-linux" "file=models-hub-linux.json" \
               "kind=NPM-Hub" "os=linux" \
-              "json=/tmp/hub-models.json" || true
+              "json=$HUB_LOGS/hub-models.json" || true
 
   # ── Hub on Windows ─────────────────────────────────────────────────
   hub-windows:
@@ -553,17 +556,17 @@ jobs:
           export VNC_PORT=5901 NOVNC_PORT=6081
           bash "$GITHUB_WORKSPACE/fork/tools/start_desktop.sh" || {
             echo "::error::the Linux desktop VNC did not start."
-            tail -30 /tmp/xvfb.log /tmp/openbox.log /tmp/x11vnc.log 2>/dev/null
+            tail -30 $HUB_LOGS/xvfb.log $HUB_LOGS/openbox.log $HUB_LOGS/x11vnc.log 2>/dev/null
             exit 1
           }
 
-          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 6081 /tmp/vnc-tunnel.log)
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 6081 $HUB_LOGS/vnc-tunnel.log)
           if [ -z "$URL" ]; then
             echo "::error::no tunnel for the VNC desktop."
-            tail -25 /tmp/vnc-tunnel.log
+            tail -25 $HUB_LOGS/vnc-tunnel.log
             exit 1
           fi
-          echo "$URL" > /tmp/vnc-url
+          echo "$URL" > $HUB_LOGS/vnc-url
 
           # Pre-warm: the noVNC page must answer over the tunnel edge before
           # we hand the address to the panel.
@@ -596,7 +599,7 @@ jobs:
 
       - name: Keep the VNC session alive
         run: |
-          PIDFILE=/tmp/cloudflared-6081.pid
+          PIDFILE=$HUB_LOGS/cloudflared-6081.pid
           for i in $(seq 1 1400); do
             sleep 15
             if ! curl -sf -o /dev/null -m 10 "http://127.0.0.1:6081/vnc.html"; then
@@ -605,16 +608,16 @@ jobs:
               export VNC_PORT=5901 NOVNC_PORT=6081
               bash "$GITHUB_WORKSPACE/fork/tools/start_desktop.sh" || true
             fi
-            CUR=$(cat /tmp/vnc-url 2>/dev/null || echo)
+            CUR=$(cat $HUB_LOGS/vnc-url 2>/dev/null || echo)
             PID=$(cat "$PIDFILE" 2>/dev/null || echo)
             if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ]; then
               code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$CUR/vnc.html" 2>/dev/null || true)
               case "$code" in 2*|3*|4*) continue ;; esac
             fi
             echo "::warning::VNC tunnel dead; reopening."
-            URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 6081 /tmp/vnc-tunnel2.log) || continue
+            URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 6081 $HUB_LOGS/vnc-tunnel2.log) || continue
             [ -n "$URL" ] || continue
-            echo "$URL" > /tmp/vnc-url
+            echo "$URL" > $HUB_LOGS/vnc-url
             echo "VNC back up on $URL/vnc.html"
             GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
               bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
