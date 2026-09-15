@@ -22,19 +22,36 @@ const HOST = '0.0.0.0';
 const STATE_FILE = path.join(HOME, '.npm-hub-state.json');
 
 app.use(express.json({ limit: '50mb' }));
-app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  setHeaders: (res, filePath) => {
+    if (/\.(html?|js|css|json)$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
 // ─── ROUTES: / → launcher, /d → desktop, /m → mobile ───
+function noCache(res) {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+}
 app.get('/d', (req, res) => {
+  noCache(res);
   res.sendFile(path.join(__dirname, '..', 'public', 'desktop.html'));
 });
 app.get('/d/*', (req, res) => {
+  noCache(res);
   res.sendFile(path.join(__dirname, '..', 'public', 'desktop.html'));
 });
 app.get('/m', (req, res) => {
+  noCache(res);
   res.sendFile(path.join(__dirname, '..', 'public', 'mobile.html'));
 });
 app.get('/m/*', (req, res) => {
+  noCache(res);
   res.sendFile(path.join(__dirname, '..', 'public', 'mobile.html'));
 });
 
