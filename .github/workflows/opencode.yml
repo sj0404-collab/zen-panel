@@ -40,6 +40,9 @@ on:
 permissions:
   contents: write
 
+env:
+  HUB_LOGS: $HOME/.npm-hub/logs
+
 jobs:
   opencode-linux:
     if: inputs.os == 'linux'
@@ -102,14 +105,14 @@ jobs:
           # Headless serve + a one-file mobile chat. Official `opencode web`
           # is a heavy SPA that janks a phone WebView; the panel opens the
           # gateway at :4100 instead.
-          cat > /tmp/opencode.json <<'JSON'
+          cat > $HUB_LOGS/opencode.json <<'JSON'
           { "permission": { "*": "allow" } }
           JSON
-          cp /tmp/opencode.json "$GITHUB_WORKSPACE/fork/opencode.json" 2>/dev/null || true
+          cp $HUB_LOGS/opencode.json "$GITHUB_WORKSPACE/fork/opencode.json" 2>/dev/null || true
 
           nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
-            > /tmp/opencode.log 2>&1 &
-          echo $! > /tmp/opencode.pid
+            > $HUB_LOGS/opencode.log 2>&1 &
+          echo $! > $HUB_LOGS/opencode.pid
 
           up=0
           for i in $(seq 1 40); do
@@ -121,13 +124,13 @@ jobs:
           done
           if [ "$up" != 1 ]; then
             echo "::error::OpenCode serve did not start."
-            tail -50 /tmp/opencode.log
+            tail -50 $HUB_LOGS/opencode.log
             exit 1
           fi
           echo "OpenCode serve is up on 4096"
 
-          node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > /tmp/oc-gateway.log 2>&1 &
-          echo $! > /tmp/oc-gateway.pid
+          node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > $HUB_LOGS/oc-gateway.log 2>&1 &
+          echo $! > $HUB_LOGS/oc-gateway.pid
           gw=0
           for i in $(seq 1 20); do
             if curl -sf -o /dev/null -m 4 "http://127.0.0.1:4100/"; then gw=1; break; fi
@@ -135,7 +138,7 @@ jobs:
           done
           if [ "$gw" != 1 ]; then
             echo "::error::oc-gateway did not start."
-            tail -40 /tmp/oc-gateway.log
+            tail -40 $HUB_LOGS/oc-gateway.log
             exit 1
           fi
 
@@ -144,10 +147,10 @@ jobs:
               || echo "::warning::first prompt failed; the chat is still up"
           fi
 
-          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 4100 /tmp/oc-tunnel.log)
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 4100 $HUB_LOGS/oc-tunnel.log)
           if [ -z "$URL" ]; then
             echo "::error::no tunnel came up."
-            tail -25 /tmp/oc-tunnel.log
+            tail -25 $HUB_LOGS/oc-tunnel.log
             exit 1
           fi
 
@@ -193,9 +196,9 @@ jobs:
             fi
             echo "::warning::OpenCode stopped answering; restarting serve + gateway."
             nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
-              > /tmp/opencode2.log 2>&1 &
+              > $HUB_LOGS/opencode2.log 2>&1 &
             sleep 4
-            node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > /tmp/oc-gateway2.log 2>&1 &
+            node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > $HUB_LOGS/oc-gateway2.log 2>&1 &
             sleep 6
           done
 

@@ -55,6 +55,9 @@ on:
 permissions:
   contents: write
 
+env:
+  HUB_LOGS: $HOME/.npm-hub/logs
+
 jobs:
   agent:
     if: inputs.os == 'linux'
@@ -144,7 +147,7 @@ jobs:
             'done' > "$HOME/autosave.sh"
           chmod +x "$HOME/autosave.sh"
           nohup "$HOME/autosave.sh" "$GITHUB_WORKSPACE/fork" \
-            "$(( ${{ inputs.autosave_minutes }} * 60 ))" > /tmp/autosave.log 2>&1 &
+            "$(( ${{ inputs.autosave_minutes }} * 60 ))" > $HUB_LOGS/autosave.log 2>&1 &
           echo "autosave every ${{ inputs.autosave_minutes }} min -> $WORK_BRANCH"
 
       - name: Start the agent and open the tunnel
@@ -198,7 +201,7 @@ jobs:
             TOKENRA_API_KEY="${{ secrets.TOKENRA_API_KEY }}" \
             ORCAROUTER_API_KEY="${{ secrets.ORCAROUTER_API_KEY }}" \
             ZEN_LOCAL_AI_PORT=8791 \
-            nohup node agent/zen-agent.js > /tmp/agent.log 2>&1 &
+            nohup node agent/zen-agent.js > $HUB_LOGS/agent.log 2>&1 &
 
           for i in $(seq 1 30); do
             curl -sf -o /dev/null "http://127.0.0.1:8765/mcp/status" && break
@@ -206,7 +209,7 @@ jobs:
           done
           if ! curl -sf -o /dev/null "http://127.0.0.1:8765/mcp/status"; then
             echo "::error::the agent did not start."
-            tail -40 /tmp/agent.log
+            tail -40 $HUB_LOGS/agent.log
             exit 1
           fi
           echo "agent is up on 8765"
@@ -223,10 +226,10 @@ jobs:
           # The trade is an address that changes every run. Nobody types it:
           # the panel reads it from session-state, and the link carries the
           # token.
-          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8765 /tmp/tunnel.log)
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8765 $HUB_LOGS/tunnel.log)
           if [ -z "$URL" ]; then
             echo "::error::no tunnel came up."
-            tail -25 /tmp/tunnel.log
+            tail -25 $HUB_LOGS/tunnel.log
             exit 1
           fi
 
