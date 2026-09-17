@@ -186,7 +186,7 @@
     <div class="logo">◆ NPM Hub <span id="hub-ver" class="hub-ver"></span></div>
     <div class="topbar-nav">
       <button class="tb on" onclick="showPage('dashboard')">Dashboard</button>
-      <button class="tb" onclick="showPage('terminal')">Терминал</button>
+      <button class="tb" onclick="openStandaloneTerminal()">Терминал</button>
       <button class="tb" onclick="showPage('files')">Файлы</button>
       <button class="tb" onclick="showPage('linux')">🖥 Экран</button>
       <button class="tb" onclick="showPage('git')">🐙 Git</button>
@@ -216,7 +216,7 @@
         <div id="term-list"></div>
       </div>
       <div class="sb-actions">
-        <button class="btn" onclick="openTerminal()" style="flex:1;text-align:center">>_ Терминал</button>
+        <button class="btn" onclick="openStandaloneTerminal()" style="flex:1;text-align:center">>_ Терминал</button>
         <button class="btn btn-p" onclick="showNewTermModal()" style="flex:1;text-align:center">+ Сессия</button>
       </div>
     </div>
@@ -283,48 +283,24 @@
         </div>
       </div>
 
-      <!-- LINUX DESKTOP (VNC) + Phone + Browser + Audio — all merged -->
+      <!-- LINUX DESKTOP (VNC): only the screen. Programs, browser, file
+           manager and audio live on the desktop itself (right-click menu). -->
       <div class="page" id="p-linux" style="padding:0;flex-direction:column;height:100%">
-        <!-- Row 1: VNC controls + Phone + Browser launch + Audio -->
-        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center;flex-wrap:wrap">
+        <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center;flex-wrap:wrap">
           <span id="linux-status-desktop" class="tag" style="flex-shrink:0">…</span>
-          <button class="btn btn-p btn-sm" onclick="linuxConnect('desktop')">Открыть экран</button>
-          <button class="btn btn-sm" onclick="linuxFullscreen('desktop')">⛶</button>
-          <div style="width:1px;height:20px;background:var(--bdr);margin:0 4px"></div>
-          <!-- Phone controls -->
-          <span id="cp-status-desktop" class="tag" style="flex-shrink:0;font-size:10px">📱</span>
-          <button class="btn btn-sm" id="cp-start-desktop" onclick="cloudPhoneStart('desktop')" title="Старт/Стоп Android эмулятора">▶ Phone</button>
-          <button class="btn btn-sm" onclick="cloudPhoneConnect('desktop')" title="Подключить VNC к телефону">📱 VNC</button>
-          <input type="text" id="cp-url-desktop" placeholder="URL в телефоне…" value="https://www.youtube.com" style="width:140px;min-width:100px;padding:4px 8px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:11px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')phoneBrowserOpen(this.value,'desktop')">
-          <button class="btn btn-sm" onclick="phoneBrowserOpen(document.getElementById('cp-url-desktop').value,'desktop')" title="Открыть URL в браузере телефона">→ Phone</button>
-          <div style="width:1px;height:20px;background:var(--bdr);margin:0 4px"></div>
-          <!-- Browser launch on desktop -->
-          <input type="text" id="browser-url-desktop" placeholder="URL на рабочем столе…" value="https://www.youtube.com" style="width:140px;min-width:100px;padding:4px 8px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:11px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')linuxRunBrowser(this.value)">
-          <button class="btn btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url-desktop').value)" title="Открыть браузер на Linux рабочем столе">🖥🌐</button>
-          <div style="width:1px;height:20px;background:var(--bdr);margin:0 4px"></div>
-          <!-- Audio controls -->
-          <span id="pulse-status" class="tag" style="font-size:10px">🔊</span>
-          <button class="btn btn-sm" onclick="pulseStatus()" title="Обновить статус аудио">⟳</button>
-          <button class="btn btn-sm" onclick="pulseStart()" title="Запустить PulseAudio">▶</button>
-          <button class="btn btn-sm" onclick="pulseStop()" title="Остановить PulseAudio">⏹</button>
-          <button class="btn btn-sm" onclick="pulseMute()" title="Mute/Unmute">🔇</button>
-          <input type="range" id="pulse-vol" min="0" max="100" value="80" style="width:80px" oninput="pulseSetVol(this.value)">
-          <span id="pulse-vol-label" style="font-size:10px;color:var(--t3);font-family:monospace">80%</span>
-          <div style="flex:1"></div>
-          <span style="font-size:11px;color:var(--t3)">openbox · xterm · Mesa · PulseAudio</span>
+          <span style="font-size:11px;color:var(--t3);flex:1;min-width:120px">Все программы, браузер и файловый менеджер — на рабочем столе (правый клик по экрану)</span>
+          <button class="btn btn-sm" onclick="linuxReload()" title="Переподключить экран">⟳</button>
+          <button class="btn btn-sm" onclick="linuxFullscreen('desktop')" title="На весь экран">⛶</button>
         </div>
-        <!-- Row 2: VNC iframe (main screen) -->
         <div style="flex:1;position:relative;background:#000">
           <iframe id="linux-frame-desktop" style="width:100%;height:100%;border:none;display:none" allow="clipboard-read; clipboard-write" allowfullscreen></iframe>
           <div id="linux-placeholder-desktop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
             <div style="font-size:48px;margin-bottom:16px">🖥</div>
             <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Linux Screen</div>
-            <div style="font-size:13px;max-width:480px;line-height:1.5">Рабочий стол Linux (openbox + xterm + Mesa).<br>Браузер, телефон и терминал запускаются здесь — через VNC.<br>Нажмите «Открыть экран».</div>
-            <div id="pulse-devices" style="margin-top:12px;font-size:11px;color:var(--t3);text-align:left"></div>
+            <div style="font-size:13px;max-width:480px;line-height:1.5">Экран подключается сам, как только будет готов.<br>Программы запускаются здесь — прямо на рабочем столе.</div>
+            <button class="btn btn-sm" onclick="linuxAutoConnect(true)" style="margin-top:14px">⟳ Проверить</button>
           </div>
         </div>
-        <!-- Hidden iframe for phone VNC (behind the scenes) -->
-        <iframe id="cp-frame-desktop" style="position:absolute;width:1px;height:1px;border:none;opacity:0;pointer-events:none" allowfullscreen></iframe>
       </div>
 
       <!-- GIT — local + GitHub repos + builds -->

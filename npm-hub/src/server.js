@@ -55,19 +55,45 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
   }
 }));
 
-// ─── ROUTES: / → launcher, /d → desktop, /m → mobile ───
+// ─── ROUTES: / → launcher, /d → dashboard, /m → mobile, separate pages ───
 function noCache(res) {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
 }
+// Каждая вкладка — отдельная страница. Общий «мост» bridge.js даёт им
+// одинаковую верхнюю панель, состояние и helpers.
 app.get('/d', (req, res) => {
   noCache(res);
-  res.sendFile(path.join(__dirname, '..', 'public', 'desktop.html'));
+  res.sendFile(path.join(__dirname, '..', 'public', 'dashboard.html'));
 });
 app.get('/d/*', (req, res) => {
   noCache(res);
-  res.sendFile(path.join(__dirname, '..', 'public', 'desktop.html'));
+  res.sendFile(path.join(__dirname, '..', 'public', 'dashboard.html'));
+});
+app.get('/files', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'files.html'));
+});
+app.get('/files/*', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'files.html'));
+});
+app.get('/linux', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'linux.html'));
+});
+app.get('/linux/*', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'linux.html'));
+});
+app.get('/git', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'git.html'));
+});
+app.get('/git/*', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'git.html'));
 });
 app.get('/m', (req, res) => {
   noCache(res);
@@ -76,6 +102,17 @@ app.get('/m', (req, res) => {
 app.get('/m/*', (req, res) => {
   noCache(res);
   res.sendFile(path.join(__dirname, '..', 'public', 'mobile.html'));
+});
+// Standalone terminal site: survives a refresh of the dashboard because its
+// tabs reconnect to the same server-side tmux sessions and replay the buffer.
+// Sessions themselves live on the server, so they run even with no page open.
+app.get('/term', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'term.html'));
+});
+app.get('/term/*', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'term.html'));
 });
 
 // ─── CORS — allow all origins (for phone access) ───
@@ -1106,6 +1143,25 @@ const tmuxHas = (() => {
 
 const safeSessionName = id => TMUX_PREFIX + String(id).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
 const sessionLogPath = id => path.join(PTY_DIR, safeSessionName(id) + '.log');
+const sessionMetaPath = id => path.join(PTY_DIR, safeSessionName(id) + '.meta.json');
+
+// A tiny `.json` sidecar per session remembers display info (name/color/icon,
+// cwd) so a hub restart can bring back a nice tab for every surviving tmux
+// session instead of a nameless shell.
+const writeSessionMeta = (session) => {
+  try {
+    fs.writeFileSync(sessionMetaPath(session.id), JSON.stringify({
+      id: session.id, cwd: session.cwd, toolId: session.toolId,
+      toolName: session.toolName || 'Terminal', color: session.color || '#58a6ff',
+      icon: session.icon || '>_', created: session.created || Date.now()
+    }));
+  } catch {}
+};
+const deleteSessionMeta = (id) => { try { fs.unlinkSync(sessionMetaPath(id)); } catch {} };
+const readSessionMeta = (id) => {
+  try { return JSON.parse(fs.readFileSync(sessionMetaPath(id), 'utf8')); }
+  catch { return null; }
+};
 
 const tmuxRun = (args, timeout, input) => {
   try { return require('child_process').spawnSync('tmux', args, { stdio: 'pipe', timeout: timeout || 5000, encoding: 'utf8', input }); }
@@ -1143,6 +1199,7 @@ const tmuxStartPoller = (session) => {
       session.poller = null;
       ptySend(session, { type: 'exit', id: session.id, code: 0 });
       try { fs.unlinkSync(session.logPath); } catch {}
+      deleteSessionMeta(session.id);
       sessions.delete(session.id);
     }
   }, 120);
@@ -1182,7 +1239,8 @@ const reviveTmuxSession = (id) => {
   if (!tmuxSessionAlive(id)) return null;
   const logPath = sessionLogPath(id);
   const offset = (() => { try { return fs.statSync(logPath).size; } catch { return 0; } })();
-  const session = { id, tmux: true, cwd: null, toolId: null, clients: new Set(), output: '', resumed: true, offset: 0, logPath, poller: null };
+  const meta = readSessionMeta(id) || {};
+  const session = { id, tmux: true, cwd: meta.cwd || null, toolId: meta.toolId || null, toolName: meta.toolName, color: meta.color, icon: meta.icon, created: meta.created || Date.now(), clients: new Set(), output: '', resumed: true, offset: 0, logPath, poller: null };
   sessions.set(id, session);
   ensureTmuxPipe(session);
   if (offset > 0) { // replay everything tmux already had
@@ -1201,8 +1259,9 @@ const createTmuxSession = (id, opts, ws) => {
   try { fs.unlinkSync(logPath); } catch {}
   const r = tmuxRun(['new-session', '-d', '-s', name, '-x', String(opts.cols || 120), '-y', String(opts.rows || 30), '-c', opts.cwd], 8000);
   if (r.status !== 0) { ws.send(JSON.stringify({ type: 'error', error: (r.stderr || 'tmux failed').trim() })); return null; }
-  const session = { id, tmux: true, cwd: opts.cwd, toolId: opts.toolId, clients: new Set(), output: '', resumed: false, offset: 0, logPath, poller: null };
+  const session = { id, tmux: true, cwd: opts.cwd, toolId: opts.toolId, toolName: opts.toolName, color: opts.color, icon: opts.icon, created: Date.now(), clients: new Set(), output: '', resumed: false, offset: 0, logPath, poller: null };
   sessions.set(id, session);
+  writeSessionMeta(session);
   ensureTmuxPipe(session);
   const shell = process.env.SHELL || '/bin/bash';
   tmuxRun(['send-keys', '-t', name, `export TERM=xterm-256color; cd ${JSON.stringify(opts.cwd)}`, 'Enter'], 3000);
@@ -1249,6 +1308,7 @@ wss.on('connection', (ws) => {
         }
         if (existing) {
           try { fs.unlinkSync(existing.logPath); } catch {}
+          deleteSessionMeta(id);
           sessions.delete(id); // tmux session died while we were detached
         }
         // A session may exist in tmux but not in our (possibly restarted) memory.
@@ -1267,11 +1327,15 @@ wss.on('connection', (ws) => {
         let cwd = msg.cwd || HOME;
         try { if (!fs.statSync(cwd).isDirectory()) cwd = HOME; } catch { cwd = HOME; }
 
+        const metaColor = tool ? tool.color : '#58a6ff';
+        const metaIcon = tool ? tool.icon : '>_';
+        const metaName = tool ? tool.name : 'Terminal';
+
         try {
           if (tmuxHas && !isWin) {
             // ❗ tmux requires a login shell name (argv[0]) to start bash as an
             // interactive shell; new-session already does that. Nothing more needed.
-            session = createTmuxSession(id, { cwd, cols: msg.cols, rows: msg.rows, toolId: tool ? tool.id : null, toolCmd: tool && tool.cmd !== '_terminal' ? tool.cmd : null }, ws);
+            session = createTmuxSession(id, { cwd, cols: msg.cols, rows: msg.rows, toolId: tool ? tool.id : null, toolName: metaName, color: metaColor, icon: metaIcon, toolCmd: tool && tool.cmd !== '_terminal' ? tool.cmd : null }, ws);
           } else {
             const p = pty.spawn(shell, [], {
               name: 'xterm-256color',
@@ -1280,8 +1344,9 @@ wss.on('connection', (ws) => {
               cwd: cwd,
               env: { ...process.env, TERM: 'xterm-256color', OPENROUTER_API_KEY: modelManager.getKeyForProvider('openrouter'), MODEL: modelManager.getSelectedModel(), OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1' }
             });
-            session = { id, pty: p, cwd, toolId: tool ? tool.id : null, clients: new Set(), output: '', resumed: false };
+            session = { id, pty: p, cwd, toolId: tool ? tool.id : null, toolName: metaName, color: metaColor, icon: metaIcon, created: Date.now(), clients: new Set(), output: '', resumed: false };
             sessions.set(id, session);
+            writeSessionMeta(session);
 
             const cdCmd = isWin ? `cd /d "${cwd}"` : `cd "${cwd}"`;
             p.write(cdCmd + '\r');
@@ -1299,6 +1364,7 @@ wss.on('connection', (ws) => {
             });
             p.onExit(({ exitCode }) => {
               ptySend(session, { type: 'exit', id: session.id, code: exitCode });
+              deleteSessionMeta(session.id);
               sessions.delete(session.id);
             });
           }
@@ -1322,8 +1388,14 @@ wss.on('connection', (ws) => {
       case 'kill': {
         if (!session) return;
         if (session.tmux) {
-          try { tmuxRun(['send-keys', '-t', safeSessionName(session.id), 'C-c'], 2000); } catch {}
-          setTimeout(() => { if (session.clients.size === 0 || true) { tmuxRun(['kill-session', '-t', safeSessionName(session.id)], 2000); try { fs.unlinkSync(session.logPath); } catch {} sessions.delete(session.id); } }, 400);
+          const target = session;
+          try { tmuxRun(['send-keys', '-t', safeSessionName(target.id), 'C-c'], 2000); } catch {}
+          setTimeout(() => {
+            tmuxRun(['kill-session', '-t', safeSessionName(target.id)], 2000);
+            try { fs.unlinkSync(target.logPath); } catch {}
+            deleteSessionMeta(target.id);
+            sessions.delete(target.id);
+          }, 400);
           session = null;
           return;
         }
@@ -1347,6 +1419,38 @@ wss.on('connection', (ws) => {
       }
     }
   });
+});
+
+// ─── GET /api/sessions — живые серверные сессии ───
+// Используется standalone терминалом (/term): показывает, что можно
+// подхватить после перезагрузки страницы или с другого устройства.
+app.get('/api/sessions', (req, res) => {
+  const list = [];
+  const push = (s) => list.push({
+    id: s.id, cwd: s.cwd || null, toolId: s.toolId || null,
+    toolName: s.toolName || 'Terminal', color: s.color || '#58a6ff',
+    icon: s.icon || '>_', resumed: !!s.resumed, tmux: !!s.tmux,
+    clients: s.clients ? s.clients.size : 0, created: s.created || 0
+  });
+  for (const s of sessions.values()) push(s);
+  // Sessions that survived a hub restart still exist as tmux sessions — list
+  // them too, reviving their in-memory record so a reconnect replays output.
+  if (tmuxHas) {
+    try {
+      const r = require('child_process').execSync('tmux list-sessions', { stdio: 'pipe', timeout: 3000, encoding: 'utf8' });
+      const seen = new Set(sessions.keys());
+      for (const line of r.split('\n')) {
+        const name = (line.split(':')[0] || '').trim();
+        if (!name.startsWith(TMUX_PREFIX)) continue;
+        const id = name.slice(TMUX_PREFIX.length);
+        if (seen.has(id)) continue;
+        const revived = reviveTmuxSession(id);
+        if (revived) push(revived);
+      }
+    } catch {}
+  }
+  list.sort((a, b) => (b.created || 0) - (a.created || 0));
+  res.json({ success: true, sessions: list });
 });
 
 // Manual update from GitHub: pull main, then exit so the workflow keep-alive

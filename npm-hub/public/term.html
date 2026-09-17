@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0a0e14">
+  <title>NPM Hub · Терминал</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    :root{--bg0:#0a0e14;--bg1:#0d1117;--bg2:#161b22;--bg3:#1c2128;--bg4:#21262d;--bdr:#30363d;--t1:#e6edf3;--t2:#8b949e;--t3:#484f58;--acc:#58a6ff;--ok:#3fb950;--err:#f85149;--warn:#d29922;--pur:#bc8cff}
+    html,body{height:100%;overflow:hidden}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg0);color:var(--t1);display:flex;flex-direction:column}
+    .topbar{height:40px;background:var(--bg2);display:flex;align-items:center;padding:0 8px;gap:6px;border-bottom:1px solid var(--bdr);flex-shrink:0}
+    .logo{font-size:13px;font-weight:800;background:linear-gradient(135deg,var(--acc),var(--pur));-webkit-background-clip:text;-webkit-text-fill-color:transparent;padding:0 4px;cursor:pointer;white-space:nowrap}
+    .tabs-row{display:flex;overflow-x:auto;flex:1;min-width:0}
+    .tab{display:flex;align-items:center;gap:5px;padding:7px 12px;font-size:11px;color:var(--t2);cursor:pointer;border-bottom:2px solid transparent;transition:all .1s;white-space:nowrap;flex-shrink:0;border-radius:6px 6px 0 0}
+    .tab:hover{background:var(--bg3);color:var(--t1)}.tab.on{color:var(--acc);border-bottom-color:var(--acc);background:var(--bg2)}
+    .tab-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+    .tab-x{margin-left:3px;opacity:.3;font-size:13px}.tab-x:hover{opacity:1;color:var(--err)}
+    .tab-add{padding:7px 10px;color:var(--t3);cursor:pointer;font-size:15px;flex-shrink:0}.tab-add:hover{color:var(--acc)}
+    .term-controls{display:flex;align-items:center;gap:4px;padding:0 6px;border-left:1px solid var(--bdr);flex-shrink:0;overflow-x:auto}
+    .tc-btn{width:26px;height:26px;border-radius:5px;border:1px solid var(--bdr);background:var(--bg3);color:var(--t2);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .1s;flex-shrink:0}
+    .tc-btn:hover{background:var(--bdr);color:var(--t1)}
+    .zoom-label{font-size:10px;color:var(--t3);min-width:36px;text-align:center;font-family:monospace}
+    .sessions-wrap{position:relative;flex-shrink:0;border-left:1px solid var(--bdr);padding:0 6px;display:flex;align-items:center}
+    .sessions-btn{width:26px;height:26px;border-radius:5px;border:1px solid var(--bdr);background:var(--bg3);color:var(--pur);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+    .sessions-btn:hover{background:var(--bdr)}
+    .sessions-panel{display:none;position:absolute;top:100%;right:0;background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;width:340px;z-index:80;margin-top:4px;box-shadow:0 8px 24px rgba(0,0,0,.5);max-height:70vh;overflow-y:auto}
+    .sessions-panel.on{display:block}
+    .ses-h{padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:1px solid var(--bdr)}
+    .ses-item{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:11px;color:var(--t1);cursor:pointer;border-bottom:1px solid var(--bdr);transition:background .08s}
+    .ses-item:hover{background:var(--bg3)}
+    .ses-item.open{opacity:.4;pointer-events:none}
+    .ses-ico{width:20px;height:20px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:800;flex-shrink:0}
+    .ses-meta{flex:1;min-width:0}
+    .ses-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+    .ses-dir{font-size:9px;color:var(--t3);font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .ses-state{font-size:9px;color:var(--ok);flex-shrink:0}
+    .ses-empty{padding:14px;font-size:11px;color:var(--t3);text-align:center}
+    .ses-refresh{position:absolute;top:6px;right:8px;font-size:10px;color:var(--t3);cursor:pointer}.ses-refresh:hover{color:var(--acc)}
+    .body{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
+    .empty-state{display:none;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;color:var(--t3);text-align:center;padding:20px}
+    .empty-state.on{display:flex}
+    .empty-title{font-size:18px;font-weight:700;color:var(--t2)}
+    .empty-sub{font-size:12px;max-width:380px;line-height:1.5}
+    .empty-btn{padding:8px 16px;border-radius:8px;border:1px solid var(--acc);background:rgba(88,166,255,.12);color:var(--acc);font-size:12px;font-weight:600;cursor:pointer;transition:all .12s}
+    .empty-btn:hover{background:rgba(88,166,255,.22)}
+    .term-container{flex:1;display:flex;overflow:hidden;background:#000;flex-wrap:wrap}
+    .term-panel{display:none;flex:1;min-width:280px;flex-direction:column;overflow:hidden;border:1px solid var(--bdr)}
+    .term-panel.on{display:flex}
+    .term-header{display:flex;align-items:center;justify-content:space-between;padding:4px 10px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;gap:8px}
+    .term-header-title{font-size:10px;color:var(--t2);display:flex;align-items:center;gap:5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .term-info{font-size:9px;color:var(--t3);font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%}
+    .term{flex:1;background:#000;padding:2px;overflow:hidden}
+    .term .xterm{height:100%}
+    .term .xterm-viewport{overflow-y:auto!important;overflow-x:hidden!important}
+    .term .xterm-viewport::-webkit-scrollbar{width:8px}
+    .term .xterm-viewport::-webkit-scrollbar-track{background:transparent}
+    .term .xterm-viewport::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:4px}
+    .term .xterm-viewport::-webkit-scrollbar-thumb:hover{background:var(--t3)}
+    .term-wrap{flex:1;display:flex;flex-direction:row;overflow:hidden;min-width:180px}
+    .term-wrap .term{flex:1;min-width:0}
+    .term-resumed{display:none;position:absolute;left:8px;bottom:8px;background:rgba(63,185,80,.9);color:#fff;border-radius:6px;font-size:10px;font-weight:600;padding:4px 8px;z-index:5;pointer-events:none}
+    .term-resumed.on{display:block}
+    .btn{padding:5px 10px;border-radius:6px;border:1px solid var(--bdr);background:var(--bg4);color:var(--t1);font-size:11px;cursor:pointer;transition:all .12s;white-space:nowrap}
+    .btn:hover{background:var(--bdr)}.btn-p{background:var(--acc);color:#fff;border-color:var(--acc)}.btn-p:hover{opacity:.85}
+    .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
+    .modal-bg.on{display:flex}
+    .modal{background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;padding:20px;width:560px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column}
+    .modal h2{font-size:16px;font-weight:600;margin-bottom:12px}
+    .modal-bar{display:flex;gap:6px;margin-bottom:10px}
+    .modal-bar input{flex:1;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none}
+    .modal-bar input:focus{border-color:var(--acc)}
+    .modal-drives{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+    .drive-btn{padding:5px 10px;background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;color:var(--t2);font-size:11px;cursor:pointer;transition:all .1s}
+    .drive-btn:hover{border-color:var(--acc);color:var(--t1)}
+    .modal-list{flex:1;overflow-y:auto;max-height:300px;border:1px solid var(--bdr);border-radius:6px;background:var(--bg0)}
+    .modal-actions{display:flex;gap:6px;margin-top:12px;justify-content:flex-end}
+    .recent-hint{font-size:9px;color:var(--t3);margin-bottom:4px}
+    .recent-item{padding:3px 6px;font-size:10px;font-family:monospace;cursor:pointer;color:var(--t2);border-bottom:1px solid var(--bdr)}
+    .recent-item:hover{background:var(--bg3);color:var(--t1)}
+    ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:var(--t3)}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="logo" onclick="goDashboard()" title="Назад в панель">◆ Терминал</div>
+    <div class="tabs-row" id="tabs"></div>
+    <button class="tab-add" id="tab-add" onclick="newSession()" title="Новая сессия">＋</button>
+    <div class="term-controls">
+      <button class="tc-btn" onclick="killTerm()" title="Стоп (SIGINT / kill)">⏹</button>
+      <button class="tc-btn" onclick="sendEscape()" title="Escape">Esc</button>
+      <button class="tc-btn" onclick="pasteClipboard()" title="Вставить">📋</button>
+      <button class="tc-btn" onclick="copySelection()" title="Копировать">⧉</button>
+      <button class="tc-btn" onclick="restartTerm()" title="Перезапустить">⟲</button>
+      <button class="tc-btn" onclick="zoomTerm(-1)">−</button>
+      <span class="zoom-label" id="zoom-label">100%</span>
+      <button class="tc-btn" onclick="zoomTerm(1)">+</button>
+      <button class="tc-btn" onclick="toggleFullscreen()">⛶</button>
+    </div>
+    <div class="sessions-wrap">
+      <button class="sessions-btn" onclick="toggleSessions(event)" title="Сессии на сервере">☰</button>
+      <div class="sessions-panel" id="sessions-panel">
+        <div class="ses-h">Живые сессии на сервере <span class="ses-refresh" onclick="loadSessions(event)">⟳</span></div>
+        <div id="sessions-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="term-container" id="term-container"></div>
+    <div class="empty-state on" id="empty-state">
+      <div class="empty-title">Терминал</div>
+      <div class="empty-sub">Вкладки сохраняются в этом браузере и подключаются к тем же серверным сессиям, поэтому перезагрузка страницы не сбрасывает вывод и запущенные процессы.</div>
+      <button class="empty-btn" onclick="newSession()">＋ Новая сессия</button>
+      <button class="empty-btn" onclick="toggleSessions(event)" style="border-color:var(--pur);color:var(--pur);background:rgba(188,140,255,.1)">☰ Подхватить сессию</button>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="modal-newterm">
+    <div class="modal">
+      <h2>Новая сессия</h2>
+      <div style="margin-bottom:10px">
+        <label style="font-size:10px;color:var(--t2)">Рабочая папка:</label>
+        <div style="display:flex;gap:6px;margin-top:4px">
+          <input type="text" id="newterm-cwd" placeholder="~" style="flex:1;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none">
+          <button class="btn" onclick="browseDir()">📁</button>
+        </div>
+        <div id="recent-paths" style="margin-top:6px;max-height:80px;overflow-y:auto"></div>
+      </div>
+      <div id="newterm-tools" style="margin-bottom:10px"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-newterm')">Отмена</button>
+        <button class="btn btn-p" onclick="createNewSession()">Запустить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="modal-browser">
+    <div class="modal">
+      <h2>Выберите папку</h2>
+      <div class="modal-bar">
+        <input type="text" id="browser-path" onkeydown="if(event.key==='Enter')browseTo(this.value)">
+        <button class="btn btn-p" onclick="browseTo(document.getElementById('browser-path').value)">Открыть</button>
+      </div>
+      <div class="modal-drives" id="browser-drives"></div>
+      <div class="modal-list" id="browser-list"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-browser')">Отмена</button>
+        <button class="btn btn-ok" onclick="selectBrowserPath()">Выбрать</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="term-app.js"></script>
+</body>
+</html>

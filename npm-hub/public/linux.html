@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0e14">
+  <title>Экран — NPM Hub</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="hub.css">
+</head>
+<body data-page="linux">
+  <div class="topbar" id="topbar"></div>
+
+  <div class="main">
+    <div class="content">
+      <!-- LINUX DESKTOP (VNC): only the screen. Programs, browser, file
+           manager and audio live on the desktop itself (right-click menu). -->
+      <div class="page on" style="padding:0;flex-direction:column;height:100%;display:flex">
+        <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center;flex-wrap:wrap">
+          <span id="linux-status-desktop" class="tag" style="flex-shrink:0">…</span>
+          <span style="font-size:11px;color:var(--t3);flex:1;min-width:120px">Все программы, браузер и файловый менеджер — на рабочем столе (правый клик по экрану)</span>
+          <button class="btn btn-sm" onclick="linuxReload()" title="Переподключить экран">⟳</button>
+          <button class="btn btn-sm" onclick="linuxFullscreen('desktop')" title="На весь экран">⛶</button>
+        </div>
+        <div style="flex:1;position:relative;background:#000">
+          <iframe id="linux-frame-desktop" style="width:100%;height:100%;border:none;display:none" allow="clipboard-read; clipboard-write" allowfullscreen></iframe>
+          <div id="linux-placeholder-desktop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
+            <div style="font-size:48px;margin-bottom:16px">🖥</div>
+            <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Linux Screen</div>
+            <div style="font-size:13px;max-width:480px;line-height:1.5">Экран подключается сам, как только будет готов.<br>Программы запускаются здесь — прямо на рабочем столе.</div>
+            <button class="btn btn-sm" onclick="linuxAutoConnect(true)" style="margin-top:14px">⟳ Проверить</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="bridge.js"></script>
+  <script src="linux-app.js"></script>
+</body>
+</html>

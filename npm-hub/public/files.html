@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0e14">
+  <title>Файлы — NPM Hub</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="hub.css">
+</head>
+<body data-page="files">
+  <div class="topbar" id="topbar"></div>
+
+  <div class="main">
+    <div class="content">
+      <div class="page on" style="display:flex;padding:0">
+        <div style="display:flex;height:100%;width:100%">
+          <div style="width:200px;background:var(--bg1);border:1px solid var(--bdr);border-radius:10px;margin-right:12px;overflow-y:auto;flex-shrink:0">
+            <div style="padding:10px 8px;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--t3);border-bottom:1px solid var(--bdr)">Устройства</div>
+            <div id="devices-list"></div>
+            <div style="padding:10px 8px;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--t3);border-top:1px solid var(--bdr)">Хранилища</div>
+            <div id="storages-list"></div>
+            <div style="padding:6px;border-top:1px solid var(--bdr)">
+              <button class="btn" onclick="showAddStorageModal()" style="width:100%;text-align:center;font-size:10px">+ Добавить</button>
+            </div>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+            <div style="display:flex;gap:6px;padding:8px 0;margin-bottom:8px;flex-shrink:0;flex-wrap:wrap">
+              <button class="btn" onclick="fmGoUp()">↑</button>
+              <button class="btn" onclick="fmGoHome()">🏠</button>
+              <input type="text" id="fm-path" style="flex:1;min-width:140px;padding:5px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')fmBrowse(this.value)">
+              <button class="btn" onclick="toggleFileSel(all)">Выделить все</button>
+              <button class="btn" onclick="fmMkdir()">📁+</button>
+              <button class="btn" onclick="fmCreateFile()">📄+</button>
+              <button class="btn" onclick="fmRename()">✏️</button>
+              <button class="btn" onclick="fmDelete()">🗑️</button>
+              <button class="btn" onclick="fmDownloadMulti()" title="Скачать на устройство — файл попадёт в папку Загрузки">📥 Multi-download</button>
+              <button class="btn" onclick="fmDownloadSingle()" title="Скачать на устройство — файл попадёт в папку Загрузки">⬇ Single</button>
+              <button class="btn" onclick="fmArchive()" title="Скачать как tar.xz (распаковывается любым архиватором)">📦</button>
+              <button class="btn" onclick="fmSaveGithub()" title="Сохранить в GitHub">⬆️GH</button>
+              <button class="btn" onclick="fmUpload()" title="Файлы (множественный выбор, любые типы, картинки — тоже)">⬆</button>
+              <button class="btn" onclick="fmUploadFolder()" title="Целую папку мышью — загрузит рекурсивно">⬆📁</button>
+              <div style="position:relative">
+                <button class="btn btn-p" onclick="toggleFmMenu(event)">▶</button>
+                <div class="apply-menu" id="fm-apply-menu"></div>
+              </div>
+            </div>
+            <div style="flex:1;overflow-y:auto;border:1px solid var(--bdr);border-radius:8px;background:var(--bg0)" id="fm-list"></div>
+            <div style="padding:4px 0;font-size:10px;color:var(--t3)" id="fm-info">Перетащи файлы и папки мышью сюда — загрузятся целиком</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Storage Modal -->
+  <div class="modal-bg" id="modal-addstorage">
+    <div class="modal">
+      <h2>Добавить хранилище</h2>
+      <div style="display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="btn storage-type-btn on" data-type="adb" onclick="setStorageType('adb')">📱 ADB</button>
+        <button class="btn storage-type-btn" data-type="ftp" onclick="setStorageType('ftp')">📂 FTP/SFTP</button>
+        <button class="btn storage-type-btn" data-type="gdrive" onclick="setStorageType('gdrive')">☁️ Google Drive</button>
+        <button class="btn storage-type-btn" data-type="github" onclick="setStorageType('github')">🐙 GitHub</button>
+        <button class="btn storage-type-btn" data-type="http" onclick="setStorageType('http')">🌐 HTTP</button>
+        <button class="btn storage-type-btn" data-type="webdav" onclick="setStorageType('webdav')">📁 WebDAV</button>
+      </div>
+
+      <!-- ADB -->
+      <div id="form-adb" style="display:block">
+        <div style="display:grid;grid-template-columns:1fr 100px;gap:6px;margin-bottom:8px">
+          <div><label style="font-size:10px;color:var(--t2)">IP адрес</label><input type="text" id="adb-host" placeholder="192.168.1.100" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+          <div><label style="font-size:10px;color:var(--t2)">Порт</label><input type="text" id="adb-port" value="5555" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        </div>
+        <div style="font-size:10px;color:var(--t3)">Подключится к телефону по Wi-Fi (adb connect ip:port)</div>
+      </div>
+
+      <!-- FTP -->
+      <div id="form-ftp" style="display:none">
+        <form autocomplete="off">
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Имя</label><input type="text" id="ftp-name" placeholder="My FTP" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        <div style="display:grid;grid-template-columns:1fr 80px;gap:6px;margin-bottom:8px">
+          <div><label style="font-size:10px;color:var(--t2)">Хост</label><input type="text" id="ftp-host" placeholder="ftp.example.com" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+          <div><label style="font-size:10px;color:var(--t2)">Порт</label><input type="text" id="ftp-port" value="21" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+          <div><label style="font-size:10px;color:var(--t2)">Логин</label><input type="text" id="ftp-user" placeholder="anonymous" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+          <div><label style="font-size:10px;color:var(--t2)">Пароль</label><input type="password" id="ftp-pass" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        </div>
+        </form>
+      </div>
+      <div id="form-gdrive" style="display:none">
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Имя</label><input type="text" id="gdrive-name" value="Google Drive" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Access Token</label><input type="text" id="gdrive-token" placeholder="ya29...." style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        <div style="font-size:10px;color:var(--t3)">Получить токен: console.cloud.google.com → APIs → Credentials</div>
+      </div>
+
+      <!-- GitHub -->
+      <div id="form-github" style="display:none">
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Репозиторий (URL)</label><input type="text" id="github-repo" placeholder="https://github.com/user/repo" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Branch</label><input type="text" id="github-branch" value="main" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Token (опционально)</label><input type="text" id="github-token" placeholder="ghp_..." style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+      </div>
+
+      <!-- HTTP -->
+      <div id="form-http" style="display:none">
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Имя</label><input type="text" id="http-name" placeholder="My HTTP" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">URL</label><input type="text" id="http-url" placeholder="https://example.com/files/" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+      </div>
+
+      <!-- WebDAV -->
+      <div id="form-webdav" style="display:none">
+        <form autocomplete="off">
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Имя</label><input type="text" id="webdav-name" placeholder="My WebDAV" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">URL</label><input type="text" id="webdav-url" placeholder="https://webdav.example.com/" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+          <div><label style="font-size:10px;color:var(--t2)">Логин</label><input type="text" id="webdav-user" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+          <div><label style="font-size:10px;color:var(--t2)">Пароль</label><input type="password" id="webdav-pass" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;margin-top:3px"></div>
+        </div>
+        </form>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-addstorage')">Отмена</button>
+        <button class="btn btn-ok" onclick="saveStorage()">Подключить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="bridge.js"></script>
+  <script src="files-app.js"></script>
+</body>
+</html>

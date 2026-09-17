@@ -221,7 +221,7 @@ function showPage(p) {
   }
   if (p === 'files') initFM();
   if (p === 'git') loadGit();
-  if (p === 'linux') linuxStatus('desktop');
+  if (p === 'linux') linuxAutoConnect();
 }
 
 showPage('files');
@@ -506,6 +506,18 @@ function openTerminal(dir) {
   createTerm('_terminal', d, true);
 }
 
+// Отдельный сайт терминала (/term): вкладки переживают перезагрузку панели,
+// потому что подключаются к тем же серверным tmux-сессиям и повторяют вывод.
+function openStandaloneTerminal(toolId, dir) {
+  const d = dir || toolDirs[toolId || '_terminal'] || homeDir;
+  const p = new URLSearchParams();
+  if (toolId) p.set('tool', toolId);
+  if (d) p.set('dir', d);
+  const q = p.toString();
+  window.open(location.origin + '/term' + (q ? '?' + q : ''), '_blank');
+  return false;
+}
+
 function renderSidebar() {
   document.getElementById('tool-list').innerHTML = tools.filter(t => t.installed).map(t => {
     const dir = toolDirs[t.id] || homeDir;
@@ -527,9 +539,9 @@ function renderSidebar() {
 // ======== SESSIONS ========
 function showNewTermModal() {
   document.getElementById('newterm-grid').innerHTML = `
-    <div class="newterm-tool" onclick="openTerminal()">
+    <div class="newterm-tool" onclick="openStandaloneTerminal()">
       <div class="sb-ico" style="background:rgba(88,166,255,.15);color:var(--acc);width:26px;height:26px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9px">&gt;_</div>
-      <div><div style="font-size:12px;font-weight:500">Terminal</div><div style="font-size:9px;color:var(--t3)">Пустой терминал</div></div>
+      <div><div style="font-size:12px;font-weight:500">Terminal</div><div style="font-size:9px;color:var(--t3)">Пустой терминал (отдельная вкладка, переживает обновление)</div></div>
     </div>
   ` + tools.filter(t => t.installed).map(t => `
     <div class="newterm-tool" onclick="createTerm('${t.id}')">
@@ -1610,6 +1622,7 @@ async function cloudPhoneStop(prefix) {
 function cloudPhoneConnect(prefix) {
   const pfx = prefix || '';
   const frame = document.getElementById('cp-frame-desktop');
+  if (!frame) return;
   const ph = document.getElementById('cp-placeholder-desktop');
   // Remote mode: the phone lives on its own runner and exposes a tunnel URL
   // (full noVNC page). Local fallback: serve the bundled noVNC through the
@@ -1650,19 +1663,12 @@ async function phoneBrowserOpen(url, prefix) {
 function cloudPhoneFullscreen(prefix) {
   const pfx = prefix || '';
   const frame = document.getElementById('cp-frame-desktop');
-  if (frame.requestFullscreen) frame.requestFullscreen();
-  else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
+  if (frame && frame.requestFullscreen) frame.requestFullscreen();
+  else if (frame && frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
 }
-// Init phone status when Linux/Screen tab is present (merged tab)
-if (document.getElementById('p-linux')) {
-  cloudPhoneStatus('desktop');
-  (function() {
-    const last = localStorage.getItem('cp.lastUrl');
-    const el = document.getElementById('cp-url-desktop');
-    if (el && last) el.value = last;
-    pulseStatus();
-  })();
-}
+// Screen tab: auto-connect as soon as the Linux desktop answers, and keep
+// polling until it is up (its job starts it on the very first run).
+if (document.getElementById('p-linux')) linuxAutoConnect();
 
 // ===== LINUX DESKTOP (VNC) =====
 async function linuxStatus(prefix) {
@@ -1699,7 +1705,39 @@ function linuxFullscreen(prefix) {
   if (frame.requestFullscreen) frame.requestFullscreen();
   else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
 }
-if (document.getElementById('p-linux')) linuxStatus('desktop');
+let linuxLastUrl = '';
+let linuxPollTimer = null;
+async function linuxAutoConnect(force) {
+  const frame = document.getElementById('linux-frame-desktop');
+  if (!frame) return;
+  const ph = document.getElementById('linux-placeholder-desktop');
+  const d = await linuxStatus('desktop');
+  const el = document.getElementById('linux-status-desktop');
+  if (el) {
+    el.textContent = d.url ? '● работает' : '○ запускается…';
+    el.className = 'tag ' + (d.url ? 'tag-on' : 'tag-off');
+  }
+  if (d.url && (force || d.url !== linuxLastUrl)) {
+    linuxLastUrl = d.url;
+    frame.src = '';
+    frame.src = d.url;
+    frame.style.display = 'block';
+    if (ph) ph.style.display = 'none';
+    return;
+  }
+  if (!d.url) {
+    frame.style.display = 'none';
+    if (ph) ph.style.display = 'flex';
+    if (linuxPollTimer) clearTimeout(linuxPollTimer);
+    linuxPollTimer = setTimeout(() => linuxAutoConnect(), 8000);
+  }
+}
+async function linuxReload() {
+  const frame = document.getElementById('linux-frame-desktop');
+  if (frame) { frame.src = ''; frame.style.display = 'block'; }
+  linuxLastUrl = '';
+  await linuxAutoConnect(true);
+}
 
 // ===== BROWSER (Chrome / YouTube) =====
 function browserGo(url, prefix) {
@@ -1712,43 +1750,51 @@ function browserGo(url, prefix) {
 
 // ===== PULSE AUDIO =====
 async function pulseStatus() {
+  const el = document.getElementById('pulse-status');
+  if (!el) return;
   try {
     const r = await fetch('/api/pulse/status');
     const d = await r.json();
-    const el = document.getElementById('pulse-status');
     el.textContent = d.running ? 'running' : 'stopped';
     el.className = 'tag ' + (d.running ? 'tag-on' : 'tag-off');
     const devEl = document.getElementById('pulse-devices');
-    if (d.sinks && d.sinks.length) {
-      devEl.innerHTML = '<b>Sinks:</b><br>' + d.sinks.map(s => '• ' + s).join('<br>') +
-        (d.sources && d.sources.length ? '<br><b>Sources:</b><br>' + d.sources.map(s => '• ' + s).join('<br>') : '');
-    } else {
-      devEl.textContent = 'Нет данных. Нажмите Start.';
+    if (devEl) {
+      if (d.sinks && d.sinks.length) {
+        devEl.innerHTML = '<b>Sinks:</b><br>' + d.sinks.map(s => '• ' + s).join('<br>') +
+          (d.sources && d.sources.length ? '<br><b>Sources:</b><br>' + d.sources.map(s => '• ' + s).join('<br>') : '');
+      } else {
+        devEl.textContent = 'Нет данных. Нажмите Start.';
+      }
     }
   } catch(e) {
-    document.getElementById('pulse-status').textContent = 'error';
-    document.getElementById('pulse-status').className = 'tag tag-off';
+    el.textContent = 'error';
+    el.className = 'tag tag-off';
   }
 }
 async function pulseStart() {
+  if (!document.getElementById('pulse-status')) return;
   await fetch('/api/pulse/start', {method:'POST'});
   setTimeout(pulseStatus, 500);
 }
 async function pulseStop() {
+  if (!document.getElementById('pulse-status')) return;
   await fetch('/api/pulse/stop', {method:'POST'});
   setTimeout(pulseStatus, 500);
 }
 async function pulseMute() {
+  const el = document.getElementById('pulse-status');
+  if (!el) return;
   const r = await fetch('/api/pulse/mute', {method:'POST'});
   const d = await r.json();
   if (d.ok) {
-    const el = document.getElementById('pulse-status');
     el.textContent = d.muted ? 'muted' : 'running';
     el.className = 'tag ' + (d.muted ? 'tag-off' : 'tag-on');
   }
 }
 async function pulseSetVol(val) {
-  document.getElementById('pulse-vol-label').textContent = val + '%';
+  const lbl = document.getElementById('pulse-vol-label');
+  if (!lbl) return;
+  lbl.textContent = val + '%';
   await fetch('/api/pulse/volume', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume:parseInt(val)})});
 }
 

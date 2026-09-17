@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0e14">
+  <title>Git — NPM Hub</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="hub.css">
+</head>
+<body data-page="git">
+  <div class="topbar" id="topbar"></div>
+
+  <div class="main">
+    <div class="content">
+      <div class="page on">
+        <div class="ph"><h1>🐙 Git</h1><p>Локальный репозиторий + GitHub аккаунт: все репозитории, ветки, коммиты, сборки</p></div>
+
+        <!-- Local repo section -->
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="git-path" placeholder="путь к локальному репозиторию (папка с .git)" style="min-width:280px;flex:1;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')loadGit()">
+          <button class="btn btn-p" onclick="loadGit()">⟳ Обновить</button>
+          <span id="git-repo" style="font-size:11px;color:var(--t3)"></span>
+        </div>
+        <div id="git-status"></div>
+        <div style="margin-top:12px;margin-bottom:6px;font-size:11px;color:var(--t2);font-weight:600">Diff</div>
+        <pre class="git-pre" id="git-diff" style="max-height:200px;overflow:auto"></pre>
+        <div style="margin-top:12px;margin-bottom:6px;font-size:11px;color:var(--t2);font-weight:600">Log</div>
+        <pre class="git-pre" id="git-log" style="max-height:200px;overflow:auto"></pre>
+
+        <!-- GitHub repos section -->
+        <div id="gh-repos-section" style="margin-top:24px;padding-top:16px;border-top:1px solid var(--bdr)">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+            <h2 style="font-size:16px;font-weight:700">GitHub — Репозитории</h2>
+            <button class="btn btn-p btn-sm" onclick="ghLoadRepos()">⟳ Обновить</button>
+            <span id="gh-repos-count" style="font-size:11px;color:var(--t3)"></span>
+          </div>
+          <div id="gh-repos-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px"></div>
+        </div>
+
+        <!-- Repo detail panel (hidden by default, shown when a repo is selected) -->
+        <div id="gh-repo-detail" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--bdr)">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            <button class="btn btn-sm" onclick="ghBackToList()">← Вернуться к списку</button>
+            <h2 id="gh-repo-name" style="font-size:16px;font-weight:700"></h2>
+            <span id="gh-repo-desc" style="font-size:12px;color:var(--t2)"></span>
+          </div>
+          <!-- Tabs: Contents / Branches / Commits / Workflows / Runs / Releases -->
+          <div style="display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap">
+            <button class="btn btn-sm gh-tab on" onclick="ghShowTab('contents',this)">📁 Файлы</button>
+            <button class="btn btn-sm gh-tab" onclick="ghShowTab('branches',this)">🌿 Ветки</button>
+            <button class="btn btn-sm gh-tab" onclick="ghShowTab('commits',this)">📝 Коммиты</button>
+            <button class="btn btn-sm gh-tab" onclick="ghShowTab('workflows',this)">⚙ Workflows</button>
+            <button class="btn btn-sm gh-tab" onclick="ghShowTab('runs',this)">🚀 Сборки</button>
+            <button class="btn btn-sm gh-tab" onclick="ghShowTab('releases',this)">📦 Релизы</button>
+          </div>
+          <div id="gh-repo-contents"></div>
+          <div id="gh-repo-branches" style="display:none"></div>
+          <div id="gh-repo-commits" style="display:none"></div>
+          <div id="gh-repo-workflows" style="display:none"></div>
+          <div id="gh-repo-runs" style="display:none"></div>
+          <div id="gh-repo-releases" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Clone + Open In Modal -->
+  <div class="modal-bg" id="modal-clone">
+    <div class="modal">
+      <h2 id="clone-title">Открыть репозиторий</h2>
+      <div id="clone-repo-info" style="font-size:12px;color:var(--t2);margin-bottom:12px"></div>
+      <div style="margin-bottom:10px">
+        <label style="font-size:10px;color:var(--t2)">Ветка:</label>
+        <input type="text" id="clone-branch" placeholder="main" value="main" style="width:100%;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none;margin-top:4px">
+      </div>
+      <div style="margin-bottom:10px">
+        <label style="font-size:10px;color:var(--t2)">Папка (hub-work/):</label>
+        <input type="text" id="clone-dir" placeholder="repo-name" style="width:100%;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none;margin-top:4px">
+      </div>
+      <div id="clone-status" style="font-size:11px;color:var(--t3);min-height:18px;margin-bottom:10px"></div>
+      <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="clone-auto-approve" style="width:16px;height:16px;accent-color:var(--ok)">
+        <label for="clone-auto-approve" style="font-size:11px;color:var(--t2);cursor:pointer">Авто-одобрение — агент выполняет всё без вопросов</label>
+      </div>
+      <div style="font-size:11px;color:var(--t2);margin-bottom:8px;font-weight:600">Открыть в:</div>
+      <div id="clone-agents" class="newterm-grid" style="max-height:200px;overflow-y:auto"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-clone')">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Repo Confirm Modal -->
+  <div class="modal-bg" id="modal-delrepo">
+    <div class="modal" style="width:420px">
+      <h2 style="color:var(--err)">Удалить репозиторий?</h2>
+      <div id="delrepo-info" style="font-size:12px;color:var(--t2);margin-bottom:12px"></div>
+      <div style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.3);border-radius:8px;padding:10px;font-size:11px;color:var(--err);margin-bottom:12px">
+        Это действие необратимо. Репозиторий и все его данные будут удалены навсегда.
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="font-size:10px;color:var(--t2)">Введите имя репозитория для подтверждения:</label>
+        <input type="text" id="delrepo-confirm" placeholder="user/repo-name" style="width:100%;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none;margin-top:4px">
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-delrepo')">Отмена</button>
+        <button class="btn btn-er" id="delrepo-btn" onclick="confirmDeleteRepo()" disabled>Удалить навсегда</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Download Release Asset Modal -->
+  <div class="modal-bg" id="modal-release-dl">
+    <div class="modal" style="width:500px">
+      <h2>Скачать из релиза</h2>
+      <div id="release-dl-list" style="max-height:400px;overflow-y:auto"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-release-dl')">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="bridge.js"></script>
+  <script src="git-app.js"></script>
+</body>
+</html>
