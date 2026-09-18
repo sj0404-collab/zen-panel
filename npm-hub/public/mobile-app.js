@@ -1996,6 +1996,29 @@ if (document.getElementById('p-linux')) {
 // один раз за сессию перезагружаем iframe и просим хаб пересобрать экран,
 // если он молчит. Никаких «Открыть экран»/«Подключение».
 let linuxRetries = 0, linuxRepairAsked = 0, linuxPollTimer = null;
+// Профиль картинки: для видео по мобильной сети нужны маленькие кадры
+// (quality/compression — параметры Tight-кодирования noVNC).
+const LINUX_PROFILES = {
+  smooth:   { quality: 3, compression: 7, label: '⚡ плавно' },
+  balanced: { quality: 6, compression: 2, label: '⚡ баланс' },
+  sharp:    { quality: 9, compression: 0, label: '⚡ чётко' }
+};
+let linuxPerf = (() => { try { return localStorage.getItem('hub_perf') || 'smooth'; } catch { return 'smooth'; } })();
+function linuxProfileQuery(u) {
+  const p = LINUX_PROFILES[linuxPerf] || LINUX_PROFILES.smooth;
+  return u + `&quality=${p.quality}&compression=${p.compression}`;
+}
+function linuxPerfToggle() {
+  const order = ['smooth', 'balanced', 'sharp'];
+  linuxPerf = order[(order.indexOf(linuxPerf) + 1) % order.length];
+  try { localStorage.setItem('hub_perf', linuxPerf); } catch {}
+  // Перезагружаем кадр с новыми параметрами (noVNC читает их при запуске).
+  const fr = document.getElementById('linux-frame');
+  if (fr) { fr.dataset.src = ''; }
+  linuxConnect();
+  linuxSetNote('картинка: ' + (LINUX_PROFILES[linuxPerf] || {}).label);
+  setTimeout(() => linuxSetNote(''), 4000);
+}
 function linuxSetNote(text) {
   const n = document.getElementById('linux-note');
   if (n) n.textContent = text || '';
@@ -2044,8 +2067,12 @@ async function linuxConnect() {
   }
   linuxRetries = 0;
   let u = d.url;
-  // noVNC: без кнопки «Подключение», с авто-реконнектом и масштабом
-  if (u && !u.includes('autoconnect')) u += (u.includes('?') ? '&' : '?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+  // noVNC: без кнопки «Подключение», с авто-реконнектом, масштабом и профилем
+  // картинки (плавность/качество — кнопка ⚡).
+  if (u && !u.includes('autoconnect')) {
+    u += (u.includes('?') ? '&' : '?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+    u = linuxProfileQuery(u);
+  }
   if (fr) {
     // Единственное место, где iframe меняет src: иначе noVNC перезагружался бы
     // каждые 15 c и экран выглядел чёрным.
@@ -2205,8 +2232,16 @@ function linuxKeyboard() {
   let ok = false;
   try { ok = fr && fr.contentDocument && fr.contentDocument.__hub ? fr.contentDocument.__hub.kbd() : false; } catch {}
   if (!ok) { linuxSetNote('клавиатура: экран ещё грузится…'); return; }
-  linuxSetNote('⌨ клавиатура открыта — печатайте');
-  setTimeout(() => linuxSetNote(''), 4000);
+  // Первый раз подсказываем хоткеи: на YouTube кнопки не показываются,
+  // пока он требует логин («Sign in to confirm you're not a bot»), а с
+  // клавиатуры телефона всё управляется: k — пуск/пауза, f — во весь экран,
+  // m — звук, ←/→ — перемотка.
+  const first = (() => { try { return !localStorage.getItem('hub_kbd_hint'); } catch { return true; } })();
+  linuxSetNote(first
+    ? '⌨ печатайте на телефоне · в YouTube: k — пуск/пауза, f — во весь экран, m — звук'
+    : '⌨ клавиатура открыта — печатайте');
+  if (first) { try { localStorage.setItem('hub_kbd_hint', '1'); } catch {} }
+  setTimeout(() => linuxSetNote(''), first ? 9000 : 4000);
 }
 
 // 🔍 Заполнить (вписать всё) ⇄ 1:1 (точные пиксели + панорамирование пальцем).

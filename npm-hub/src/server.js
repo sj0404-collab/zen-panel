@@ -1884,9 +1884,24 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         } catch {}
         // Вертикальный ютуб: узкое окно 412×915 (как Pixel), горизонтальный 1280×720
         const winSize = vertical ? '412,915' : '1280,720';
-        const userData = vertical ? '/tmp/chrome-vertical' : '/tmp/chrome-hub';
+        // Профиль браузера — в домашней папке, а НЕ в /tmp: YouTube на
+        // датацентровом IP показывает «Sign in to confirm you're not a bot»,
+        // и после входа сессия должна переживать перезапуск хаба (в /tmp её
+        // снесло бы первым же обновлением). На своём раннере ~ сохраняется.
+        const profileRoot = path.join(DATA_DIR, 'chrome-profile');
+        try { fs.mkdirSync(profileRoot, { recursive: true }); } catch {}
+        const userData = vertical ? path.join(profileRoot, 'vertical') : profileRoot;
         // Хром с поддержкой звука и автоплея
-        const chromeFlags = `--no-sandbox --test-type --disable-gpu --autoplay-policy=no-user-gesture-required --disable-features=PreloadMediaEngagementData,AutoplayIgnoreWebAudio --use-fake-ui-for-media-stream --window-size=${winSize} --window-position=20,20 --user-data-dir=${userData} --no-first-run --disable-infobars --disable-dev-shm-usage`;
+        // Флаги под headless-VNC: без них Chromium считает окно на Xvfb
+        // «перекрытым/фоновым» и душит рендер и медиа — видео в YouTube просто
+        // не идёт, а картинка обновляется рывками. Список --disable-features
+        // слит в один: второй флаг перекрывает первый.
+        const chromeFlags = `--no-sandbox --test-type --disable-gpu --autoplay-policy=no-user-gesture-required`
+          + ` --disable-features=PreloadMediaEngagementData,AutoplayIgnoreWebAudio,CalculateNativeWinOcclusion,MediaEngagementBypassAutoplayPolicies`
+          + ` --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling`
+          + ` --use-fake-ui-for-media-stream`
+          + ` --enable-accelerated-video-decode --disable-frame-rate-limit`
+          + ` --window-size=${winSize} --window-position=20,20 --user-data-dir=${userData} --no-first-run --disable-infobars --disable-dev-shm-usage`;
         // Мобильный user-agent для вертикального ютуба (чтобы открылся m.youtube.com/shorts)
         const uaFlag = (vertical && isYoutube) ? `--user-agent='Mozilla/5.0 (Linux; Android 10; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36'` : '';
         // Бинарь ищем на месте: на раннере может быть chromium, chromium-browser,

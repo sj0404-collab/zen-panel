@@ -305,8 +305,10 @@ if ! command -v x11vnc >/dev/null 2>&1; then
 fi
 
 log "x11vnc -> $VNC_PORT"
+# -wait/-defer собирают изменения в пачку (меньше мелких обновлений = плавнее
+# кино), -threads отдаёт кодирование отдельному потоку.
 x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -localhost -rfbport "$VNC_PORT" \
-  -noxdamage -wirecopyrect top -alwaysshared >"$HUB_LOGS/x11vnc.log" 2>&1 || \
+  -noxdamage -wirecopyrect top -alwaysshared -wait 6 -defer 6 -threads >"$HUB_LOGS/x11vnc.log" 2>&1 || \
   x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -localhost -rfbport "$VNC_PORT" \
   >"$HUB_LOGS/x11vnc.log" 2>&1
 

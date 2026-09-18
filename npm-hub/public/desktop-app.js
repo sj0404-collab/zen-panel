@@ -1959,6 +1959,22 @@ function ocrCaptureDesk(){ ocrCapture(); }
 // ===== LINUX DESKTOP (VNC) — всегда включён (сервер: src/vnc-keepalive.js) =====
 let linuxLastUrl = '';
 let linuxRetries = 0, linuxRepairAsked = 0, linuxPollTimer = null;
+const LINUX_PROFILES = {
+  smooth:   { quality: 3, compression: 7, label: '⚡ плавно' },
+  balanced: { quality: 6, compression: 2, label: '⚡ баланс' },
+  sharp:    { quality: 9, compression: 0, label: '⚡ чётко' }
+};
+let linuxPerf = (() => { try { return localStorage.getItem('hub_perf') || 'smooth'; } catch { return 'smooth'; } })();
+function linuxPerfToggle() {
+  const order = ['smooth', 'balanced', 'sharp'];
+  linuxPerf = order[(order.indexOf(linuxPerf) + 1) % order.length];
+  try { localStorage.setItem('hub_perf', linuxPerf); } catch {}
+  const fr = document.getElementById('linux-frame-desktop');
+  if (fr) fr.dataset.src = '';
+  linuxConnect('desktop');
+  linuxSetNote('картинка: ' + (LINUX_PROFILES[linuxPerf] || {}).label);
+  setTimeout(() => linuxSetNote(''), 4000);
+}
 function linuxSetNote(text) {
   const n = document.getElementById('linux-note-desktop');
   if (n) n.textContent = text || '';
@@ -1987,6 +2003,8 @@ async function linuxStatus(prefix) {
 function linuxQuery(u) {
   if (u && !u.includes('autoconnect')) {
     u += (u.includes('?') ? '&' : '?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+    const p = LINUX_PROFILES[linuxPerf] || LINUX_PROFILES.smooth;
+    u += `&quality=${p.quality}&compression=${p.compression}`;
   }
   return u;
 }

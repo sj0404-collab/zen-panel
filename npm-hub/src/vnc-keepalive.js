@@ -47,7 +47,10 @@ const WALL = path.join(PICTURES, 'wallpaper.png');
 const DISPLAY = process.env.VNC_DISPLAY || ':99';
 const VNC_PORT = String(process.env.VNC_PORT || 5901);
 const NOVNC_PORT = String(process.env.NOVNC_PORT || 6081);
-const RESOLUTION = process.env.VNC_RESOLUTION || '1920x1080';
+// 1600x900 по умолчанию: на 30% меньше пикселей, чем 1920x1080, а значит
+// заметно быстрее кадры по мобильной сети (телефон всё равно масштабирует).
+// Хотите ровно Full HD — VNC_RESOLUTION=1920x1080.
+const RESOLUTION = process.env.VNC_RESOLUTION || '1600x900';
 const W = parseInt(RESOLUTION.split('x')[0], 10) || 1920;
 const H = parseInt(RESOLUTION.split('x')[1], 10) || 1080;
 const TICK_MS = Number(process.env.VNC_TICK_MS || 15000);
@@ -606,7 +609,7 @@ async function ensureEssentials() {
   } else if (!(await portOpen(VNC_PORT))) {
     const vlog = JSON.stringify(path.join(LOG_DIR, 'x11vnc.log'));
     await sh(`nohup x11vnc -display ${DISPLAY} -nopw -forever -shared -bg -localhost -rfbport ${VNC_PORT}`
-      + ` -noxdamage -wirecopyrect top -alwaysshared >>${vlog} 2>&1 &`, 12000);
+      + ` -noxdamage -wirecopyrect top -alwaysshared -wait 6 -defer 6 -threads >>${vlog} 2>&1 &`, 12000);
     for (let i = 0; i < 12; i++) {
       if (await portOpen(VNC_PORT)) break;
       await sleep(700);
