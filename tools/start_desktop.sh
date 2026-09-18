@@ -134,7 +134,8 @@ done
 # so the file manager, terminal, browser and audio mixer are one click away.
 mkdir -p "$HOME/Desktop"
 launcher() {
-  local name="${1:-}" exec="${2:-}" term="${3:-}" file="$HOME/Desktop/$name.desktop"
+  local name="${1:-}" exec="${2:-}" term="${3:-}"
+  local file="$HOME/Desktop/$name.desktop"
   cat > "$file" <<EOF
 [Desktop Entry]
 Name=$name
