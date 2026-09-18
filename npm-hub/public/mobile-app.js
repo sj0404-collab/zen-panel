@@ -280,8 +280,8 @@ async function ghLoadRepos() {
           ${r.stargazers_count ? '<span>⭐ ' + r.stargazers_count + '</span>' : ''}
           <span>🌿 ${escHtml(r.default_branch)}</span>
           <span style="margin-left:auto;display:flex;gap:4px">
-            <button class="btn btn-sm" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); browserOpenDesktop('https://github.com/${escAttr(r.full_name)}')" title="Открыть на github.com">🌐</button>
-            <button class="btn btn-sm" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); browserOpenDesktop('https://github.com/${escAttr(r.full_name)}',true)" title="Вертикально">📱</button>
+            <button class="btn btn-sm btn-p" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); ghQuickClone('${escAttr(r.full_name)}')" title="Клонировать и открыть в любом агенте (как в Файлах)">📂</button>
+            <button class="btn btn-sm" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); browserOpenDesktop('https://github.com/${escAttr(r.full_name)}')" title="Открыть на github.com в браузере">🌐</button>
           </span>
         </div>
       </div>
@@ -316,13 +316,65 @@ function ghBackToList() {
   ghCurrentRepo = null;
 }
 function ghOpenOnGithub(vertical){
-  if(!ghCurrentRepo){ fmInfo('Сначала выбери репозиторий'); return; }
+  if(!ghCurrentRepo){ if(typeof fmInfo==='function') fmInfo('Сначала выбери репозиторий'); return; }
   const url='https://github.com/'+ghCurrentRepo;
-  // GitHub блокирует iframe — сразу на VNC рабочий стол
   if(typeof browserOpenDesktop==='function') browserOpenDesktop(url, !!vertical);
   else if(typeof hubBrowserGo==='function') hubBrowserGo(url);
   else window.open(url,'_blank');
 }
+function toggleGhAgentMenu(e){
+  if(e) e.stopPropagation();
+  document.querySelectorAll('.apply-menu').forEach(m=>m.classList.remove('on'));
+  const menu=document.getElementById('gh-agent-menu');
+  if(!menu) return;
+  if(!ghCurrentRepo){ if(typeof fmInfo==='function') fmInfo('Сначала выбери репозиторий'); return; }
+  const inst=(typeof tools!=='undefined'?tools:[]).filter(t=>t.installed);
+  menu.innerHTML=`<div class="apply-menu-title">Открыть ${escHtml(ghCurrentRepo)} в</div>`+
+    inst.map(t=>`<div class="apply-item" onclick="event.stopPropagation();ghCloneAndOpen('${escAttr(t.id)}')"><div class="sb-ico" style="background:${t.color}18;color:${t.color};width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${t.icon}</div><span>${escHtml(t.name)}</span></div>`).join('')+
+    `<div class="apply-item" onclick="event.stopPropagation();ghCloneAndOpen('_terminal')"><div class="sb-ico" style="background:rgba(88,166,255,.15);color:var(--acc);width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">&gt;_</div><span>Terminal</span></div>`;
+  menu.classList.add('on');
+  // Закрыть по клику вне
+  setTimeout(()=>{ const h=(ev)=>{ if(!menu.contains(ev.target)){ menu.classList.remove('on'); document.removeEventListener('click',h); } }; document.addEventListener('click',h); }, 50);
+}
+async function ghCloneAndOpen(toolId){
+  document.querySelectorAll('.apply-menu').forEach(m=>m.classList.remove('on'));
+  if(!ghCurrentRepo) return;
+  if(typeof fmInfo==='function') fmInfo('⏳ Клонирую '+ghCurrentRepo+'...');
+  try{
+    const r=await fetch('/api/gh/clone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({full_name:ghCurrentRepo})}).then(x=>x.json());
+    if(!r.success){ if(typeof fmInfo==='function') fmInfo('❌ Ошибка клона: '+(r.error||'')); return; }
+    const dir=r.path;
+    if(typeof fmInfo==='function') fmInfo('✅ Готово: '+dir);
+    // Открыть как в Файлах: ▶ — в любом агенте
+    if(typeof createTerm==='function'){
+      if(typeof showPage==='function') showPage('terminal');
+      createTerm(toolId, dir);
+    } else {
+      if(typeof fmOpenIn==='function') fmOpenIn(dir, toolId);
+    }
+  }catch(e){ if(typeof fmInfo==='function') fmInfo('❌ '+e.message); }
+}
+async function ghQuickClone(full_name){
+  ghCurrentRepo=full_name;
+  // Для списка — сразу Terminal (быстро), а выбор — через деталку
+  // Но показываем то же меню рядом с кнопкой
+  const fakeEvent={stopPropagation:()=>{}, target:document.getElementById('gh-agent-menu')};
+  // Если много инструментов — покажем меню, иначе сразу клон
+  const inst=(typeof tools!=='undefined'?tools:[]).filter(t=>t.installed);
+  if(inst.length>1){
+    // Откроем меню в шапке деталки, но сначала покажем деталку? проще — сразу клон в терминал
+    if(typeof fmInfo==='function') fmInfo('⏳ Клонирую '+full_name+' в Terminal...');
+    try{
+      const r=await fetch('/api/gh/clone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({full_name})}).then(x=>x.json());
+      if(!r.success){ if(typeof fmInfo==='function') fmInfo('❌ '+(r.error||'')); return; }
+      if(typeof showPage==='function') showPage('terminal');
+      if(typeof createTerm==='function') createTerm('_terminal', r.path);
+    }catch(e){ if(typeof fmInfo==='function') fmInfo('❌ '+e.message); }
+  } else {
+    ghCloneAndOpen(inst[0]?.id||'_terminal');
+  }
+}
+
 
 function ghShowTab(tab, btn) {
   document.querySelectorAll('.gh-tab').forEach(b => b.classList.remove('on'));
