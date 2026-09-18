@@ -1706,6 +1706,42 @@ function browserOpenDesktop(url, vertical){
   linuxRunBrowser(url, !!vertical);
   showPage('linux'); setTimeout(()=>linuxConnect(),800);
 }
+
+// ===== TTS desktop (общий с mobile) =====
+let ttsVoicesD=[], ttsQueueD=[], ttsIdxD=0, ttsSpeakingD=false, ttsPausedD=false;
+function ttsInitDesk(){
+  try{
+    const load=()=>{
+      ttsVoicesD=speechSynthesis.getVoices()||[];
+      const sel=document.getElementById('tts-voice-desk');
+      if(sel) sel.innerHTML=ttsVoicesD.map((v,i)=>`<option value="${i}">${v.name} (${v.lang})</option>`).join('');
+    };
+    load();
+    if(speechSynthesis.onvoiceschanged!==undefined) speechSynthesis.onvoiceschanged=load;
+  }catch{}
+}
+setTimeout(ttsInitDesk,600);
+function ttsToggleDesk(){
+  const sel=document.getElementById('tts-voice-desk');
+  const voice=sel?sel.value:0;
+  // Используем те же функции что в mobile, но с desk id
+  const s=document.getElementById('tts-voice'); if(s) s.value=voice;
+  // Вызываем общий ttsToggle если есть
+  if(typeof ttsToggle==='function') ttsToggle();
+  else {
+    // fallback simple
+    let txt='';
+    try{ const f=document.getElementById('browser-frame-desk'); if(f&&f.contentDocument) txt=f.contentDocument.body.innerText.slice(0,8000); }catch{}
+    if(!txt) txt=document.getElementById('browser-url-desk')?.value||'';
+    if(txt){ const u=new SpeechSynthesisUtterance(txt.slice(0,2000)); if(ttsVoicesD[voice]) u.voice=ttsVoicesD[voice]; speechSynthesis.speak(u); }
+  }
+}
+function ttsStopDesk(){ if(typeof ttsStop==='function') ttsStop(); else speechSynthesis.cancel(); }
+function ttsSetRateDesk(v){ const el=document.getElementById('tts-rate-label-desk'); if(el) el.textContent=v+'×'; if(typeof ttsSetRate==='function') ttsSetRate(v); }
+function ocrCaptureDesk(){
+  if(typeof ocrCapture==='function') ocrCapture();
+  else alert('OCR: используй мобильную версию');
+}
 function browserFullscreenVerticalDesk(){
   const url=document.getElementById('browser-url-desk')?.value||'https://m.youtube.com/shorts/';
   browserOpenDesktop(url, true);
@@ -1726,6 +1762,181 @@ async function pulseToggleMuteDesk(){
   try{ const r=await fetch('/api/pulse/mute',{method:'POST'}); const d=await r.json(); }catch{}
 }
 
+// ===== TTS + OCR + Автоскролл + Фон =====
+let ttsVoices=[], ttsQueue=[], ttsIdx=0, ttsSpeaking=false, ttsPaused=false, ttsScrollTimer=null, ttsRate=1;
+function ttsInit(){
+  try{
+    const loadVoices=()=>{
+      ttsVoices=speechSynthesis.getVoices()||[];
+      const sel=document.getElementById('tts-voice');
+      if(sel){
+        sel.innerHTML=ttsVoices.map((v,i)=>`<option value="${i}" ${v.default?'selected':''}>${v.name} (${v.lang})</option>`).join('');
+        if(!sel.value && ttsVoices.length) sel.value=0;
+      }
+      const selDesk=document.getElementById('tts-voice-desk');
+      if(selDesk) selDesk.innerHTML=sel?sel.innerHTML:'';
+    };
+    loadVoices();
+    if(speechSynthesis.onvoiceschanged!==undefined) speechSynthesis.onvoiceschanged=loadVoices;
+  }catch{}
+}
+setTimeout(ttsInit, 500);
+function ttsSetRate(v){ ttsRate=parseFloat(v)||1; const l=document.getElementById('tts-rate-label'); if(l) l.textContent=v+'×'; const ld=document.getElementById('tts-rate-label-desk'); if(ld) ld.textContent=v+'×'; }
+function ttsSetRateDesk(v){ ttsSetRate(v); }
+function getPageText(){
+  // Пытаемся взять текст из iframe если тот же origin, иначе просим OCR
+  try{
+    const frame=document.getElementById('browser-frame');
+    if(frame && frame.contentDocument){
+      const body=frame.contentDocument.body;
+      if(body){
+        let txt=body.innerText||body.textContent||'';
+        txt=txt.trim().slice(0,12000);
+        if(txt.length>30) return txt;
+      }
+    }
+  }catch{}
+  // Fallback: текст из placeholder или URL
+  const url=document.getElementById('browser-url-main')?.value||'';
+  return 'Страница: '+url+' . Текст не доступен напрямую из-за защиты сайта. Нажми 👁️ OCR чтобы распознать скриншот.';
+}
+function ttsSpeakChunk(text){
+  if(!text) return;
+  const u=new SpeechSynthesisUtterance(text);
+  const sel=document.getElementById('tts-voice');
+  if(sel && ttsVoices[sel.value]) u.voice=ttsVoices[sel.value];
+  u.rate=ttsRate; u.lang=(u.voice&&u.voice.lang)||'ru-RU';
+  u.onstart=()=>{
+    const st=document.getElementById('tts-status'); if(st) st.textContent='🔊 читаю...';
+    const btn=document.getElementById('tts-play-btn'); if(btn) btn.textContent='⏸ Пауза';
+  };
+  u.onend=()=>{
+    ttsIdx++;
+    if(ttsIdx < ttsQueue.length && ttsSpeaking && !ttsPaused){
+      // Автоскролл
+      if(document.getElementById('tts-autoscroll')?.checked){
+        try{
+          const frame=document.getElementById('browser-frame');
+          if(frame && frame.contentWindow) frame.contentWindow.scrollBy(0,180);
+          else window.scrollBy(0,180);
+        }catch{}
+        // Скролл VNC iframe тоже
+        const vnc=document.getElementById('linux-frame');
+        if(vnc && vnc.contentWindow) try{vnc.contentWindow.scrollBy(0,180);}catch{}
+      }
+      ttsSpeakChunk(ttsQueue[ttsIdx]);
+    } else {
+      ttsSpeaking=false; ttsPaused=false;
+      const st=document.getElementById('tts-status'); if(st) st.textContent='готов';
+      const btn=document.getElementById('tts-play-btn'); if(btn) btn.textContent='▶ Читать';
+      if(ttsScrollTimer){ clearInterval(ttsScrollTimer); ttsScrollTimer=null; }
+    }
+  };
+  u.onerror=()=>{ ttsIdx++; if(ttsIdx<ttsQueue.length) ttsSpeakChunk(ttsQueue[ttsIdx]); };
+  speechSynthesis.speak(u);
+}
+function ttsToggle(){
+  const bg=document.getElementById('tts-bg')?.checked;
+  if(ttsSpeaking && !ttsPaused){
+    speechSynthesis.pause(); ttsPaused=true;
+    const st=document.getElementById('tts-status'); if(st) st.textContent='⏸ пауза';
+    const btn=document.getElementById('tts-play-btn'); if(btn) btn.textContent='▶ Продолжить';
+    return;
+  }
+  if(ttsPaused){
+    speechSynthesis.resume(); ttsPaused=false;
+    const st=document.getElementById('tts-status'); if(st) st.textContent='🔊 читаю...';
+    const btn=document.getElementById('tts-play-btn'); if(btn) btn.textContent='⏸ Пауза';
+    return;
+  }
+  // Старт нового чтения
+  const raw=getPageText();
+  // Режем на предложения по 180 символов для автопрокрутки
+  ttsQueue=raw.split(/(?<=[.!?。！？])\s+/).reduce((acc,s)=>{
+    if(s.length<180) acc.push(s);
+    else for(let i=0;i<s.length;i+=180) acc.push(s.slice(i,i+180));
+    return acc;
+  },[]).filter(Boolean).slice(0,80);
+  if(!ttsQueue.length) ttsQueue=[raw.slice(0,800)];
+  ttsIdx=0; ttsSpeaking=true; ttsPaused=false;
+  // Держим в фоне: не даём браузеру уснуть
+  if(bg){
+    try{
+      if(navigator.wakeLock && navigator.wakeLock.request) navigator.wakeLock.request('screen').catch(()=>{});
+    }catch{}
+    document.addEventListener('visibilitychange', ttsVisHandler);
+  }
+  // Автоскролл таймер 4с
+  if(document.getElementById('tts-autoscroll')?.checked){
+    ttsScrollTimer=setInterval(()=>{
+      if(!ttsSpeaking||ttsPaused) return;
+      try{
+        const frame=document.getElementById('browser-frame');
+        if(frame && frame.contentWindow) frame.contentWindow.scrollBy(0,120);
+      }catch{}
+    }, 4000);
+  }
+  ttsSpeakChunk(ttsQueue[ttsIdx]);
+}
+function ttsVisHandler(){
+  // В фоне продолжаем читать
+  if(document.visibilityState==='visible'){
+    if(ttsSpeaking && !ttsPaused) speechSynthesis.resume();
+  } else {
+    if(document.getElementById('tts-bg')?.checked && ttsSpeaking && !ttsPaused){
+      // Не паузим, держим аудио
+      try{ speechSynthesis.resume(); }catch{}
+    }
+  }
+}
+function ttsPause(){ if(ttsSpeaking && !ttsPaused){ speechSynthesis.pause(); ttsPaused=true; const st=document.getElementById('tts-status'); if(st) st.textContent='⏸ пауза'; } }
+function ttsStop(){
+  try{ speechSynthesis.cancel(); }catch{}
+  ttsSpeaking=false; ttsPaused=false; ttsQueue=[]; ttsIdx=0;
+  if(ttsScrollTimer){ clearInterval(ttsScrollTimer); ttsScrollTimer=null; }
+  document.removeEventListener('visibilitychange', ttsVisHandler);
+  const st=document.getElementById('tts-status'); if(st) st.textContent='остановлено';
+  const btn=document.getElementById('tts-play-btn'); if(btn) btn.textContent='▶ Читать';
+}
+function ttsToggleDesk(){ // для десктопа вызываем тот же ttsToggle
+  // Синхронизируем select
+  const v=document.getElementById('tts-voice-desk')?.value;
+  if(v!==undefined) { const s=document.getElementById('tts-voice'); if(s) s.value=v; }
+  ttsToggle();
+}
+function ttsStopDesk(){ ttsStop(); }
+function ttsSetRateDesk(v){ ttsSetRate(v); }
+async function ocrCapture(){
+  const st=document.getElementById('tts-status'); if(st) st.textContent='👁️ OCR...';
+  try{
+    // Сначала пробуем взять текст напрямую
+    let txt=getPageText();
+    if(txt && !txt.includes('Текст не доступен')){
+      if(st) st.textContent='OK (текст)';
+      ttsQueue=[txt.slice(0,3000)]; ttsIdx=0;
+      if(confirm('Распознано '+txt.slice(0,120)+'... Начать чтение?')) ttsToggle();
+      return;
+    }
+    // Иначе скриншот VNC + tesseract на сервере
+    const r=await fetch('/api/ocr', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
+    const d=await r.json();
+    if(d.ok && d.text){
+      txt=d.text; 
+      if(st) st.textContent='OCR готово: '+d.text.slice(0,30)+'...';
+      // Кладём в буфер и предлагаем читать
+      ttsQueue=[txt.slice(0,4000)];
+      if(confirm('OCR: '+txt.slice(0,200)+'... Читать?')) { ttsIdx=0; ttsSpeaking=false; ttsToggle(); }
+      else { navigator.clipboard?.writeText(txt).catch(()=>{}); }
+    } else {
+      if(st) st.textContent='OCR: '+ (d.error||'нет текста');
+      alert('OCR не нашёл текст: '+(d.error||'попробуй другой сайт'));
+    }
+  }catch(e){
+    if(st) st.textContent='OCR ошибка';
+    alert('OCR ошибка: '+e.message);
+  }
+}
+function ocrCaptureDesk(){ ocrCapture(); }
 async function linuxStatus(prefix) {
   const pfx = prefix || '';
   const el = document.getElementById(pfx ? 'linux-status-desktop' : 'linux-status');

@@ -408,7 +408,19 @@
           <span style="margin-left:8px">📱 Вертикаль:</span>
           <button class="btn btn-sm" onclick="hubBrowserGo('https://m.youtube.com/shorts/')">Shorts</button>
           <button class="btn btn-sm" onclick="hubBrowserGo('https://www.youtube.com')">Горизонт</button>
-          <span style="margin-left:auto;font-size:10px;color:var(--ok)">✓ Работает пока агент занят</span>
+          <span style="margin-left:auto;font-size:10px;color:var(--ok)">✓ Пока агент занят</span>
+        </div>
+        <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg1);border-bottom:1px solid var(--bdr);align-items:center;flex-wrap:wrap;font-size:11px">
+          <span style="color:var(--pur);font-weight:700">🔊 TTS/OCR:</span>
+          <button class="btn btn-p btn-sm" id="tts-play-btn" onclick="ttsToggle()">▶ Читать</button>
+          <button class="btn btn-sm" onclick="ttsStop()">⏹ Стоп</button>
+          <button class="btn btn-sm" onclick="ttsPause()">⏸ Пауза</button>
+          <select id="tts-voice" style="padding:4px 6px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:11px;max-width:120px"></select>
+          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--t2)"><input type="range" id="tts-rate" min="0.5" max="2" step="0.1" value="1" style="width:60px" oninput="ttsSetRate(this.value)"> <span id="tts-rate-label">1×</span></label>
+          <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-autoscroll" checked> Авто-скролл</label>
+          <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-bg" checked> В фоне</label>
+          <button class="btn btn-sm" onclick="ocrCapture()" title="Распознать текст с экрана (OCR)">👁️ OCR</button>
+          <span id="tts-status" style="font-size:10px;color:var(--t3);margin-left:auto">готов</span>
         </div>
         <div id="browser-agent-hint" style="display:none;padding:8px 10px;background:rgba(88,166,255,.12);border-bottom:1px solid var(--bdr);font-size:12px;color:var(--acc);align-items:center;gap:8px">
           <span>🔗 Агент прислал ссылку:</span><a id="browser-agent-url" href="#" target="_blank" style="color:var(--acc);word-break:break-all"></a>

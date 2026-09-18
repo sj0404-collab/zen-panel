@@ -1859,6 +1859,57 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+// ─── OCR + SCREENSHOT для TTS/чтения в фоне ───
+const ocrRun = (cmd) => new Promise((resolve)=>{
+  const {_exec} = require('child_process');
+  _exec(cmd, {timeout: 15000}, (err, stdout, stderr)=>{
+    resolve({ok: !err, out: (stdout||'').trim(), err: (stderr||'').trim()});
+  });
+});
+app.post('/api/ocr', express.json(), async (req,res)=>{
+  const display = process.env.VNC_DISPLAY || ':99';
+  const hasX = require('fs').existsSync('/tmp/.X11-unix/X99') || require('fs').existsSync('/tmp/.X11-lock');
+  if(!hasX) return res.json({ok:false, error:'VNC desktop не запущен'});
+  const tmpPng = '/tmp/ocr_'+Date.now()+'.png';
+  try{
+    // 1) Скриншот
+    let cap = await ocrRun(`DISPLAY=${display} import -window root ${tmpPng} 2>&1`);
+    if(!require('fs').existsSync(tmpPng)){
+      cap = await ocrRun(`DISPLAY=${display} scrot ${tmpPng} 2>&1`);
+    }
+    if(!require('fs').existsSync(tmpPng)){
+      cap = await ocrRun(`DISPLAY=${display} xwd -root -silent -out /tmp/ocr.xwd 2>&1 && convert /tmp/ocr.xwd ${tmpPng} 2>&1`);
+    }
+    if(!require('fs').existsSync(tmpPng)) return res.json({ok:false, error:'Не удалось сделать скриншот: '+cap.err});
+    // 2) OCR
+    let ocr = await ocrRun(`tesseract ${tmpPng} stdout -l rus+eng --psm 6 2>&1`);
+    if(!ocr.ok || !ocr.out || ocr.out.includes('Error')){
+      ocr = await ocrRun(`tesseract ${tmpPng} stdout -l eng --psm 6 2>&1`);
+    }
+    // Если tesseract не установлен
+    if(ocr.out.includes('not found') || ocr.out.includes('command not found')){
+      return res.json({ok:false, error:'tesseract не установлен на раннере. Установи: sudo apt-get install -y tesseract-ocr tesseract-ocr-rus imagemagick scrot'});
+    }
+    const text = ocr.out.trim().slice(0,6000);
+    try{ require('fs').unlinkSync(tmpPng); }catch{}
+    try{ require('fs').unlinkSync('/tmp/ocr.xwd'); }catch{}
+    if(!text) return res.json({ok:false, error:'OCR не нашёл текст'});
+    res.json({ok:true, text});
+  }catch(e){
+    res.json({ok:false, error:e.message});
+  }
+});
+app.get('/api/screenshot', async (req,res)=>{
+  const display = process.env.VNC_DISPLAY || ':99';
+  const tmpPng = '/tmp/shot_'+Date.now()+'.png';
+  try{
+    let cap = await ocrRun(`DISPLAY=${display} import -window root ${tmpPng} 2>&1`);
+    if(!require('fs').existsSync(tmpPng)) cap = await ocrRun(`DISPLAY=${display} scrot ${tmpPng} 2>&1`);
+    if(!require('fs').existsSync(tmpPng)) return res.status(404).send('no screenshot');
+    res.sendFile(tmpPng, ()=>{ try{require('fs').unlinkSync(tmpPng);}catch{} });
+  }catch(e){ res.status(500).send(e.message); }
+});
+
 // ─── GITHUB: browse repos, contents, commits, workflows, builds ───
 // All endpoints use GH_TOKEN to call the GitHub REST API directly.
 // Provides full repo browsing for the linked GitHub account.
