@@ -2015,7 +2015,8 @@ async function linuxConnect(prefix) {
   if (fr) {
     if (fr.dataset.src !== u) { fr.dataset.src = u; fr.src = u; }
     fr.style.display = 'block';
-    fr.allow = 'clipboard-read; clipboard-write';
+    fr.allow = 'fullscreen; clipboard-read; clipboard-write';
+    linuxPatchFrame(fr);
   }
   if (ph) ph.style.display = 'none';
   linuxSetNote('');
@@ -2053,6 +2054,41 @@ async function linuxRepair(prefix) {
   try { await fetch('/api/vnc/keepalive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'repair' }) }); } catch {}
   setTimeout(() => { try { linuxConnect(prefix || 'desktop'); } catch {} }, 3000);
 }
+
+// noVNC живёт в iframe на нашем же домене, поэтому можем его подправить:
+//  * прячем его кнопку fullscreen — на iPhone iframe в fullscreen не умеет, и
+//    клик по ней показывал красную ошибку «Fullscreen is not supported»;
+//  * прячем саму эту ошибку, если она всё же появилась (у нас есть свой ⛶,
+//    который разворачивает страницу целиком и работает в любом браузере).
+function linuxPatchFrame(fr) {
+  if (!fr) return;
+  const inject = () => {
+    try {
+      const doc = fr.contentDocument;
+      if (!doc || doc.__hubPatched) return;
+      doc.__hubPatched = true;
+      const st = doc.createElement('style');
+      st.textContent = [
+        '#noVNC_fullscreen_button{display:none!important}',
+        '#noVNC_setting_resize{display:none!important}'
+      ].join('');
+      doc.head.appendChild(st);
+      const kill = () => {
+        const s = doc.getElementById('noVNC_status');
+        if (!s) return;
+        if (/fullscreen|полный экран/i.test(s.textContent || '')) {
+          s.style.display = 'none';
+          s.textContent = '';
+        }
+      };
+      kill();
+      try { new MutationObserver(kill).observe(doc.body, { childList: true, subtree: true, characterData: true }); } catch {}
+    } catch (e) { /* другой домен — просто ничего не делаем */ }
+  };
+  if (fr.contentDocument && fr.contentDocument.readyState === 'complete') inject();
+  fr.addEventListener('load', inject, { once: false });
+}
+
 // Всегда включён: коннект при загрузке и keepalive без перезагрузки iframe.
 setTimeout(() => { try { linuxConnect('desktop'); } catch {} }, 600);
 setInterval(() => {

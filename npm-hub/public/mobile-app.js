@@ -2051,10 +2051,13 @@ async function linuxConnect() {
     // каждые 15 c и экран выглядел чёрным.
     if (fr.dataset.src !== u) { fr.dataset.src = u; fr.src = u; }
     fr.style.display = 'block';
-    fr.allow = 'clipboard-read; clipboard-write';
+    fr.allow = 'fullscreen; clipboard-read; clipboard-write';
+    linuxPatchFrame(fr);
   }
   if (ph) ph.style.display = 'none';
   linuxRetries = 0;
+  // Строка «ставлю недостающее: …» осталась от момента запуска — убираем.
+  if (d.keepalive && d.keepalive.note && String(d.keepalive.note).startsWith('running')) linuxSetNote('');
 }
 async function linuxRepair() {
   linuxSetNote('починка экрана…');
@@ -2062,6 +2065,41 @@ async function linuxRepair() {
   try { await fetch('/api/vnc/keepalive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'repair' }) }); } catch {}
   setTimeout(() => { try { linuxConnect(); } catch {} }, 3000);
 }
+
+// noVNC живёт в iframe на нашем же домене, поэтому можем его подправить:
+//  * прячем его кнопку fullscreen — на iPhone iframe в fullscreen не умеет, и
+//    клик по ней показывал красную ошибку «Fullscreen is not supported»;
+//  * прячем саму эту ошибку, если она всё же появилась (у нас есть свой ⛶,
+//    который разворачивает страницу целиком и работает в любом браузере).
+function linuxPatchFrame(fr) {
+  if (!fr) return;
+  const inject = () => {
+    try {
+      const doc = fr.contentDocument;
+      if (!doc || doc.__hubPatched) return;
+      doc.__hubPatched = true;
+      const st = doc.createElement('style');
+      st.textContent = [
+        '#noVNC_fullscreen_button{display:none!important}',
+        '#noVNC_setting_resize{display:none!important}'
+      ].join('');
+      doc.head.appendChild(st);
+      const kill = () => {
+        const s = doc.getElementById('noVNC_status');
+        if (!s) return;
+        if (/fullscreen|полный экран/i.test(s.textContent || '')) {
+          s.style.display = 'none';
+          s.textContent = '';
+        }
+      };
+      kill();
+      try { new MutationObserver(kill).observe(doc.body, { childList: true, subtree: true, characterData: true }); } catch {}
+    } catch (e) { /* другой домен — просто ничего не делаем */ }
+  };
+  if (fr.contentDocument && fr.contentDocument.readyState === 'complete') inject();
+  fr.addEventListener('load', inject, { once: false });
+}
+
 // Всегда включён: коннект при загрузке и keepalive без перезагрузки iframe.
 setTimeout(() => { try { linuxConnect(); } catch {} }, 500);
 setInterval(() => {
@@ -2420,7 +2458,14 @@ function startLivePoll(){
 }
 setTimeout(startLivePoll, 2000);
 
-if (document.getElementById('p-linux')) linuxStatus();
+if (document.getElementById('p-linux')) {
+  linuxStatus();
+  // PulseAudio поднимается вместе с хабом, поэтому бейдж звука нельзя
+  // измерять один раз при загрузке страницы — он оставался 'stopped' даже
+  // когда бэкенд уже отвечал running:true.
+  setTimeout(() => { try { pulseStatus(); } catch {} }, 2500);
+  setInterval(() => { try { pulseStatus(); } catch {} }, 30000);
+}
 
 // ===== BROWSER (Chrome / YouTube) =====
 function browserGo(url, prefix) {
@@ -2438,7 +2483,9 @@ async function pulseStatus() {
     const r = await fetch('/api/pulse/status');
     const d = await r.json();
     const el = document.getElementById('pulse-status');
-    el.textContent = d.running ? 'running' : 'stopped';
+    if (!el) return;
+    // Короткая подпись: в панели это узкий тег рядом с Go.
+    el.textContent = d.running ? '🔊 звук' : '🔇 нет звука';
     el.className = 'tag ' + (d.running ? 'tag-on' : 'tag-off');
     const devEl = document.getElementById('pulse-devices');
     if (d.sinks && d.sinks.length) {
