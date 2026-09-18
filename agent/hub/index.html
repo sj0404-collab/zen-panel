@@ -366,6 +366,7 @@ loadModels();
 
 /* ── presets ─────────────────────────────────────────────────────── */
 function togglePresets(){
+  try{ document.activeElement.blur(); }catch{}
   const box = $('presets');
   const showing = box.style.display !== 'none';
   box.style.display = showing ? 'none' : 'block';
@@ -426,6 +427,7 @@ async function savePreset(){
    the same machine as the agent, so nothing is rate-limited and nothing is
    billed. The cost is disk and startup time, both shown up front. */
 function toggleLocal(){
+  try{ document.activeElement.blur(); }catch{}
   const box = $('local');
   const showing = box.style.display !== 'none';
   box.style.display = showing ? 'none' : 'block';
@@ -568,7 +570,24 @@ function say(text, mine){
   const stick = atBottom();
   const d = document.createElement('div');
   d.className = 'say' + (mine ? ' me' : '');
-  if (mine) d.textContent = text; else d.innerHTML = md(text);
+  if (mine) {
+    d.textContent = text;
+  } else {
+    let html = md(text);
+    // Линкуем http(s) URL и предлагаем открыть в Chrome вкладке хаба
+    html = html.replace(/(https?:\/\/[^\s"'<>]+)/g, (url)=>{
+      try{ localStorage.setItem('agent_last_url', url); }catch{}
+      // Пост в хаб если открыт рядом
+      try{
+        if(window.opener && !window.opener.closed) window.opener.postMessage({type:'hub-open-url', url}, '*');
+        localStorage.setItem('hub_browser_last', url);
+      }catch{}
+      const safe = url.replace(/"/g,'&quot;');
+      return '<a href="'+safe+'" target="_blank" style="color:var(--accent);text-decoration:underline" onclick="event.stopPropagation(); try{localStorage.setItem(\'agent_last_url\',\''+safe+'\');}catch{}">'+safe+'</a> '
+        + '<button onclick="event.stopPropagation(); try{localStorage.setItem(\'agent_last_url\',\''+safe+'\');}catch{}; if(window.opener) window.opener.postMessage({type:\'hub-open-url\',url:\''+safe+'\'},\'*\'); else window.open(\''+safe+'\',\'_blank\')" style="margin-left:6px;font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer">🌐 Открыть в Chrome</button>';
+    });
+    d.innerHTML = html;
+  }
   stream.appendChild(d);
   if (stick) scroll();
   return d;
@@ -655,6 +674,7 @@ function setBusy(on){
 /* Enter and the button share this, so the key cannot start a second run while
    one is going - it stops the current one instead. */
 function primary(){
+  try{ document.activeElement.blur(); }catch{}
   if (runId) abortRun(); else send();
 }
 
@@ -918,7 +938,20 @@ async function abortRun(){
   }, 8000);
 }
 
-function toggleTerm(){ $('drawer').classList.toggle('on'); }
+function toggleTerm(){
+  try{ document.activeElement.blur(); }
+// Долгий тап в терминале — копировать
+(function(){
+  const termEl = document.getElementById('term');
+  if(!termEl) return;
+  const isTouch = ('ontouchstart' in window)|| (navigator.maxTouchPoints||0)>0;
+  if(!isTouch) return;
+  let stY=0,stX=0,scrolled=false,hold=null,longp=false;
+  termEl.addEventListener('touchstart', e=>{ const tt=e.touches[0]; stY=tt.clientY; stX=tt.clientX; scrolled=false; longp=false; clearTimeout(hold); hold=setTimeout(()=>{ if(!scrolled){ longp=true; try{if(navigator.vibrate) navigator.vibrate(30);}catch{} const sel=window.getSelection().toString()||termEl.textContent.slice(-2000); if(sel) navigator.clipboard?.writeText(sel).catch(()=>{});} },600); }, {passive:true});
+  termEl.addEventListener('touchmove', e=>{ const tt=e.touches[0]; if(Math.abs(tt.clientY-stY)>8||Math.abs(tt.clientX-stX)>8){ scrolled=true; clearTimeout(hold); } }, {passive:true});
+  termEl.addEventListener('touchend', e=>{ clearTimeout(hold); if(longp) e.preventDefault(); }, {passive:false});
+  termEl.addEventListener('contextmenu', e=>{ e.preventDefault(); const sel=window.getSelection().toString()||termEl.textContent.slice(-2000); if(sel) navigator.clipboard?.writeText(sel).catch(()=>{}); return false; });
+})();catch{} $('drawer').classList.toggle('on'); }
 
 async function runCmd(){
   const c=$('cmd').value.trim(); if(!c) return;
@@ -994,6 +1027,7 @@ let currentSession = 'default';
 let lastThinkAt = 0;
 
 function toggleSheet(id){
+  try{ document.activeElement.blur(); }catch{}
   for (const sid of ['sessions','keys','agents','presets','local']) {
     const el = $(sid); if (!el) continue;
     if (sid === id) el.classList.toggle('on');
@@ -1005,6 +1039,7 @@ function toggleSheet(id){
   if (id === 'agents') loadAgents();
 }
 function toggleStudio(){
+  try{ document.activeElement.blur(); }catch{}
   document.body.classList.toggle('studio-on');
 }
 function updateStudioMeta(){
