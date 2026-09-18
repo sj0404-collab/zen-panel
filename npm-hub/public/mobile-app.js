@@ -2012,14 +2012,41 @@ async function linuxStatus() {
 }
 async function linuxConnect() {
   const d = await linuxStatus();
-  if (!d.url) { linuxStatus(); return; }
+  if (!d.url) {
+    // Всегда включён — повторяем каждые 5с пока не появится URL
+    setTimeout(()=>{ try{ linuxConnect(); }catch{} }, 5000);
+    const ph=document.getElementById('linux-placeholder');
+    if(ph) ph.style.display='flex';
+    const fr=document.getElementById('linux-frame');
+    if(fr) fr.style.display='none';
+    const btn=document.getElementById('linux-open');
+    if(btn) btn.textContent='⟳ ожидание…';
+    return;
+  }
   const frame = document.getElementById('linux-frame');
   const ph = document.getElementById('linux-placeholder');
-  frame.src = d.url;
-  frame.style.display = 'block';
-  frame.allow = 'clipboard-read; clipboard-write';
+  let u=d.url;
+  // noVNC авто-подключение без кнопки 'Подключение' внутри iframe
+  if(u && !u.includes('autoconnect')){
+    u += (u.includes('?')?'&':'?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+  }
+  if(frame.src !== u){
+    frame.src = u;
+    frame.style.display = 'block';
+    frame.allow = 'clipboard-read; clipboard-write';
+  } else {
+    frame.style.display='block';
+  }
   if (ph) ph.style.display = 'none';
+  const btn=document.getElementById('linux-open');
+  if(btn) btn.textContent='● всегда включён';
+  const el=document.getElementById('linux-status');
+  if(el){ el.textContent='● запущен'; el.className='tag tag-on'; }
 }
+
+// Всегда включён: грузим сразу при загрузке и держим живым
+setTimeout(()=>{ try{ linuxConnect(); }catch{} }, 800);
+setInterval(()=>{ try{ const fr=document.getElementById('linux-frame'); if(!fr || !fr.src || fr.style.display==='none'){ linuxConnect(); } }catch{} }, 15000);
 function linuxFullscreen() {
   const frame = document.getElementById('linux-frame');
   if (frame.requestFullscreen) frame.requestFullscreen();

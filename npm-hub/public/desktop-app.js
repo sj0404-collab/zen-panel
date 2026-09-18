@@ -1977,10 +1977,17 @@ async function linuxStatus(prefix) {
 async function linuxConnect(prefix) {
   const pfx = prefix || '';
   const d = await linuxStatus(pfx);
-  if (!d.url) { linuxStatus(pfx); return; }
+  if (!d.url) {
+    setTimeout(()=>{ try{ linuxConnect(pfx); }catch{} }, 5000);
+    return;
+  }
   const frame = document.getElementById(pfx ? 'linux-frame-desktop' : 'linux-frame');
   const ph = document.getElementById(pfx ? 'linux-placeholder-desktop' : 'linux-placeholder');
-  frame.src = d.url;
+  let u=d.url;
+  if(u && !u.includes('autoconnect')){
+    u += (u.includes('?')?'&':'?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+  }
+  if(frame.src !== u) frame.src = u;
   frame.style.display = 'block';
   if (ph) ph.style.display = 'none';
 }
@@ -2004,8 +2011,12 @@ async function linuxAutoConnect(force) {
   }
   if (d.url && (force || d.url !== linuxLastUrl)) {
     linuxLastUrl = d.url;
+    let u=d.url;
+    if(u && !u.includes('autoconnect')){
+      u += (u.includes('?')?'&':'?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+    }
     frame.src = '';
-    frame.src = d.url;
+    frame.src = u;
     frame.style.display = 'block';
     if (ph) ph.style.display = 'none';
     return;
