@@ -2017,6 +2017,7 @@ async function linuxConnect(prefix) {
     fr.style.display = 'block';
     fr.allow = 'fullscreen; clipboard-read; clipboard-write';
     linuxPatchFrame(fr);
+    setTimeout(() => linuxApplyZoom(fr), 3000);
   }
   if (ph) ph.style.display = 'none';
   linuxSetNote('');
@@ -2026,19 +2027,49 @@ async function linuxAutoConnect(force) {
   if (force) { linuxRetries = 0; }
   return linuxConnect('desktop');
 }
-function linuxFullscreen(prefix) {
+async function linuxFullscreen(prefix) {
   const page = document.getElementById('p-linux');
   if (!page) return;
-  page.classList.toggle('linux-full');
-  const on = page.classList.contains('linux-full');
-  const esc = (e) => {
-    if (e.key === 'Escape' && page.classList.contains('linux-full')) {
-      page.classList.remove('linux-full');
-      document.removeEventListener('keydown', esc);
+  const want = !page.classList.contains('linux-full');
+  page.classList.toggle('linux-full', want);
+  try {
+    if (want) { if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen(); }
+    else if (document.exitFullscreen && document.fullscreenElement) await document.exitFullscreen();
+  } catch (e) {}
+  try { fmInfo && fmInfo(want ? '⛶ На весь экран (Esc — выход)' : '⛶ Обычный размер'); } catch {}
+}
+document.addEventListener('fullscreenchange', () => {
+  const page = document.getElementById('p-linux');
+  if (page && !document.fullscreenElement) page.classList.remove('linux-full');
+  linuxRefit();
+});
+window.addEventListener('resize', () => { clearTimeout(window.__linuxRefitT); window.__linuxRefitT = setTimeout(linuxRefit, 300); });
+function linuxRefit() {
+  const fr = document.getElementById('linux-frame-desktop');
+  try {
+    if (fr && fr.contentDocument) {
+      fr.contentDocument.defaultView.dispatchEvent(new Event('resize'));
+      if (fr.contentDocument.__hub) fr.contentDocument.__hub.scale(linuxZoomMode);
     }
-  };
-  document.addEventListener('keydown', esc);
-  try { fmInfo && fmInfo(on ? '⛶ Экран на весь экран (Esc — выход)' : '⛶ Обычный размер'); } catch {}
+  } catch {}
+}
+function linuxKeyboard(prefix) {
+  const fr = document.getElementById(prefix ? 'linux-frame-desktop' : 'linux-frame');
+  let ok = false;
+  try { ok = fr && fr.contentDocument && fr.contentDocument.__hub ? fr.contentDocument.__hub.kbd() : false; } catch {}
+  linuxSetNote(ok ? '⌨ клавиатура переключена' : 'клавиатура: экран ещё грузится…');
+  setTimeout(() => linuxSetNote(''), 4000);
+}
+let linuxZoomMode = (() => { try { return localStorage.getItem('hub_zoom') || 'fit'; } catch { return 'fit'; } })();
+function linuxZoomToggle(prefix) {
+  linuxZoomMode = linuxZoomMode === 'fit' ? 'clip' : 'fit';
+  try { localStorage.setItem('hub_zoom', linuxZoomMode); } catch {}
+  const fr = document.getElementById(prefix ? 'linux-frame-desktop' : 'linux-frame');
+  try { if (fr && fr.contentDocument && fr.contentDocument.__hub) fr.contentDocument.__hub.scale(linuxZoomMode); } catch {}
+  const btn = document.getElementById(prefix ? 'linux-zoom-btn-desktop' : 'linux-zoom-btn');
+  if (btn) btn.textContent = linuxZoomMode === 'fit' ? '🔍' : '🔎';
+  linuxSetNote(linuxZoomMode === 'fit' ? 'вписано в экран' : '1:1 — панорамирование пальцем/мышью');
+  setTimeout(() => linuxSetNote(''), 4000);
 }
 async function linuxReload() {
   // Полный перезапуск сессии noVNC: сбрасываем dataset.src, иначе connect
@@ -2066,13 +2097,52 @@ function linuxPatchFrame(fr) {
     try {
       const doc = fr.contentDocument;
       if (!doc || doc.__hubPatched) return;
+      // Кнопка fullscreen самого noVNC бесполезна и ругалась ошибкой; его
+      // клавиатуру и масштаб, наоборот, вытаскиваем наружу через __hub.
       doc.__hubPatched = true;
       const st = doc.createElement('style');
       st.textContent = [
         '#noVNC_fullscreen_button{display:none!important}',
-        '#noVNC_setting_resize{display:none!important}'
+        '#noVNC_control_bar,#noVNC_control_bar_handle{display:none!important}',
+        // Курсор-точка рисуется по центру касания — без неё непонятно, куда
+        // именно попадёт клик. Оставляем её всегда видимой.
+        '#noVNC_connect_dlg{display:none!important}'
       ].join('');
       doc.head.appendChild(st);
+
+      // Касание = клик в точке касания + перенос курсора: показываем точку
+      // (noVNC рисует её только при включённой настройке show_dot).
+      try {
+        const dot = doc.getElementById('noVNC_setting_show_dot');
+        if (dot && !dot.checked) { dot.checked = true; dot.dispatchEvent(new Event('change', { bubbles: true })); }
+      } catch {}
+
+      doc.__hub = {
+        // Клавиатура ТЕЛЕФОНА: noVNC по нажатию своей кнопки фокусирует
+        // скрытый input, от него приходят события мягкой клавиатуры.
+        kbd(show) {
+          const btn = doc.getElementById('noVNC_keyboard_button');
+          const inp = doc.getElementById('noVNC_keyboardinput');
+          if (btn) { btn.click(); return true; }
+          if (inp) { (show === false ? inp.blur() : inp.focus()); return true; }
+          return false;
+        },
+        // Масштаб: 'fit' — вписать в экран, 'clip' — 1:1 с панорамированием.
+        scale(mode) {
+          const sel = doc.getElementById('noVNC_setting_resize');
+          const clip = doc.getElementById('noVNC_setting_view_clip');
+          const fire = (el) => el.dispatchEvent(new Event('change', { bubbles: true }));
+          if (sel) { sel.value = mode === 'clip' ? 'off' : 'scale'; fire(sel); }
+          if (clip) { clip.checked = mode === 'clip'; fire(clip); }
+          return Boolean(sel);
+        },
+        info() {
+          const sel = doc.getElementById('noVNC_setting_resize');
+          const cv = doc.querySelector('canvas');
+          return { resize: sel && sel.value, canvas: cv ? cv.width + 'x' + cv.height : null };
+        }
+      };
+
       const kill = () => {
         const s = doc.getElementById('noVNC_status');
         if (!s) return;
@@ -2087,6 +2157,12 @@ function linuxPatchFrame(fr) {
   };
   if (fr.contentDocument && fr.contentDocument.readyState === 'complete') inject();
   fr.addEventListener('load', inject, { once: false });
+}
+
+// Применяем масштаб после (пере)загрузки кадра: noVNC читает свои настройки
+// из cookie при старте, поэтому просим нужный режим ещё раз.
+function linuxApplyZoom(fr) {
+  try { if (fr && fr.contentDocument && fr.contentDocument.__hub) fr.contentDocument.__hub.scale(linuxZoomMode); } catch {}
 }
 
 // Всегда включён: коннект при загрузке и keepalive без перезагрузки iframe.

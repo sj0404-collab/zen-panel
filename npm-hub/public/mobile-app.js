@@ -2053,6 +2053,7 @@ async function linuxConnect() {
     fr.style.display = 'block';
     fr.allow = 'fullscreen; clipboard-read; clipboard-write';
     linuxPatchFrame(fr);
+    setTimeout(() => linuxApplyZoom(fr), 3000);
   }
   if (ph) ph.style.display = 'none';
   linuxRetries = 0;
@@ -2077,13 +2078,52 @@ function linuxPatchFrame(fr) {
     try {
       const doc = fr.contentDocument;
       if (!doc || doc.__hubPatched) return;
+      // Кнопка fullscreen самого noVNC бесполезна и ругалась ошибкой; его
+      // клавиатуру и масштаб, наоборот, вытаскиваем наружу через __hub.
       doc.__hubPatched = true;
       const st = doc.createElement('style');
       st.textContent = [
         '#noVNC_fullscreen_button{display:none!important}',
-        '#noVNC_setting_resize{display:none!important}'
+        '#noVNC_control_bar,#noVNC_control_bar_handle{display:none!important}',
+        // Курсор-точка рисуется по центру касания — без неё непонятно, куда
+        // именно попадёт клик. Оставляем её всегда видимой.
+        '#noVNC_connect_dlg{display:none!important}'
       ].join('');
       doc.head.appendChild(st);
+
+      // Касание = клик в точке касания + перенос курсора: показываем точку
+      // (noVNC рисует её только при включённой настройке show_dot).
+      try {
+        const dot = doc.getElementById('noVNC_setting_show_dot');
+        if (dot && !dot.checked) { dot.checked = true; dot.dispatchEvent(new Event('change', { bubbles: true })); }
+      } catch {}
+
+      doc.__hub = {
+        // Клавиатура ТЕЛЕФОНА: noVNC по нажатию своей кнопки фокусирует
+        // скрытый input, от него приходят события мягкой клавиатуры.
+        kbd(show) {
+          const btn = doc.getElementById('noVNC_keyboard_button');
+          const inp = doc.getElementById('noVNC_keyboardinput');
+          if (btn) { btn.click(); return true; }
+          if (inp) { (show === false ? inp.blur() : inp.focus()); return true; }
+          return false;
+        },
+        // Масштаб: 'fit' — вписать в экран, 'clip' — 1:1 с панорамированием.
+        scale(mode) {
+          const sel = doc.getElementById('noVNC_setting_resize');
+          const clip = doc.getElementById('noVNC_setting_view_clip');
+          const fire = (el) => el.dispatchEvent(new Event('change', { bubbles: true }));
+          if (sel) { sel.value = mode === 'clip' ? 'off' : 'scale'; fire(sel); }
+          if (clip) { clip.checked = mode === 'clip'; fire(clip); }
+          return Boolean(sel);
+        },
+        info() {
+          const sel = doc.getElementById('noVNC_setting_resize');
+          const cv = doc.querySelector('canvas');
+          return { resize: sel && sel.value, canvas: cv ? cv.width + 'x' + cv.height : null };
+        }
+      };
+
       const kill = () => {
         const s = doc.getElementById('noVNC_status');
         if (!s) return;
@@ -2100,6 +2140,12 @@ function linuxPatchFrame(fr) {
   fr.addEventListener('load', inject, { once: false });
 }
 
+// Применяем масштаб после (пере)загрузки кадра: noVNC читает свои настройки
+// из cookie при старте, поэтому просим нужный режим ещё раз.
+function linuxApplyZoom(fr) {
+  try { if (fr && fr.contentDocument && fr.contentDocument.__hub) fr.contentDocument.__hub.scale(linuxZoomMode); } catch {}
+}
+
 // Всегда включён: коннект при загрузке и keepalive без перезагрузки iframe.
 setTimeout(() => { try { linuxConnect(); } catch {} }, 500);
 setInterval(() => {
@@ -2107,20 +2153,73 @@ setInterval(() => {
   if (!fr || !fr.dataset.src || fr.style.display === 'none') { try { linuxConnect(); } catch {} }
 }, 15000);
 
-function linuxFullscreen() {
-  // Весь экран целиком (тулбары + VNC) на весь экран; Esc — обратно.
+// Настоящий полный экран страницы + поворот в ландшафт (если браузер умеет:
+// Android Chrome умеет, iOS Safari — нет, там остаётся CSS-режим с 100dvh).
+async function linuxFullscreen(force) {
   const page = document.getElementById('p-linux');
   if (!page) return;
-  page.classList.toggle('linux-full');
-  const on = page.classList.contains('linux-full');
-  const esc = (e) => {
-    if (e.key === 'Escape' && page.classList.contains('linux-full')) {
-      page.classList.remove('linux-full');
-      document.removeEventListener('keydown', esc);
+  const want = typeof force === 'boolean' ? force : !page.classList.contains('linux-full');
+  page.classList.toggle('linux-full', want);
+  try {
+    const el = document.documentElement;
+    if (want) {
+      if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' });
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      if (screen.orientation && screen.orientation.lock) {
+        try { await screen.orientation.lock('landscape'); } catch {}
+      }
+    } else {
+      if (document.exitFullscreen && document.fullscreenElement) await document.exitFullscreen();
+      else if (document.webkitExitFullscreen && document.webkitFullscreenElement) document.webkitExitFullscreen();
+      if (screen.orientation && screen.orientation.unlock) { try { screen.orientation.unlock(); } catch {} }
     }
-  };
-  document.addEventListener('keydown', esc);
-  try { fmInfo(on ? '⛶ Экран на весь экран (Esc — выход)' : '⛶ Обычный размер'); } catch {}
+  } catch (e) { /* браузер отказал — остаёмся в CSS-режиме, он тоже на весь экран */ }
+  try { fmInfo(want ? '⛶ На весь экран · ландшафт (✕ — выход)' : '⛶ Обычный размер'); } catch {}
+}
+// Браузер сам вышел из fullscreen (жест «назад», Esc) — синхронизируем класс.
+document.addEventListener('fullscreenchange', () => {
+  const page = document.getElementById('p-linux');
+  if (!page) return;
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) page.classList.remove('linux-full');
+  linuxRefit();
+});
+// Поворот телефона: noVNC пересчитывает масштаб по своему resize, но в
+// iframe он приходит с задержкой — просим ещё раз.
+window.addEventListener('orientationchange', () => setTimeout(linuxRefit, 350));
+window.addEventListener('resize', () => { clearTimeout(window.__linuxRefitT); window.__linuxRefitT = setTimeout(linuxRefit, 300); });
+function linuxRefit() {
+  const fr = document.getElementById('linux-frame');
+  try {
+    if (fr && fr.contentDocument) {
+      fr.contentDocument.defaultView.dispatchEvent(new Event('resize'));
+      if (fr.contentDocument.__hub) fr.contentDocument.__hub.scale(linuxZoomMode);
+    }
+  } catch {}
+  if (window.visualViewport) setTimeout(() => { try { fr.contentWindow.dispatchEvent(new Event('resize')); } catch {} }, 200);
+}
+
+// Клавиатура телефона: печатаем в скрытый input внутри noVNC, он передаёт
+// нажатия на удалённый экран (xterm, браузер и т.д.).
+function linuxKeyboard() {
+  const fr = document.getElementById('linux-frame');
+  let ok = false;
+  try { ok = fr && fr.contentDocument && fr.contentDocument.__hub ? fr.contentDocument.__hub.kbd() : false; } catch {}
+  if (!ok) { linuxSetNote('клавиатура: экран ещё грузится…'); return; }
+  linuxSetNote('⌨ клавиатура открыта — печатайте');
+  setTimeout(() => linuxSetNote(''), 4000);
+}
+
+// 🔍 Заполнить (вписать всё) ⇄ 1:1 (точные пиксели + панорамирование пальцем).
+let linuxZoomMode = (() => { try { return localStorage.getItem('hub_zoom') || 'fit'; } catch { return 'fit'; } })();
+function linuxZoomToggle() {
+  linuxZoomMode = linuxZoomMode === 'fit' ? 'clip' : 'fit';
+  try { localStorage.setItem('hub_zoom', linuxZoomMode); } catch {}
+  const fr = document.getElementById('linux-frame');
+  try { if (fr && fr.contentDocument && fr.contentDocument.__hub) fr.contentDocument.__hub.scale(linuxZoomMode); } catch {}
+  const btn = document.getElementById('linux-zoom-btn');
+  if (btn) btn.textContent = linuxZoomMode === 'fit' ? '🔍' : '🔎';
+  linuxSetNote(linuxZoomMode === 'fit' ? 'вписано в экран' : '1:1 — двигайте пальцем, чтобы плавать по экрану');
+  setTimeout(() => linuxSetNote(''), 4000);
 }
 
 

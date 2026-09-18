@@ -110,8 +110,12 @@ const which = async (bin) => {
   return r.out.endsWith('0');
 };
 
-const pgrep = async (pattern) => {
-  const r = await sh(`pgrep -f ${JSON.stringify(pattern)} >/dev/null 2>&1; echo $?`, 8000);
+// pgrep -x (точное имя), а НЕ pgrep -f: с -f шаблон совпадает с командной
+// строкой собственной оболочки (`bash -lc 'pgrep -f idesk …'`), проверка
+// всегда «находит» процесс — так idesk/иконки считались живыми, хотя их не
+// было (пустой рабочий стол в кадре).
+const pgrep = async (name) => {
+  const r = await sh(`pgrep -x ${JSON.stringify(name)} >/dev/null 2>&1; echo $?`, 8000);
   return r.out.endsWith('0');
 };
 
@@ -299,10 +303,15 @@ async function ensureWallpaper(force) {
   const magick = (await which('convert')) ? 'convert' : (await which('magick')) ? 'magick' : null;
   if (magick) {
     const font = findFont();
+    // Верх градиента раньше был почти чёрным (#0b0f14) — на телефоне это
+    // читалось как «чёрный экран». Теперь база светлее, плюс мягкое свечение
+    // из центра и полоса-«панель» внизу.
     const args = [
-      '-size', `${W}x${H}`, 'gradient:#0b0f14-#1a2a3e',
-      '-fill', '#0b0f14', '-draw', `rectangle 0,${Math.round(H * 0.72)},${W},${H}`,
-      '-blur', '0x28'
+      '-size', `${W}x${H}`, 'gradient:#16273a-#3d6b96',
+      '-fill', '#16273a', '-draw', `rectangle 0,0,${W},${Math.round(H * 0.29)}`,
+      '-blur', '0x30',
+      '-fill', '#0e1a26', '-draw', `rectangle 0,${Math.round(H * 0.78)},${W},${H}`,
+      '-blur', '0x24'
     ];
     if (font) {
       args.push(
@@ -394,17 +403,21 @@ async function ensureShortcuts(port) {
   const ideskDir = path.join(HOME, '.idesktop');
   try { fs.mkdirSync(ideskDir, { recursive: true }); } catch {}
   const ideskRc = path.join(HOME, '.ideskrc');
-  if (!fs.existsSync(ideskRc) || fs.statSync(ideskRc).size < 200) {
+  {
+    // Берём образец из дистрибутива (idesk требует все ключи) или уже
+    // существующий файл, и КАЖДЫЙ раз правим оформительские строки: раньше
+    // файл создавался один раз и подписи оставались салатовыми (#37CFA6).
     const sample = '/usr/share/idesk/dot.ideskrc';
     let base = null;
-    try { base = fs.readFileSync(sample, 'utf8'); } catch {}
+    try { base = fs.readFileSync(fs.existsSync(ideskRc) && fs.statSync(ideskRc).size > 200 ? ideskRc : sample, 'utf8'); } catch {}
     if (base) {
       // Готовый шаблон дистрибутива + наши цвета/шрифт — idesk требует все
       // ключи (Background.Source и т.д.), минимальный конфиг он отвергает.
       base = base
         .replace(/^  FontName:.*$/m, '  FontName: DejaVu Sans')
         .replace(/^  FontSize:.*$/m, '  FontSize: 10')
-        .replace(/^  FontColor:.*$/m, '  FontColor: #e6edf3')
+        .replace(/^  FontColor:.*$/m, '  FontColor: #eaf2ff')
+        .replace(/^  ToolTip.ForeColor:.*$/m, '  ToolTip.ForeColor: #eaf2ff')
         .replace(/^  Bold: true$/m, '  Bold: false')
         .replace(/^  Background\.Color:.*$/m, '  Background.Color: #0b0f14');
       try { fs.writeFileSync(ideskRc, base); } catch {}
@@ -757,17 +770,22 @@ async function tick() {
   ticking = true;
   try {
     state.lastTick = Date.now();
-    const [x, vnc, ui, wm] = await Promise.all([
+    const [x, vnc, ui, wm, icons, bar] = await Promise.all([
       xDisplayUp(),
       portOpen(VNC_PORT),
       Promise.resolve(fs.existsSync(NOVNC_UI)),
-      pgrep('openbox')
+      pgrep('openbox'),
+      pgrep('idesk'),
+      pgrep('tint2')
     ]);
-    state.desktop = x && wm ? 'up' : 'down';
+    state.desktop = x && wm && icons ? 'up' : 'down';
     state.novnc = ui ? 'up' : 'down';
     state.x11vnc = vnc ? 'up' : 'down';
-    if (!x || !vnc || !ui || !wm) {
-      const why = [!x && 'нет X', !wm && 'нет openbox', !vnc && `нет x11vnc:${VNC_PORT}`, !ui && 'нет noVNC-UI']
+    state.icons = icons ? 'up' : 'down';
+    state.bar = bar ? 'up' : 'down';
+    if (!x || !vnc || !ui || !wm || !icons || !bar) {
+      const why = [!x && 'нет X', !wm && 'нет openbox', !icons && 'нет idesk (иконки)',
+        !bar && 'нет tint2 (панель)', !vnc && `нет x11vnc:${VNC_PORT}`, !ui && 'нет noVNC-UI']
         .filter(Boolean).join(', ');
       await repair(repoRootRef, why);
     }
@@ -788,6 +806,8 @@ function status() {
     desktop: state.desktop,
     novnc: state.novnc,
     x11vnc: state.x11vnc,
+    icons: state.icons,
+    bar: state.bar,
     proxy: state.proxy,
     hubUrl: state.hubUrl || hubPublicUrl(),
     wall: state.wall,

@@ -349,10 +349,12 @@
         <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
           <span id="linux-status" class="tag">…</span>
           <button class="btn btn-sm" onclick="linuxRepair()" title="Пересобрать экран на этом раннере">🔧 починить</button>
-          <button class="btn btn-sm" onclick="linuxFullscreen()" title="На весь экран (Esc — выход)">⛶</button>
+          <button class="btn btn-sm" onclick="linuxFullscreen()" title="На весь экран + поворот в ландшафт">⛶</button>
+          <button class="btn btn-sm" onclick="linuxKeyboard()" title="Клавиатура телефона (печатать на удалённом экране)">⌨</button>
+          <button class="btn btn-sm" id="linux-zoom-btn" onclick="linuxZoomToggle()" title="Заполнить экран / 1:1 с панорамой">🔍</button>
           <span id="linux-note" style="font-size:10px;color:var(--t3)"></span>
-          <span style="margin-left:auto;font-size:11px;color:var(--t3)">🖥 Один экран для всего</span>
-          <span style="font-size:10px;color:var(--ok)">VNC · включается сам</span>
+          <span class="linux-hint" style="margin-left:auto;font-size:11px;color:var(--t3)">🖥 Один экран для всего</span>
+          <span class="linux-hint" style="font-size:10px;color:var(--ok)">VNC · включается сам</span>
         </div>
         <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
           <input type="text" id="browser-url" placeholder="https://... — откроется на этом экране" value="https://www.youtube.com" style="flex:1;min-width:140px;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')linuxRunBrowser(this.value)">
@@ -363,10 +365,20 @@
           <button class="btn btn-sm" onclick="pulseToggleMute()" title="Мьют">🔇</button>
         </div>
         <style>
-          /* ⛶ — экран на весь экран без потери noVNC-сессии */
-          #p-linux.linux-full{position:fixed!important;inset:0!important;height:100vh!important;z-index:99999;background:#000}
+          /* ⛶ — экран на весь экран без потери noVNC-сессии.
+             100dvh: на мобильных адресная строка Safari/Chrome иначе «съедает»
+             часть высоты и картинка не заполняет экран. */
+          #p-linux.linux-full{position:fixed!important;inset:0!important;height:100vh!important;height:100dvh!important;z-index:99999;background:#000}
+          #p-linux.linux-full > div:first-child, #p-linux.linux-full > div:nth-child(2){display:none!important}
+          #p-linux.linux-full #linux-stack{flex:1 1 auto;height:100%}
+          .linux-exitfs{display:none}
+          #p-linux.linux-full .linux-exitfs{display:block;position:absolute;top:10px;right:10px;z-index:100000;
+            background:rgba(13,17,23,.75);color:#e6edf3;border:1px solid rgba(240,246,252,.2);border-radius:50%;
+            width:38px;height:38px;font-size:16px;line-height:1}
+          @media (max-width:560px){ .linux-hint{display:none!important} }
         </style>
         <div id="linux-stack" style="flex:1;position:relative;background:#000">
+          <button class="btn btn-sm linux-exitfs" onclick="linuxFullscreen()" title="Выйти из полного экрана">✕</button>
           <iframe id="linux-frame" style="width:100%;height:100%;border:none;display:none" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
           <div id="linux-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
             <div style="font-size:48px;margin-bottom:16px">🖥</div>
