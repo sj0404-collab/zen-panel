@@ -1804,10 +1804,30 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
       case 'browser': {
         if (!url) return res.json({ ok: false, error: 'url required' });
         const escaped = String(url).replace(/'/g, "'\\''");
-        // Try chromium, then firefox, then xdg-open
-        let r = await runOnDisplay(`(which chromium-browser || which chromium || which google-chrome) >/dev/null 2>&1 && (chromium-browser --no-sandbox --disable-gpu '${escaped}' &>/dev/null &)`, 5000);
+        const vertical = req.body.vertical || req.body.orient==='vertical' || /youtube.*shorts|m\.youtube|vertical/i.test(url);
+        const isYoutube = /youtube\.com|youtu\.be/i.test(url);
+        // PulseAudio со звуком: проверяем и стартуем если упал
+        try {
+          const chk = await pulseRun('pulseaudio --check 2>&1; echo $?');
+          if (!chk.out || !chk.out.trim().endsWith('0')) {
+            await pulseRun('pulseaudio --start --disallow-exit --exit-idle-time=-1 2>&1');
+            await pulseRun('pactl set-sink-volume @DEFAULT_SINK@ 90% 2>/dev/null || true');
+            console.log('  🔊 PulseAudio auto-started for browser');
+          }
+        } catch {}
+        // Вертикальный ютуб: узкое окно 412×915 (как Pixel), горизонтальный 1280×720
+        const winSize = vertical ? '412,915' : '1280,720';
+        const userData = vertical ? '/tmp/chrome-vertical' : '/tmp/chrome-hub';
+        // Хром с поддержкой звука и автоплея
+        const chromeFlags = `--no-sandbox --disable-gpu --autoplay-policy=no-user-gesture-required --disable-features=PreloadMediaEngagementData,AutoplayIgnoreWebAudio --use-fake-ui-for-media-stream --window-size=${winSize} --window-position=20,20 --user-data-dir=${userData} --no-first-run --disable-infobars --disable-dev-shm-usage`;
+        // Мобильный user-agent для вертикального ютуба (чтобы открылся m.youtube.com/shorts)
+        const uaFlag = (vertical && isYoutube) ? `--user-agent='Mozilla/5.0 (Linux; Android 10; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36'` : '';
+        let r = await runOnDisplay(`(which chromium-browser || which chromium || which google-chrome) >/dev/null 2>&1 && (chromium-browser ${chromeFlags} ${uaFlag} '${escaped}' &>/dev/null &)`, 6000);
+        if (!r.ok || r.err) r = await runOnDisplay(`(which chromium-browser || which chromium || which google-chrome) >/dev/null 2>&1 && (chromium-browser ${chromeFlags} '${escaped}' &>/dev/null &)`, 5000);
         if (!r.ok || r.err) r = await runOnDisplay(`(which firefox >/dev/null 2>&1 && firefox '${escaped}' &>/dev/null &) || (xdg-open '${escaped}' &>/dev/null &)`, 5000);
-        return res.json({ ok: true, message: `Браузер запущен: ${url}` });
+        // Громкость на макс и снять mute чтобы ютуб был слышен
+        try { await pulseRun('pactl set-sink-mute @DEFAULT_SINK@ 0 2>/dev/null || true'); await pulseRun('pactl set-sink-volume @DEFAULT_SINK@ 90% 2>/dev/null || true'); } catch {}
+        return res.json({ ok: true, message: `Браузер запущен${vertical?' (вертикально)':''}: ${url} — звук вкл.`, vertical, winSize });
       }
       case 'phone': {
         // Try to start Android emulator on the local display

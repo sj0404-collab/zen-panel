@@ -236,14 +236,14 @@ async function loadGit() {
 }
 
 // ===== LINUX DESKTOP: launch browser on VNC =====
-async function linuxRunBrowser(url) {
+async function linuxRunBrowser(url, vertical) {
   if (!url) return;
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
   try {
     const r = await fetch('/api/linux/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'browser', url })
+      body: JSON.stringify({ action: 'browser', url, vertical: !!vertical })
     });
     const d = await r.json();
     if (!d.ok) console.warn('linuxRunBrowser:', d.error);
@@ -1987,14 +1987,28 @@ function hubBrowserGo(url){
   try{ localStorage.setItem('hub_browser_last', url); }catch{}
   showPage('browser');
 }
-function browserOpenDesktop(url){
+function browserOpenDesktop(url, vertical){
   if(!url) url = document.getElementById('browser-url-main')?.value || '';
   if(!url) return;
   url=url.trim(); if(!/^https?:\/\//i.test(url)) url='https://'+url;
-  linuxRunBrowser(url);
-  fmInfo('Браузер на рабочем столе: '+url+' → смотри в «Экран»');
+  // vertical=true для ютуб Shorts — узкое окно + мобильный UA + звук
+  if(vertical===true) url = url; // флаг передаётся в API
+  linuxRunBrowser(url, vertical);
+  fmInfo((vertical?'📱 Вертикальный браузер: ':'🖥 Браузер: ')+url+' → смотри в «Экран» (звук вкл)');
   showPage('linux');
-  setTimeout(()=>{ linuxConnect(); }, 800);
+  setTimeout(()=>{ linuxConnect(); }, 900);
+}
+async function pulseToggleMute(){
+  try{
+    const r=await fetch('/api/pulse/mute',{method:'POST'});
+    const d=await r.json();
+    fmInfo(d.muted ? '🔇 Мьют' : '🔊 Звук вкл');
+  }catch{}
+}
+async function pulseSetVol(v){
+  const lbl=document.getElementById('browser-vol-label');
+  if(lbl) lbl.textContent=v+'%';
+  try{ await fetch('/api/pulse/volume',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume: Number(v)})}); }catch{}
 }
 function browserBack(){ if(browserIdx>0){ browserIdx--; const u=browserHist[browserIdx]; document.getElementById('browser-url-main').value=u; document.getElementById('browser-frame').src=u; } }
 function browserForward(){ if(browserIdx < browserHist.length-1){ browserIdx++; const u=browserHist[browserIdx]; document.getElementById('browser-url-main').value=u; document.getElementById('browser-frame').src=u; } }

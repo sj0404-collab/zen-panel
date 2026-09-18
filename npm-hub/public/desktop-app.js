@@ -1699,11 +1699,11 @@ function hubBrowserGo(url){
   try{localStorage.setItem('hub_browser_last',url);}catch{}
   showPage('browser');
 }
-function browserOpenDesktop(url){
+function browserOpenDesktop(url, vertical){
   if(!url) url=document.getElementById('browser-url-desk')?.value||'';
   if(!url) return;
   url=url.trim(); if(!/^https?:\/\//i.test(url)) url='https://'+url;
-  linuxRunBrowser(url);
+  linuxRunBrowser(url, !!vertical);
   showPage('linux'); setTimeout(()=>linuxConnect(),800);
 }
 function browserAgentHintDesk(url){
@@ -1714,6 +1714,10 @@ function browserAgentHintDesk(url){
   a.textContent=url; a.href=url; hint.style.display='flex';
 }
 window.openInHubBrowser=(url)=>{ browserAgentHintDesk(url); hubBrowserGo(url); };
+async function pulseToggleMuteDesk(){
+  try{ const r=await fetch('/api/pulse/mute',{method:'POST'}); const d=await r.json(); }catch{}
+}
+
 async function linuxStatus(prefix) {
   const pfx = prefix || '';
   const el = document.getElementById(pfx ? 'linux-status-desktop' : 'linux-status');
@@ -1842,14 +1846,14 @@ async function pulseSetVol(val) {
 }
 
 // ===== LINUX DESKTOP: launch browser on VNC =====
-async function linuxRunBrowser(url) {
+async function linuxRunBrowser(url, vertical) {
   if (!url) return;
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
   try {
     const r = await fetch('/api/linux/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'browser', url })
+      body: JSON.stringify({ action: 'browser', url, vertical: !!vertical })
     });
     const d = await r.json();
     if (!d.ok) console.warn('linuxRunBrowser:', d.error);

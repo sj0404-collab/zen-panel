@@ -393,10 +393,21 @@
           <button class="btn btn-sm" onclick="browserForward()" title="Вперёд">→</button>
           <button class="btn btn-sm" onclick="browserRefresh()" title="Обновить">⟳</button>
           <button class="btn btn-sm" onclick="browserHome()" title="Домой">🏠</button>
-          <input type="text" id="browser-url-main" placeholder="https://..." value="https://www.google.com" style="flex:1;min-width:120px;padding:8px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:13px;outline:none" onkeydown="if(event.key==='Enter')hubBrowserGo(this.value)">
-          <button class="btn btn-p btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-main').value)" title="Открыть">Go</button>
-          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-url-main').value)" title="Открыть на рабочем столе Linux (видно в Экране)">🖥</button>
+          <input type="text" id="browser-url-main" placeholder="https://..." value="https://www.youtube.com" style="flex:1;min-width:120px;padding:8px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:13px;outline:none" onkeydown="if(event.key==='Enter')hubBrowserGo(this.value)">
+          <button class="btn btn-p btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-main').value)" title="Открыть в iframe">Go</button>
+          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-url-main').value,false)" title="Открыть на рабочем столе (горизонтально)">🖥</button>
+          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-url-main').value,true)" title="Вертикальный Chrome для ютуб Shorts (412×915) со звуком">📱</button>
           <button class="btn btn-sm" onclick="browserCopyUrl()" title="Копировать">⧉</button>
+        </div>
+        <div style="display:flex;gap:6px;padding:6px 8px;background:rgba(188,140,255,.08);border-bottom:1px solid var(--bdr);align-items:center;flex-wrap:wrap;font-size:11px;color:var(--t3)">
+          <span>🎧 Звук:</span>
+          <button class="btn btn-sm" onclick="pulseToggleMute()" title="Мьют">🔇</button>
+          <input type="range" id="browser-vol" min="0" max="100" value="90" style="width:80px" oninput="pulseSetVol(this.value)">
+          <span id="browser-vol-label" style="font-family:monospace">90%</span>
+          <span style="margin-left:8px">📱 Вертикаль:</span>
+          <button class="btn btn-sm" onclick="hubBrowserGo('https://m.youtube.com/shorts/')">Shorts</button>
+          <button class="btn btn-sm" onclick="hubBrowserGo('https://www.youtube.com')">Горизонт</button>
+          <span style="margin-left:auto;font-size:10px;color:var(--ok)">✓ Работает пока агент занят</span>
         </div>
         <div id="browser-agent-hint" style="display:none;padding:8px 10px;background:rgba(88,166,255,.12);border-bottom:1px solid var(--bdr);font-size:12px;color:var(--acc);align-items:center;gap:8px">
           <span>🔗 Агент прислал ссылку:</span><a id="browser-agent-url" href="#" target="_blank" style="color:var(--acc);word-break:break-all"></a>
@@ -415,7 +426,7 @@
           <div id="browser-placeholder" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--t3);text-align:center;padding:20px">
             <div style="font-size:48px;margin-bottom:12px">🌐</div>
             <div style="font-size:16px;font-weight:600;color:var(--t2);margin-bottom:8px">Chrome вкладка</div>
-            <div style="font-size:13px;max-width:320px;line-height:1.5">Введи URL и нажми Go — откроется прямо тут (если сайт разрешает iframe).<br>Если видишь белый экран — нажми 🖥, браузер откроется на рабочем столе Linux и ты увидишь его в «Экране» в реальном времени.</div>
+            <div style="font-size:13px;max-width:320px;line-height:1.5">Введи URL и нажми <b>Go</b> — откроется тут. <b>🖥</b> = на рабочем столе Linux (горизонтально), <b>📱</b> = вертикальный Chrome 412×915 для YouTube Shorts <b>со звуком</b> (PulseAudio).<br>Пока агент занят в терминале — можешь серфить, он не трогает твой Chrome (отдельный профиль).</div>
             <div style="margin-top:16px;display:flex;gap:8px">
               <button class="btn btn-p" onclick="hubBrowserGo('https://www.google.com')">Открыть Google</button>
               <button class="btn" onclick="showPage('linux')">→ Экран</button>
