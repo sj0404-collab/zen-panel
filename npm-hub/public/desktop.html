@@ -189,6 +189,7 @@
       <button class="tb" onclick="openStandaloneTerminal()">Терминал</button>
       <button class="tb" onclick="showPage('files')">Файлы</button>
       <button class="tb" onclick="showPage('linux')">🖥 Экран</button>
+      <button class="tb" onclick="showPage('browser')">🌐 Chrome</button>
       <button class="tb" onclick="showPage('git')">🐙 Git</button>
     </div>
     <div class="topbar-right">
@@ -304,6 +305,26 @@
       </div>
 
       <!-- GIT — local + GitHub repos + builds -->
+      <!-- BROWSER — Chrome вкладка -->
+      <div class="page" id="p-browser" style="padding:0;flex-direction:column;height:100%">
+        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);align-items:center;flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-desk')?.value||'')">←</button>
+          <button class="btn btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-desk')?.value||'')">→</button>
+          <button class="btn btn-sm" onclick="document.getElementById('browser-frame-desk').src=document.getElementById('browser-frame-desk').src">⟳</button>
+          <input type="text" id="browser-url-desk" placeholder="https://..." value="https://www.google.com" style="flex:1;min-width:160px;padding:6px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')hubBrowserGo(this.value)">
+          <button class="btn btn-p btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-desk').value)">Go</button>
+          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-url-desk').value)">🖥</button>
+        </div>
+        <div id="browser-agent-hint-desk" style="display:none;padding:8px;background:rgba(88,166,255,.12);border-bottom:1px solid var(--bdr);font-size:12px;color:var(--acc);gap:8px;align-items:center">
+          <span>🔗 Агент:</span><a id="browser-agent-url-desk" href="#" style="color:var(--acc)"></a>
+          <button class="btn btn-p btn-sm" onclick="hubBrowserGo(document.getElementById('browser-agent-url-desk').textContent)">Открыть</button>
+          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-agent-url-desk').textContent)">🖥</button>
+        </div>
+        <div style="flex:1;position:relative;background:#fff;display:flex;flex-direction:column">
+          <iframe id="browser-frame-desk" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads" style="flex:1;width:100%;border:none;background:#fff;display:block" allow="clipboard-read; clipboard-write"></iframe>
+          <div id="browser-placeholder-desk" style="position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#0a0e14;color:var(--t3);flex-direction:column">Введите URL</div>
+        </div>
+      </div>
       <div class="page" id="p-git">
         <div class="ph"><h1>🐙 Git</h1><p>Локальный репозиторий + GitHub аккаунт: все репозитории, ветки, коммиты, сборки</p></div>
 

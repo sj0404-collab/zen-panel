@@ -18,6 +18,11 @@
 
     /* ===== TOPBAR ===== */
     .topbar{height:48px;background:var(--bg2);display:flex;align-items:center;padding:0 12px;gap:8px;border-bottom:1px solid var(--bdr);flex-shrink:0;padding-top:max(0px,env(safe-area-inset-top))}
+    .live-dot{width:8px;height:8px;border-radius:50%;background:var(--t3);display:inline-block;margin-left:8px}
+    .live-dot.on{background:var(--err);box-shadow:0 0 8px rgba(248,81,73,.6);animation:livepulse 1s infinite}
+    @keyframes livepulse{50%{opacity:.3}}
+    .live-label{font-size:10px;color:var(--t2);margin-left:4px}
+    .live-label.on{color:var(--err)}
     .logo{font-size:16px;font-weight:800;background:linear-gradient(135deg,var(--acc),var(--pur));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
     .logo .hub-ver{font-size:9px;font-weight:600;color:var(--t3);-webkit-text-fill-color:var(--t3);background:none;margin-left:4px;vertical-align:super}
     .topbar-right{margin-left:auto;display:flex;align-items:center;gap:6px}
@@ -381,6 +386,46 @@
         <iframe id="cp-frame" style="position:absolute;width:1px;height:1px;border:none;opacity:0;pointer-events:none" allowfullscreen></iframe>
       </div>
 
+      <!-- BROWSER — Chrome вкладка для ссылок от агента -->
+      <div class="page" id="p-browser" style="padding:0;flex-direction:column;height:100%">
+        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);align-items:center;flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="browserBack()" title="Назад">←</button>
+          <button class="btn btn-sm" onclick="browserForward()" title="Вперёд">→</button>
+          <button class="btn btn-sm" onclick="browserRefresh()" title="Обновить">⟳</button>
+          <button class="btn btn-sm" onclick="browserHome()" title="Домой">🏠</button>
+          <input type="text" id="browser-url-main" placeholder="https://..." value="https://www.google.com" style="flex:1;min-width:120px;padding:8px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:13px;outline:none" onkeydown="if(event.key==='Enter')hubBrowserGo(this.value)">
+          <button class="btn btn-p btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-main').value)" title="Открыть">Go</button>
+          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-url-main').value)" title="Открыть на рабочем столе Linux (видно в Экране)">🖥</button>
+          <button class="btn btn-sm" onclick="browserCopyUrl()" title="Копировать">⧉</button>
+        </div>
+        <div id="browser-agent-hint" style="display:none;padding:8px 10px;background:rgba(88,166,255,.12);border-bottom:1px solid var(--bdr);font-size:12px;color:var(--acc);align-items:center;gap:8px">
+          <span>🔗 Агент прислал ссылку:</span><a id="browser-agent-url" href="#" target="_blank" style="color:var(--acc);word-break:break-all"></a>
+          <button class="btn btn-p btn-sm" onclick="hubBrowserGo(document.getElementById('browser-agent-url').textContent)">Открыть</button>
+          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-agent-url').textContent)">🖥</button>
+          <span style="margin-left:auto;cursor:pointer" onclick="document.getElementById('browser-agent-hint').style.display='none'">✕</span>
+        </div>
+        <div id="browser-chips" style="display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);overflow-x:auto;flex-shrink:0">
+          <button class="btn btn-sm" onclick="hubBrowserGo('https://www.google.com')">Google</button>
+          <button class="btn btn-sm" onclick="hubBrowserGo('https://www.youtube.com')">YouTube</button>
+          <button class="btn btn-sm" onclick="hubBrowserGo('https://github.com')">GitHub</button>
+          <button class="btn btn-sm" onclick="hubBrowserGo('https://chat.openai.com')">ChatGPT</button>
+        </div>
+        <div style="flex:1;position:relative;background:#0a0e14;display:flex;flex-direction:column">
+          <iframe id="browser-frame" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads" style="flex:1;width:100%;border:none;background:#fff;display:none" allow="clipboard-read; clipboard-write"></iframe>
+          <div id="browser-placeholder" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--t3);text-align:center;padding:20px">
+            <div style="font-size:48px;margin-bottom:12px">🌐</div>
+            <div style="font-size:16px;font-weight:600;color:var(--t2);margin-bottom:8px">Chrome вкладка</div>
+            <div style="font-size:13px;max-width:320px;line-height:1.5">Введи URL и нажми Go — откроется прямо тут (если сайт разрешает iframe).<br>Если видишь белый экран — нажми 🖥, браузер откроется на рабочем столе Linux и ты увидишь его в «Экране» в реальном времени.</div>
+            <div style="margin-top:16px;display:flex;gap:8px">
+              <button class="btn btn-p" onclick="hubBrowserGo('https://www.google.com')">Открыть Google</button>
+              <button class="btn" onclick="showPage('linux')">→ Экран</button>
+            </div>
+            <div style="margin-top:12px;font-size:11px;color:var(--t3)">Ссылки от агента появляются сверху автоматом.</div>
+          </div>
+          <div id="browser-loading" style="display:none;position:absolute;top:8px;left:50%;transform:translateX(-50%);background:var(--bg3);color:var(--t1);font-size:11px;padding:4px 10px;border-radius:12px;border:1px solid var(--bdr)">Загрузка…</div>
+        </div>
+      </div>
+
       <!-- GIT — local + GitHub repos + builds -->
       <div class="page" id="p-git">
         <div class="ph"><h1>🐙 Git</h1><p>Локальный репозиторий + GitHub: все репозитории, ветки, коммиты, сборки</p></div>
@@ -432,6 +477,17 @@
   </div>
 
   <!-- BOTTOM NAV -->
+  <!-- LIVE PIP: показывает экран когда агент работает -->
+  <div id="live-pip" style="display:none;position:fixed;bottom:72px;right:10px;width:180px;height:110px;background:#000;border:1px solid var(--acc);border-radius:10px;overflow:hidden;z-index:85;box-shadow:0 6px 20px rgba(0,0,0,.5)">
+    <div style="height:18px;background:var(--acc);color:#000;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:space-between;padding:0 6px">
+      <span>● LIVE Экран · агент</span><span onclick="closeLivePip()" style="cursor:pointer;padding:0 4px">✕</span>
+    </div>
+    <div id="live-pip-body" style="height:calc(100% - 18px);position:relative;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden">
+      <div id="live-pip-vnc" style="width:100%;height:100%;transform:scale(0.5);transform-origin:top left;pointer-events:none"></div>
+      <div id="live-pip-status" style="position:absolute;bottom:4px;left:6px;font-size:8px;color:#fff;background:rgba(0,0,0,.6);padding:2px 6px;border-radius:8px">тестирует…</div>
+      <button onclick="showPage('linux');closeLivePip()" style="position:absolute;inset:0;opacity:0;cursor:pointer" title="Открыть экран"></button>
+    </div>
+  </div>
   <div class="bottom-nav">
     <button class="nav-btn" id="nav-dashboard" onclick="showPage('dashboard')">
       <span class="nav-ico">📊</span>
@@ -448,6 +504,10 @@
     <button class="nav-btn" id="nav-linux" onclick="showPage('linux')">
       <span class="nav-ico">🖥</span>
       <span class="nav-label">Экран</span>
+    </button>
+    <button class="nav-btn" id="nav-browser" onclick="showPage('browser')">
+      <span class="nav-ico">🌐</span>
+      <span class="nav-label">Chrome</span>
     </button>
     <button class="nav-btn" id="nav-git" onclick="showPage('git')">
       <span class="nav-ico">🐙</span>

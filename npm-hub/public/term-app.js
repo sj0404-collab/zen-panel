@@ -92,7 +92,7 @@ function attachTab(meta) {
   const panel = document.createElement('div');
   panel.className = 'term-panel';
   panel.id = 'panel-' + id;
-  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span></div><div class="term-info">${dirShort}</div><button class="btn" style="padding:2px 8px;font-size:10px" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div></div><div class="term-resumed" id="resumed-${id}">✓ Восстановлено</div>`;
+  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span></div><div class="term-info">${dirShort}</div><button class="btn" style="padding:2px 8px;font-size:10px" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll"><div class="term-scroll-thumb"></div></div></div><div class="term-resumed" id="resumed-${id}">✓ Восстановлено</div>`;
   document.getElementById('term-container').appendChild(panel);
   term.open(document.getElementById('term-' + id));
   setTimeout(() => fitAddon.fit(), 30);
@@ -170,6 +170,10 @@ function attachTab(meta) {
   tabEl.innerHTML = `<div class="tab-dot" style="background:${color}"></div><span>${displayName}</span><span class="tab-x" onclick="event.stopPropagation();closeTab('${id}')">×</span>`;
   document.getElementById('tabs').appendChild(tabEl);
   td.tabEl = tabEl;
+  // виртуальный скролл + удержание для копирования
+  try{ const vp=document.getElementById('term-'+td.id).querySelector('.xterm-viewport'); }catch{}
+  td.scroll = attachTermScroll(td.id, panel);
+  td.touchHandler = setupTermTouch(document.getElementById('term-'+td.id), td.term);
 
   showEmpty(false);
   persistTabs();
@@ -197,6 +201,8 @@ function closeTab(id) {
   tab.manualClose = true;
   if (tab.keepAlive) clearInterval(tab.keepAlive);
   if (tab.resizeObs) tab.resizeObs.disconnect();
+  if (tab.scroll?.destroy) tab.scroll.destroy();
+  if (tab.touchHandler?.destroy) tab.touchHandler.destroy();
   try { if (tab.ws && tab.ws.readyState === 1) tab.ws.send(JSON.stringify({ type: 'close' })); } catch (e) {}
   tab.ws?.close();
   tab.term?.dispose();
@@ -305,6 +311,81 @@ function syncZoom() {
   document.getElementById('zoom-label').textContent = zoomLevel + '%';
   tabs.forEach(t => { t.term.options.fontSize = Math.round(14 * zoomLevel / 100); setTimeout(() => t.fitAddon?.fit(), 10); });
 }
+
+// ===== TERMINAL SCROLLBAR (виртуальный ползунок, как мышка) =====
+function attachTermScroll(id, panel){
+  const termEl=document.getElementById('term-'+id);
+  const vp=termEl.querySelector('.xterm-viewport');
+  const track=panel.querySelector('.term-scroll');
+  const thumb=panel.querySelector('.term-scroll-thumb');
+  if(!vp||!track||!thumb) return null;
+  const upd=()=>{
+    const max=vp.scrollHeight - vp.clientHeight;
+    if(max<=2){ thumb.style.display='none'; return; }
+    thumb.style.display='block';
+    const trackH=track.clientHeight;
+    const th=Math.max(24, trackH * (vp.clientHeight / vp.scrollHeight));
+    const pos= trackH<=th?0:(vp.scrollTop/max)*(trackH-th);
+    thumb.style.height=th+'px';
+    thumb.style.transform='translateY('+pos+'px)';
+  };
+  vp.addEventListener('scroll',upd);
+  let ro=null;
+  if(typeof ResizeObserver!=='undefined'){ ro=new ResizeObserver(upd); ro.observe(track); }
+  const resizeHandler=upd; window.addEventListener('resize',resizeHandler);
+  let dragging=false,startY=0,startTop=0;
+  const toTop=(e)=>{
+    const max=vp.scrollHeight - vp.clientHeight;
+    if(max<=0) return;
+    const trackH=track.clientHeight;
+    const th=Math.max(24, trackH * (vp.clientHeight / vp.scrollHeight));
+    const ratio=trackH-th; const dy=e.clientY-startY;
+    vp.scrollTop=Math.max(0,Math.min(1,(startTop/max)*ratio+dy)/ratio)*max;
+    e.preventDefault();
+  };
+  thumb.addEventListener('pointerdown',(e)=>{dragging=true; startY=e.clientY; startTop=vp.scrollTop; try{thumb.setPointerCapture(e.pointerId);}catch{} e.preventDefault();});
+  thumb.addEventListener('pointermove',(e)=>{ if(dragging) toTop(e); });
+  const endDrag=()=>{dragging=false;};
+  thumb.addEventListener('pointerup',endDrag); thumb.addEventListener('pointercancel',endDrag);
+  track.addEventListener('pointerdown',(e)=>{
+    if(e.target===thumb) return;
+    const max=vp.scrollHeight - vp.clientHeight;
+    if(max<=0) return;
+    const rect=track.getBoundingClientRect();
+    const ratio=(e.clientY-rect.top-14)/rect.height;
+    vp.scrollTop=max*Math.max(0,Math.min(1,ratio));
+    e.preventDefault();
+  });
+  upd();
+  return{upd,destroy(){ if(ro) ro.disconnect(); window.removeEventListener('resize',resizeHandler); }};
+}
+
+// ===== LONG-PRESS COPY =====
+function setupTermTouch(termEl, term){
+  if(!('ontouchstart' in window) && !(navigator.maxTouchPoints||0)) return null;
+  let startY=0,startX=0,startT=0,scrolled=false,longPress=false,holdTimer=null;
+  const onStart=(e)=>{
+    const t=e.touches[0]; startY=t.clientY; startX=t.clientX; startT=Date.now(); scrolled=false; longPress=false;
+    term.blur();
+    clearTimeout(holdTimer);
+    holdTimer=setTimeout(()=>{ if(!scrolled){ longPress=true; try{if(navigator.vibrate) navigator.vibrate(30);}catch{} copySelection(); } },600);
+  };
+  const onMove=(e)=>{
+    const t=e.touches[0];
+    if(Math.abs(t.clientY-startY)>8 || Math.abs(t.clientX-startX)>8){ scrolled=true; clearTimeout(holdTimer); term.blur(); }
+  };
+  const onEnd=(e)=>{
+    clearTimeout(holdTimer);
+    if(longPress){ e.preventDefault(); return; }
+    if(!scrolled && Date.now()-startT<500){ e.preventDefault(); term.focus(); }
+  };
+  const onContext=(e)=>{ e.preventDefault(); copySelection(); return false; };
+  termEl.addEventListener('touchstart',onStart,{passive:true});
+  termEl.addEventListener('touchmove',onMove,{passive:true});
+  termEl.addEventListener('touchend',onEnd,{passive:false});
+  termEl.addEventListener('contextmenu',onContext);
+  return{destroy(){ clearTimeout(holdTimer); termEl.removeEventListener('touchstart',onStart); termEl.removeEventListener('touchmove',onMove); termEl.removeEventListener('touchend',onEnd); termEl.removeEventListener('contextmenu',onContext); }};
+}
 function toggleFullscreen() {
   if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
   else document.exitFullscreen();
@@ -315,15 +396,15 @@ function killTerm() {
   if (!activeTab || !activeTab.ws) return;
   if (activeTab.ws.readyState === WebSocket.OPEN) {
     activeTab.ws.send(JSON.stringify({ type: 'kill', signal: 'SIGINT' }));
-    activeTab.term?.focus();
   }
+  if (('ontouchstart' in window) || (navigator.maxTouchPoints||0)) { try{activeTab.term.blur();}catch{} } else { activeTab.term?.focus(); }
 }
 function sendEscape() {
   if (!activeTab || !activeTab.ws) return;
   if (activeTab.ws.readyState === WebSocket.OPEN) {
     activeTab.ws.send(JSON.stringify({ type: 'input', data: '\x1b' }));
-    activeTab.term?.focus();
   }
+  if (('ontouchstart' in window) || (navigator.maxTouchPoints||0)) { try{activeTab.term.blur();}catch{} }
 }
 function restartTerm() {
   if (!activeTab) return;

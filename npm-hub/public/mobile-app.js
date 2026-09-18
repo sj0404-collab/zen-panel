@@ -831,17 +831,45 @@ function attachTermScroll(id, panel) {
   return { upd, destroy() { if (ro) ro.disconnect(); window.removeEventListener('resize', resizeHandler); } };
 }
 
-// ===== TAP-TO-FOCUS: клавиатура не открывается при прокрутке =====
+// ===== TAP-TO-FOCUS + LONG-PRESS COPY: клавиатура не открывается при прокрутке, удержание = копировать =====
 function setupTermTouch(termEl, term) {
   if (!isTouch) return null;
-  let startY = 0, startT = 0, scrolled = false;
-  const onStart = (e) => { startY = e.touches[0].clientY; startT = Date.now(); scrolled = false; term.blur(); };
-  const onMove = (e) => { if (Math.abs(e.touches[0].clientY - startY) > 8) scrolled = true; if (scrolled) term.blur(); };
-  const onEnd = (e) => { if (!scrolled && Date.now() - startT < 500) { e.preventDefault(); term.focus(); } };
+  let startY = 0, startX = 0, startT = 0, scrolled = false, longPress = false, holdTimer = null;
+  const onStart = (e) => {
+    const t = e.touches[0];
+    startY = t.clientY; startX = t.clientX; startT = Date.now(); scrolled = false; longPress = false;
+    term.blur();
+    // Долгое удержание 600мс без движения → копировать
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      if (!scrolled) {
+        longPress = true;
+        // Вибрация если доступна
+        try { if (navigator.vibrate) navigator.vibrate(30); } catch {}
+        copySelection();
+      }
+    }, 600);
+  };
+  const onMove = (e) => {
+    const t = e.touches[0];
+    if (Math.abs(t.clientY - startY) > 8 || Math.abs(t.clientX - startX) > 8) {
+      scrolled = true;
+      clearTimeout(holdTimer);
+      term.blur();
+    }
+  };
+  const onEnd = (e) => {
+    clearTimeout(holdTimer);
+    if (longPress) { e.preventDefault(); return; }
+    if (!scrolled && Date.now() - startT < 500) { e.preventDefault(); term.focus(); }
+  };
+  // Предотвращаем контекстное меню браузера, оставляем своё копирование
+  const onContext = (e) => { e.preventDefault(); copySelection(); return false; };
   termEl.addEventListener('touchstart', onStart, { passive: true });
   termEl.addEventListener('touchmove', onMove, { passive: true });
   termEl.addEventListener('touchend', onEnd, { passive: false });
-  return { destroy() { termEl.removeEventListener('touchstart', onStart); termEl.removeEventListener('touchmove', onMove); termEl.removeEventListener('touchend', onEnd); } };
+  termEl.addEventListener('contextmenu', onContext);
+  return { destroy() { clearTimeout(holdTimer); termEl.removeEventListener('touchstart', onStart); termEl.removeEventListener('touchmove', onMove); termEl.removeEventListener('touchend', onEnd); termEl.removeEventListener('contextmenu', onContext); } };
 }
 
 async function createTerm(toolId, cwdOverride, plainTerminal) {
@@ -1142,6 +1170,8 @@ function sendKey(key) {
   if (activeTab.socket.readyState === WebSocket.OPEN) {
     activeTab.socket.send(JSON.stringify({ type: 'input', data: key }));
   }
+  // Не фокусируем терминал на таче, чтобы клавиатура не всплывала при тапе по экранным кнопкам
+  if (isTouch) { try { activeTab.term.blur(); } catch {} }
 }
 
 // ===== FILE MANAGER =====
@@ -1931,6 +1961,108 @@ function linuxFullscreen() {
   if (frame.requestFullscreen) frame.requestFullscreen();
   else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
 }
+
+// ===== BROWSER TAB (Chrome вкладка) =====
+let browserHist = [], browserIdx = -1;
+function hubBrowserGo(url){
+  if(!url) return;
+  url = url.trim();
+  if(!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  const input = document.getElementById('browser-url-main');
+  if(input) input.value = url;
+  const frame = document.getElementById('browser-frame');
+  const ph = document.getElementById('browser-placeholder');
+  const loading = document.getElementById('browser-loading');
+  if(!frame) return;
+  browserHist = browserHist.slice(0, browserIdx+1);
+  browserHist.push(url);
+  browserIdx = browserHist.length-1;
+  frame.style.display='block';
+  if(ph) ph.style.display='none';
+  if(loading) loading.style.display='block';
+  frame.src = url;
+  frame.onload = ()=>{ if(loading) loading.style.display='none'; };
+  frame.onerror = ()=>{ if(loading) loading.style.display='none'; };
+  setTimeout(()=>{ if(loading) loading.style.display='none'; }, 4000);
+  try{ localStorage.setItem('hub_browser_last', url); }catch{}
+  showPage('browser');
+}
+function browserOpenDesktop(url){
+  if(!url) url = document.getElementById('browser-url-main')?.value || '';
+  if(!url) return;
+  url=url.trim(); if(!/^https?:\/\//i.test(url)) url='https://'+url;
+  linuxRunBrowser(url);
+  fmInfo('Браузер на рабочем столе: '+url+' → смотри в «Экран»');
+  showPage('linux');
+  setTimeout(()=>{ linuxConnect(); }, 800);
+}
+function browserBack(){ if(browserIdx>0){ browserIdx--; const u=browserHist[browserIdx]; document.getElementById('browser-url-main').value=u; document.getElementById('browser-frame').src=u; } }
+function browserForward(){ if(browserIdx < browserHist.length-1){ browserIdx++; const u=browserHist[browserIdx]; document.getElementById('browser-url-main').value=u; document.getElementById('browser-frame').src=u; } }
+function browserRefresh(){ const f=document.getElementById('browser-frame'); if(f && f.src) f.src=f.src; }
+function browserHome(){ hubBrowserGo('https://www.google.com'); }
+function browserCopyUrl(){ const u=document.getElementById('browser-url-main')?.value||''; if(!u) return; navigator.clipboard?.writeText(u).then(()=>fmInfo('Скопировано: '+u)).catch(()=>prompt('Копируй:',u)); }
+function browserAgentHint(url){
+  if(!url) return;
+  const hint=document.getElementById('browser-agent-hint');
+  const a=document.getElementById('browser-agent-url');
+  if(!hint||!a) return;
+  a.textContent=url; a.href=url;
+  hint.style.display='flex';
+  const btn=document.getElementById('nav-browser');
+  if(btn){ btn.style.animation='livepulse 1s 3'; setTimeout(()=>btn.style.animation='',3000); }
+  fmInfo('🔗 Агент прислал ссылку: '+url);
+}
+window.openInHubBrowser = (url)=>{ browserAgentHint(url); hubBrowserGo(url); };
+window.addEventListener('message', (e)=>{
+  try{
+    const d = typeof e.data==='string' ? JSON.parse(e.data) : e.data;
+    if(d && d.type==='hub-open-url' && d.url) browserAgentHint(d.url);
+  }catch{}
+});
+let lastAgentUrl = '';
+async function pollAgentUrls(){
+  try{
+    const last = localStorage.getItem('agent_last_url');
+    if(last && last!==lastAgentUrl && /^https?:\/\//.test(last)){
+      lastAgentUrl=last;
+      browserAgentHint(last);
+    }
+  }catch{}
+}
+setInterval(pollAgentUrls, 8000);
+
+// ===== LIVE DESKTOP PIP =====
+function closeLivePip(){ const el=document.getElementById('live-pip'); if(el) el.style.display='none'; }
+let livePollTimer=null;
+function startLivePoll(){
+  if(livePollTimer) return;
+  livePollTimer=setInterval(async ()=>{
+    try{
+      const v = await fetch('/api/vnc/status').then(r=>r.json()).catch(()=>({ok:false}));
+      const s = await fetch('/api/sessions').then(r=>r.json()).catch(()=>({success:false}));
+      const vncLive = !!(v && (v.ok || v.url));
+      const hasActive = !!(s && s.sessions && s.sessions.length);
+      const pip = document.getElementById('live-pip');
+      const dot = document.getElementById('live-dot');
+      const lbl = document.getElementById('live-label');
+      if(vncLive && hasActive){
+        if(pip) pip.style.display='block';
+        if(dot) dot.classList.add('on');
+        if(lbl){ lbl.textContent='● агент на экране'; lbl.classList.add('on'); }
+        const body=document.getElementById('live-pip-vnc');
+        if(body && !body.dataset.loaded){
+          body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--acc);font-size:10px">LIVE<br>Экран</div>';
+          body.dataset.loaded='1';
+        }
+      } else {
+        if(dot) dot.classList.remove('on');
+        if(lbl) lbl.classList.remove('on');
+      }
+    }catch{}
+  }, 5000);
+}
+setTimeout(startLivePoll, 2000);
+
 if (document.getElementById('p-linux')) linuxStatus();
 
 // ===== BROWSER (Chrome / YouTube) =====

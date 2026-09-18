@@ -623,17 +623,30 @@ function attachTermScroll(id, panel) {
   return { upd, destroy() { if (ro) ro.disconnect(); window.removeEventListener('resize', resizeHandler); } };
 }
 
-// ===== TAP-TO-FOCUS: клавиатура не открывается при прокрутке =====
+// ===== TAP-TO-FOCUS + LONG-PRESS COPY =====
 function setupTermTouch(termEl, term) {
   if (!isTouch) return null;
-  let startY = 0, startT = 0, scrolled = false;
-  const onStart = (e) => { startY = e.touches[0].clientY; startT = Date.now(); scrolled = false; term.blur(); };
-  const onMove = (e) => { if (Math.abs(e.touches[0].clientY - startY) > 8) scrolled = true; if (scrolled) term.blur(); };
-  const onEnd = (e) => { if (!scrolled && Date.now() - startT < 500) { e.preventDefault(); term.focus(); } };
+  let startY = 0, startX = 0, startT = 0, scrolled = false, longPress=false, holdTimer=null;
+  const onStart = (e) => {
+    const tt=e.touches[0]; startY=tt.clientY; startX=tt.clientX; startT=Date.now(); scrolled=false; longPress=false;
+    term.blur(); clearTimeout(holdTimer);
+    holdTimer=setTimeout(()=>{ if(!scrolled){ longPress=true; try{if(navigator.vibrate) navigator.vibrate(30);}catch{} copySelection(); } },600);
+  };
+  const onMove = (e) => {
+    const tt=e.touches[0];
+    if(Math.abs(tt.clientY-startY)>8 || Math.abs(tt.clientX-startX)>8){ scrolled=true; clearTimeout(holdTimer); term.blur(); }
+  };
+  const onEnd = (e) => {
+    clearTimeout(holdTimer);
+    if(longPress){ e.preventDefault(); return; }
+    if(!scrolled && Date.now()-startT<500){ e.preventDefault(); term.focus(); }
+  };
+  const onContext=(e)=>{ e.preventDefault(); copySelection(); return false; };
   termEl.addEventListener('touchstart', onStart, { passive: true });
   termEl.addEventListener('touchmove', onMove, { passive: true });
   termEl.addEventListener('touchend', onEnd, { passive: false });
-  return { destroy() { termEl.removeEventListener('touchstart', onStart); termEl.removeEventListener('touchmove', onMove); termEl.removeEventListener('touchend', onEnd); } };
+  termEl.addEventListener('contextmenu', onContext);
+  return { destroy() { clearTimeout(holdTimer); termEl.removeEventListener('touchstart', onStart); termEl.removeEventListener('touchmove', onMove); termEl.removeEventListener('touchend', onEnd); termEl.removeEventListener('contextmenu', onContext); } };
 }
 
 async function createTerm(toolId, cwdOverride, plainTerminal) {
@@ -1671,6 +1684,36 @@ function cloudPhoneFullscreen(prefix) {
 if (document.getElementById('p-linux')) linuxAutoConnect();
 
 // ===== LINUX DESKTOP (VNC) =====
+
+let browserHistDesk=[], browserIdxDesk=-1;
+function hubBrowserGo(url){
+  if(!url) return;
+  url=url.trim(); if(!/^https?:\/\//i.test(url)) url='https://'+url;
+  const inp=document.getElementById('browser-url-desk');
+  if(inp) inp.value=url;
+  const frame=document.getElementById('browser-frame-desk');
+  if(!frame) return;
+  browserHistDesk=browserHistDesk.slice(0,browserIdxDesk+1);
+  browserHistDesk.push(url); browserIdxDesk=browserHistDesk.length-1;
+  frame.src=url;
+  try{localStorage.setItem('hub_browser_last',url);}catch{}
+  showPage('browser');
+}
+function browserOpenDesktop(url){
+  if(!url) url=document.getElementById('browser-url-desk')?.value||'';
+  if(!url) return;
+  url=url.trim(); if(!/^https?:\/\//i.test(url)) url='https://'+url;
+  linuxRunBrowser(url);
+  showPage('linux'); setTimeout(()=>linuxConnect(),800);
+}
+function browserAgentHintDesk(url){
+  if(!url) return;
+  const hint=document.getElementById('browser-agent-hint-desk');
+  const a=document.getElementById('browser-agent-url-desk');
+  if(!hint||!a) return;
+  a.textContent=url; a.href=url; hint.style.display='flex';
+}
+window.openInHubBrowser=(url)=>{ browserAgentHintDesk(url); hubBrowserGo(url); };
 async function linuxStatus(prefix) {
   const pfx = prefix || '';
   const el = document.getElementById(pfx ? 'linux-status-desktop' : 'linux-status');
