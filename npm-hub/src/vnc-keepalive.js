@@ -161,7 +161,7 @@ const paintCheck = async (size = 24) => {
 const REQUIRED_BINS = [
   ['Xvfb', 'xvfb'], ['openbox', 'openbox'], ['x11vnc', 'x11vnc'], ['xterm', 'xterm'],
   ['tint2', 'tint2'], ['idesk', 'idesk'], ['feh', 'feh'], ['convert', 'imagemagick'],
-  ['pcmanfm', 'pcmanfm'], ['xdotool', 'xdotool']
+  ['pcmanfm', 'pcmanfm'], ['xdotool', 'xdotool'], ['pulseaudio', 'pulseaudio']
 ];
 let lastPkgTry = 0;
 let aptUpdated = false;
