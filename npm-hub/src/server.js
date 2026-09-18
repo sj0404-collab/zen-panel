@@ -936,6 +936,30 @@ app.post('/api/runner/restart', async (req, res) => {
 });
 
 // ─── GIT: status / diff / log for a local repo ─────────────────────────
+// Repo discovery (declared BEFORE GIT_ROOT below: the GIT_ROOT IIFE runs at
+// module load and calls it - a const declared later is in the temporal dead
+// zone there, and the server died at startup with
+// "Cannot access 'repoCandidates' before initialization" on any machine
+// without GITHUB_WORKSPACE in the environment, i.e. every local run).
+const repoCandidates = () => {
+  const found = [];
+  const walk = (dir, depth) => {
+    if (depth > 3 || found.length) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (!e.isDirectory() || e.name.startsWith('.') || e.name === 'node_modules' || e.name === 'actions-runner') continue;
+      if (fs.existsSync(path.join(dir, e.name, '.git'))) {
+        found.push(path.join(dir, e.name));
+        return;
+      }
+      if (depth < 3) walk(path.join(dir, e.name), depth + 1);
+    }
+  };
+  walk(WORK_DIR, 1);
+  return found;
+};
+
 // This repository root: the runner checkout (workspace/fork) when on Actions,
 // otherwise the first repo discovered in the work dir.
 const GIT_ROOT = (() => {
@@ -957,25 +981,6 @@ const gitRun = (repo, args) => new Promise((resolve) => {
   child.on('close', () => resolve(out.join('').trimEnd()));
   child.on('error', () => resolve(''));
 });
-
-const repoCandidates = () => {
-  const found = [];
-  const walk = (dir, depth) => {
-    if (depth > 3 || found.length) return;
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      if (!e.isDirectory() || e.name.startsWith('.') || e.name === 'node_modules' || e.name === 'actions-runner') continue;
-      if (fs.existsSync(path.join(dir, e.name, '.git'))) {
-        found.push(path.join(dir, e.name));
-        return;
-      }
-      if (depth < 3) walk(path.join(dir, e.name), depth + 1);
-    }
-  };
-  walk(WORK_DIR, 1);
-  return found;
-};
 
 const resolveRepo = async (p) => {
   if (p && fs.existsSync(p) && fs.statSync(p).isDirectory()) {
@@ -2406,18 +2411,29 @@ app.get('/api/gh/repos/:owner/:repo/releases', async (req, res) => {
 let tunnelInfo = null; // { url, type, close }
 
 // ─── START ───
+// One attempt at a time: each listen() call stacks its own 'listening'
+// callback on the shared server object, so a failed attempt left its callback
+// attached and the successful retry fired BOTH onReady(oldPort) and
+// onReady(newPort) - measured: double startup banner, and in --tunnel mode
+// that would open two tunnels. Remove the previous attempt's listeners before
+// retrying.
 function tryListen(port, onReady) {
-  const srv = server.listen(port, HOST, () => onReady(port, srv));
-  srv.on('error', (err) => {
+  const ready = () => onReady(port, server);
+  const onError = (err) => {
     if (err.code === 'EADDRINUSE') {
       const next = Number(port) + 1;
       console.log(`  ⚠ Port ${port} is busy, trying ${next}...`);
+      server.removeListener('listening', ready);
+      server.removeListener('error', onError);
       tryListen(next, onReady);
     } else {
       console.error(`  ❌ Server error: ${err.message}`);
       process.exit(1);
     }
-  });
+  };
+  server.once('listening', ready);
+  server.on('error', onError);
+  server.listen(port, HOST);
 }
 
 function onReady(actualPort) {
