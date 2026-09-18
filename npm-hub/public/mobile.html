@@ -344,46 +344,35 @@
         </div>
       </div>
 
-<!-- LINUX DESKTOP (VNC) + Phone + Browser + Audio — merged -->
+<!-- LINUX DESKTOP (VNC) — ОДИН ЭКРАН ДЛЯ ВСЕГО (RDP/VNC) -->
       <div class="page" id="p-linux" style="padding:0;flex-direction:column;height:100%">
         <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
           <span id="linux-status" class="tag">…</span>
           <button class="btn btn-p btn-sm" id="linux-open" onclick="linuxConnect()">Открыть экран</button>
           <button class="btn btn-sm" onclick="linuxFullscreen()">⛶</button>
-          <div style="flex:1"></div>
-          <span style="font-size:11px;color:var(--t3)">openbox · xterm · Mesa</span>
+          <span style="margin-left:auto;font-size:11px;color:var(--t3)">🖥 Один экран для всего</span>
+          <span style="font-size:10px;color:var(--ok)">RDP/VNC · авто-подключение</span>
         </div>
-        <div style="display:flex;gap:4px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
-          <span id="cp-status" class="tag" style="font-size:10px">📱</span>
-          <button class="btn btn-sm" id="cp-start" onclick="cloudPhoneStart()">▶ Старт</button>
-          <button class="btn btn-sm" onclick="cloudPhoneStop()">⏹ Стоп</button>
-          <button class="btn btn-sm" onclick="cloudPhoneConnect()">Подключить</button>
-          <input type="text" id="cp-url" placeholder="URL в телефоне…" value="https://www.youtube.com" style="flex:1;min-width:110px;padding:6px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')phoneBrowserOpen(this.value)">
-          <button class="btn btn-sm" onclick="phoneBrowserOpen(document.getElementById('cp-url').value)">→</button>
-        </div>
-        <div style="display:flex;gap:4px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
-          <input type="text" id="browser-url" placeholder="URL на рабочем столе…" value="https://www.youtube.com" style="flex:1;min-width:110px;padding:6px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')linuxRunBrowser(this.value)">
-          <button class="btn btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url').value)" title="Открыть браузер на рабочем столе">🖥🌐</button>
+        <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
+          <input type="text" id="browser-url" placeholder="https://... — откроется на этом экране" value="https://www.youtube.com" style="flex:1;min-width:140px;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')linuxRunBrowser(this.value)">
+          <button class="btn btn-p btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url').value)" title="Открыть Chromium прямо на этом экране (DISPLAY=:99)">Go · 🖥</button>
           <span id="pulse-status" class="tag" style="font-size:10px">🔊</span>
-          <button class="btn btn-sm" onclick="pulseStart()" title="Старт PulseAudio">▶</button>
-          <button class="btn btn-sm" onclick="pulseStop()" title="Стоп PulseAudio">⏹</button>
-          <button class="btn btn-sm" onclick="pulseMute()" title="Mute/Unmute">🔇</button>
-          <button class="btn btn-sm" onclick="pulseStatus()" title="Обновить">⟳</button>
-        </div>
-        <div style="display:flex;gap:6px;padding:0 8px 6px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center">
-          <input type="range" id="pulse-vol" min="0" max="100" value="80" style="flex:1" oninput="pulseSetVol(this.value)">
-          <span id="pulse-vol-label" style="font-size:12px;font-family:monospace;min-width:40px;text-align:right">80%</span>
+          <input type="range" id="pulse-vol" min="0" max="100" value="80" style="width:80px" oninput="pulseSetVol(this.value)">
+          <span id="pulse-vol-label" style="font-size:11px;font-family:monospace;min-width:36px;text-align:right">80%</span>
+          <button class="btn btn-sm" onclick="pulseToggleMute()" title="Мьют">🔇</button>
         </div>
         <div style="flex:1;position:relative;background:#000">
           <iframe id="linux-frame" style="width:100%;height:100%;border:none;display:none" allow="clipboard-read; clipboard-write" allowfullscreen></iframe>
           <div id="linux-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
             <div style="font-size:48px;margin-bottom:16px">🖥</div>
-            <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Linux Screen</div>
-            <div style="font-size:13px;max-width:300px;line-height:1.5">Браузер и терминал запускаются здесь — на рабочем столе.<br>Телефон — отдельное VNC-окно.<br>Нажмите «Открыть экран».</div>
+            <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Один экран</div>
+            <div style="font-size:13px;max-width:320px;line-height:1.5">Всё — браузер, терминал, файлы — на одном рабочем столе Linux (openbox).<br>Нажми <b>Go</b> выше — Chromium откроется прямо здесь, звук уже 80%.<br><span style="color:var(--t3)">Телефон теперь тоже здесь: `📱` в Chrome-вкладке открывает вертикальный ютуб.</span></div>
+            <button class="btn btn-p btn-sm" onclick="linuxConnect()" style="margin-top:14px">⟳ Подключить</button>
             <div id="pulse-devices" style="margin-top:12px;font-size:11px;color:var(--t3);text-align:left"></div>
           </div>
         </div>
-        <iframe id="cp-frame" style="position:absolute;width:1px;height:1px;border:none;opacity:0;pointer-events:none" allowfullscreen></iframe>
+        <!-- cloud phone теперь не нужен отдельно — всё на одном DISPLAY -->
+        <iframe id="cp-frame" style="display:none" allowfullscreen></iframe>
       </div>
 
       <!-- BROWSER — Chrome вкладка для ссылок от агента -->

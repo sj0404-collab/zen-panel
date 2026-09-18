@@ -196,7 +196,7 @@ function showPage(p) {
   }
   if (p === 'files') initFM();
   if (p === 'git') loadGit();
-  if (p === 'linux') linuxStatus();
+  if (p === 'linux') { linuxStatus(); setTimeout(()=>{ try{ linuxConnect(); }catch{} }, 400); }
 }
 
 showPage('files');
