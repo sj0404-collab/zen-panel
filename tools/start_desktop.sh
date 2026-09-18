@@ -41,7 +41,7 @@ export EGL_PLATFORM=x11
 
 INSTALL_PKGS="xvfb openbox xterm tint2 x11vnc websockify novnc dbus-x11 \
   mesa-utils libgl1-mesa-dri libgl1 libegl1 libgles2 libglu1-mesa libgbm1 \
-  x11-utils x11-xserver-utils pcmanfm pulseaudio pavucontrol"
+  x11-utils x11-xserver-utils pcmanfm pulseaudio pavucontrol feh geany imagemagick"
 if ! command -v Xvfb >/dev/null 2>&1; then
   warn "installing desktop stack..."
   sudo apt-get update -qq
@@ -130,11 +130,10 @@ EOF
   fi
 done
 
-# Clickable launchers on the desktop - pcmanfm shows the icons of ~/Desktop,
-# so the file manager, terminal, browser and audio mixer are one click away.
-mkdir -p "$HOME/Desktop"
+# Clickable launchers on the desktop - pcmanfm shows the icons of ~/Desktop
+mkdir -p "$HOME/Desktop" "$HOME/Pictures"
 launcher() {
-  local name="${1:-}" exec="${2:-}" term="${3:-}"
+  local name="${1:-}" exec="${2:-}" term="${3:-}" icon="${4:-}"
   local file="$HOME/Desktop/$name.desktop"
   cat > "$file" <<EOF
 [Desktop Entry]
@@ -143,23 +142,71 @@ Comment=запуск с рабочего стола
 Exec=$exec
 Type=Application
 Terminal=$term
+Icon=${icon}
 EOF
   chmod +x "$file"
 }
-launcher "Терминал"          "xterm"              true
-launcher "Файловый менеджер" "pcmanfm"            false
+# Базовые
+launcher "Терминал"          "xterm"              true  "utilities-terminal"
+launcher "Файловый менеджер" "pcmanfm"            false "system-file-manager"
 if [ -n "$BROWSER" ]; then
-  launcher "Браузер" "$BROWSER" false
+  launcher "Браузер"          "$BROWSER"           false "web-browser"
+  launcher "YouTube"         "$BROWSER https://www.youtube.com" false "youtube"
+  launcher "GitHub"          "$BROWSER https://github.com"      false "github"
 fi
 if command -v pavucontrol >/dev/null 2>&1; then
-  launcher "Звук" "pavucontrol" false
+  launcher "Звук"            "pavucontrol"        false "audio-volume-high"
+fi
+# Доп. ярлыки
+launcher "Редактор (Geany)"  "geany 2>/dev/null || gedit 2>/dev/null || xterm -e nano" false "text-editor"
+launcher "Hub папка"         "pcmanfm $HOME/hub-work" false "folder"
+# Ярлык на сам Hub (откроет браузер на локальный хаб)
+launcher "NPM Hub"           "${BROWSER:-xterm} http://127.0.0.1:8090" false "applications-internet"
+
+# Обои — тёмный градиент + логотип (работает оффлайн, без сети)
+WALL="$HOME/Pictures/wallpaper.png"
+if command -v convert >/dev/null 2>&1; then
+  convert -size 1920x1080 gradient:"#0f1419-#1e2a3a" -gravity center -pointsize 72 -fill "#58a6ff" -font "DejaVu-Sans-Bold" -annotate +0-100 "NPM Hub" -pointsize 28 -fill "#8b949e" -annotate +0+20 "Один экран для всего" "$WALL" 2>/dev/null || true
+else
+  # fallback: попробуем скачать готовые обои, если сеть есть
+  curl -fsSL -o "$WALL" "https://picsum.photos/1920/1080?blur=2" 2>/dev/null || true
+  [ -f "$WALL" ] || WALL=""
+fi
+# Если не удалось — просто тёмный png через xsetroot позже
+# Настроим pcmanfm чтобы показывал обои и иконки
+for _prof in default LXDE; do
+  CONF_DIR="$HOME/.config/pcmanfm/$_prof"
+  mkdir -p "$CONF_DIR"
+  # Перезапишем с обоями
+  cat > "$CONF_DIR/pcmanfm.conf" <<EOF
+[Desktop]
+wallpaper_mode=1
+wallpaper=$WALL
+desktop_bg=#101418
+desktop_fg=#ffffff
+desktop_shadow=#000000
+show_wm_menu=1
+desktop_sort=mtime
+
+[pcmanfm]
+EOF
+done
+# Попытка сразу поставить обои если pcmanfm уже может
+if [ -f "$WALL" ]; then
+  pcmanfm --set-wallpaper "$WALL" 2>/dev/null || true
+  # feh как fallback
+  if command -v feh >/dev/null 2>&1; then feh --bg-scale "$WALL" 2>/dev/null || true; fi
 fi
 
 # openbox autostart: file manager on the desktop, a terminal, the taskbar and
 # per-user audio (with a silent "null" sink so every app just works).
 {
   echo '# zen-desktop autostart'
-  echo 'xsetroot -solid "#101418"'
+  if [ -n "$WALL" ] && [ -f "$WALL" ]; then
+    echo "feh --bg-scale \"$WALL\" 2>/dev/null || pcmanfm --set-wallpaper \"$WALL\" 2>/dev/null || xsetroot -solid \"#101418\""
+  else
+    echo 'xsetroot -solid "#101418"'
+  fi
   echo 'pcmanfm --desktop >/dev/null 2>&1 &'
   echo 'xterm -geometry 160x40+40+40 -title "Hub Linux Desktop" >/dev/null 2>&1 &'
   echo 'tint2 >/dev/null 2>&1 &'
