@@ -1691,11 +1691,30 @@ function hubBrowserGo(url){
   url=url.trim(); if(!/^https?:\/\//i.test(url)) url='https://'+url;
   const inp=document.getElementById('browser-url-desk');
   if(inp) inp.value=url;
+  const blockedSites = /google\.com|youtube\.com|youtu\.be|github\.com|chat\.openai\.com/i;
+  if(blockedSites.test(url)){
+    const isYt=/youtube|youtu\.be/i.test(url);
+    browserOpenDesktop(url, isYt);
+    return;
+  }
   const frame=document.getElementById('browser-frame-desk');
   if(!frame) return;
   browserHistDesk=browserHistDesk.slice(0,browserIdxDesk+1);
   browserHistDesk.push(url); browserIdxDesk=browserHistDesk.length-1;
   frame.src=url;
+  // Проверка блокировки iframe
+  setTimeout(()=>{
+    try{
+      const doc=frame.contentDocument;
+      if(!doc || !doc.body || doc.body.innerText.includes('ERR_BLOCKED')){
+        const hint=document.getElementById('browser-agent-hint-desk');
+        if(hint){ hint.innerHTML='<span>⚠️ Блокирует iframe —</span> <button class=\"btn btn-p btn-sm\" onclick=\"browserOpenDesktop(\''+url.replace(/'/g,"\\'")+ '\')\">🖥</button>'; hint.style.display='flex'; }
+      }
+    }catch(e){
+      const hint=document.getElementById('browser-agent-hint-desk');
+      if(hint){ hint.innerHTML='<span>⚠️ Блокирует iframe —</span> <button class=\"btn btn-p btn-sm\" onclick=\"browserOpenDesktop(\''+url.replace(/'/g,"\\'")+ '\')\">🖥</button>'; hint.style.display='flex'; }
+    }
+  },1500);
   try{localStorage.setItem('hub_browser_last',url);}catch{}
   showPage('browser');
 }

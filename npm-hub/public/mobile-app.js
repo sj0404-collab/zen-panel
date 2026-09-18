@@ -1970,6 +1970,14 @@ function hubBrowserGo(url){
   if(!/^https?:\/\//i.test(url)) url = 'https://' + url;
   const input = document.getElementById('browser-url-main');
   if(input) input.value = url;
+  // Сайты с X-Frame-Options (Google, YouTube, GitHub, ChatGPT) не грузятся в iframe — сразу на VNC
+  const blockedSites = /google\.com|google\.ru|youtube\.com|youtu\.be|github\.com|chat\.openai\.com|openai\.com|facebook\.com|instagram\.com|twitter\.com|x\.com/i;
+  if(blockedSites.test(url)){
+    fmInfo('🌐 '+url+' блокирует iframe — открываю на рабочем столе (🖥/📱) со звуком');
+    const isYt = /youtube|youtu\.be/i.test(url);
+    browserOpenDesktop(url, isYt);
+    return;
+  }
   const frame = document.getElementById('browser-frame');
   const ph = document.getElementById('browser-placeholder');
   const loading = document.getElementById('browser-loading');
@@ -1981,7 +1989,27 @@ function hubBrowserGo(url){
   if(ph) ph.style.display='none';
   if(loading) loading.style.display='block';
   frame.src = url;
-  frame.onload = ()=>{ if(loading) loading.style.display='none'; };
+  frame.onload = ()=>{
+    if(loading) loading.style.display='none';
+    // Проверка: если iframe заблокирован (ERR_BLOCKED_BY_RESPONSE), contentDocument будет пустым или доступ запрещён
+    setTimeout(()=>{
+      try{
+        const doc = frame.contentDocument;
+        // Если doc null или внутри текст ERR_BLOCKED -> фолбэк
+        if(!doc || !doc.body || doc.body.innerText.includes('ERR_BLOCKED_BY_RESPONSE') || doc.body.innerText.includes('Не удалось открыть')){
+          throw new Error('blocked');
+        }
+      }catch(e){
+        if(loading) loading.style.display='none';
+        // Автоматически предлагаем VNC
+        const hint=document.getElementById('browser-agent-hint');
+        if(hint){
+          hint.innerHTML='<span>⚠️ Сайт блокирует встройку —</span> <button class=\"btn btn-p btn-sm\" onclick=\"browserOpenDesktop(\''+url.replace(/'/g,"\\'")+ '\')\">Открыть 🖥</button> <button class=\"btn btn-sm\" onclick=\"browserOpenDesktop(\''+url.replace(/'/g,"\\'")+ '\',true)\">📱 вертикально</button> <span style=\"margin-left:auto;cursor:pointer\" onclick=\"this.parentElement.style.display=\'none\'\">✕</span>';
+          hint.style.display='flex';
+        }
+      }
+    }, 1500);
+  };
   frame.onerror = ()=>{ if(loading) loading.style.display='none'; };
   setTimeout(()=>{ if(loading) loading.style.display='none'; }, 4000);
   try{ localStorage.setItem('hub_browser_last', url); }catch{}
