@@ -275,10 +275,14 @@ async function ghLoadRepos() {
           <span style="font-size:14px;font-weight:600;color:var(--acc)">${escHtml(r.full_name)}</span>
         </div>
         <div style="font-size:12px;color:var(--t2);margin-bottom:4px">${escHtml(r.description || '(нет описания)')}</div>
-        <div style="display:flex;gap:8px;font-size:10px;color:var(--t3)">
+        <div style="display:flex;gap:8px;font-size:10px;color:var(--t3);align-items:center">
           ${r.language ? '<span>' + escHtml(r.language) + '</span>' : ''}
           ${r.stargazers_count ? '<span>⭐ ' + r.stargazers_count + '</span>' : ''}
           <span>🌿 ${escHtml(r.default_branch)}</span>
+          <span style="margin-left:auto;display:flex;gap:4px">
+            <button class="btn btn-sm" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); browserOpenDesktop('https://github.com/${escAttr(r.full_name)}')" title="Открыть на github.com">🌐</button>
+            <button class="btn btn-sm" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); browserOpenDesktop('https://github.com/${escAttr(r.full_name)}',true)" title="Вертикально">📱</button>
+          </span>
         </div>
       </div>
     `).join('');
@@ -310,6 +314,14 @@ function ghBackToList() {
   document.getElementById('gh-repo-detail').style.display = 'none';
   if (section) section.scrollIntoView({ block: 'start' });
   ghCurrentRepo = null;
+}
+function ghOpenOnGithub(vertical){
+  if(!ghCurrentRepo){ fmInfo('Сначала выбери репозиторий'); return; }
+  const url='https://github.com/'+ghCurrentRepo;
+  // GitHub блокирует iframe — сразу на VNC рабочий стол
+  if(typeof browserOpenDesktop==='function') browserOpenDesktop(url, !!vertical);
+  else if(typeof hubBrowserGo==='function') hubBrowserGo(url);
+  else window.open(url,'_blank');
 }
 
 function ghShowTab(tab, btn) {

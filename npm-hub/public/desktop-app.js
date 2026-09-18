@@ -2133,6 +2133,11 @@ async function ghLoadRepos() {
           <button class="btn btn-sm" onclick="ghDownloadReleaseModal('${escAttr(r.full_name)}')" title="Скачать файл из релиза по тегу">📦 Релиз</button>
           <button class="btn btn-sm gh-repo-btn-del" onclick="ghDeleteRepoModal('${escAttr(r.full_name)}')" title="Удалить репозиторий">🗑</button>
         </div>
+                <span style="margin-left:auto;display:flex;gap:4px">
+            <button class="btn btn-sm" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); browserOpenDesktop('https://github.com/'+r.full_name)" title="Открыть">🌐</button>
+            <button class="btn btn-sm" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); browserOpenDesktop('https://github.com/'+r.full_name,true)" title="Вертикально">📱</button>
+          </span>
+        </div>
       </div>
     `).join('');
   } catch (e) { grid.innerHTML = '<div style="color:var(--err);font-size:12px;grid-column:1/-1">' + escHtml(e.message) + '</div>'; }
@@ -2167,6 +2172,13 @@ function ghBackToList() {
     if (el) el.scrollIntoView({ block: 'start' });
   }
   ghCurrentRepo = null;
+}
+function ghOpenOnGithub(vertical){
+  if(!ghCurrentRepo){ if(typeof fmInfo==='function') fmInfo('Сначала выбери репозиторий'); return; }
+  const url='https://github.com/'+ghCurrentRepo;
+  if(typeof browserOpenDesktop==='function') browserOpenDesktop(url, !!vertical);
+  else if(typeof hubBrowserGo==='function') hubBrowserGo(url);
+  else window.open(url,'_blank');
 }
 
 function ghShowTab(tab, btn) {
