@@ -1037,6 +1037,9 @@ app.get('/api/git/log', async (req, res) => {
 
 // ─── PULSE AUDIO ───
 const { exec: _exec } = require('child_process');
+const shTail = (file, lines = 3) => new Promise((resolve) => {
+  _exec(`tail -n ${lines} ${JSON.stringify(file)} 2>/dev/null | tr '\n' ' '`, { timeout: 4000 }, (err, stdout) => resolve(String(stdout || '').trim().slice(0, 300)));
+});
 const pulseRun = (cmd) => new Promise((resolve) => {
   _exec(cmd, { timeout: 5000 }, (err, stdout, stderr) => {
     resolve({ ok: !err, out: (stdout || '').trim(), err: (stderr || '').trim() });
@@ -1834,12 +1837,19 @@ server.on('upgrade', (req, socket, head) => {
 app.post('/api/linux/run', express.json(), async (req, res) => {
   const { action, url } = req.body || {};
   const display = process.env.VNC_DISPLAY || ':99';
-  const hasXvfb = fs.existsSync('/tmp/.X11-unix/X99') || fs.existsSync('/tmp/.X11-lock');
+  // Дисплей не обязан быть :99 — socket проверяем по номеру из VNC_DISPLAY
+  const dispNum = display.replace(/^:/, '');
+  const hasXvfb = fs.existsSync(`/tmp/.X11-unix/X${dispNum}`);
   if (!hasXvfb) return res.json({ ok: false, error: 'Linux VNC desktop не запущен на этом раннере (нет X11 display)' });
 
+  // ВАЖНО: DISPLAY нужно именно ЭКСПОРТИРОВАТЬ. Раньше строка собиралась как
+  // `DISPLAY=:99 <команда>`, и переменная попадала только в первое присваивание
+  // (BROWSER_BIN=...), а сам chromium запускался уже без DISPLAY → «Missing X
+  // server or $DISPLAY» в логе и ни одного окна: так и выглядел сломанный
+  // «Go · 🖥».
   const runOnDisplay = (cmd, timeoutMs = 8000) => new Promise((resolve) => {
     try {
-      const p = _exec(`DISPLAY=${display} ${cmd}`, { timeout: timeoutMs }, (err, stdout, stderr) => {
+      const p = _exec(`export DISPLAY=${display}; ${cmd}`, { timeout: timeoutMs }, (err, stdout, stderr) => {
         resolve({ ok: !err, out: (stdout || '').trim(), err: (stderr || '').trim() });
       });
     } catch (e) { resolve({ ok: false, error: e.message }); }
@@ -1865,12 +1875,30 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         const winSize = vertical ? '412,915' : '1280,720';
         const userData = vertical ? '/tmp/chrome-vertical' : '/tmp/chrome-hub';
         // Хром с поддержкой звука и автоплея
-        const chromeFlags = `--no-sandbox --disable-gpu --autoplay-policy=no-user-gesture-required --disable-features=PreloadMediaEngagementData,AutoplayIgnoreWebAudio --use-fake-ui-for-media-stream --window-size=${winSize} --window-position=20,20 --user-data-dir=${userData} --no-first-run --disable-infobars --disable-dev-shm-usage`;
+        const chromeFlags = `--no-sandbox --test-type --disable-gpu --autoplay-policy=no-user-gesture-required --disable-features=PreloadMediaEngagementData,AutoplayIgnoreWebAudio --use-fake-ui-for-media-stream --window-size=${winSize} --window-position=20,20 --user-data-dir=${userData} --no-first-run --disable-infobars --disable-dev-shm-usage`;
         // Мобильный user-agent для вертикального ютуба (чтобы открылся m.youtube.com/shorts)
         const uaFlag = (vertical && isYoutube) ? `--user-agent='Mozilla/5.0 (Linux; Android 10; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36'` : '';
-        let r = await runOnDisplay(`(which chromium-browser || which chromium || which google-chrome) >/dev/null 2>&1 && (chromium-browser ${chromeFlags} ${uaFlag} '${escaped}' &>/dev/null &)`, 6000);
-        if (!r.ok || r.err) r = await runOnDisplay(`(which chromium-browser || which chromium || which google-chrome) >/dev/null 2>&1 && (chromium-browser ${chromeFlags} '${escaped}' &>/dev/null &)`, 5000);
-        if (!r.ok || r.err) r = await runOnDisplay(`(which firefox >/dev/null 2>&1 && firefox '${escaped}' &>/dev/null &) || (xdg-open '${escaped}' &>/dev/null &)`, 5000);
+        // Бинарь ищем на месте: на раннере может быть chromium, chromium-browser,
+        // google-chrome или google-chrome-stable — раньше здесь был жёстко
+        // забит chromium-browser, и «Go · 🖥» молча не открывал ничего.
+        const binPick = `BROWSER_BIN=$(command -v chromium || command -v chromium-browser || command -v google-chrome || command -v google-chrome-stable || true); if [ -z "$BROWSER_BIN" ]; then exit 3; fi`;
+        // Браузер пишет свой вывод в лог: без него «не открылось» невозможно
+        // объяснить, а именно так и выглядел сломанный «Go · 🖥».
+        const blog = path.join(LOG_DIR, 'browser.log');
+        const launch = (extraFlags) => runOnDisplay(
+          `${binPick}; setsid nohup "$BROWSER_BIN" ${chromeFlags} ${extraFlags} '${escaped}' >>${JSON.stringify(blog)} 2>&1 & sleep 3; `
+          + `pgrep -f "$(basename "$BROWSER_BIN")" | head -1`, 12000);
+        let r = await launch(uaFlag);
+        let started = Boolean(r.out && /^\d+$/m.test(r.out));
+        if (!started) { r = await launch(''); started = Boolean(r.out && /^\d+$/m.test(r.out)); }
+        if (!started) {
+          r = await runOnDisplay(`(command -v firefox >/dev/null 2>&1 && setsid nohup firefox '${escaped}' >/dev/null 2>&1 &) || (setsid nohup xdg-open '${escaped}' >/dev/null 2>&1 &); sleep 3; pgrep -f firefox | head -1`, 12000);
+          started = Boolean(r.out && /^\d+$/m.test(r.out));
+        }
+        if (!started) {
+          const tail = await shTail(blog, 3);
+          return res.json({ ok: false, error: 'браузер не запустился (' + (r.err || 'нет процесса').slice(0, 120) + '): ' + tail });
+        }
         // Громкость на макс и снять mute чтобы ютуб был слышен
         try { await pulseRun('pactl set-sink-mute @DEFAULT_SINK@ 0 2>/dev/null || true'); await pulseRun('pactl set-sink-volume @DEFAULT_SINK@ 90% 2>/dev/null || true'); } catch {}
         return res.json({ ok: true, message: `Браузер запущен${vertical?' (вертикально)':''}: ${url} — звук вкл.`, vertical, winSize });

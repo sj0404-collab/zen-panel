@@ -513,6 +513,11 @@ async function fullStartInner(repoRoot) {
     scriptOk = r.ok;
     if (!scriptOk && r.out) state.note = String(r.out).split('\n').slice(-2).join(' | ').slice(0, 200);
   }
+  if (!(await which('Xvfb'))) {
+    state.note = 'на этом раннере нет Xvfb (sudo apt-get install xvfb нужен один раз)';
+    state.log(state.note);
+    return false;
+  }
   const alive = (await portOpen(VNC_PORT)) && state.desktop !== 'down';
   state.log((alive ? 'рабочий стол поднят' : 'рабочий стол не поднялся') + ' (Xvfb ' + DISPLAY + ', VNC ' + VNC_PORT
     + ', noVNC ' + NOVNC_PORT + (scriptOk ? '' : ', скрипт не завершился — поднял сам') + ')');
@@ -539,7 +544,7 @@ async function ensureEssentials() {
   }
   if (!(await portOpen(VNC_PORT))) {
     const vlog = JSON.stringify(path.join(LOG_DIR, 'x11vnc.log'));
-    await sh(`nohup x11vnc -display ${DISPLAY} -nopw -forever -shared -bg -rfbport ${VNC_PORT}`
+    await sh(`nohup x11vnc -display ${DISPLAY} -nopw -forever -shared -bg -localhost -rfbport ${VNC_PORT}`
       + ` -noxdamage -wirecopyrect top -alwaysshared >>${vlog} 2>&1 &`, 12000);
     for (let i = 0; i < 12; i++) {
       if (await portOpen(VNC_PORT)) break;
@@ -548,16 +553,14 @@ async function ensureEssentials() {
     if (await portOpen(VNC_PORT)) fixes.push('x11vnc');
     else state.note = 'x11vnc не поднялся: ' + (await sh(`tail -n 2 ${JSON.stringify(path.join(LOG_DIR, 'x11vnc.log'))}`, 5000)).out.slice(0, 160);
   }
-  // Обои: feh выставляет корневой pixmap и СРАЗУ выходит — «живого процесса»
-  // у него нет, поэтому применяем всегда (дёшево), а не «если не запущен».
-  if (state.wall && fs.existsSync(state.wall) && (await which('feh'))) {
-    if (!state.wallApplied) {
-      await sh(`DISPLAY=${DISPLAY} feh --bg-scale ${JSON.stringify(state.wall)} 2>/dev/null`, 10000);
-      state.wallApplied = true;
-      fixes.push('обои');
-    }
-  }
   if (!(await pgrep('tint2'))) { await sh(`DISPLAY=${DISPLAY} nohup tint2 >/dev/null 2>&1 &`, 6000); fixes.push('tint2'); }
+  // Обои — последними: feh выставляет корневой pixmap и сразу выходит (процесса
+  // нет), а любой перезапуск Xvfb этот pixmap обнуляет — тогда экран снова
+  // чёрный при живых иконках (проверено скриншотом).
+  if (state.wall && fs.existsSync(state.wall) && (await which('feh'))) {
+    await sh(`DISPLAY=${DISPLAY} feh --bg-scale ${JSON.stringify(state.wall)} 2>/dev/null`, 10000);
+    fixes.push('обои');
+  }
   // Иконки: idesk, иначе (если пакета нет) pcmanfm --desktop.
   if (!(await pgrep('idesk')) && (await which('idesk'))) {
     await sh(`DISPLAY=${DISPLAY} nohup idesk >/dev/null 2>&1 &`, 6000);
@@ -570,11 +573,9 @@ async function ensureEssentials() {
   // «чёрный экран»: проверяем пиксели и, если плоско, перекрашиваем фон.
   const paint = await paintCheck();
   if (paint.checked && !paint.ok) {
-    state.wallApplied = false;
     if (state.wall && fs.existsSync(state.wall)) {
       await sh(`DISPLAY=${DISPLAY} feh --bg-scale ${JSON.stringify(state.wall)} 2>/dev/null`, 10000);
       await sh(`DISPLAY=${DISPLAY} xsetroot -solid '#121c28' 2>/dev/null || true`, 6000);
-      state.wallApplied = true;
     }
     const again = await paintCheck();
     fixes.push(`перекраска (${paint.colors}->${again.colors} цв.)`);

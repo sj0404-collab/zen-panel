@@ -65,7 +65,9 @@ if [ "$RESTART_DESKTOP" = "1" ]; then
   sleep 1
 fi
 
-pkill -f "Xvfb $DISPLAY_NUM" 2>/dev/null || true
+# ВАЖНО: Xvfb здесь НЕ убиваем — иначе каждый ремонт сносил бы окна (браузер,
+# сессии) и заново поднимал весь дисплей. Живой дисплей переиспользуется ниже;
+# мёртвый (сокет без процесса) убирается в ветке запуска Xvfb.
 pkill -f "x11vnc.*$DISPLAY_NUM" 2>/dev/null || true
 pkill -f "websockify.*$NOVNC_PORT" 2>/dev/null || true
 sleep 1
@@ -77,6 +79,9 @@ if [ -S "/tmp/.X11-unix/X$X_NUM" ] && pgrep -f "Xvfb $DISPLAY_NUM" >/dev/null 2>
   log "Xvfb $DISPLAY_NUM уже работает — переиспользую (быстрый перезапуск)"
 else
   log "Xvfb $DISPLAY_NUM ($SCR)"
+  pkill -f "Xvfb $DISPLAY_NUM" 2>/dev/null || true
+  sleep 1
+  rm -f "/tmp/.X11-unix/X$X_NUM" "/tmp/.X$X_NUM-lock" 2>/dev/null || true
   Xvfb "$DISPLAY_NUM" -screen 0 "$SCR" -nolisten tcp >"$HUB_LOGS/xvfb.log" 2>&1 &
   XVFB_PID=$!
   sleep 2
@@ -288,9 +293,9 @@ if ! command -v x11vnc >/dev/null 2>&1; then
 fi
 
 log "x11vnc -> $VNC_PORT"
-x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -rfbport "$VNC_PORT" \
+x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -localhost -rfbport "$VNC_PORT" \
   -noxdamage -wirecopyrect top -alwaysshared >"$HUB_LOGS/x11vnc.log" 2>&1 || \
-  x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -rfbport "$VNC_PORT" \
+  x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -localhost -rfbport "$VNC_PORT" \
   >"$HUB_LOGS/x11vnc.log" 2>&1
 
 # noVNC via websockify (noVNC on Ubuntu ships /usr/share/novnc). If the
@@ -318,9 +323,9 @@ if ! pgrep -x openbox >/dev/null 2>&1; then
 fi
 if ! pgrep -f "x11vnc.*$DISPLAY_NUM" >/dev/null 2>&1; then
   log "x11vnc не поднялся сам — запускаю"
-  x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -rfbport "$VNC_PORT" \
+  x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -localhost -rfbport "$VNC_PORT" \
     -noxdamage -wirecopyrect top -alwaysshared >"$HUB_LOGS/x11vnc.log" 2>&1 || \
-    x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -rfbport "$VNC_PORT" \
+    x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -localhost -rfbport "$VNC_PORT" \
       >"$HUB_LOGS/x11vnc.log" 2>&1 || warn "x11vnc не стартовал"
 fi
 if pgrep -x idesk >/dev/null 2>&1; then :; elif command -v idesk >/dev/null 2>&1; then
