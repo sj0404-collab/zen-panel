@@ -106,6 +106,7 @@ jobs:
           # per-package attempts so a renamed package cannot cancel the
           # rest. Whatever lands on PATH the hub picks up; anything missing
           # still launches through `npx -y` at click time.
+          mkdir -p "$HUB_LOGS" "$HOME/.npm-hub/logs" 2>/dev/null || true
           PKGS="opencode-ai @anthropic-ai/claude-code @google/gemini-cli @openai/codex @github/copilot @qwen-code/qwen-code http-server"
           npm install -g $PKGS >$HUB_LOGS/npm-i.log 2>&1 || \
             for p in $PKGS; do npm install -g "$p" >$HUB_LOGS/npm-i.log 2>&1 \
@@ -129,10 +130,12 @@ jobs:
           sudo chmod +x /usr/local/bin/agent
 
       - name: Create the work folder
-        run: mkdir -p ~/hub-work
+        run: mkdir -p ~/hub-work ~/.npm-hub/logs "$HUB_LOGS" 2>/dev/null; mkdir -p "$HOME/.npm-hub/logs"; echo "logs dir ready: $(ls -ld ~/.npm-hub/logs 2>&1)"
 
       - name: Start the hub and open the tunnel
         run: |
+          mkdir -p "$HUB_LOGS" "$HOME/.npm-hub/logs" ~/.npm-hub/logs 2>/dev/null || true
+          echo "HUB_LOGS=$HUB_LOGS HOME=$HOME $(ls -ld "$HUB_LOGS" 2>&1 || ls -ld "$HOME/.npm-hub/logs" 2>&1)"
           cd "$GITHUB_WORKSPACE/fork/npm-hub"
           HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 nohup node src/server.js > $HUB_LOGS/hub.log 2>&1 &
           for i in $(seq 1 60); do
@@ -268,6 +271,7 @@ jobs:
           # object the panel renders as a line. The hub may already be dead
           # here (cancelled mid-run) - then the file stays empty and json=
           # is skipped with a warning.
+          mkdir -p "$HUB_LOGS" 2>/dev/null || true
           python3 - > $HUB_LOGS/hub-models.json <<'PY' || true
           import json, urllib.request
           _zt = urllib.request.Request('http://127.0.0.1:8090/api/models/full', headers={'x-hub-token': '${{ inputs.token }}'})
