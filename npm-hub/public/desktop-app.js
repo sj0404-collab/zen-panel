@@ -1706,6 +1706,14 @@ function browserOpenDesktop(url, vertical){
   linuxRunBrowser(url, !!vertical);
   showPage('linux'); setTimeout(()=>linuxConnect(),800);
 }
+function browserFullscreenVerticalDesk(){
+  const url=document.getElementById('browser-url-desk')?.value||'https://m.youtube.com/shorts/';
+  browserOpenDesktop(url, true);
+  setTimeout(()=>{
+    const c=document.getElementById('p-browser');
+    try{ if(c && c.requestFullscreen) c.requestFullscreen().catch(()=>{}); }catch{}
+  },1100);
+}
 function browserAgentHintDesk(url){
   if(!url) return;
   const hint=document.getElementById('browser-agent-hint-desk');

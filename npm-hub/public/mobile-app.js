@@ -2014,6 +2014,21 @@ function browserBack(){ if(browserIdx>0){ browserIdx--; const u=browserHist[brow
 function browserForward(){ if(browserIdx < browserHist.length-1){ browserIdx++; const u=browserHist[browserIdx]; document.getElementById('browser-url-main').value=u; document.getElementById('browser-frame').src=u; } }
 function browserRefresh(){ const f=document.getElementById('browser-frame'); if(f && f.src) f.src=f.src; }
 function browserHome(){ hubBrowserGo('https://www.google.com'); }
+function browserFullscreenVertical(){
+  const url = document.getElementById('browser-url-main')?.value || 'https://m.youtube.com/shorts/';
+  browserOpenDesktop(url, true);
+  setTimeout(()=>{
+    const cont = document.getElementById('p-browser');
+    const frame = document.getElementById('linux-frame');
+    try{
+      if(cont && cont.requestFullscreen) cont.requestFullscreen().catch(()=>{});
+      else if(frame && frame.requestFullscreen) frame.requestFullscreen().catch(()=>{});
+    }catch{}
+    if(screen.orientation && screen.orientation.lock){
+      try{ screen.orientation.lock('portrait').catch(()=>{}); }catch{}
+    }
+  }, 1200);
+}
 function browserCopyUrl(){ const u=document.getElementById('browser-url-main')?.value||''; if(!u) return; navigator.clipboard?.writeText(u).then(()=>fmInfo('Скопировано: '+u)).catch(()=>prompt('Копируй:',u)); }
 function browserAgentHint(url){
   if(!url) return;
