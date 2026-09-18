@@ -1755,6 +1755,17 @@ const vncStatus = async () => {
   if (local.url) {
     return { running: true, url: local.url, remote: false, source: 'local', raw: null, keepalive: vncKeeper ? vncKeeper.status() : null };
   }
+  // Свой экран ещё поднимается (ставятся пакеты / стартует x11vnc) — чужой
+  // раннер в это время показывать нельзя: наш «Go · 🖥» рисует только на этом
+  // раннере, и пользователь видел ровно это — «запущен · другой раннер» +
+  // чёрный экран. Ждём свой; удалённый берём только как последнюю надежду.
+  if (local.pending) {
+    return {
+      running: false, url: null, remote: false, source: 'local-pending', raw: null,
+      pending: true, installing: local.installing || [],
+      keepalive: vncKeeper ? vncKeeper.status() : null
+    };
+  }
   const s = await vncRemoteStatus();
   const url = s.url;
   return {

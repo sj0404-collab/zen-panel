@@ -2008,7 +2008,8 @@ async function linuxStatus() {
     const ok = d.running && d.url;
     if (el) {
       const where = d.source === 'local' ? 'этот экран' : d.source === 'remote' ? 'другой раннер' : '';
-      el.textContent = ok ? '● запущен' + (where ? ' · ' + where : '') : '○ поднимается…';
+      el.textContent = ok ? '● запущен' + (where ? ' · ' + where : '')
+        : (d.installing && d.installing.length ? '⧗ ставлю ' + d.installing.join(', ') : '○ поднимается…');
       el.className = 'tag ' + (ok ? 'tag-on' : 'tag-off');
     }
     if (d.keepalive && d.keepalive.note && d.keepalive.note !== 'running'

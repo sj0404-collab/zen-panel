@@ -44,11 +44,23 @@ INSTALL_PKGS="xvfb openbox xterm tint2 x11vnc websockify novnc dbus-x11 \
   mesa-utils libgl1-mesa-dri libgl1 libegl1 libgles2 libglu1-mesa libgbm1 \
   x11-utils x11-xserver-utils pcmanfm pulseaudio pavucontrol feh geany \
   imagemagick xdotool wmctrl xterm idesk tint2 dbus-x11"
-if ! command -v Xvfb >/dev/null 2>&1; then
-  warn "installing desktop stack..."
-  sudo apt-get update -qq
+# Проверяем КАЖДЫЙ нужный бинарь: раньше условие смотрело только на Xvfb, и на
+# раннере, где Xvfb есть, а x11vnc нет, установка не запускалась вовсе —
+# x11vnc потом падал с «No such file or directory», а экран оставался чёрным.
+MISSING_BINS=""
+for _b in Xvfb openbox x11vnc xterm idesk tint2 feh convert pcmanfm; do
+  command -v "$_b" >/dev/null 2>&1 || MISSING_BINS="$MISSING_BINS $_b"
+done
+if [ -n "$MISSING_BINS" ]; then
+  warn "installing desktop stack (нет:$MISSING_BINS)"
+  sudo apt-get update -qq || true
   # shellcheck disable=SC2086
   sudo apt-get install -y -qq $INSTALL_PKGS || true
+  MISSING_BINS=""
+  for _b in Xvfb openbox x11vnc xterm idesk tint2 feh convert; do
+    command -v "$_b" >/dev/null 2>&1 || MISSING_BINS="$MISSING_BINS $_b"
+  done
+  [ -n "$MISSING_BINS" ] && warn "всё ещё нет:$MISSING_BINS (проверьте sudo/apt на раннере)"
 fi
 
 # VNC_RESTART=1 (or RESTART=1) restarts the DESKTOP PROGRAMMES without killing

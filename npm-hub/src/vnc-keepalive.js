@@ -72,6 +72,9 @@ const state = {
   proxy: null,             // registered on the hub server?
   wall: null,              // wallpaper path in use
   paint: null,             // 'ok' | 'flat' — pixels actually drawn?
+  missing: [],             // пакеты, которых нет на раннере
+  hopeless: false,         // локальный экран невозможен (нет sudo/apt)
+  firstStartAt: null,
   hubUrl: null,            // public hub address (from ~/.npm-hub/logs/hub-url)
   starts: 0,
   repairs: 0,
@@ -151,6 +154,45 @@ const paintCheck = async (size = 24) => {
   // Градиент + иконки + панель дают десятки оттенков; плоский фон — 1-2.
   return { checked: true, ok: colors > 4, colors };
 };
+
+// Бинарь → пакет. Без любого из них экран ломается молча — именно так и вышло
+// с x11vnc: «nohup: failed to run command 'x11vnc': No such file or directory»,
+// а панель показывала экран ЧУЖОГО раннера (чёрный).
+const REQUIRED_BINS = [
+  ['Xvfb', 'xvfb'], ['openbox', 'openbox'], ['x11vnc', 'x11vnc'], ['xterm', 'xterm'],
+  ['tint2', 'tint2'], ['idesk', 'idesk'], ['feh', 'feh'], ['convert', 'imagemagick'],
+  ['pcmanfm', 'pcmanfm'], ['xdotool', 'xdotool']
+];
+let lastPkgTry = 0;
+let aptUpdated = false;
+
+async function ensurePackages(force) {
+  const missing = [];
+  for (const [bin, pkg] of REQUIRED_BINS) if (!(await which(bin))) missing.push(pkg);
+  state.missing = missing;
+  if (!missing.length) return { ok: true, missing: [] };
+  if (!force && Date.now() - lastPkgTry < 5 * 60 * 1000) return { ok: false, missing, throttled: true };
+  lastPkgTry = Date.now();
+  state.note = 'ставлю недостающее: ' + missing.join(', ') + ' (apt)…';
+  state.log(state.note);
+  const sudoOk = (await sh('sudo -n true 2>/dev/null; echo $?', 10000)).out.trim().endsWith('0');
+  if (!sudoOk || !(await which('apt-get'))) {
+    state.note = 'на раннере нет sudo/apt — не поставить: ' + missing.join(', ')
+      + ' (нужен образ с desktop-пакетами или права sudo)';
+    state.log(state.note);
+    state.hopeless = true;
+    return { ok: false, missing, reason: 'no-sudo' };
+  }
+  if (!aptUpdated) { aptUpdated = true; await sh('sudo -n apt-get update -qq 2>&1 | tail -n 2', 300000); }
+  for (const pkg of missing) {
+    const r = await sh(`sudo -n apt-get install -y -qq ${pkg} 2>&1 | tail -n 2`, 300000);
+    state.log(`apt ${pkg}: ${r.code === 0 ? 'ok' : 'ошибка — ' + r.out.slice(0, 120)}`);
+  }
+  const still = [];
+  for (const [bin, pkg] of REQUIRED_BINS) if (missing.includes(pkg) && !(await which(bin))) still.push(pkg);
+  state.missing = still;
+  return { ok: still.length === 0, missing: still };
+}
 
 const hubPublicUrl = () => {
   try {
@@ -493,6 +535,9 @@ async function fullStart(repoRoot) {
 
 async function fullStartInner(repoRoot) {
   state.note = 'building the desktop…';
+  if (!state.firstStartAt) state.firstStartAt = Date.now();
+  // Пакеты — ДО всего: без x11vnc/idesk/feh экран не поднимется никак.
+  await ensurePackages(false);
   // Обои — до скрипта: он их только докрашивает, если файла нет.
   await ensureWallpaper(false);
   // Скрипт НЕ ждём: он качает пакеты и умеет подвисать на apt/pcmanfm/
@@ -519,6 +564,7 @@ async function fullStartInner(repoRoot) {
     return false;
   }
   const alive = (await portOpen(VNC_PORT)) && state.desktop !== 'down';
+  if (alive) state.hopeless = false;
   state.log((alive ? 'рабочий стол поднят' : 'рабочий стол не поднялся') + ' (Xvfb ' + DISPLAY + ', VNC ' + VNC_PORT
     + ', noVNC ' + NOVNC_PORT + (scriptOk ? '' : ', скрипт не завершился — поднял сам') + ')');
   return alive;
@@ -542,7 +588,9 @@ async function ensureEssentials() {
     await sleep(1200);
     fixes.push('openbox');
   }
-  if (!(await portOpen(VNC_PORT))) {
+  if (!(await which('x11vnc'))) {
+    state.note = 'x11vnc не установлен — ставлю через apt';
+  } else if (!(await portOpen(VNC_PORT))) {
     const vlog = JSON.stringify(path.join(LOG_DIR, 'x11vnc.log'));
     await sh(`nohup x11vnc -display ${DISPLAY} -nopw -forever -shared -bg -localhost -rfbport ${VNC_PORT}`
       + ` -noxdamage -wirecopyrect top -alwaysshared >>${vlog} 2>&1 &`, 12000);
@@ -599,6 +647,7 @@ async function repair(repoRoot, why) {
   state.repairs++;
   state.lastRepair = Date.now();
   state.log('починка экрана (' + why + ')');
+  await ensurePackages(false);
   await ensureWallpaper(false);
   const r = await runStartScript(repoRoot, true);
   await ensureShortcuts(process.env.PORT || 8090);
@@ -679,7 +728,17 @@ async function localStatus() {
   if (!state.enabled) return { url: null, ready: false };
   const x = await xDisplayUp();
   const vnc = await portOpen(VNC_PORT);
-  if (!x || !vnc) return { url: null, ready: false, display: x, x11vnc: vnc };
+  if (!x || !vnc) {
+    return {
+      url: null, ready: false, display: x, x11vnc: vnc,
+      // Свой экран ещё не готов: панели говорим «поднимается». Чужой раннер
+      // подсовывать нельзя — на нём наш Go·🖥 ничего не нарисует, и это
+      // выглядит как «чёрный экран» (если свой экран вообще невозможен —
+      // нет sudo/apt — тогда оставляем удалённый как единственный вариант).
+      pending: !state.hopeless,
+      installing: state.missing.length ? state.missing : undefined
+    };
+  }
   state.hubUrl = hubPublicUrl();
   const base = state.hubUrl || '';
   const ui = fs.existsSync(NOVNC_UI) ? '/novnc/vnc.html' : `/novnc-proxy/vnc.html?path=websockify`;
@@ -733,6 +792,8 @@ function status() {
     hubUrl: state.hubUrl || hubPublicUrl(),
     wall: state.wall,
     paint: state.paint,
+    missing: state.missing,
+    hopeless: state.hopeless,
     starts: state.starts,
     repairs: state.repairs,
     lastTick: state.lastTick ? new Date(state.lastTick).toISOString() : null,
