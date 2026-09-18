@@ -130,7 +130,9 @@ jobs:
           sudo chmod +x /usr/local/bin/agent
 
       - name: Create the work folder
-        run: mkdir -p ~/hub-work ~/.npm-hub/logs "$HUB_LOGS" 2>/dev/null; mkdir -p "$HOME/.npm-hub/logs"; echo "logs dir ready: $(ls -ld ~/.npm-hub/logs 2>&1)"
+        run: |
+          mkdir -p ~/hub-work ~/.npm-hub/logs "$HUB_LOGS" 2>/dev/null; mkdir -p "$HOME/.npm-hub/logs"
+          echo "logs dir ready $(ls -ld ~/.npm-hub/logs 2>&1)"
 
       - name: Start the hub and open the tunnel
         run: |
