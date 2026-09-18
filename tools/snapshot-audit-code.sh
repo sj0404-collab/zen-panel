@@ -64,12 +64,18 @@ try:
         con = sqlite3.connect(db)
         con.row_factory = sqlite3.Row
         cur = con.cursor()
-        cur.execute("SELECT id, title, datetime(time_created/1000,'unixepoch') as created FROM session ORDER BY time_created DESC LIMIT 20")
+        cur.execute("SELECT id, title, slug, directory, parent_id, datetime(time_created/1000,'unixepoch') as created FROM session ORDER BY time_created DESC LIMIT 50")
         for r in cur.fetchall():
             out["opencode"].append(dict(r))
+        try:
+            cur.execute("SELECT session_id, id as message_id, time_created, json_extract(data,'$.role') as role, substr(json_extract(data,'$.parts'),1,2000) as parts FROM message ORDER BY time_created DESC LIMIT 200")
+            out["opencodeMessages"] = [dict(r) for r in cur.fetchall()]
+            out["opencodeMessageCount"] = len(out["opencodeMessages"])
+        except Exception:
+            pass
         con.close()
-except Exception:
-    pass
+except Exception as e:
+    out["opencode_error"] = str(e)
 out["chatCount"] = len(out["chat"])
 out["auditCount"] = len(out["audit"])
 # Если chat пустой (неизвестные event names), дублируем audit как chat
@@ -80,6 +86,10 @@ with open(os.path.join(tmpdir, "audit.json"), "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, indent=2)
 PY
   if [ ! -s "$audit_json" ]; then echo "{}" > "$audit_json"; fi
+  # Обновляем saved/opencode-*.json каждые 120с (не раз в сутки) чтобы сессии были свежими
+  if [ -f "$SCRIPT_DIR/backup-chat-history.sh" ] && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
+    GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" PUBLISH=1 bash "$SCRIPT_DIR/backup-chat-history.sh" >> "$HUB_LOGS/snapshot-$SLOT.log" 2>&1 || true
+  fi
 
   python3 - "$WORK" "$tmpdir" <<'PY'
 import json, os, sys, subprocess, glob

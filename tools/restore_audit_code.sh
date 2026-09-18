@@ -52,3 +52,33 @@ if ls "$TMP/state"/saved/code-*.json >/dev/null 2>&1; then
   cp -f "$TMP/state"/saved/code-*.json "$WORK/.zen-agent/restored/" 2>/dev/null || true
   echo "restore_audit_code: saved code snapshots copied"
 fi
+mkdir -p "$HOME/.local/share/opencode/history" 2>/dev/null || true
+if ls "$TMP/state/saved"/opencode-*.json >/dev/null 2>&1; then
+  for f in "$TMP/state"/saved/opencode-*.json; do
+    STAMP="$(basename "$f" .json | sed 's/^opencode-//')"
+    DEST="$HOME/.local/share/opencode/history/$STAMP"
+    mkdir -p "$DEST" 2>/dev/null || true
+    cp -f "$f" "$DEST/bundle.json" 2>/dev/null || true
+    echo "restore_audit_code: opencode bundle $STAMP restored"
+  done
+  if [ -f "$TMP/state/audit.json" ]; then
+    python3 - "$TMP/state/audit.json" "$HOME/.local/share/opencode/history" <<'PY2'
+import json, os, sys, glob
+audit_path, hist_root = sys.argv[1], sys.argv[2]
+try:
+    data=json.load(open(audit_path, encoding="utf-8"))
+    msgs=data.get("opencodeMessages",[])
+    if msgs:
+        import glob as g
+        dirs=sorted(g.glob(hist_root+"/*"))
+        dest=dirs[-1] if dirs else hist_root+"/restored"
+        os.makedirs(dest, exist_ok=True)
+        with open(dest+"/messages_restored.jsonl","w",encoding="utf-8") as out:
+            for m in msgs:
+                out.write(json.dumps(m, ensure_ascii=False)+"\n")
+        print(f"restored {len(msgs)} opencode messages to {dest}/messages_restored.jsonl")
+except Exception as e:
+    print(f"opencode restore failed: {e}", file=sys.stderr)
+PY2
+  fi
+fi
