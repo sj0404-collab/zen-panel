@@ -57,7 +57,7 @@ permissions:
   contents: write
 
 env:
-  HUB_LOGS: $HOME/.npm-hub/logs
+  HUB_LOGS: /home/runner/.npm-hub/logs
 
 jobs:
   # ── Hub on Linux ───────────────────────────────────────────────────
@@ -106,7 +106,7 @@ jobs:
           # per-package attempts so a renamed package cannot cancel the
           # rest. Whatever lands on PATH the hub picks up; anything missing
           # still launches through `npx -y` at click time.
-          mkdir -p "$HUB_LOGS" "$HOME/.npm-hub/logs" 2>/dev/null || true
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
           PKGS="opencode-ai @anthropic-ai/claude-code @google/gemini-cli @openai/codex @github/copilot @qwen-code/qwen-code http-server"
           npm install -g $PKGS >$HUB_LOGS/npm-i.log 2>&1 || \
             for p in $PKGS; do npm install -g "$p" >$HUB_LOGS/npm-i.log 2>&1 \
@@ -131,14 +131,15 @@ jobs:
 
       - name: Create the work folder
         run: |
-          mkdir -p ~/hub-work ~/.npm-hub/logs "$HUB_LOGS" 2>/dev/null; mkdir -p "$HOME/.npm-hub/logs"
-          echo "logs dir ready $(ls -ld ~/.npm-hub/logs 2>&1)"
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p ~/hub-work "$HUB_LOGS" 2>/dev/null || true; mkdir -p ~/.npm-hub/logs
+          echo "logs dir ready $(ls -ld ~/.npm-hub/logs 2>&1 || ls -ld "$HUB_LOGS" 2>&1)"
 
       - name: Start the hub and open the tunnel
         run: |
-          mkdir -p "$HUB_LOGS" "$HOME/.npm-hub/logs" ~/.npm-hub/logs 2>/dev/null || true
-          echo "HUB_LOGS=$HUB_LOGS HOME=$HOME $(ls -ld "$HUB_LOGS" 2>&1 || ls -ld "$HOME/.npm-hub/logs" 2>&1)"
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          echo "HUB_LOGS=$HUB_LOGS HOME=$HOME $(ls -ld "$HUB_LOGS" 2>&1)"
           cd "$GITHUB_WORKSPACE/fork/npm-hub"
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
           HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 nohup node src/server.js > $HUB_LOGS/hub.log 2>&1 &
           for i in $(seq 1 60); do
             body=$(curl -s -m 15 -H "x-hub-token: ${{ inputs.token }}" "http://127.0.0.1:8090/api/tools" || true)
