@@ -110,6 +110,7 @@ jobs:
           { "permission": { "*": "allow" } }
           JSON
           cp $HUB_LOGS/opencode.json "$GITHUB_WORKSPACE/fork/opencode.json" 2>/dev/null || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || true
 
           nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
             > $HUB_LOGS/opencode.log 2>&1 &
@@ -129,6 +130,9 @@ jobs:
             exit 1
           fi
           echo "OpenCode serve is up on 4096"
+          export SNAPSHOT_INTERVAL=120
+          nohup bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" opencode "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-opencode.log" 2>&1 &
+          echo "opencode audit/code snapshot every 120s"
 
           node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > $HUB_LOGS/oc-gateway.log 2>&1 &
           echo $! > $HUB_LOGS/oc-gateway.pid
@@ -202,6 +206,12 @@ jobs:
             node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > $HUB_LOGS/oc-gateway2.log 2>&1 &
             sleep 6
           done
+
+      - name: Snapshot audit/code on exit
+        if: always()
+        run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once opencode "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-opencode.log" || true
 
       - name: Clear the published session
         run: |

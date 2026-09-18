@@ -133,6 +133,8 @@ jobs:
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p ~/hub-work "$HUB_LOGS" 2>/dev/null || true; mkdir -p ~/.npm-hub/logs
           echo "logs dir ready $(ls -ld ~/.npm-hub/logs 2>&1 || ls -ld "$HUB_LOGS" 2>&1)"
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" 2>&1 | tee -a "$HUB_LOGS/restore-hubwork.log" || true
 
       - name: Start the hub and open the tunnel
         run: |
@@ -153,6 +155,10 @@ jobs:
             exit 1
           fi
           echo "hub is up on 8090"
+          # Start audit/code snapshot daemon (audit.json = chat, code.json = diff + sessions)
+          export SNAPSHOT_INTERVAL=120
+          nohup bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" hub "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-hub.log" 2>&1 &
+          echo "snapshot daemon: audit.json + code.json every 120s -> session-state"
 
           URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 $HUB_LOGS/tunnel.log)
           if [ -z "$URL" ]; then
@@ -267,6 +273,12 @@ jobs:
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=hub-linux" "state=ended" || true
+
+      - name: Snapshot audit/code on exit
+        if: always()
+        run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once hub "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-hub.log" || true
 
       - name: Save the models snapshot
         run: |
@@ -609,6 +621,10 @@ jobs:
 
           echo "=================================================="
           echo " Linux Desktop VNC: $URL/vnc.html"
+          # VNC audit/code (hub-work) snapshot
+          export SNAPSHOT_INTERVAL=180
+          nohup bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" vnc "$HOME/hub-work" > "$HUB_LOGS/snapshot-vnc.log" 2>&1 &
+          echo "vnc snapshot daemon started"
           echo "=================================================="
 
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \

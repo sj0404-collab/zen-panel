@@ -98,6 +98,8 @@ set -- ${ARGS+"${ARGS[@]}"}
 if [ -n "$FILE_OVERRIDE" ]; then
   _f="${FILE_OVERRIDE#file=}"
   if [[ "$_f" =~ ^models-(linux|windows|agent(-linux|-windows)?|opencode(-linux|-windows)?|hub(-linux|-windows)?)\.json$ ]] || \
+     [[ "$_f" =~ ^(audit|code)\.json$ ]] || \
+     [[ "$_f" =~ ^saved/(audit|code)(-[a-z0-9-]+)?-[0-9]{8}T[0-9]{6}\.json$ ]] || \
      [[ "$_f" =~ ^saved/(linux|windows|agent(-linux|-windows)?|opencode(-linux|-windows)?|hub(-linux|-windows)?)-[0-9]{8}T[0-9]{6}\.json$ ]]; then
     FILE="$_f"
   else
@@ -178,7 +180,7 @@ fi
 
 # SESSION_STATE_URL exists for local tests: point it at a file:// bare
 # repo and the whole publish runs without touching github.com.
-REMOTE="${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git}"
+REMOTE="${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN:-}@github.com/${GITHUB_REPOSITORY:-}.git}"
 
 WORK="$(mktemp -d)"
 cd "$WORK" || exit 0

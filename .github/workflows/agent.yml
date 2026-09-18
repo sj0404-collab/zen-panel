@@ -107,6 +107,12 @@ jobs:
           # in the log rather than only in the browser.
           echo "hub/index.html: $(git log -1 --format='%h %s' -- agent/hub/index.html)"
 
+      - name: Restore audit/code from session-state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || true
+
       - name: Clone the repositories to work on
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -150,6 +156,13 @@ jobs:
           nohup "$HOME/autosave.sh" "$GITHUB_WORKSPACE/fork" \
             "$(( ${{ inputs.autosave_minutes }} * 60 ))" > $HUB_LOGS/autosave.log 2>&1 &
           echo "autosave every ${{ inputs.autosave_minutes }} min -> $WORK_BRANCH"
+
+      - name: Start audit/code snapshot daemon
+        run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          export SNAPSHOT_INTERVAL=120
+          nohup bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" agent "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-agent.log" 2>&1 &
+          echo "audit/code snapshot every 120s (audit.json + code.json) -> session-state"
 
       - name: Start the agent and open the tunnel
         env:
@@ -275,6 +288,12 @@ jobs:
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent-linux" "state=ended" || true
+
+      - name: Snapshot audit/code on exit
+        if: always()
+        run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once agent "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-agent.log" || true
 
       - name: Save the models roster
         run: |
