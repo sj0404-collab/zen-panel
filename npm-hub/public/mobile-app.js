@@ -1990,68 +1990,100 @@ if (document.getElementById('p-linux')) {
   })();
 }
 
-// ===== LINUX DESKTOP (VNC) =====
+// ===== LINUX DESKTOP (VNC) — всегда включён =====
+// Экран поднимается сам на раннере, где живёт хаб (src/vnc-keepalive.js), и
+// держится живым без кнопок: подключаемся сразу, повторяем до готовности,
+// один раз за сессию перезагружаем iframe и просим хаб пересобрать экран,
+// если он молчит. Никаких «Открыть экран»/«Подключение».
+let linuxRetries = 0, linuxRepairAsked = 0, linuxPollTimer = null;
+function linuxSetNote(text) {
+  const n = document.getElementById('linux-note');
+  if (n) n.textContent = text || '';
+}
 async function linuxStatus() {
   const el = document.getElementById('linux-status');
-  const btn = document.getElementById('linux-open');
   try {
-    if (el) { el.textContent = 'проверка…'; el.className = 'tag'; }
     const r = await fetch('/api/vnc/status');
     const d = await r.json();
     const ok = d.running && d.url;
     if (el) {
-      el.textContent = ok ? '● запущен' : '○ выключен';
+      const where = d.source === 'local' ? 'этот экран' : d.source === 'remote' ? 'другой раннер' : '';
+      el.textContent = ok ? '● запущен' + (where ? ' · ' + where : '') : '○ поднимается…';
       el.className = 'tag ' + (ok ? 'tag-on' : 'tag-off');
+    }
+    if (d.keepalive && d.keepalive.note && d.keepalive.note !== 'running'
+        && !/^\(/.test(String(d.keepalive.note)) && typeof d.keepalive.note === 'string'
+        && !d.keepalive.note.startsWith('running')) {
+      linuxSetNote(String(d.keepalive.note).slice(0, 90));
     }
     return d;
   } catch (e) {
-    if (el) { el.textContent = '? ошибка'; el.className = 'tag tag-off'; }
-    if (btn) { btn.textContent = 'Открыть экран'; }
+    if (el) { el.textContent = '? нет связи с хабом'; el.className = 'tag tag-off'; }
     return { running: false, url: null };
   }
 }
 async function linuxConnect() {
+  const fr = document.getElementById('linux-frame');
+  const ph = document.getElementById('linux-placeholder');
   const d = await linuxStatus();
   if (!d.url) {
-    // Всегда включён — повторяем каждые 5с пока не появится URL
-    setTimeout(()=>{ try{ linuxConnect(); }catch{} }, 5000);
-    const ph=document.getElementById('linux-placeholder');
-    if(ph) ph.style.display='flex';
-    const fr=document.getElementById('linux-frame');
-    if(fr) fr.style.display='none';
-    const btn=document.getElementById('linux-open');
-    if(btn) btn.textContent='⟳ ожидание…';
+    linuxRetries++;
+    if (fr) fr.style.display = 'none';
+    if (ph) ph.style.display = 'flex';
+    linuxSetNote('поднимаю экран на этом раннере: попытка ' + linuxRetries + '…');
+    // 6 неудач ≈ 30 c — просим хаб пересобрать рабочий стол (repair)
+    if (linuxRetries >= 6 && Date.now() - linuxRepairAsked > 60000) {
+      linuxRepairAsked = Date.now();
+      try { await fetch('/api/vnc/keepalive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'repair' }) }); } catch {}
+      linuxSetNote('хаб пересобирает рабочий стол…');
+    }
+    clearTimeout(linuxPollTimer);
+    linuxPollTimer = setTimeout(() => { try { linuxConnect(); } catch {} }, 5000);
     return;
   }
-  const frame = document.getElementById('linux-frame');
-  const ph = document.getElementById('linux-placeholder');
-  let u=d.url;
-  // noVNC авто-подключение без кнопки 'Подключение' внутри iframe
-  if(u && !u.includes('autoconnect')){
-    u += (u.includes('?')?'&':'?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
-  }
-  if(frame.src !== u){
-    frame.src = u;
-    frame.style.display = 'block';
-    frame.allow = 'clipboard-read; clipboard-write';
-  } else {
-    frame.style.display='block';
+  linuxRetries = 0;
+  let u = d.url;
+  // noVNC: без кнопки «Подключение», с авто-реконнектом и масштабом
+  if (u && !u.includes('autoconnect')) u += (u.includes('?') ? '&' : '?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+  if (fr) {
+    // Единственное место, где iframe меняет src: иначе noVNC перезагружался бы
+    // каждые 15 c и экран выглядел чёрным.
+    if (fr.dataset.src !== u) { fr.dataset.src = u; fr.src = u; }
+    fr.style.display = 'block';
+    fr.allow = 'clipboard-read; clipboard-write';
   }
   if (ph) ph.style.display = 'none';
-  const btn=document.getElementById('linux-open');
-  if(btn) btn.textContent='● всегда включён';
-  const el=document.getElementById('linux-status');
-  if(el){ el.textContent='● запущен'; el.className='tag tag-on'; }
+  linuxRetries = 0;
+}
+async function linuxRepair() {
+  linuxSetNote('починка экрана…');
+  linuxRepairAsked = Date.now(); linuxRetries = 0;
+  try { await fetch('/api/vnc/keepalive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'repair' }) }); } catch {}
+  setTimeout(() => { try { linuxConnect(); } catch {} }, 3000);
+}
+// Всегда включён: коннект при загрузке и keepalive без перезагрузки iframe.
+setTimeout(() => { try { linuxConnect(); } catch {} }, 500);
+setInterval(() => {
+  const fr = document.getElementById('linux-frame');
+  if (!fr || !fr.dataset.src || fr.style.display === 'none') { try { linuxConnect(); } catch {} }
+}, 15000);
+
+function linuxFullscreen() {
+  // Весь экран целиком (тулбары + VNC) на весь экран; Esc — обратно.
+  const page = document.getElementById('p-linux');
+  if (!page) return;
+  page.classList.toggle('linux-full');
+  const on = page.classList.contains('linux-full');
+  const esc = (e) => {
+    if (e.key === 'Escape' && page.classList.contains('linux-full')) {
+      page.classList.remove('linux-full');
+      document.removeEventListener('keydown', esc);
+    }
+  };
+  document.addEventListener('keydown', esc);
+  try { fmInfo(on ? '⛶ Экран на весь экран (Esc — выход)' : '⛶ Обычный размер'); } catch {}
 }
 
-// Всегда включён: грузим сразу при загрузке и держим живым
-setTimeout(()=>{ try{ linuxConnect(); }catch{} }, 800);
-setInterval(()=>{ try{ const fr=document.getElementById('linux-frame'); if(!fr || !fr.src || fr.style.display==='none'){ linuxConnect(); } }catch{} }, 15000);
-function linuxFullscreen() {
-  const frame = document.getElementById('linux-frame');
-  if (frame.requestFullscreen) frame.requestFullscreen();
-  else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
-}
 
 // ===== BROWSER TAB (Chrome вкладка) =====
 let browserHist = [], browserIdx = -1;

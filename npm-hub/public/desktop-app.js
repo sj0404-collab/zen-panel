@@ -1956,84 +1956,108 @@ async function ocrCapture(){
   }
 }
 function ocrCaptureDesk(){ ocrCapture(); }
+// ===== LINUX DESKTOP (VNC) — всегда включён (сервер: src/vnc-keepalive.js) =====
+let linuxLastUrl = '';
+let linuxRetries = 0, linuxRepairAsked = 0, linuxPollTimer = null;
+function linuxSetNote(text) {
+  const n = document.getElementById('linux-note-desktop');
+  if (n) n.textContent = text || '';
+}
 async function linuxStatus(prefix) {
   const pfx = prefix || '';
   const el = document.getElementById(pfx ? 'linux-status-desktop' : 'linux-status');
   try {
-    if (el) { el.textContent = 'проверка…'; el.className = 'tag'; }
     const r = await fetch('/api/vnc/status');
     const d = await r.json();
     const ok = d.running && d.url;
     if (el) {
-      el.textContent = ok ? '● запущен' : '○ выключен';
+      const where = d.source === 'local' ? 'этот экран' : d.source === 'remote' ? 'другой раннер' : '';
+      el.textContent = ok ? '● запущен' + (where ? ' · ' + where : '') : '○ поднимается…';
       el.className = 'tag ' + (ok ? 'tag-on' : 'tag-off');
     }
+    if (d.keepalive && typeof d.keepalive.note === 'string' && d.keepalive.note
+        && !d.keepalive.note.startsWith('running')) linuxSetNote(d.keepalive.note.slice(0, 90));
     return d;
   } catch (e) {
-    if (el) { el.textContent = '? ошибка'; el.className = 'tag tag-off'; }
+    if (el) { el.textContent = '? нет связи с хабом'; el.className = 'tag tag-off'; }
     return { running: false, url: null };
   }
 }
+function linuxQuery(u) {
+  if (u && !u.includes('autoconnect')) {
+    u += (u.includes('?') ? '&' : '?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+  }
+  return u;
+}
 async function linuxConnect(prefix) {
   const pfx = prefix || '';
+  const fr = document.getElementById(pfx ? 'linux-frame-desktop' : 'linux-frame');
+  const ph = document.getElementById(pfx ? 'linux-placeholder-desktop' : 'linux-placeholder');
   const d = await linuxStatus(pfx);
   if (!d.url) {
-    setTimeout(()=>{ try{ linuxConnect(pfx); }catch{} }, 5000);
+    linuxRetries++;
+    if (fr) fr.style.display = 'none';
+    if (ph) ph.style.display = 'flex';
+    linuxSetNote('поднимаю экран на этом раннере: попытка ' + linuxRetries + '…');
+    if (linuxRetries >= 6 && Date.now() - linuxRepairAsked > 60000) {
+      linuxRepairAsked = Date.now();
+      try { await fetch('/api/vnc/keepalive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'repair' }) }); } catch {}
+      linuxSetNote('хаб пересобирает рабочий стол…');
+    }
+    clearTimeout(linuxPollTimer);
+    linuxPollTimer = setTimeout(() => { try { linuxConnect(pfx); } catch {} }, 5000);
     return;
   }
-  const frame = document.getElementById(pfx ? 'linux-frame-desktop' : 'linux-frame');
-  const ph = document.getElementById(pfx ? 'linux-placeholder-desktop' : 'linux-placeholder');
-  let u=d.url;
-  if(u && !u.includes('autoconnect')){
-    u += (u.includes('?')?'&':'?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+  const u = linuxQuery(d.url);
+  linuxLastUrl = d.url;
+  linuxRetries = 0;
+  if (fr) {
+    if (fr.dataset.src !== u) { fr.dataset.src = u; fr.src = u; }
+    fr.style.display = 'block';
+    fr.allow = 'clipboard-read; clipboard-write';
   }
-  if(frame.src !== u) frame.src = u;
-  frame.style.display = 'block';
   if (ph) ph.style.display = 'none';
+  linuxSetNote('');
+}
+// Совместимость: те же вызовы, что и раньше.
+async function linuxAutoConnect(force) {
+  if (force) { linuxRetries = 0; }
+  return linuxConnect('desktop');
 }
 function linuxFullscreen(prefix) {
-  const pfx = prefix || '';
-  const frame = document.getElementById(pfx ? 'linux-frame-desktop' : 'linux-frame');
-  if (frame.requestFullscreen) frame.requestFullscreen();
-  else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
-}
-let linuxLastUrl = '';
-let linuxPollTimer = null;
-async function linuxAutoConnect(force) {
-  const frame = document.getElementById('linux-frame-desktop');
-  if (!frame) return;
-  const ph = document.getElementById('linux-placeholder-desktop');
-  const d = await linuxStatus('desktop');
-  const el = document.getElementById('linux-status-desktop');
-  if (el) {
-    el.textContent = d.url ? '● работает' : '○ запускается…';
-    el.className = 'tag ' + (d.url ? 'tag-on' : 'tag-off');
-  }
-  if (d.url && (force || d.url !== linuxLastUrl)) {
-    linuxLastUrl = d.url;
-    let u=d.url;
-    if(u && !u.includes('autoconnect')){
-      u += (u.includes('?')?'&':'?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+  const page = document.getElementById('p-linux');
+  if (!page) return;
+  page.classList.toggle('linux-full');
+  const on = page.classList.contains('linux-full');
+  const esc = (e) => {
+    if (e.key === 'Escape' && page.classList.contains('linux-full')) {
+      page.classList.remove('linux-full');
+      document.removeEventListener('keydown', esc);
     }
-    frame.src = '';
-    frame.src = u;
-    frame.style.display = 'block';
-    if (ph) ph.style.display = 'none';
-    return;
-  }
-  if (!d.url) {
-    frame.style.display = 'none';
-    if (ph) ph.style.display = 'flex';
-    if (linuxPollTimer) clearTimeout(linuxPollTimer);
-    linuxPollTimer = setTimeout(() => linuxAutoConnect(), 8000);
-  }
+  };
+  document.addEventListener('keydown', esc);
+  try { fmInfo && fmInfo(on ? '⛶ Экран на весь экран (Esc — выход)' : '⛶ Обычный размер'); } catch {}
 }
 async function linuxReload() {
-  const frame = document.getElementById('linux-frame-desktop');
-  if (frame) { frame.src = ''; frame.style.display = 'block'; }
-  linuxLastUrl = '';
-  await linuxAutoConnect(true);
+  // Полный перезапуск сессии noVNC: сбрасываем dataset.src, иначе connect
+  // решит, что URL не изменился, и ничего не перезагрузит.
+  const fr = document.getElementById('linux-frame-desktop');
+  if (fr) { fr.dataset.src = ''; fr.src = ''; fr.style.display = 'block'; }
+  linuxRetries = 0;
+  await linuxConnect('desktop');
 }
+async function linuxRepair(prefix) {
+  linuxSetNote('починка экрана…');
+  linuxRetries = 0; linuxRepairAsked = Date.now();
+  try { await fetch('/api/vnc/keepalive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'repair' }) }); } catch {}
+  setTimeout(() => { try { linuxConnect(prefix || 'desktop'); } catch {} }, 3000);
+}
+// Всегда включён: коннект при загрузке и keepalive без перезагрузки iframe.
+setTimeout(() => { try { linuxConnect('desktop'); } catch {} }, 600);
+setInterval(() => {
+  const fr = document.getElementById('linux-frame-desktop');
+  if (!fr || !fr.dataset.src || fr.style.display === 'none') { try { linuxConnect('desktop'); } catch {} }
+}, 15000);
 
 // ===== BROWSER (Chrome / YouTube) =====
 function browserGo(url, prefix) {

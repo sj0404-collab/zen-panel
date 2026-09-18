@@ -1127,13 +1127,23 @@ app.get('/api/pulse/sinks', async (req, res) => {
 // we fall back to node-pty sessions that live inside this process.
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
+// Paths owned by their own upgrade handlers below (cloud phone VNC + the
+// always-on desktop). Handling the same socket twice makes ws throw
+// «server.handleUpgrade() was called more than once» — and that crash took the
+// whole hub down, so the list is shared and every handler is guarded.
+const WS_CLAIMED = new Set(['/ws/vnc', '/ws/desktop', '/novnc/ws/desktop', '/websockify', '/novnc/websockify']);
 server.on('upgrade', (req, socket, head) => {
-  // Route the single 'upgrade' event: /ws → PTY, /ws/vnc → cloud phone.
+  // Route the single 'upgrade' event: /ws → PTY, others → their own blocks.
   let pathname = '';
   try { pathname = new URL(req.url, 'http://' + (req.headers.host || 'localhost')).pathname; }
   catch { return; }
-  if (pathname === '/ws/vnc') return; // handled below (VNC proxy block)
-  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  if (WS_CLAIMED.has(pathname.replace(/\/+$/, ''))) return;
+  try {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  } catch (e) {
+    console.log('  ⚠ ws upgrade: ' + e.message);
+    try { socket.destroy(); } catch {}
+  }
 });
 const sessions = new Map(); // sessionId -> { id, pty?, tmux?, cwd, toolId, clients:Set, output, resumed, offset, logPath, poller? }
 
@@ -1732,15 +1742,46 @@ const vncRemoteStatus = async () => {
 };
 
 const vncStatus = async () => {
+  // Local screen first: the hub's OWN runner is the desktop that the panel's
+  // 'Go · 🖥' actually paints into (DISPLAY=:99 on this machine), it lives on
+  // the hub origin (no iframe/tunnel games) and vnc-keepalive heals it. The
+  // URL the `vnc` job published is only a fallback - it may belong to another
+  // runner of the same cluster, where nothing the hub launches can be seen.
+  let local = { url: null, ready: false };
+  try { if (vncKeeper) local = await vncKeeper.localStatus(); } catch {}
+  if (local.url) {
+    return { running: true, url: local.url, remote: false, source: 'local', raw: null, keepalive: vncKeeper ? vncKeeper.status() : null };
+  }
   const s = await vncRemoteStatus();
   const url = s.url;
   return {
     running: Boolean(url || s.raw && s.raw.state === 'live'),
     url,
     remote: true,
-    raw: s.raw
+    source: url ? 'remote' : 'none',
+    raw: s.raw,
+    local: local,
+    keepalive: vncKeeper ? vncKeeper.status() : null
   };
 };
+
+// Diagnostics + manual repair of the always-on desktop (see src/vnc-keepalive.js)
+app.get('/api/vnc/keepalive', async (req, res) => {
+  try {
+    const st = vncKeeper ? vncKeeper.status() : { enabled: false, note: 'keepalive не подключён' };
+    const local = vncKeeper ? await vncKeeper.localStatus() : { url: null };
+    res.json({ ok: true, keepalive: st, local });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.post('/api/vnc/keepalive', async (req, res) => {
+  if (!vncKeeper) return res.json({ ok: false, error: 'keepalive не подключён' });
+  const action = (req.body && req.body.action) || 'repair';
+  try {
+    const ok = action === 'rebuild' ? await vncKeeper.ensureNow() : await vncKeeper.repair('запрос панели');
+    res.json({ ok: true, action, done: ok, keepalive: vncKeeper.status() });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 
 app.get('/api/vnc/status', async (req, res) => {
   try { res.json(await vncStatus()); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -1769,6 +1810,7 @@ server.on('upgrade', (req, socket, head) => {
   try { u = new URL(req.url, 'http://' + (req.headers.host || 'localhost')); }
   catch { return; }
   if (u.pathname !== '/ws/vnc') return; // let the main /ws WSS handle it
+  try {
   vncWss.handleUpgrade(req, socket, head, (ws) => {
     const tcp = net.connect(PHONE_VNC_PORT, '127.0.0.1');
     const destroy = () => { try { tcp.destroy(); } catch {} try { ws.terminate(); } catch {} };
@@ -1779,6 +1821,10 @@ server.on('upgrade', (req, socket, head) => {
     ws.on('error', () => destroy());
     vncWss.emit('connection', ws, req);
   });
+  } catch (e) {
+    console.log('  ⚠ phone-vnc upgrade: ' + e.message);
+    try { socket.destroy(); } catch {}
+  }
 });
 
 // ─── LINUX DESKTOP: run apps on the VNC desktop ───
@@ -2567,6 +2613,25 @@ function onReady(actualPort) {
   };
   backupHistory(true);
   setInterval(() => backupHistory(false), 24 * 60 * 60 * 1000);
+}
+
+// ─── ALWAYS-ON DESKTOP ───
+// The screen must be there before anyone asks for it: vnc-keepalive starts the
+// Xvfb/openbox/x11vnc/websockify stack on THIS runner, proxies it under
+// /novnc + /ws/desktop, paints the wallpaper/shortcuts and repairs it every
+// 15 s. Started before the listener so the proxy is registered on `server`.
+let vncKeeper = null;
+try {
+  vncKeeper = require('./vnc-keepalive').start({
+    repoRoot: GIT_ROOT,
+    app,
+    server,
+    port: PORT,
+    log: (m) => console.log('  🖥 ' + m)
+  });
+  console.log('  🖥 Always-on desktop: ' + JSON.stringify(vncKeeper.status().note));
+} catch (e) {
+  console.log('  🖥 vnc-keepalive не запустился: ' + e.message);
 }
 
 tryListen(PORT, onReady);
