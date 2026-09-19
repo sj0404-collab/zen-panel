@@ -189,7 +189,6 @@
       <button class="tb" onclick="openStandaloneTerminal()">Терминал</button>
       <button class="tb" onclick="showPage('files')">Файлы</button>
       <button class="tb" onclick="showPage('linux')">🖥 Экран</button>
-      <button class="tb" onclick="showPage('browser')">🌐 Chrome</button>
       <button class="tb" onclick="showPage('git')">🐙 Git</button>
     </div>
     <div class="topbar-right">
@@ -303,6 +302,24 @@
           <button class="btn btn-p btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url-desktop').value)" title="Открыть на этом экране">Go · 🖥</button>
           <span style="font-size:11px;color:var(--t3)">звук 80% авто</span>
         </div>
+        <!-- Читалка и ссылки агента: жили во вкладке Chrome, которая дублировала
+             «Экран» (два браузера) — теперь это часть экрана. -->
+        <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center;flex-wrap:wrap;font-size:11px">
+          <span style="color:var(--pur);font-weight:700">🔊 TTS/OCR:</span>
+          <button class="btn btn-p btn-sm" id="tts-play-btn-desk" onclick="ttsToggleDesk()">▶ Читать</button>
+          <button class="btn btn-sm" onclick="ttsStopDesk()">⏹ Стоп</button>
+          <select id="tts-voice-desk" style="padding:4px 6px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:11px;max-width:120px"></select>
+          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--t2)"><input type="range" id="tts-rate-desk" min="0.5" max="2" step="0.1" value="1" style="width:60px" oninput="ttsSetRateDesk(this.value)"> <span id="tts-rate-label-desk">1×</span></label>
+          <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-autoscroll-desk" checked> Авто-скролл</label>
+          <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-bg-desk" checked> В фоне</label>
+          <button class="btn btn-sm" onclick="ocrCaptureDesk()">👁️ OCR</button>
+          <span id="tts-status-desk" style="font-size:10px;color:var(--t3);margin-left:auto">готов</span>
+        </div>
+        <div id="browser-agent-hint-desk" style="display:none;padding:6px 8px;background:rgba(88,166,255,.14);border-bottom:1px solid var(--bdr);font-size:12px;color:var(--acc);gap:8px;align-items:center;flex-shrink:0">
+          <span>🔗 Агент прислал ссылку:</span><a id="browser-agent-url-desk" href="#" style="color:var(--acc);word-break:break-all"></a>
+          <button class="btn btn-p btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-agent-url-desk').textContent)">🖥 Открыть на экране</button>
+          <button class="btn btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-agent-url-desk').textContent, true)">📱 вертикально</button>
+        </div>
         <style>
           /* ⛶ — экран на весь экран без потери noVNC-сессии */
           #p-linux.linux-full{position:fixed!important;inset:0!important;height:100vh!important;z-index:99999;background:#000}
@@ -319,40 +336,6 @@
       </div>
 
       <!-- GIT — local + GitHub repos + builds -->
-      <!-- BROWSER — Chrome вкладка -->
-      <div class="page" id="p-browser" style="padding:0;flex-direction:column;height:100%">
-        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);align-items:center;flex-wrap:wrap">
-          <button class="btn btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-desk')?.value||'')">←</button>
-          <button class="btn btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-desk')?.value||'')">→</button>
-          <button class="btn btn-sm" onclick="document.getElementById('browser-frame-desk').src=document.getElementById('browser-frame-desk').src">⟳</button>
-          <input type="text" id="browser-url-desk" placeholder="https://..." value="https://www.google.com" style="flex:1;min-width:160px;padding:6px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')hubBrowserGo(this.value)">
-          <button class="btn btn-p btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-desk').value)">Go</button>
-          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-url-desk').value)">🖥</button>
-          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-url-desk').value,true)">📱</button>
-          <button class="btn btn-sm" onclick="browserFullscreenVerticalDesk()" title="9:16 фуллскрин">⛶ 9:16</button>
-          <button class="btn btn-sm" onclick="browserCopyUrlDesk()" title="Копировать">⧉</button>
-        </div>
-        <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg1);border-bottom:1px solid var(--bdr);align-items:center;flex-wrap:wrap;font-size:11px">
-          <span style="color:var(--pur);font-weight:700">🔊 TTS/OCR:</span>
-          <button class="btn btn-p btn-sm" id="tts-play-btn-desk" onclick="ttsToggleDesk()">▶ Читать</button>
-          <button class="btn btn-sm" onclick="ttsStopDesk()">⏹</button>
-          <select id="tts-voice-desk" style="padding:4px 6px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:11px;max-width:120px"></select>
-          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--t2)"><input type="range" id="tts-rate-desk" min="0.5" max="2" step="0.1" value="1" style="width:60px" oninput="ttsSetRateDesk(this.value)"> <span id="tts-rate-label-desk">1×</span></label>
-          <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-autoscroll-desk" checked> Авто-скролл</label>
-          <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-bg-desk" checked> В фоне</label>
-          <button class="btn btn-sm" onclick="ocrCaptureDesk()">👁️ OCR</button>
-          <span id="tts-status-desk" style="font-size:10px;color:var(--t3);margin-left:auto">готов</span>
-        </div>
-        <div id="browser-agent-hint-desk" style="display:none;padding:8px;background:rgba(88,166,255,.12);border-bottom:1px solid var(--bdr);font-size:12px;color:var(--acc);gap:8px;align-items:center">
-          <span>🔗 Агент:</span><a id="browser-agent-url-desk" href="#" style="color:var(--acc)"></a>
-          <button class="btn btn-p btn-sm" onclick="hubBrowserGo(document.getElementById('browser-agent-url-desk').textContent)">Открыть</button>
-          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-agent-url-desk').textContent)">🖥</button>
-        </div>
-        <div style="flex:1;position:relative;background:#fff;display:flex;flex-direction:column">
-          <iframe id="browser-frame-desk" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads" style="flex:1;width:100%;border:none;background:#fff;display:block" allow="clipboard-read; clipboard-write"></iframe>
-          <div id="browser-placeholder-desk" style="position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#0a0e14;color:var(--t3);flex-direction:column">Введите URL</div>
-        </div>
-      </div>
       <div class="page" id="p-git">
         <div class="ph"><h1>🐙 Git</h1><p>Локальный репозиторий + GitHub аккаунт: все репозитории, ветки, коммиты, сборки</p></div>
 

@@ -114,8 +114,7 @@ async function hubUpdate() {
     fmInfo(`Актуальная версия (${check.version}), обновлений нет.`);
     return;
   }
-  const want = `На GitHub есть новая версия: сейчас ${check.current}, доступно ${check.latest} (+${check.behind} коммит.)\n\nОбновить сейчас? Терминалы и туннель переживут рестарт.`;
-  if (!confirm(want)) { busy('🔄'); return; }
+  fmInfo(`Новая версия: ${check.current} → ${check.latest} (+${check.behind} коммит.) — обновляю…`);
   try {
     const apply = await fetch('/api/update', { method: 'POST' }).then(r => r.json());
     if (!apply.success) {
@@ -225,6 +224,8 @@ function showPage(p) {
 }
 
 showPage('files');
+// восстанавливаем адрес облачного телефона и держим его актуальным
+(function(){ try { cpRestoreLastUrl(); } catch {} })();
 
 // ===== GIT VIEW =====
 let gitPathRef = '';
@@ -1565,6 +1566,19 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ===== CLOUD PHONE =====
+// Последний адрес облачного телефона: писался, но не восстанавливался —
+// после перезагрузки панели поле оставалось пустым.
+let cpLastUrl = '';
+function cpRestoreLastUrl() {
+  try {
+    const last = localStorage.getItem('cp.lastUrl');
+    if (!last) return;
+    cpLastUrl = last;
+    const el = document.getElementById('cp-url-desktop') || document.getElementById('cp-url');
+    if (el && !el.value) el.value = last;
+  } catch {}
+}
+
 function cloudPhoneUrl(suffix) {
   const proto = location.protocol === 'https:' ? 'https' : 'http';
   return proto + '://' + location.host + '/phone/' + (suffix || 'vnc.html');
@@ -1657,6 +1671,7 @@ async function phoneBrowserOpen(url, prefix) {
   if (!/^https?:\/\//i.test(val)) val = 'https://' + val;
   if (urlEl) urlEl.value = val;
   try { localStorage.setItem('cp.lastUrl', val); } catch {}
+  cpLastUrl = val;
   const d = await cloudPhoneStatus(pfx);
   if (!d.running) {
     phoneMsg('Телефон не запущен. Нажмите «▶ Старт».');
@@ -1686,40 +1701,22 @@ if (document.getElementById('p-linux')) linuxAutoConnect();
 // ===== LINUX DESKTOP (VNC) =====
 
 let browserHistDesk=[], browserIdxDesk=-1;
+// Вкладку Chrome убрали (она дублировала «Экран»): любая ссылка открывается
+// прямо на удалённом рабочем столе.
 function hubBrowserGo(url){
   if(!url) return;
   url=url.trim(); if(!/^https?:\/\//i.test(url)) url='https://'+url;
-  const inp=document.getElementById('browser-url-desk');
+  const inp=document.getElementById('browser-url-desktop');
   if(inp) inp.value=url;
-  const blockedSites = /google\.com|youtube\.com|youtu\.be|github\.com|chat\.openai\.com/i;
-  if(blockedSites.test(url)){
-    const isYt=/youtube|youtu\.be/i.test(url);
-    browserOpenDesktop(url, isYt);
-    return;
-  }
-  const frame=document.getElementById('browser-frame-desk');
-  if(!frame) return;
-  browserHistDesk=browserHistDesk.slice(0,browserIdxDesk+1);
-  browserHistDesk.push(url); browserIdxDesk=browserHistDesk.length-1;
-  frame.src=url;
-  // Проверка блокировки iframe
-  setTimeout(()=>{
-    try{
-      const doc=frame.contentDocument;
-      if(!doc || !doc.body || doc.body.innerText.includes('ERR_BLOCKED')){
-        const hint=document.getElementById('browser-agent-hint-desk');
-        if(hint){ hint.innerHTML='<span>⚠️ Блокирует iframe —</span> <button class=\"btn btn-p btn-sm\" onclick=\"browserOpenDesktop(\''+url.replace(/'/g,"\\'")+ '\')\">🖥</button>'; hint.style.display='flex'; }
-      }
-    }catch(e){
-      const hint=document.getElementById('browser-agent-hint-desk');
-      if(hint){ hint.innerHTML='<span>⚠️ Блокирует iframe —</span> <button class=\"btn btn-p btn-sm\" onclick=\"browserOpenDesktop(\''+url.replace(/'/g,"\\'")+ '\')\">🖥</button>'; hint.style.display='flex'; }
-    }
-  },1500);
   try{localStorage.setItem('hub_browser_last',url);}catch{}
-  showPage('browser');
+  const isYt=/youtube|youtu\.be/i.test(url);
+  linuxRunBrowser(url, isYt);
+  fmInfo('🌐 '+url+' → открываю на экране');
+  showPage('linux');
 }
+
 function browserOpenDesktop(url, vertical){
-  if(!url) url=document.getElementById('browser-url-desk')?.value||'';
+  if(!url) url=document.getElementById('browser-url-desktop')?.value||'';
   if(!url) return;
   url=url.trim(); if(!/^https?:\/\//i.test(url)) url='https://'+url;
   linuxRunBrowser(url, !!vertical);
@@ -1759,15 +1756,7 @@ function ttsStopDesk(){ if(typeof ttsStop==='function') ttsStop(); else speechSy
 function ttsSetRateDesk(v){ const el=document.getElementById('tts-rate-label-desk'); if(el) el.textContent=v+'×'; if(typeof ttsSetRate==='function') ttsSetRate(v); }
 function ocrCaptureDesk(){
   if(typeof ocrCapture==='function') ocrCapture();
-  else alert('OCR: используй мобильную версию');
-}
-function browserFullscreenVerticalDesk(){
-  const url=document.getElementById('browser-url-desk')?.value||'https://m.youtube.com/shorts/';
-  browserOpenDesktop(url, true);
-  setTimeout(()=>{
-    const c=document.getElementById('p-browser');
-    try{ if(c && c.requestFullscreen) c.requestFullscreen().catch(()=>{}); }catch{}
-  },1100);
+  else fmInfo('OCR: распознавание доступно в мобильной панели');
 }
 function browserAgentHintDesk(url){
   if(!url) return;
@@ -1933,7 +1922,8 @@ async function ocrCapture(){
     if(txt && !txt.includes('Текст не доступен')){
       if(st) st.textContent='OK (текст)';
       ttsQueue=[txt.slice(0,3000)]; ttsIdx=0;
-      if(confirm('Распознано '+txt.slice(0,120)+'... Начать чтение?')) ttsToggle();
+      ttsToggle();
+      fmInfo('Читаю распознанное: '+txt.slice(0,80)+'…');
       return;
     }
     // Иначе скриншот VNC + tesseract на сервере
@@ -1944,15 +1934,15 @@ async function ocrCapture(){
       if(st) st.textContent='OCR готово: '+d.text.slice(0,30)+'...';
       // Кладём в буфер и предлагаем читать
       ttsQueue=[txt.slice(0,4000)];
-      if(confirm('OCR: '+txt.slice(0,200)+'... Читать?')) { ttsIdx=0; ttsSpeaking=false; ttsToggle(); }
-      else { navigator.clipboard?.writeText(txt).catch(()=>{}); }
+      ttsIdx=0; ttsSpeaking=false; ttsToggle();
+      fmInfo('OCR: читаю распознанное ('+txt.length+' символов)');
     } else {
       if(st) st.textContent='OCR: '+ (d.error||'нет текста');
-      alert('OCR не нашёл текст: '+(d.error||'попробуй другой сайт'));
+      fmInfo('OCR не нашёл текст: '+(d.error||'попробуй другую страницу'));
     }
   }catch(e){
     if(st) st.textContent='OCR ошибка';
-    alert('OCR ошибка: '+e.message);
+    fmInfo('OCR ошибка: '+e.message);
   }
 }
 function ocrCaptureDesk(){ ocrCapture(); }

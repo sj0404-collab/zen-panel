@@ -102,8 +102,9 @@ function hubUpdate() {
     catch (e) { check = { success: false, error: e.message }; }
     if (!check.success) { busy('🔄'); fmInfo('Обновление: ' + (check.error || 'не удалось проверить')); return; }
     if (check.same) { busy('🔄'); fmInfo(`Актуальная версия (${check.version}), обновлений нет.`); return; }
-    const want = `На GitHub есть новая версия: сейчас ${check.current}, доступно ${check.latest} (+${check.behind} коммит.)\n\nОбновить сейчас? Терминалы переживут рестарт.`;
-    if (!confirm(want)) { busy('🔄'); return; }
+    // Подтверждения спрашивать нечем — системный confirm в WebView не работает —
+    // показываем что нашли и обновляем.
+    fmInfo(`Новая версия: ${check.current} → ${check.latest} (+${check.behind} коммит.) — обновляю…`);
     try {
       const apply = await fetch('/api/update', { method: 'POST' }).then(r => r.json());
       if (!apply.success) { busy('🔄'); fmInfo('Обновление: ' + (apply.error || 'не удалось применить')); return; }
@@ -2352,59 +2353,25 @@ function linuxMoreToggle() {
 
 // ===== BROWSER TAB (Chrome вкладка) =====
 let browserHist = [], browserIdx = -1;
+// Раньше это открывало iframe во вкладке «Chrome». Вкладку убрали (она
+// дублировала «Экран»), поэтому любой «открыть ссылку» ведёт прямо на
+// удалённый рабочий стол — один браузер вместо двух.
 function hubBrowserGo(url){
   if(!url) return;
   url = url.trim();
   if(!/^https?:\/\//i.test(url)) url = 'https://' + url;
-  const input = document.getElementById('browser-url-main');
+  const input = document.getElementById('browser-url') || document.getElementById('browser-url-main');
   if(input) input.value = url;
-  // Сайты с X-Frame-Options (Google, YouTube, GitHub, ChatGPT) не грузятся в iframe — сразу на VNC
-  const blockedSites = /google\.com|google\.ru|youtube\.com|youtu\.be|github\.com|chat\.openai\.com|openai\.com|facebook\.com|instagram\.com|twitter\.com|x\.com/i;
-  if(blockedSites.test(url)){
-    fmInfo('🌐 '+url+' блокирует iframe — открываю на рабочем столе (🖥/📱) со звуком');
-    const isYt = /youtube|youtu\.be/i.test(url);
-    browserOpenDesktop(url, isYt);
-    return;
-  }
-  const frame = document.getElementById('browser-frame');
-  const ph = document.getElementById('browser-placeholder');
-  const loading = document.getElementById('browser-loading');
-  if(!frame) return;
-  browserHist = browserHist.slice(0, browserIdx+1);
-  browserHist.push(url);
-  browserIdx = browserHist.length-1;
-  frame.style.display='block';
-  if(ph) ph.style.display='none';
-  if(loading) loading.style.display='block';
-  frame.src = url;
-  frame.onload = ()=>{
-    if(loading) loading.style.display='none';
-    // Проверка: если iframe заблокирован (ERR_BLOCKED_BY_RESPONSE), contentDocument будет пустым или доступ запрещён
-    setTimeout(()=>{
-      try{
-        const doc = frame.contentDocument;
-        // Если doc null или внутри текст ERR_BLOCKED -> фолбэк
-        if(!doc || !doc.body || doc.body.innerText.includes('ERR_BLOCKED_BY_RESPONSE') || doc.body.innerText.includes('Не удалось открыть')){
-          throw new Error('blocked');
-        }
-      }catch(e){
-        if(loading) loading.style.display='none';
-        // Автоматически предлагаем VNC
-        const hint=document.getElementById('browser-agent-hint');
-        if(hint){
-          hint.innerHTML='<span>⚠️ Сайт блокирует встройку —</span> <button class=\"btn btn-p btn-sm\" onclick=\"browserOpenDesktop(\''+url.replace(/'/g,"\\'")+ '\')\">Открыть 🖥</button> <button class=\"btn btn-sm\" onclick=\"browserOpenDesktop(\''+url.replace(/'/g,"\\'")+ '\',true)\">📱 вертикально</button> <span style=\"margin-left:auto;cursor:pointer\" onclick=\"this.parentElement.style.display=\'none\'\">✕</span>';
-          hint.style.display='flex';
-        }
-      }
-    }, 1500);
-  };
-  frame.onerror = ()=>{ if(loading) loading.style.display='none'; };
-  setTimeout(()=>{ if(loading) loading.style.display='none'; }, 4000);
   try{ localStorage.setItem('hub_browser_last', url); }catch{}
-  showPage('browser');
+  const isYt = /youtube|youtu\.be/i.test(url);
+  linuxRunBrowser(url, isYt);
+  fmInfo('🌐 ' + url + ' → открываю на экране (звук вкл)');
+  if (typeof linuxMoreToggle === 'function') { const m=document.getElementById('linux-more'); if (m && !m.hidden) linuxMoreToggle(); }
+  showPage('linux');
 }
+
 function browserOpenDesktop(url, vertical){
-  if(!url) url = document.getElementById('browser-url-main')?.value || '';
+  if(!url) url = (document.getElementById('browser-url') || {}).value || '';
   if(!url) return;
   url=url.trim(); if(!/^https?:\/\//i.test(url)) url='https://'+url;
   // vertical=true для ютуб Shorts — узкое окно + мобильный UA + звук
@@ -2426,27 +2393,9 @@ async function pulseSetVol(v){
   if(lbl) lbl.textContent=v+'%';
   try{ await fetch('/api/pulse/volume',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume: Number(v)})}); }catch{}
 }
-function browserBack(){ if(browserIdx>0){ browserIdx--; const u=browserHist[browserIdx]; document.getElementById('browser-url-main').value=u; document.getElementById('browser-frame').src=u; } }
-function browserForward(){ if(browserIdx < browserHist.length-1){ browserIdx++; const u=browserHist[browserIdx]; document.getElementById('browser-url-main').value=u; document.getElementById('browser-frame').src=u; } }
-function browserRefresh(){ const f=document.getElementById('browser-frame'); if(f && f.src) f.src=f.src; }
-function browserHome(){ hubBrowserGo('https://www.google.com'); }
-function browserFullscreenVertical(){
-  const url = document.getElementById('browser-url-main')?.value || 'https://m.youtube.com/shorts/';
-  browserOpenDesktop(url, true);
-  setTimeout(()=>{
-    const cont = document.getElementById('p-browser');
-    const frame = document.getElementById('linux-frame');
-    try{
-      if(cont && cont.requestFullscreen) cont.requestFullscreen().catch(()=>{});
-      else if(frame && frame.requestFullscreen) frame.requestFullscreen().catch(()=>{});
-    }catch{}
-    if(screen.orientation && screen.orientation.lock){
-      try{ screen.orientation.lock('portrait').catch(()=>{}); }catch{}
-    }
-  }, 1200);
-}
-
-// ===== TTS + OCR + Автоскролл + Фон =====
+// ===== TTS / OCR (читалка) =====
+// Живёт на странице «Экран»: читает вслух то, что открыто на удалённом
+// рабочем столе (OCR снимает скриншот экрана на сервере).
 let ttsVoices=[], ttsQueue=[], ttsIdx=0, ttsSpeaking=false, ttsPaused=false, ttsScrollTimer=null, ttsRate=1;
 function ttsInit(){
   try{
@@ -2468,9 +2417,10 @@ setTimeout(ttsInit, 500);
 function ttsSetRate(v){ ttsRate=parseFloat(v)||1; const l=document.getElementById('tts-rate-label'); if(l) l.textContent=v+'×'; const ld=document.getElementById('tts-rate-label-desk'); if(ld) ld.textContent=v+'×'; }
 function ttsSetRateDesk(v){ ttsSetRate(v); }
 function getPageText(){
-  // Пытаемся взять текст из iframe если тот же origin, иначе просим OCR
+  // Раньше текст брался из iframe вкладки Chrome. Вкладки больше нет —
+  // страница живёт на удалённом столе, поэтому всегда идём через OCR.
   try{
-    const frame=document.getElementById('browser-frame');
+    const frame=null;
     if(frame && frame.contentDocument){
       const body=frame.contentDocument.body;
       if(body){
@@ -2481,7 +2431,7 @@ function getPageText(){
     }
   }catch{}
   // Fallback: текст из placeholder или URL
-  const url=document.getElementById('browser-url-main')?.value||'';
+  const url=document.getElementById('browser-url')?.value||'';
   return 'Страница: '+url+' . Текст не доступен напрямую из-за защиты сайта. Нажми 👁️ OCR чтобы распознать скриншот.';
 }
 function ttsSpeakChunk(text){
@@ -2598,7 +2548,8 @@ async function ocrCapture(){
     if(txt && !txt.includes('Текст не доступен')){
       if(st) st.textContent='OK (текст)';
       ttsQueue=[txt.slice(0,3000)]; ttsIdx=0;
-      if(confirm('Распознано '+txt.slice(0,120)+'... Начать чтение?')) ttsToggle();
+      ttsToggle();
+      fmInfo('Читаю распознанное: '+txt.slice(0,80)+'…');
       return;
     }
     // Иначе скриншот VNC + tesseract на сервере
@@ -2609,19 +2560,18 @@ async function ocrCapture(){
       if(st) st.textContent='OCR готово: '+d.text.slice(0,30)+'...';
       // Кладём в буфер и предлагаем читать
       ttsQueue=[txt.slice(0,4000)];
-      if(confirm('OCR: '+txt.slice(0,200)+'... Читать?')) { ttsIdx=0; ttsSpeaking=false; ttsToggle(); }
-      else { navigator.clipboard?.writeText(txt).catch(()=>{}); }
+      ttsIdx=0; ttsSpeaking=false; ttsToggle();
+      fmInfo('OCR: читаю распознанное ('+txt.length+' символов)');
     } else {
       if(st) st.textContent='OCR: '+ (d.error||'нет текста');
-      alert('OCR не нашёл текст: '+(d.error||'попробуй другой сайт'));
+      fmInfo('OCR не нашёл текст: '+(d.error||'попробуй другую страницу'));
     }
   }catch(e){
     if(st) st.textContent='OCR ошибка';
-    alert('OCR ошибка: '+e.message);
+    fmInfo('OCR ошибка: '+e.message);
   }
 }
 function ocrCaptureDesk(){ ocrCapture(); }
-function browserCopyUrl(){ const u=document.getElementById('browser-url-main')?.value||''; if(!u) return; navigator.clipboard?.writeText(u).then(()=>fmInfo('Скопировано: '+u)).catch(()=>prompt('Копируй:',u)); }
 function browserAgentHint(url){
   if(!url) return;
   const hint=document.getElementById('browser-agent-hint');
@@ -2629,8 +2579,6 @@ function browserAgentHint(url){
   if(!hint||!a) return;
   a.textContent=url; a.href=url;
   hint.style.display='flex';
-  const btn=document.getElementById('nav-browser');
-  if(btn){ btn.style.animation='livepulse 1s 3'; setTimeout(()=>btn.style.animation='',3000); }
   fmInfo('🔗 Агент прислал ссылку: '+url);
 }
 window.openInHubBrowser = (url)=>{ browserAgentHint(url); hubBrowserGo(url); };

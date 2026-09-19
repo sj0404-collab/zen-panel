@@ -237,16 +237,24 @@ check('q37 vnc endpoint', server.includes("app.get('/api/vnc/status'") &&
 check('q37b vnc server route', server.includes("app.get('/desktop-vnc'"));
 check('q37c vnc publish slot', fs.readFileSync(path.join(__dirname, '..', 'tools/publish_session.sh'), 'utf8')
   .includes('slot=vnc)      FILE="session-vnc.json"'));
+// Контракт изменился (требование владельца: «всё время включённым, а не
+// подключаться каждый раз»): кнопки «подключиться» в разметке НЕТ, экран
+// поднимает сам хаб и кадр подключается автоподключением. Поэтому проверяем
+// не кнопку, а отсутствие ручного шага + наличие автоподключения.
 check('q37d vnc mobile ui', mobHtml.includes('id="p-linux"') &&
   mobHtml.includes('id="nav-linux"') &&
-  mobHtml.includes('onclick="linuxConnect()"') &&
+  mobHtml.includes('onclick="linuxOpen()"') &&
   mobHtml.includes('onclick="linuxFullscreen()"') &&
-  mob.includes('function linuxConnect(') && mob.includes('function linuxStatus('));
+  !mobHtml.includes('linuxConnect()') &&
+  mob.includes('function linuxConnect(') && mob.includes('function linuxStatus(') &&
+  mob.includes('autoconnect=true'));
 check('q37e vnc desktop ui', deskHtml.includes('id="p-linux"') &&
   deskHtml.includes('onclick="showPage(\'linux\')"') &&
-  deskHtml.includes("linuxConnect('desktop')") &&
   deskHtml.includes("linuxFullscreen('desktop')") &&
-  desk.includes('function linuxConnect(') && desk.includes('function linuxStatus('));
+  deskHtml.includes('id="linux-frame-desktop"') &&
+  desk.includes("linuxConnect('desktop')") &&
+  desk.includes('function linuxConnect(') && desk.includes('function linuxStatus(') &&
+  desk.includes('autoconnect=true'));
 check('q37f vnc workflow', /job|vnc:/.test(fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8')) &&
   fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8').includes('start_desktop.sh') &&
   fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8').includes('slot=vnc'));
