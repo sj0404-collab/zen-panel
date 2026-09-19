@@ -323,6 +323,12 @@
         <style>
           /* ⛶ — экран на весь экран без потери noVNC-сессии */
           #p-linux.linux-full{position:fixed!important;inset:0!important;height:100vh!important;z-index:99999;background:#000}
+          /* Кадр экрана занимает ВСЮ свободную высоту. Раньше страница
+             включалась как display:block, поэтому flex:1 у кадра не работал и
+             iframe схлопывался до ~150 px — экран был виден полоской. */
+          #p-linux.on{display:flex;flex-direction:column;overflow:hidden}
+          #linux-stack-desktop{flex:1 1 auto;min-height:0}
+          #linux-frame-desktop{width:100%;height:100%;border:none}
         </style>
         <div id="linux-stack-desktop" style="flex:1;position:relative;background:#000">
           <iframe id="linux-frame-desktop" style="width:100%;height:100%;border:none;display:none" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
