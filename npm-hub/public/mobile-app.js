@@ -197,6 +197,7 @@ function showPage(p) {
   if (p === 'files') initFM();
   if (p === 'git') loadGit();
   if (p === 'linux') { linuxStatus(); setTimeout(()=>{ try{ linuxConnect(); }catch{} }, 400); }
+  document.body.classList.toggle('pg-linux', p === 'linux');
 }
 
 showPage('files');
@@ -240,10 +241,12 @@ async function linuxRunBrowser(url, vertical) {
   if (!url) return;
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
   try {
+    // mobile: хаб откроет окно размером с экран телефона в левом верхнем углу
+    // стола — телефон показывает стол крупно (1:1), и окно занимает весь экран.
     const r = await fetch('/api/linux/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'browser', url, vertical: !!vertical })
+      body: JSON.stringify({ action: 'browser', url, vertical: !!vertical, mobile: true })
     });
     const d = await r.json();
     if (!d.ok) console.warn('linuxRunBrowser:', d.error);
@@ -2125,6 +2128,28 @@ function linuxPatchFrame(fr) {
         if (dot && !dot.checked) { dot.checked = true; dot.dispatchEvent(new Event('change', { bubbles: true })); }
       } catch {}
 
+      // Панорамирование пальцем в режиме «заполнить»: перетаскивание двигает
+      // стол, короткий тап остаётся кликом по экрану.
+      if (!doc.__hubPan) {
+        doc.__hubPan = true;
+        const screenEl = doc.getElementById('noVNC_screen') || doc.body;
+        let drag = null;
+        screenEl.addEventListener('touchstart', (e) => {
+          if (resolveZoom() !== 'clip' || e.touches.length !== 1) { drag = null; return; }
+          drag = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }, { passive: true, capture: true });
+        screenEl.addEventListener('touchmove', (e) => {
+          if (!drag || e.touches.length !== 1) return;
+          const t = e.touches[0];
+          const dx = t.clientX - drag.x, dy = t.clientY - drag.y;
+          if (Math.abs(dx) + Math.abs(dy) < 8) return;
+          drag.x = t.clientX; drag.y = t.clientY;
+          try { doc.__hub.pan(dx, dy); } catch {}
+          e.preventDefault(); e.stopPropagation();
+        }, { passive: false, capture: true });
+        screenEl.addEventListener('touchend', () => { drag = null; }, { passive: true, capture: true });
+      }
+
       doc.__hub = {
         // Клавиатура ТЕЛЕФОНА: noVNC по нажатию своей кнопки фокусирует
         // скрытый input, от него приходят события мягкой клавиатуры.
@@ -2135,14 +2160,31 @@ function linuxPatchFrame(fr) {
           if (inp) { (show === false ? inp.blur() : inp.focus()); return true; }
           return false;
         },
-        // Масштаб: 'fit' — вписать в экран, 'clip' — 1:1 с панорамированием.
+        // Масштаб: 'fit' — виден весь рабочий стол целиком, 'clip' — стол крупно
+        // (1:1), лишнее уходит за края, панорамирование пальцем.
         scale(mode) {
           const sel = doc.getElementById('noVNC_setting_resize');
           const clip = doc.getElementById('noVNC_setting_view_clip');
           const fire = (el) => el.dispatchEvent(new Event('change', { bubbles: true }));
+          const wantClip = mode === 'clip';
           if (sel) { sel.value = mode === 'clip' ? 'off' : 'scale'; fire(sel); }
-          if (clip) { clip.checked = mode === 'clip'; fire(clip); }
-          return Boolean(sel);
+          if (clip) { clip.checked = wantClip; fire(clip); }
+          // clip включаем и через объект RFB: кнопка в панели noVNC ссылается на
+          // ту же настройку, но событие не всегда успевает примениться.
+          const rfb = doc.defaultView && doc.defaultView.__rfb;
+          if (rfb && wantClip) { try { rfb.scaleViewport = false; rfb.clipViewport = true; } catch {} }
+          return Boolean(sel) || Boolean(rfb);
+        },
+        // Панорамирование (режим «заполнить»): палец двигает стол.
+        pan(dx, dy) {
+          try {
+            const rfb = doc.defaultView && doc.defaultView.__rfb;
+            const d = rfb && rfb._display;
+            if (!d) return false;
+            const k = d.scale || 1;
+            d.viewportChangePos(-dx / k, -dy / k);
+            return true;
+          } catch { return false; }
         },
         info() {
           const sel = doc.getElementById('noVNC_setting_resize');
@@ -2170,7 +2212,7 @@ function linuxPatchFrame(fr) {
 // Применяем масштаб после (пере)загрузки кадра: noVNC читает свои настройки
 // из cookie при старте, поэтому просим нужный режим ещё раз.
 function linuxApplyZoom(fr) {
-  try { if (fr && fr.contentDocument && fr.contentDocument.__hub) fr.contentDocument.__hub.scale(linuxZoomMode); } catch {}
+  try { if (fr && fr.contentDocument && fr.contentDocument.__hub) fr.contentDocument.__hub.scale(resolveZoom()); } catch {}
 }
 
 // Всегда включён: коннект при загрузке и keepalive без перезагрузки iframe.
@@ -2182,6 +2224,17 @@ setInterval(() => {
 
 // Настоящий полный экран страницы + поворот в ландшафт (если браузер умеет:
 // Android Chrome умеет, iOS Safari — нет, там остаётся CSS-режим с 100dvh).
+// Тап по «Экран» в нижнем меню: на телефоне сразу разворачиваем рабочий стол
+// на весь экран (и в ландшафт) — тогда видно стол, а не мелкую картинку в
+// окружении панелей. Вышел через ✕ — в этой сессии больше не навязываемся.
+function linuxOpen() {
+  showPage('linux');
+  let skip = false; try { skip = sessionStorage.getItem('hub_nofs') === '1'; } catch {}
+  const touchy = (navigator.maxTouchPoints || 0) > 0 && Math.min(screen.width, screen.height) < 820;
+  if (skip || !touchy) return;
+  setTimeout(() => { try { linuxFullscreen(true); } catch {} }, 400);
+}
+
 async function linuxFullscreen(force) {
   const page = document.getElementById('p-linux');
   if (!page) return;
@@ -2201,6 +2254,8 @@ async function linuxFullscreen(force) {
       if (screen.orientation && screen.orientation.unlock) { try { screen.orientation.unlock(); } catch {} }
     }
   } catch (e) { /* браузер отказал — остаёмся в CSS-режиме, он тоже на весь экран */ }
+  // Запомнили, что полный экран не нужен — сами больше не разворачиваем.
+  if (!want) { try { sessionStorage.setItem('hub_nofs', '1'); } catch {} }
   try { fmInfo(want ? '⛶ На весь экран · ландшафт (✕ — выход)' : '⛶ Обычный размер'); } catch {}
 }
 // Браузер сам вышел из fullscreen (жест «назад», Esc) — синхронизируем класс.
@@ -2219,7 +2274,7 @@ function linuxRefit() {
   try {
     if (fr && fr.contentDocument) {
       fr.contentDocument.defaultView.dispatchEvent(new Event('resize'));
-      if (fr.contentDocument.__hub) fr.contentDocument.__hub.scale(linuxZoomMode);
+      if (fr.contentDocument.__hub) fr.contentDocument.__hub.scale(resolveZoom());
     }
   } catch {}
   if (window.visualViewport) setTimeout(() => { try { fr.contentWindow.dispatchEvent(new Event('resize')); } catch {} }, 200);
@@ -2245,16 +2300,53 @@ function linuxKeyboard() {
 }
 
 // 🔍 Заполнить (вписать всё) ⇄ 1:1 (точные пиксели + панорамирование пальцем).
-let linuxZoomMode = (() => { try { return localStorage.getItem('hub_zoom') || 'fit'; } catch { return 'fit'; } })();
+const LINUX_ZOOMS = {
+  auto: { icon: '🔎', note: 'сам: вертикально — крупно, горизонтально — весь стол' },
+  fit:  { icon: '🔍', note: 'весь рабочий стол целиком' },
+  clip: { icon: '🔎', note: 'стол крупно — двигайте пальцем, чтобы плавать по нему' }
+};
+// 'auto' (по умолчанию) сам выбирает: вертикальный телефон — крупно с
+// панорамой, горизонтальный — весь стол. До этого картинка висела мелкой
+// вставкой посреди чёрного поля — на это и жаловались («каша»).
+let linuxZoomMode = (() => { try { return localStorage.getItem('hub_zoom') || 'auto'; } catch { return 'auto'; } })();
+
+// Что реально делать сейчас: авто-режим смотрит на пропорции кадра.
+function resolveZoom() {
+  if (linuxZoomMode === 'fit' || linuxZoomMode === 'clip') return linuxZoomMode;
+  // auto: вертикальный телефон — стол крупно (заполняет экран, лишнее за краем,
+  // панорама пальцем); горизонтальный — весь стол (там пропорции совпадают).
+  const st = document.getElementById('linux-stack');
+  const r = st ? st.getBoundingClientRect() : { width: 0, height: 0 };
+  if (!r.width || !r.height) return 'fit';
+  return (r.width / r.height) >= 1.2 ? 'fit' : 'clip';
+}
+
 function linuxZoomToggle() {
-  linuxZoomMode = linuxZoomMode === 'fit' ? 'clip' : 'fit';
+  const order = ['auto', 'fit', 'clip'];
+  linuxZoomMode = order[(order.indexOf(linuxZoomMode) + 1) % order.length];
   try { localStorage.setItem('hub_zoom', linuxZoomMode); } catch {}
   const fr = document.getElementById('linux-frame');
-  try { if (fr && fr.contentDocument && fr.contentDocument.__hub) fr.contentDocument.__hub.scale(linuxZoomMode); } catch {}
+  try { if (fr && fr.contentDocument && fr.contentDocument.__hub) fr.contentDocument.__hub.scale(resolveZoom()); } catch {}
   const btn = document.getElementById('linux-zoom-btn');
-  if (btn) btn.textContent = linuxZoomMode === 'fit' ? '🔍' : '🔎';
-  linuxSetNote(linuxZoomMode === 'fit' ? 'вписано в экран' : '1:1 — двигайте пальцем, чтобы плавать по экрану');
+  if (btn) btn.textContent = (LINUX_ZOOMS[linuxZoomMode] || LINUX_ZOOMS.auto).icon;
+  linuxSetNote((LINUX_ZOOMS[linuxZoomMode] || {}).note);
   setTimeout(() => linuxSetNote(''), 4000);
+}
+
+// Применить текущий режим зума к кадру (кнопкой, при повороте и в тестах).
+function linuxZoomApply() {
+  const fr = document.getElementById('linux-frame');
+  try { if (fr && fr.contentDocument && fr.contentDocument.__hub) fr.contentDocument.__hub.scale(resolveZoom()); } catch {}
+}
+
+// «⋯» — адрес, звук и починка. Экран должен быть экраном.
+function linuxMoreToggle() {
+  const el = document.getElementById('linux-more');
+  if (!el) return;
+  el.hidden = !el.hidden;
+  const b = document.getElementById('linux-more-btn');
+  if (b) b.textContent = el.hidden ? '⋯' : '×';
+  if (!el.hidden) { try { pulseStatus(); } catch {} }
 }
 
 
@@ -2560,37 +2652,11 @@ async function pollAgentUrls(){
 }
 setInterval(pollAgentUrls, 8000);
 
-// ===== LIVE DESKTOP PIP =====
-function closeLivePip(){ const el=document.getElementById('live-pip'); if(el) el.style.display='none'; }
-let livePollTimer=null;
-function startLivePoll(){
-  if(livePollTimer) return;
-  livePollTimer=setInterval(async ()=>{
-    try{
-      const v = await fetch('/api/vnc/status').then(r=>r.json()).catch(()=>({ok:false}));
-      const s = await fetch('/api/sessions').then(r=>r.json()).catch(()=>({success:false}));
-      const vncLive = !!(v && (v.ok || v.url));
-      const hasActive = !!(s && s.sessions && s.sessions.length);
-      const pip = document.getElementById('live-pip');
-      const dot = document.getElementById('live-dot');
-      const lbl = document.getElementById('live-label');
-      if(vncLive && hasActive){
-        if(pip) pip.style.display='block';
-        if(dot) dot.classList.add('on');
-        if(lbl){ lbl.textContent='● агент на экране'; lbl.classList.add('on'); }
-        const body=document.getElementById('live-pip-vnc');
-        if(body && !body.dataset.loaded){
-          body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--acc);font-size:10px">LIVE<br>Экран</div>';
-          body.dataset.loaded='1';
-        }
-      } else {
-        if(dot) dot.classList.remove('on');
-        if(lbl) lbl.classList.remove('on');
-      }
-    }catch{}
-  }, 5000);
-}
-setTimeout(startLivePoll, 2000);
+// ===== LIVE DESKTOP PIP — удалён =====
+// Окошко «● LIVE Экран · агент» внутри показывало заглушку «LIVE Экран», но
+// висело поверх рабочего стола и превращало экран в кашу. Если понадобится
+// снова — это был обычный абсолютный блок #live-pip в mobile.html.
+function closeLivePip(){}
 
 if (document.getElementById('p-linux')) {
   linuxStatus();

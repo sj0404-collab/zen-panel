@@ -53,6 +53,10 @@ const NOVNC_PORT = String(process.env.NOVNC_PORT || 6081);
 const RESOLUTION = process.env.VNC_RESOLUTION || '1600x900';
 const W = parseInt(RESOLUTION.split('x')[0], 10) || 1920;
 const H = parseInt(RESOLUTION.split('x')[1], 10) || 1080;
+// ВАЖНО: Xvfb не умеет менять размер после старта (проверено: --fb откатывается
+// обратно, а рабочий стол остаётся «плоским» — это ровно тот чёрный экран, на
+// который жаловались). Поэтому размер стола фиксирован стартовым, а телефон
+// показывает стол крупно (1:1) с панорамированием пальцем.
 const TICK_MS = Number(process.env.VNC_TICK_MS || 15000);
 const REPAIR_COOLDOWN_MS = Number(process.env.VNC_REPAIR_COOLDOWN_MS || 45000);
 
@@ -84,6 +88,7 @@ const state = {
   lastTick: 0,
   lastRepair: 0,
   note: 'init',
+  size: `${W}x${H}`,
   log: () => {}
 };
 
@@ -168,7 +173,8 @@ const paintCheck = async (size = 24) => {
 const REQUIRED_BINS = [
   ['Xvfb', 'xvfb'], ['openbox', 'openbox'], ['x11vnc', 'x11vnc'], ['xterm', 'xterm'],
   ['tint2', 'tint2'], ['idesk', 'idesk'], ['feh', 'feh'], ['convert', 'imagemagick'],
-  ['pcmanfm', 'pcmanfm'], ['xdotool', 'xdotool'], ['pulseaudio', 'pulseaudio']
+  ['pcmanfm', 'pcmanfm'], ['xdotool', 'xdotool'], ['pulseaudio', 'pulseaudio'],
+  ['wmctrl', 'wmctrl']
 ];
 let lastPkgTry = 0;
 let aptUpdated = false;
@@ -595,9 +601,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * display. This is the difference between «noVNC отвечает» and «на экране
  * что-то видно».
  */
+/** Текущий размер стола из xdpyinfo (для диагностики). */
+async function desktopSize() {
+  const r = await sh(`DISPLAY=${DISPLAY} xdpyinfo 2>/dev/null | grep -m1 dimensions`, 8000);
+  const m = /dimensions:\s+(\d+)x(\d+)/.exec(r.out || '');
+  if (!m) return null;
+  return { w: parseInt(m[1], 10), h: parseInt(m[2], 10) };
+}
+
 async function ensureEssentials() {
   if (!(await xDisplayUp())) return false;
   const fixes = [];
+  const cur = await desktopSize();
+  if (cur) state.size = `${cur.w}x${cur.h}`;
   const logFile = JSON.stringify(path.join(LOG_DIR, 'openbox.log'));
   if (!(await pgrep('openbox'))) {
     await sh(`DISPLAY=${DISPLAY} nohup openbox >>${logFile} 2>&1 &`, 8000);
@@ -877,6 +893,7 @@ function start(opts = {}) {
     ensureNow: () => fullStart(repoRootRef),
     repair: (why) => repair(repoRootRef, why || 'manual'),
     tick,
+    size: () => desktopSize(),
     registerProxy,
     stop: () => clearInterval(timer),
     keepalive: state

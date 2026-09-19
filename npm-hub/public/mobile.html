@@ -346,31 +346,39 @@
 
 <!-- LINUX DESKTOP (VNC) — ОДИН ЭКРАН ДЛЯ ВСЕГО (RDP/VNC) -->
       <div class="page" id="p-linux" style="padding:0;flex-direction:column;height:100%">
-        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
+        <!-- Одна тонкая строка: всё остальное (адрес, звук, починка) — за «⋯».
+             Экран должен быть экраном, а не панелью управления. -->
+        <div class="linux-bar">
           <span id="linux-status" class="tag">…</span>
-          <button class="btn btn-sm" onclick="linuxRepair()" title="Пересобрать экран на этом раннере">🔧 починить</button>
-          <button class="btn btn-sm" onclick="linuxFullscreen()" title="На весь экран + поворот в ландшафт">⛶</button>
-          <button class="btn btn-sm" onclick="linuxKeyboard()" title="Клавиатура телефона (печатать на удалённом экране)">⌨</button>
-          <button class="btn btn-sm" id="linux-zoom-btn" onclick="linuxZoomToggle()" title="Заполнить экран / 1:1 с панорамой">🔍</button>
+          <button class="btn btn-sm" onclick="linuxKeyboard()" title="Клавиатура телефона (в YouTube: k — пуск/пауза, f — во весь экран, m — звук)">⌨</button>
+          <button class="btn btn-sm" id="linux-zoom-btn" onclick="linuxZoomToggle()" title="Заполнить / весь стол / 1:1">🔎</button>
           <button class="btn btn-sm" id="linux-perf-btn" onclick="linuxPerfToggle()" title="Плавность: плавно / баланс / чётко">⚡</button>
-          <span id="linux-note" style="font-size:10px;color:var(--t3)"></span>
-          <span class="linux-hint" style="margin-left:auto;font-size:11px;color:var(--t3)">🖥 Один экран для всего</span>
-          <span class="linux-hint" style="font-size:10px;color:var(--ok)">VNC · включается сам</span>
+          <button class="btn btn-sm" onclick="linuxFullscreen()" title="На весь экран + поворот в ландшафт">⛶</button>
+          <span id="linux-note"></span>
+          <button class="btn btn-sm" id="linux-more-btn" onclick="linuxMoreToggle()" style="margin-left:auto" title="Адрес, звук, починить">⋯</button>
         </div>
-        <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center">
+        <div id="linux-more" hidden>
           <input type="text" id="browser-url" placeholder="https://... — откроется на этом экране" value="https://www.youtube.com" style="flex:1;min-width:140px;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')linuxRunBrowser(this.value)">
           <button class="btn btn-p btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url').value)" title="Открыть Chromium прямо на этом экране (DISPLAY=:99)">Go · 🖥</button>
           <span id="pulse-status" class="tag" style="font-size:10px">🔊</span>
           <input type="range" id="pulse-vol" min="0" max="100" value="80" style="width:80px" oninput="pulseSetVol(this.value)">
           <span id="pulse-vol-label" style="font-size:11px;font-family:monospace;min-width:36px;text-align:right">80%</span>
           <button class="btn btn-sm" onclick="pulseToggleMute()" title="Мьют">🔇</button>
+          <button class="btn btn-sm" onclick="linuxRepair()" title="Пересобрать экран на этом раннере">🔧 починить</button>
         </div>
         <style>
           /* ⛶ — экран на весь экран без потери noVNC-сессии.
              100dvh: на мобильных адресная строка Safari/Chrome иначе «съедает»
              часть высоты и картинка не заполняет экран. */
           #p-linux.linux-full{position:fixed!important;inset:0!important;height:100vh!important;height:100dvh!important;z-index:99999;background:#000}
-          #p-linux.linux-full > div:first-child, #p-linux.linux-full > div:nth-child(2){display:none!important}
+          #p-linux.linux-full > .linux-bar, #p-linux.linux-full > #linux-more{display:none!important}
+          /* «Просто рабочий стол»: на странице «Экран» не нужна шапка приложения —
+             уйти можно нижним меню, а в полном экране есть ✕. */
+          body.pg-linux .topbar{display:none}
+          .linux-bar{display:flex;gap:6px;padding:6px 8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center;flex-wrap:nowrap;overflow:hidden}
+          .linux-bar #linux-note{font-size:10px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          #linux-more{display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;flex-wrap:wrap;align-items:center}
+          #linux-more[hidden]{display:none}
           #p-linux.linux-full #linux-stack{flex:1 1 auto;height:100%}
           /* В полном экране тулбары скрыты, поэтому клавиатура, масштаб и
              выход живут здесь — иначе за клавиатурой приходилось выходить из
@@ -522,17 +530,6 @@
   </div>
 
   <!-- BOTTOM NAV -->
-  <!-- LIVE PIP: показывает экран когда агент работает -->
-  <div id="live-pip" style="display:none;position:fixed;bottom:72px;right:10px;width:180px;height:110px;background:#000;border:1px solid var(--acc);border-radius:10px;overflow:hidden;z-index:85;box-shadow:0 6px 20px rgba(0,0,0,.5)">
-    <div style="height:18px;background:var(--acc);color:#000;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:space-between;padding:0 6px">
-      <span>● LIVE Экран · агент</span><span onclick="closeLivePip()" style="cursor:pointer;padding:0 4px">✕</span>
-    </div>
-    <div id="live-pip-body" style="height:calc(100% - 18px);position:relative;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden">
-      <div id="live-pip-vnc" style="width:100%;height:100%;transform:scale(0.5);transform-origin:top left;pointer-events:none"></div>
-      <div id="live-pip-status" style="position:absolute;bottom:4px;left:6px;font-size:8px;color:#fff;background:rgba(0,0,0,.6);padding:2px 6px;border-radius:8px">тестирует…</div>
-      <button onclick="showPage('linux');closeLivePip()" style="position:absolute;inset:0;opacity:0;cursor:pointer" title="Открыть экран"></button>
-    </div>
-  </div>
   <div class="bottom-nav">
     <button class="nav-btn" id="nav-dashboard" onclick="showPage('dashboard')">
       <span class="nav-ico">📊</span>
@@ -546,7 +543,7 @@
       <span class="nav-ico">📁</span>
       <span class="nav-label">Файлы</span>
     </button>
-    <button class="nav-btn" id="nav-linux" onclick="showPage('linux')">
+    <button class="nav-btn" id="nav-linux" onclick="linuxOpen()">
       <span class="nav-ico">🖥</span>
       <span class="nav-label">Экран</span>
     </button>

@@ -1028,6 +1028,10 @@ const UI = {
                          { shared: UI.getSetting('shared'),
                            repeaterID: UI.getSetting('repeaterID'),
                            credentials: { password: password } });
+        // NPM Hub: ui.js подключён как модуль, поэтому снаружи (из панели хаба)
+        // объект RFB иначе недостижим. Он нужен для режима «заполнить»
+        // (canvas крупнее вьюпорта + панорамирование пальцем).
+        window.__rfb = UI.rfb;
         UI.rfb.addEventListener("connect", UI.connectFinished);
         UI.rfb.addEventListener("disconnect", UI.disconnectFinished);
         UI.rfb.addEventListener("credentialsrequired", UI.credentials);
@@ -1109,6 +1113,7 @@ const UI = {
         UI.connected = false;
 
         UI.rfb = undefined;
+        window.__rfb = undefined;
 
         if (!e.detail.clean) {
             UI.updateVisualState('disconnected');
