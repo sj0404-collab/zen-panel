@@ -174,14 +174,32 @@ const REQUIRED_BINS = [
   ['Xvfb', 'xvfb'], ['openbox', 'openbox'], ['x11vnc', 'x11vnc'], ['xterm', 'xterm'],
   ['tint2', 'tint2'], ['idesk', 'idesk'], ['feh', 'feh'], ['convert', 'imagemagick'],
   ['pcmanfm', 'pcmanfm'], ['xdotool', 'xdotool'], ['pulseaudio', 'pulseaudio'],
-  ['wmctrl', 'wmctrl']
+  ['wmctrl', 'wmctrl'], ['xwit', 'xwit'],
+  // Читалка на «Экране» (👁️ OCR + 🔊 TTS) без tesseract не может ничего:
+  // /api/ocr отвечал «tesseract не установлен».
+  ['tesseract', 'tesseract-ocr'],
+  // Mesa llvmpipe: Chrome's GPU compositor uses this software renderer on Xvfb.
+  ['glxinfo', 'mesa-utils'],
+  // Audio bridge: parec reads the monitor of Chromium's PulseAudio sink.
+  ['parec', 'pulseaudio-utils']
 ];
+
+// Русский язык для OCR: у пакета нет своего исполняемого файла, поэтому в
+// REQUIRED_BINS он не попадает — проверяем сам файл языковой модели.
+const OCR_LANG_PKG = 'tesseract-ocr-rus';
+async function ocrLangMissing() {
+  const r = await sh('ls /usr/share/tesseract-ocr/*/tessdata/rus.traineddata 2>/dev/null | head -1', 8000);
+  return !String(r.out || '').trim();
+}
 let lastPkgTry = 0;
 let aptUpdated = false;
 
 async function ensurePackages(force) {
   const missing = [];
   for (const [bin, pkg] of REQUIRED_BINS) if (!(await which(bin))) missing.push(pkg);
+  if (!missing.includes('tesseract-ocr') && (await which('tesseract')) && (await ocrLangMissing())) {
+    missing.push(OCR_LANG_PKG);
+  }
   state.missing = missing;
   if (!missing.length) return { ok: true, missing: [] };
   if (!force && Date.now() - lastPkgTry < 5 * 60 * 1000) return { ok: false, missing, throttled: true };
@@ -203,6 +221,7 @@ async function ensurePackages(force) {
   }
   const still = [];
   for (const [bin, pkg] of REQUIRED_BINS) if (missing.includes(pkg) && !(await which(bin))) still.push(pkg);
+  if (missing.includes(OCR_LANG_PKG) && (await ocrLangMissing())) still.push(OCR_LANG_PKG);
   state.missing = still;
   return { ok: still.length === 0, missing: still };
 }
@@ -359,7 +378,7 @@ async function ensureWallpaper(force) {
 
 const SHORTCUTS = [
   { name: 'Терминал',   exec: 'xterm',                                          glyph: '>_',   c1: '#1f6feb', c2: '#0d419d', icon: 'utilities-terminal' },
-  { name: 'Файлы',      exec: 'pcmanfm $HOME/hub-work',                         glyph: 'F',    c1: '#bb8009', c2: '#7d5e05', icon: 'system-file-manager' },
+  { name: 'Файлы',      exec: 'hub-files $HOME/hub-work',                       glyph: 'F',    c1: '#bb8009', c2: '#7d5e05', icon: 'system-file-manager' },
   { name: 'Google',     exec: '$BROWSER --start-maximized https://www.google.com', glyph: 'G', c1: '#1a73e8', c2: '#0b47a1', icon: 'google-chrome' },
   { name: 'YouTube',    exec: '$BROWSER --start-maximized https://www.youtube.com', glyph: 'YT', c1: '#cc0000', c2: '#7a0000', icon: 'youtube' },
   { name: 'Hub',        exec: '$BROWSER --start-maximized http://127.0.0.1:$PORT', glyph: 'H', c1: '#8957e5', c2: '#4c2889', icon: 'applications-internet' },
@@ -367,7 +386,7 @@ const SHORTCUTS = [
   { name: 'AI',         exec: 'xterm -title "OpenCode" -e bash -lc "opencode; exec bash"', glyph: 'AI', c1: '#00a887', c2: '#005f4c', icon: 'utilities-terminal' },
   { name: 'Редактор',   exec: '(command -v geany >/dev/null && geany) || (command -v gedit >/dev/null && gedit) || xterm -e nano', glyph: '</>', c1: '#d29922', c2: '#7a5605', icon: 'accessories-text-editor' },
   { name: 'Звук',       exec: 'pavucontrol',                                     glyph: '♪',    c1: '#2596be', c2: '#124e63', icon: 'multimedia-volume-control' },
-  { name: 'Проекты',    exec: 'pcmanfm $HOME/hub-work',                          glyph: 'P',    c1: '#3fb950', c2: '#1b6d2c', icon: 'folder' }
+  { name: 'Проекты',    exec: 'hub-files $HOME/hub-work',                        glyph: 'P',    c1: '#3fb950', c2: '#1b6d2c', icon: 'folder' }
 ];
 
 async function ensureShortcutIcons(magick, font) {
@@ -391,6 +410,9 @@ async function ensureShortcutIcons(magick, font) {
 }
 
 async function ensureShortcuts(port) {
+  // Обёртка для файлового менеджера (см. ensureFilesLauncher): без неё на
+  // экране всплывает паразитный диалог pcmanfm.
+  const filesLauncher = await ensureFilesLauncher();
   const magick = (await which('convert')) ? 'convert' : (await which('magick')) ? 'magick' : null;
   const font = findFont();
   const icons = await ensureShortcutIcons(magick, font);
@@ -442,7 +464,8 @@ async function ensureShortcuts(port) {
     if (s.name === 'Редактор' && !available.has('geany') && !available.has('gedit') && !available.has('xterm')) continue;
     const icon = (icons[s.name] && fs.existsSync(icons[s.name])) ? icons[s.name] : s.icon;
     const exec = s.exec.replace(/\$BROWSER\b/g, browser).replace(/\$PORT\b/g, String(port || 8090))
-      .replace(/\$HOME\b/g, HOME);
+      .replace(/\$HOME\b/g, HOME)
+      .replace(/^hub-files\b/, filesLauncher ? JSON.stringify(filesLauncher) : 'pcmanfm');
     const body = [
       '[Desktop Entry]',
       'Version=1.0',
@@ -601,6 +624,103 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * display. This is the difference between «noVNC отвечает» and «на экране
  * что-то видно».
  */
+/**
+ * Иконки рабочего стола (idesk) — окна override-redirect, оконный менеджер их
+ * не переставляет. Когда idesk перерисовывается (или keepalive заново красит
+ * обои через feh), его окна оказываются ПОВЕРХ окна браузера — ровно та
+ * «наложенность» на экране телефона, где иконки видны сквозь веб-страницу.
+ * xwit умеет опускать такие окна; список берём по размеру иконки (64x64 —
+ * только иконки, проверено на живом экране).
+ */
+const ICON_PX = Number(process.env.VNC_ICON_PX || 64);
+// Размеры иконок берём из самих .lnk (Width/Height), а если их нет — 64.
+function iconSizes() {
+  const sizes = new Set([ICON_PX]);
+  try {
+    for (const f of fs.readdirSync(path.join(HOME, '.idesktop'))) {
+      if (!f.endsWith('.lnk')) continue;
+      const src = fs.readFileSync(path.join(HOME, '.idesktop', f), 'utf8');
+      const w = Number((src.match(/^\s*Width:\s*(\d+)/m) || [])[1]);
+      if (w >= 16 && w <= 256) sizes.add(w);
+    }
+  } catch {}
+  return [...sizes];
+}
+
+// pcmanfm на этом раннере при КАЖДОМ запуске показывает пустое окно
+// «Error — Desktop manager is not active» (проверено и локально, и на раннере:
+// он поднимает свой менеджер рабочего стола, а тот уже занят idesk). Файловый
+// менеджер при этом работает, но на экране телефона диалог выглядит как чужое
+// окно поверх стола. Поэтому файлы открываем обёрткой: она поднимает pcmanfm и
+// сразу гасит этот диалог.
+const FILES_LAUNCHER = path.join(HOME, '.npm-hub', 'bin', 'hub-files');
+async function ensureFilesLauncher() {
+  const script = [
+    '#!/bin/bash',
+    '# Открывает файловый менеджер и убирает паразитный диалог pcmanfm',
+    '# «Desktop manager is not active» (idesk уже держит рабочий стол).',
+    'export DISPLAY="${VNC_DISPLAY:-:99}"',
+    'target="${1:-$HOME/hub-work}"',
+    '(pcmanfm "$target" >/dev/null 2>&1 &) || true',
+    'for _ in $(seq 1 12); do',
+    '  sleep 1',
+    '  for w in $(xdotool search --name "^Error$" 2>/dev/null); do',
+    '    if xprop -id "$w" WM_CLASS 2>/dev/null | grep -q pcmanfm; then',
+    '      xdotool windowkill "$w" 2>/dev/null || true',
+    '      exit 0',
+    '    fi',
+    '  done',
+    '  pgrep -x pcmanfm >/dev/null 2>&1 || exit 0',
+    'done',
+    ''
+  ].join('\n');
+  try {
+    fs.mkdirSync(path.dirname(FILES_LAUNCHER), { recursive: true });
+    fs.writeFileSync(FILES_LAUNCHER, script);
+    fs.chmodSync(FILES_LAUNCHER, 0o755);
+    return FILES_LAUNCHER;
+  } catch { return null; }
+}
+
+// Разово погасить такой диалог, если он уже висит (пути запуска мимо ярлыка:
+// двойной клик по иконке, «Файлы» из панели, ручной pcmanfm).
+async function dismissStrayDialogs() {
+  if (!(await which('xdotool'))) return 0;
+  const r = await sh(`DISPLAY=${DISPLAY} xdotool search --name '^Error$' 2>/dev/null`, 8000);
+  const ids = String(r.out || '').split('\n').map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
+  let n = 0;
+  for (const id of ids) {
+    const cls = await sh(`DISPLAY=${DISPLAY} xprop -id ${id} WM_CLASS 2>/dev/null | grep -c pcmanfm`, 5000);
+    if (String(cls.out || '').trim() === '1') {
+      await sh(`DISPLAY=${DISPLAY} xdotool windowkill ${id} 2>/dev/null`, 5000);
+      n++;
+    }
+  }
+  return n;
+}
+
+async function lowerDesktopIcons() {
+  if (!(await which('xwit'))) return false;
+  const r = await sh(`DISPLAY=${DISPLAY} xwininfo -root -children 2>/dev/null`, 10000);
+  // Разбираем список окон: id + геометрия. Иконки узнаём по размеру из .lnk,
+  // затем берём КЛИЕНТА X11, которому они принадлежат (старшие биты id) и
+  // опускаем все его окна — у idesk подписи и подсказки это ОТДЕЛЬНЫЕ окна
+  // (17 px высотой), поэтому «опустить только 64x64» оставляло подписи висеть
+  // поверх страницы.
+  const win = [];
+  for (const line of String(r.out || '').split('\n')) {
+    const m = line.match(/(0x[0-9a-f]+)\s+.*?\s(\d+)x(\d+)[+-]-?\d+[+-]-?\d+/i);
+    if (m) win.push({ id: m[1], w: Number(m[2]), h: Number(m[3]) });
+  }
+  const sizes = iconSizes();
+  const bases = new Set();
+  for (const w of win) if (sizes.includes(w.w) && sizes.includes(w.h)) bases.add((parseInt(w.id, 16) & 0x3ff00000) >>> 0);
+  if (!bases.size) return 0;
+  const ids = win.filter((w) => bases.has((parseInt(w.id, 16) & 0x3ff00000) >>> 0)).map((w) => w.id);
+  for (const id of ids) await sh(`DISPLAY=${DISPLAY} xwit -id ${id} -lower 2>/dev/null`, 5000);
+  return ids.length;
+}
+
 /** Текущий размер стола из xdpyinfo (для диагностики). */
 async function desktopSize() {
   const r = await sh(`DISPLAY=${DISPLAY} xdpyinfo 2>/dev/null | grep -m1 dimensions`, 8000);
@@ -634,6 +754,10 @@ async function ensureEssentials() {
     else state.note = 'x11vnc не поднялся: ' + (await sh(`tail -n 2 ${JSON.stringify(path.join(LOG_DIR, 'x11vnc.log'))}`, 5000)).out.slice(0, 160);
   }
   if (!(await pgrep('tint2'))) { await sh(`DISPLAY=${DISPLAY} nohup tint2 >/dev/null 2>&1 &`, 6000); fixes.push('tint2'); }
+  // idesk перерисовывает иконки поверх окон — при старте idesk и после
+  // перекраски обоев опускаем их под окна приложений.
+  const iconsRaised = fixes.includes('idesk') || fixes.includes('обои');
+  if (iconsRaised) { await sleep(1200); await lowerDesktopIcons(); }
   // Обои — последними: feh выставляет корневой pixmap и сразу выходит (процесса
   // нет), а любой перезапуск Xvfb этот pixmap обнуляет — тогда экран снова
   // чёрный при живых иконках (проверено скриншотом).
@@ -784,6 +908,7 @@ async function localStatus() {
 let repoRootRef = null;
 let ticking = false;
 
+let tickCount = 0;
 async function tick() {
   if (!state.enabled || ticking) return;
   ticking = true;
@@ -802,6 +927,11 @@ async function tick() {
     state.x11vnc = vnc ? 'up' : 'down';
     state.icons = icons ? 'up' : 'down';
     state.bar = bar ? 'up' : 'down';
+    // Раз в минуту возвращаем иконки под окна приложений: idesk умеет
+    // перерисоваться и всплыть поверх браузера сам по себе.
+    tickCount++;
+    if (x && icons && tickCount % 2 === 0) await lowerDesktopIcons();
+    if (x && tickCount % 2 === 1) await dismissStrayDialogs();
     if (!x || !vnc || !ui || !wm || !icons || !bar) {
       const why = [!x && 'нет X', !wm && 'нет openbox', !icons && 'нет idesk (иконки)',
         !bar && 'нет tint2 (панель)', !vnc && `нет x11vnc:${VNC_PORT}`, !ui && 'нет noVNC-UI']
@@ -900,4 +1030,4 @@ function start(opts = {}) {
   };
 }
 
-module.exports = { start, gradientPng, SHORTCUTS };
+module.exports = { start, gradientPng, SHORTCUTS, lowerDesktopIcons, dismissStrayDialogs, ensureFilesLauncher };

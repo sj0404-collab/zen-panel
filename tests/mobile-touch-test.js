@@ -10,6 +10,8 @@ const desk = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/desktop-
 const mgr = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/src/storage/manager.js'), 'utf8');
 const mobHtml = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/mobile.html'), 'utf8');
 const deskHtml = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/desktop.html'), 'utf8');
+const keep = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/src/vnc-keepalive.js'), 'utf8');
+const startDesktop = fs.readFileSync(path.join(__dirname, '..', 'tools/start_desktop.sh'), 'utf8');
 const mainKt = fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/java/dev/zen/hub/MainActivity.kt'), 'utf8');
 
 let pass = 0, fail = 0;
@@ -237,19 +239,152 @@ check('q37 vnc endpoint', server.includes("app.get('/api/vnc/status'") &&
 check('q37b vnc server route', server.includes("app.get('/desktop-vnc'"));
 check('q37c vnc publish slot', fs.readFileSync(path.join(__dirname, '..', 'tools/publish_session.sh'), 'utf8')
   .includes('slot=vnc)      FILE="session-vnc.json"'));
+// Контракт изменился (требование владельца: «всё время включённым, а не
+// подключаться каждый раз»): кнопки «подключиться» в разметке НЕТ, экран
+// поднимает сам хаб и кадр подключается автоподключением. Поэтому проверяем
+// не кнопку, а отсутствие ручного шага + наличие автоподключения.
 check('q37d vnc mobile ui', mobHtml.includes('id="p-linux"') &&
   mobHtml.includes('id="nav-linux"') &&
-  mobHtml.includes('onclick="linuxConnect()"') &&
+  mobHtml.includes('onclick="linuxOpen()"') &&
   mobHtml.includes('onclick="linuxFullscreen()"') &&
-  mob.includes('function linuxConnect(') && mob.includes('function linuxStatus('));
+  !mobHtml.includes('linuxConnect()') &&
+  mob.includes('function linuxConnect(') && mob.includes('function linuxStatus(') &&
+  mob.includes('autoconnect=true'));
 check('q37e vnc desktop ui', deskHtml.includes('id="p-linux"') &&
   deskHtml.includes('onclick="showPage(\'linux\')"') &&
-  deskHtml.includes("linuxConnect('desktop')") &&
   deskHtml.includes("linuxFullscreen('desktop')") &&
-  desk.includes('function linuxConnect(') && desk.includes('function linuxStatus('));
+  deskHtml.includes('id="linux-frame-desktop"') &&
+  desk.includes("linuxConnect('desktop')") &&
+  desk.includes('function linuxConnect(') && desk.includes('function linuxStatus(') &&
+  desk.includes('autoconnect=true'));
 check('q37f vnc workflow', /job|vnc:/.test(fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8')) &&
   fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8').includes('start_desktop.sh') &&
   fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8').includes('slot=vnc'));
+
+
+// q38: touch on the terminal — tap types, long-press selects (user bug
+// «каждый тап бесконечно копирует весь текст при запуске клавиатуры»).
+// (a) никакой копировки по удержанию/контекстному меню
+check('q38a no copy on touch', !/holdTimer\s*=\s*setTimeout\([^)]*copySelection/.test(mob) &&
+  !/holdTimer\s*=\s*setTimeout\([^)]*copySelection/.test(desk) &&
+  !/onContext\s*=\s*\(e\)\s*=>\s*\{[^}]*copySelection\(/.test(mob) &&
+  !/onContext\s*=\s*\(e\)\s*=>\s*\{[^}]*copySelection\(/.test(desk));
+// (b) тап возвращает фокус (клавиатура) и НЕ прячет её на старте касания
+check('q38b tap focuses', /function setupTermTouch/.test(mob) &&
+  /term\.focus\(\)/.test(mob.slice(mob.indexOf('function setupTermTouch'), mob.indexOf('async function createTerm'))) &&
+  /term\.focus\(\)/.test(desk.slice(desk.indexOf('function setupTermTouch'), desk.indexOf('async function createTerm'))) &&
+  !/const onStart = \(e\) => \{[\s\S]{0,400}?term\.blur\(\)/.test(mob.slice(mob.indexOf('function setupTermTouch'), mob.indexOf('async function createTerm'))));
+// (c) удержание выделяет слово под пальцем, протяжка расширяет по строкам
+check('q38c hold selects', mob.includes('function termSelectWordAt(') && desk.includes('function termSelectWordAt(') &&
+  mob.includes('term.select(') && mob.includes('term.selectLines(') && mob.includes('function termCellAt('));
+// (d) без выделения НЕ копируем последние 200 строк — только подсказка
+check('q38d no silent full-buffer copy', !mob.includes('buf.length - 200') && !desk.includes('buf.length - 200') &&
+  mob.includes('Сначала выдели текст') && desk.includes('Сначала выдели текст'));
+// (e) выделение чистого текста работает: никакого preventDefault на старте тапа,
+//     который убивает нативное выделение страницы
+const mobTouch = mob.slice(mob.indexOf('function setupTermTouch'), mob.indexOf('async function createTerm'));
+check('q38e native selection alive', mobTouch.includes("addEventListener('touchstart', onStart, { passive: true })") &&
+  mobTouch.includes("addEventListener('touchmove', onMove, { passive: false })") &&
+  mobTouch.includes("getSelection() || ''"));
+
+
+// q39: «наложение» на Экране — иконки рабочего стола всплывали ПОВЕРХ окна
+// браузера (жалоба 19.09: контент страницы смешан с иконками стола).
+// Лечение: иконки idesk (окна override-redirect, WM их не переставляет)
+// опускаются под окна приложений — при старте стола, при лечении keepalive,
+// раз в 30 с и сразу после запуска приложения.
+check('q39a icons lowered by keepalive', keep.includes('async function lowerDesktopIcons') &&
+  /module\.exports = \{[^}]*lowerDesktopIcons/.test(keep) && keep.includes('tickCount % 2 === 0') &&
+  /iconsRaised[\s\S]{0,120}lowerDesktopIcons/.test(keep));
+check('q39b xwit installed by hub', keep.includes("['xwit', 'xwit']") &&
+  startDesktop.includes('xwit') && startDesktop.includes('-lower'));
+check('q39c launch lowers icons', (server.match(/require\('\.\/vnc-keepalive'\)\.lowerDesktopIcons/g) || []).length >= 2);
+
+
+// q40: виртуальная мышь на «Экране» — сенсор, две кнопки, колесо стрелками
+// (вместо «палец по картинке»: он закрывает то место, куда целишься).
+check('q40a panel markup', (mobHtml.match(/id="linux-mouse"/g) || []).length === 1 &&
+  (deskHtml.match(/id="linux-mouse"/g) || []).length === 1 &&
+  mobHtml.includes('id="lm-pad"') && deskHtml.includes('id="lm-pad"') &&
+  mobHtml.includes('id="lm-left"') && mobHtml.includes('id="lm-right"'));
+check('q40b wheel arrows', ['up', 'down', 'left', 'right'].every((d) =>
+  mobHtml.includes('data-dir="' + d + '"') && deskHtml.includes('data-dir="' + d + '"')) &&
+  mobHtml.includes('vMouseWheelStart(\'up\')'));
+check('q40c touchpad logic', mob.includes('function vMouseInitPad') && desk.includes('function vMouseInitPad') &&
+  mob.includes('VMOUSE_SENS') && desk.includes('VMOUSE_SENS') &&
+  mob.includes('pad.addEventListener(\'pointermove\'') && mob.includes('wasTap'));
+check('q40d rfb pointer api', mob.includes('mouse: {') && desk.includes('mouse: {') &&
+  mob.includes('r._sendMouse(p.x, p.y, mask | 0)') && desk.includes('r._sendMouse(p.x, p.y, mask | 0)') &&
+  mob.includes('click(mask)') && mob.includes('wheel(mask)'));
+check('q40e wheel masks', mob.includes('up: 8, down: 16, left: 32, right: 64') &&
+  desk.includes('up: 8, down: 16, left: 32, right: 64'));
+check('q40f follow cursor', mob.includes('_follow()') && desk.includes('_follow()') &&
+  mob.includes('viewportChangePos') && desk.includes('viewportChangePos'));
+
+
+// q41: читалка на «Экране» — /api/ocr и /api/screenshot падали с
+// «_exec is not a function» (в модуле хелпер объявлен как `const { exec: _exec }`,
+// а в OCR-хелпере его повторно доставали как `const {_exec}` — такого свойства
+// у child_process нет). Проверяем, что такого дубля больше нет и что OCR-пакеты
+// хаб ставит сам.
+check('q41a ocr helper uses module exec', !server.includes('const {_exec} = require(') &&
+  server.includes('const { exec: _exec } = require(') &&
+  server.includes('const ocrRun = (cmd) => new Promise') &&
+  server.includes('/api/screenshot'));
+check('q41b hub installs tesseract', keep.includes("['tesseract', 'tesseract-ocr']") &&
+  keep.includes("OCR_LANG_PKG = 'tesseract-ocr-rus'") && keep.includes('ocrLangMissing'));
+
+
+// q42: файловый менеджер открывается без паразитного диалога pcmanfm
+// «Desktop manager is not active» (idesk уже держит рабочий стол). Файлы на
+// экране — через обёртку hub-files, плюс разовая уборка залипшего диалога.
+check('q42a files launcher', keep.includes('FILES_LAUNCHER') && keep.includes('ensureFilesLauncher') &&
+  keep.includes("exec: 'hub-files $HOME/hub-work'") &&
+  (keep.match(/hub-files \$HOME\/hub-work/g) || []).length === 2 &&
+  keep.includes('filesLauncher ? JSON.stringify(filesLauncher)'));
+check('q42b dialogs cleaned', keep.includes('async function dismissStrayDialogs') &&
+  /tickCount % 2 === 1\) await dismissStrayDialogs/.test(keep) &&
+  server.includes('dismissStrayDialogs'));
+
+
+// q43: звук видео — VNC сам звук не передаёт, поэтому PulseAudio идёт
+// отдельным PCM-потоком в браузер телефона/десктопа.
+check('q43a audio websocket bridge', server.includes('REMOTE DESKTOP AUDIO') &&
+  server.includes("u.pathname !== '/ws/audio'") && server.includes('parec') &&
+  server.includes('audioWss.handleUpgrade') && server.includes("'/ws/audio'"));
+check('q43b PCM packets are coalesced', server.includes('AUDIO_PACKET = 8192') &&
+  server.includes('pendingAudio') && server.includes('sendAudio(false)') &&
+  server.includes("'--latency-msec=40'"));
+check('q43c audio client playback and flush', mob.includes('function remoteAudioStart') &&
+  desk.includes('function remoteAudioStart') && mob.includes("'/ws/audio?rate='") &&
+  desk.includes("'/ws/audio?rate='") && mob.includes('createScriptProcessor') &&
+  desk.includes('createScriptProcessor') && mob.includes('rate * 0.35') &&
+  desk.includes('rate * 0.35') && mob.includes('pending = new Uint8Array(0)') &&
+  desk.includes('pending = new Uint8Array(0)'));
+check('q43d sound button and clean Pulse path', mobHtml.includes('remoteAudioToggle()') &&
+  deskHtml.includes('remoteAudioToggle()') &&
+  keep.includes("['parec', 'pulseaudio-utils']") && startDesktop.includes('pulseaudio-utils') &&
+  server.includes('module-loopback') && server.includes('unload-module') &&
+  !server.includes('source=browser_youtube.monitor sink=auto_null'));
+
+
+// q44: video launch prefers a codec-complete Google Chrome over a bare
+// Chromium build; the latter showed controls but returned NotSupportedError
+// for H.264/AAC media and produced no PulseAudio sink input.
+check('q44 chrome media codec priority', /BROWSER_BIN=\$\(command -v google-chrome-stable \|\| command -v google-chrome \|\| command -v chromium/.test(server) &&
+  server.includes('PULSE_SINK=browser_youtube') && server.includes("browserProfile = googleAvailable ? 'google' : 'chromium'") &&
+  server.includes('--no-default-browser-check') && server.includes('--disable-signin-promo'));
+
+// q45: browser video keeps the GPU compositor/raster path on Xvfb. The old
+// --disable-gpu contradicted accelerated video decode and made FPS low.
+check('q45 Mesa GPU compositor and Android UA', !server.includes('--test-type --disable-gpu --autoplay-policy') &&
+  server.includes('--use-gl=angle') && server.includes('--use-angle=gl') &&
+  server.includes('--ignore-gpu-blocklist') && server.includes('--enable-gpu-rasterization') &&
+  server.includes('--enable-oop-rasterization') && server.includes('GALLIUM_DRIVER=llvmpipe') &&
+  server.includes('MESA_LOADER_DRIVER_OVERRIDE=llvmpipe') && server.includes('LIBGL_ALWAYS_SOFTWARE=1') &&
+  server.includes('Pixel Tablet') && server.includes('Pixel 8'));
+check('q46 Mesa package and VNC latency', keep.includes("['glxinfo', 'mesa-utils']") &&
+  startDesktop.includes('-wait 2 -defer 2'));
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
