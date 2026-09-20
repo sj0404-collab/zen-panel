@@ -1068,7 +1068,12 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   const toolIcon = (resume && resume.icon) || (isPlain ? '>_ ' : tool.icon);
 
   const tab = { id, toolId: effectiveToolId, toolName, toolColor, toolIcon,
-    color: toolColor, icon: toolIcon, cwd, dirShort, term, fitAddon, socket: null, pty: null,
+    color: toolColor, icon: toolIcon, cwd, dirShort,
+    repoPath: (resume && resume.repoPath) || null, repoName: (resume && resume.repoName) || null,
+    repoRemote: (resume && resume.repoRemote) || null, repoBranch: (resume && resume.repoBranch) || null,
+    repoHead: (resume && resume.repoHead) || null, repoDirty: !!(resume && resume.repoDirty),
+    repoStatus: (resume && resume.repoStatus) || '', emulator: (resume && resume.emulator) || null,
+    phoneRunner: (resume && resume.phoneRunner) || null, term, fitAddon, socket: null, pty: null,
     manualClose: false, lastPong: 0, reconnectTimer: null, keepAlive: null,
     resizeObs: null, touchHandler: null, connect: () => {} };
   tabs.push(tab);
@@ -1108,7 +1113,9 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
 
     socket.onopen = () => {
       tab.lastPong = Date.now();
-      socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : effectiveToolId, sessionId: id, cwd, cols: term.cols, rows: term.rows }));
+      socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : effectiveToolId, sessionId: id, cwd,
+        repoPath: (resume && resume.repoPath) || null, emulator: (resume && resume.emulator) || null,
+        phoneRunner: (resume && resume.phoneRunner) || null, cols: term.cols, rows: term.rows }));
       if (!isTouch) term.focus();
     };
 
@@ -1971,6 +1978,29 @@ document.addEventListener('keydown', (e) => {
   else if (e.code === 'KeyX') { e.preventDefault(); if (activeTab) closeTab(activeTab.id); }
 });
 
+// ===== PERSISTENT EMULATOR DEFAULT =====
+function emulatorDefaultInputId(prefix) { return prefix ? 'emulator-default-desktop' : 'emulator-default'; }
+async function loadEmulatorDefault(prefix) {
+  try {
+    const r = await fetch('/api/emulator/default');
+    const d = await r.json();
+    const el = document.getElementById(emulatorDefaultInputId(prefix));
+    if (el && d.emulator) el.value = d.emulator;
+  } catch {}
+}
+async function saveEmulatorDefault(prefix) {
+  const el = document.getElementById(emulatorDefaultInputId(prefix));
+  const emulator = String((el && el.value) || '').trim();
+  if (!emulator) return;
+  try {
+    const r = await fetch('/api/emulator/default', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emulator }) });
+    const d = await r.json();
+    if (d.emulator && el) el.value = d.emulator;
+    const note = document.getElementById(prefix ? 'linux-note-desktop' : 'linux-note');
+    if (note) { note.textContent = 'AVD: ' + (d.emulator || d.error || 'ошибка'); setTimeout(() => { if (note.textContent.startsWith('AVD:')) note.textContent = ''; }, 3000); }
+  } catch {}
+}
+
 // ===== CLOUD PHONE =====
 function cloudPhoneUrl(suffix) {
   const proto = location.protocol === 'https:' ? 'https' : 'http';
@@ -2075,6 +2105,7 @@ function cloudPhoneFullscreen(prefix) {
   else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
 }
 if (document.getElementById('p-linux')) {
+  loadEmulatorDefault();
   cloudPhoneStatus();
   (function() {
     const last = localStorage.getItem('cp.lastUrl');

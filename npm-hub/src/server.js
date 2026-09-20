@@ -180,6 +180,38 @@ function loadState() {
 }
 function saveState(s) { fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)); }
 
+// Persist the Android AVD choice instead of falling back to a different
+// machine/environment default after every hub restart.
+const DEFAULT_EMULATOR = 'pixel_7_api34';
+const cleanEmulatorName = (value) => {
+  const s = String(value || '').trim();
+  return /^[A-Za-z0-9._-]{1,80}$/.test(s) ? s : null;
+};
+const getDefaultEmulator = () => {
+  const state = loadState();
+  return cleanEmulatorName(state.defaultEmulator) || cleanEmulatorName(process.env.ANDROID_AVD) || DEFAULT_EMULATOR;
+};
+const setDefaultEmulator = (value) => {
+  const emulator = cleanEmulatorName(value);
+  if (!emulator) return null;
+  const state = loadState();
+  state.defaultEmulator = emulator;
+  saveState(state);
+  return emulator;
+};
+const getDefaultPhoneRunner = () => {
+  const state = loadState();
+  return cleanEmulatorName(state.phoneRunner) || cleanEmulatorName(process.env.PHONE_RUNNER) || 'emulator';
+};
+const setDefaultPhoneRunner = (value) => {
+  const runner = cleanEmulatorName(value);
+  if (!runner) return null;
+  const state = loadState();
+  state.phoneRunner = runner;
+  saveState(state);
+  return runner;
+};
+
 function isInstalled(cmd) {
   const isWin = process.platform === 'win32';
   const safe = String(cmd).replace(/[;&|`$()]/g, '');
@@ -296,6 +328,8 @@ app.post('/api/tools/test', (req, res) => {
 // ─── INFO ───
 app.get('/api/info', (req, res) => {
   const state = loadState();
+  state.defaultEmulator = getDefaultEmulator();
+  state.phoneRunner = getDefaultPhoneRunner();
   res.json({ home: HOME, workDir: WORK_DIR, platform: process.platform, ...hubBuildInfo(), ...getAccessInfo(req), state });
 });
 
@@ -492,6 +526,31 @@ app.post('/api/models/freeonly', (req, res) => {
 
 app.get('/api/models/current', (req, res) => {
   res.json({ success: true, model: modelManager.getSelectedModel(), apiKey: modelManager.getApiKey() });
+});
+
+// ─── PERSISTENT EMULATOR DEFAULT ───
+app.get('/api/emulator/default', (req, res) => {
+  res.json({ success: true, emulator: getDefaultEmulator(), runner: getDefaultPhoneRunner() });
+});
+app.post('/api/emulator/default', (req, res) => {
+  const body = req.body || {};
+  // Validate everything before persisting anything: a request that fails must
+  // not half-apply (e.g. save the runner while rejecting the emulator).
+  const emulator = cleanEmulatorName(body.emulator || body.avd);
+  const runner = body.runner ? cleanEmulatorName(body.runner) : null;
+  if (!emulator) return res.status(400).json({ success: false, error: 'некорректное имя эмулятора' });
+  if (body.runner && !runner) return res.status(400).json({ success: false, error: 'некорректная метка cloud runner' });
+  const savedEmulator = setDefaultEmulator(emulator);
+  const savedRunner = runner ? setDefaultPhoneRunner(runner) : getDefaultPhoneRunner();
+  res.json({ success: true, emulator: savedEmulator, runner: savedRunner });
+});
+app.get('/api/phone/runner', (req, res) => {
+  res.json({ success: true, runner: getDefaultPhoneRunner() });
+});
+app.post('/api/phone/runner', (req, res) => {
+  const runner = setDefaultPhoneRunner(req.body && req.body.runner);
+  if (!runner) return res.status(400).json({ success: false, error: 'некорректная метка cloud runner' });
+  res.json({ success: true, runner });
 });
 
 // ─── PATH HISTORY ───
@@ -1273,17 +1332,82 @@ const safeSessionName = id => TMUX_PREFIX + String(id).replace(/[^A-Za-z0-9_-]/g
 const sessionLogPath = id => path.join(PTY_DIR, safeSessionName(id) + '.log');
 const sessionMetaPath = id => path.join(PTY_DIR, safeSessionName(id) + '.meta.json');
 
-// A tiny `.json` sidecar per session remembers display info (name/color/icon,
-// cwd) so a hub restart can bring back a nice tab for every surviving tmux
-// session instead of a nameless shell.
+// Keep project identity beside the tmux session. cwd alone is not enough for
+// a cloned/local repo because the UI needs to know which unfinished worktree
+// belongs to which agent after a hub restart.
+const repoContext = (dir) => {
+  let p = dir;
+  try { p = path.resolve(String(dir || HOME)); } catch { return null; }
+  for (let i = 0; i < 32 && p; i++) {
+    if (fs.existsSync(path.join(p, '.git'))) {
+      const run = (args) => {
+        try { return require('child_process').execFileSync('git', ['-C', p, ...args], { encoding: 'utf8', timeout: 2500 }).trim(); }
+        catch { return ''; }
+      };
+      const status = run(['status', '--short']);
+      return {
+        path: p,
+        name: path.basename(p),
+        remote: run(['config', '--get', 'remote.origin.url']) || null,
+        branch: run(['rev-parse', '--abbrev-ref', 'HEAD']) || null,
+        head: run(['rev-parse', 'HEAD']) || null,
+        dirty: Boolean(status),
+        status: status.slice(0, 20000)
+      };
+    }
+    const next = path.dirname(p);
+    if (next === p) break;
+    p = next;
+  }
+  return null;
+};
+const currentTmuxCwd = (session) => {
+  if (!session || !session.tmux) return session && session.cwd;
+  const r = tmuxRun(['display-message', '-p', '-t', safeSessionName(session.id), '#{pane_current_path}'], 2000);
+  const cwd = String(r.stdout || '').trim();
+  return cwd && fs.existsSync(cwd) ? cwd : session.cwd;
+};
+
+// A tiny `.json` sidecar per session remembers display info, cwd, project and
+// emulator so a hub restart can bring back the exact unfinished worktree.
 const writeSessionMeta = (session) => {
   try {
+    session.repo = session.repo || repoContext(session.cwd);
+    session.emulator = session.emulator || getDefaultEmulator();
+    session.phoneRunner = session.phoneRunner || getDefaultPhoneRunner();
     fs.writeFileSync(sessionMetaPath(session.id), JSON.stringify({
       id: session.id, cwd: session.cwd, toolId: session.toolId,
       toolName: session.toolName || 'Terminal', color: session.color || '#58a6ff',
-      icon: session.icon || '>_', created: session.created || Date.now()
+      icon: session.icon || '>_', created: session.created || Date.now(),
+      emulator: session.emulator,
+      phoneRunner: session.phoneRunner,
+      repoPath: session.repo && session.repo.path,
+      repoName: session.repo && session.repo.name,
+      repoRemote: session.repo && session.repo.remote,
+      repoBranch: session.repo && session.repo.branch,
+      repoHead: session.repo && session.repo.head,
+      repoDirty: !!(session.repo && session.repo.dirty),
+      repoStatus: session.repo && session.repo.status || ''
     }));
   } catch {}
+};
+// Repo "identity" = the stable fields that pin a session to a worktree. The
+// mutable `status` snapshot is deliberately excluded: git status changes on
+// every keystroke/worktree touch, so comparing it would rewrite the sidecar on
+// every /api/sessions poll for any dirty repo.
+const repoIdentity = (r) => r ?
+  [r.path, r.name, r.remote, r.branch, r.head, !!r.dirty].join('\u0000') : null;
+const syncTmuxSession = (session) => {
+  const cwd = currentTmuxCwd(session);
+  const nextRepo = repoContext(cwd || session.cwd);
+  const oldRepo = session.repo || null;
+  const repoChanged = repoIdentity(oldRepo) !== repoIdentity(nextRepo);
+  if ((cwd && cwd !== session.cwd) || repoChanged) {
+    if (cwd) session.cwd = cwd;
+    session.repo = nextRepo;
+    writeSessionMeta(session);
+  }
+  return session;
 };
 const deleteSessionMeta = (id) => { try { fs.unlinkSync(sessionMetaPath(id)); } catch {} };
 const readSessionMeta = (id) => {
@@ -1294,6 +1418,11 @@ const readSessionMeta = (id) => {
 const tmuxRun = (args, timeout, input) => {
   try { return require('child_process').spawnSync('tmux', args, { stdio: 'pipe', timeout: timeout || 5000, encoding: 'utf8', input }); }
   catch { return { status: 1, stdout: '', stderr: '' }; }
+};
+const tmuxSessionEmulator = (id) => {
+  const r = tmuxRun(['show-environment', '-t', safeSessionName(id), 'ANDROID_AVD'], 2000);
+  const match = String(r.stdout || '').match(/^ANDROID_AVD=(.+)$/m);
+  return cleanEmulatorName(match && match[1]);
 };
 
 const tmuxSessionAlive = id => tmuxRun(['has-session', '-t', safeSessionName(id)], 2000).status === 0;
@@ -1368,8 +1497,17 @@ const reviveTmuxSession = (id) => {
   const logPath = sessionLogPath(id);
   const offset = (() => { try { return fs.statSync(logPath).size; } catch { return 0; } })();
   const meta = readSessionMeta(id) || {};
-  const session = { id, tmux: true, cwd: meta.cwd || null, toolId: meta.toolId || null, toolName: meta.toolName, color: meta.color, icon: meta.icon, created: meta.created || Date.now(), clients: new Set(), output: '', resumed: true, offset: 0, logPath, poller: null };
+  const session = { id, tmux: true, cwd: meta.cwd || meta.repoPath || null,
+    repo: meta.repoPath ? { path: meta.repoPath, name: meta.repoName, remote: meta.repoRemote,
+      branch: meta.repoBranch, head: meta.repoHead, dirty: !!meta.repoDirty, status: meta.repoStatus || '' } : null,
+    emulator: meta.emulator || tmuxSessionEmulator(id) || getDefaultEmulator(),
+    phoneRunner: meta.phoneRunner || getDefaultPhoneRunner(), toolId: meta.toolId || null,
+    toolName: meta.toolName, color: meta.color, icon: meta.icon, created: meta.created || Date.now(),
+    clients: new Set(), output: '', resumed: true, offset: 0, logPath, poller: null };
   sessions.set(id, session);
+  // Backfill metadata for sessions created before project/emulator persistence
+  // existed. No clone is made and the tmux process is not restarted.
+  writeSessionMeta(session);
   ensureTmuxPipe(session);
   if (offset > 0) { // replay everything tmux already had
     try {
@@ -1387,8 +1525,17 @@ const createTmuxSession = (id, opts, ws) => {
   try { fs.unlinkSync(logPath); } catch {}
   const r = tmuxRun(['new-session', '-d', '-s', name, '-x', String(opts.cols || 120), '-y', String(opts.rows || 30), '-c', opts.cwd], 8000);
   if (r.status !== 0) { ws.send(JSON.stringify({ type: 'error', error: (r.stderr || 'tmux failed').trim() })); return null; }
-  const session = { id, tmux: true, cwd: opts.cwd, toolId: opts.toolId, toolName: opts.toolName, color: opts.color, icon: opts.icon, created: Date.now(), clients: new Set(), output: '', resumed: false, offset: 0, logPath, poller: null };
+  const session = { id, tmux: true, cwd: opts.cwd, repo: repoContext(opts.cwd),
+    emulator: cleanEmulatorName(opts.emulator) || getDefaultEmulator(),
+    phoneRunner: cleanEmulatorName(opts.phoneRunner) || getDefaultPhoneRunner(),
+    toolId: opts.toolId, toolName: opts.toolName, color: opts.color,
+    icon: opts.icon, created: Date.now(), clients: new Set(), output: '', resumed: false,
+    offset: 0, logPath, poller: null };
   sessions.set(id, session);
+  // Pin the selected emulator in tmux as well as in the sidecar. This lets a
+  // legacy session recover its original choice even if the global default has
+  // changed since that session was opened.
+  tmuxRun(['set-environment', '-t', name, 'ANDROID_AVD', session.emulator], 3000);
   writeSessionMeta(session);
   ensureTmuxPipe(session);
   const shell = process.env.SHELL || '/bin/bash';
@@ -1452,8 +1599,13 @@ wss.on('connection', (ws) => {
         const tool = TOOLS.find(t => t.id === msg.toolId);
         const isWin = process.platform === 'win32';
         const shell = isWin ? (process.env.COMSPEC || 'cmd.exe') : (process.env.SHELL || '/bin/sh');
-        let cwd = msg.cwd || HOME;
-        try { if (!fs.statSync(cwd).isDirectory()) cwd = HOME; } catch { cwd = HOME; }
+        let cwd = msg.cwd || msg.repoPath || HOME;
+        try {
+          if (!fs.statSync(cwd).isDirectory()) throw new Error('cwd missing');
+        } catch {
+          try { cwd = msg.repoPath && fs.statSync(msg.repoPath).isDirectory() ? msg.repoPath : HOME; }
+          catch { cwd = HOME; }
+        }
 
         const metaColor = tool ? tool.color : '#58a6ff';
         const metaIcon = tool ? tool.icon : '>_';
@@ -1463,7 +1615,8 @@ wss.on('connection', (ws) => {
           if (tmuxHas() && !isWin) {
             // ❗ tmux requires a login shell name (argv[0]) to start bash as an
             // interactive shell; new-session already does that. Nothing more needed.
-            session = createTmuxSession(id, { cwd, cols: msg.cols, rows: msg.rows, toolId: tool ? tool.id : null, toolName: metaName, color: metaColor, icon: metaIcon, toolCmd: tool && tool.cmd !== '_terminal' ? tool.cmd : null }, ws);
+            session = createTmuxSession(id, { cwd, cols: msg.cols, rows: msg.rows, toolId: tool ? tool.id : null, toolName: metaName, color: metaColor, icon: metaIcon,
+              emulator: msg.emulator, phoneRunner: msg.phoneRunner, toolCmd: tool && tool.cmd !== '_terminal' ? tool.cmd : null }, ws);
           } else {
             const p = pty.spawn(shell, [], {
               name: 'xterm-256color',
@@ -1472,7 +1625,9 @@ wss.on('connection', (ws) => {
               cwd: cwd,
               env: { ...process.env, TERM: 'xterm-256color', OPENROUTER_API_KEY: modelManager.getKeyForProvider('openrouter'), MODEL: modelManager.getSelectedModel(), OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1' }
             });
-            session = { id, pty: p, cwd, toolId: tool ? tool.id : null, toolName: metaName, color: metaColor, icon: metaIcon, created: Date.now(), clients: new Set(), output: '', resumed: false };
+            session = { id, pty: p, cwd, emulator: cleanEmulatorName(msg.emulator) || getDefaultEmulator(),
+              phoneRunner: cleanEmulatorName(msg.phoneRunner) || getDefaultPhoneRunner(), toolId: tool ? tool.id : null,
+              toolName: metaName, color: metaColor, icon: metaIcon, created: Date.now(), clients: new Set(), output: '', resumed: false };
             sessions.set(id, session);
             writeSessionMeta(session);
 
@@ -1565,12 +1720,20 @@ app.get('/api/sessions', (req, res) => {
       sessions.delete(s.id);
     }
   }
-  const push = (s) => list.push({
-    id: s.id, cwd: s.cwd || null, toolId: s.toolId || null,
-    toolName: s.toolName || 'Terminal', color: s.color || '#58a6ff',
-    icon: s.icon || '>_', resumed: !!s.resumed, tmux: !!s.tmux,
-    clients: s.clients ? s.clients.size : 0, created: s.created || 0
-  });
+  const push = (s) => {
+    if (s.tmux) syncTmuxSession(s);
+    const repo = s.repo || repoContext(s.cwd);
+    list.push({
+      id: s.id, cwd: s.cwd || null, repoPath: repo && repo.path || null,
+      repoName: repo && repo.name || null, repoRemote: repo && repo.remote || null,
+      repoBranch: repo && repo.branch || null, repoHead: repo && repo.head || null,
+      repoDirty: !!(repo && repo.dirty), repoStatus: repo && repo.status || '',
+      emulator: s.emulator || getDefaultEmulator(), phoneRunner: s.phoneRunner || getDefaultPhoneRunner(),
+      toolId: s.toolId || null, toolName: s.toolName || 'Terminal',
+      color: s.color || '#58a6ff', icon: s.icon || '>_', resumed: !!s.resumed, tmux: !!s.tmux,
+      clients: s.clients ? s.clients.size : 0, created: s.created || 0
+    });
+  };
   for (const s of sessions.values()) push(s);
   // Sessions that survived a hub restart still exist as tmux sessions — list
   // them too, reviving their in-memory record so a reconnect replays output.
@@ -1679,7 +1842,7 @@ const dispatchPhone = (command, browserUrl) => new Promise(async (resolve) => {
   const token = phoneToken();
   if (!remotePhoneAvailable()) return resolve({ ok: false, out: 'нет GH_TOKEN / PHONE_REPO для remote-телефона' });
   try {
-    const inputs = { command, runner: process.env.PHONE_RUNNER || 'emulator' };
+    const inputs = { command, runner: getDefaultPhoneRunner() };
     if (browserUrl) inputs.browser_url = browserUrl;
     const url = `${GITHUB_BASE(PHONE_REPO)}/actions/workflows/${PHONE_WF}/dispatches`;
     const r = await ghApi('POST', url, token, {
@@ -1721,9 +1884,9 @@ const phoneLocalStatus = async () => {
   return { vnc, adb, control: ctl };
 };
 
-const phoneCtrl = (sub, timeoutMs = 90000) => new Promise((resolve) => {
+const phoneCtrl = (sub, timeoutMs = 90000, extraEnv = {}) => new Promise((resolve) => {
   try {
-    const p = spawn('bash', [PHONE_CTL, sub], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const p = spawn('bash', [PHONE_CTL, sub], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...extraEnv } });
     let out = '';
     const timer = setTimeout(() => { try { p.kill(); } catch {} }, timeoutMs);
     p.stdout.on('data', d => out += d);
@@ -1750,6 +1913,7 @@ const phoneStatus = async () => {
       remote: true, url,
       raw: s.raw,
       noVncPort: PHONE_NO_VNC_PORT,
+      defaultEmulator: getDefaultEmulator(), phoneRunner: getDefaultPhoneRunner(),
       adb: Boolean(s.raw && s.raw.adbPort),
       control: { ok: true, out: s.raw && s.raw.state === 'live' ? 'remote: live' : 'remote: idle' }
     };
@@ -1759,6 +1923,7 @@ const phoneStatus = async () => {
     running: s.vnc, adb: s.adb,
     remote: false, url: null,
     noVncPort: PHONE_NO_VNC_PORT,
+    defaultEmulator: getDefaultEmulator(), phoneRunner: getDefaultPhoneRunner(),
     control: s.control
   };
 };
@@ -1769,12 +1934,17 @@ app.get('/api/phone/status', async (req, res) => {
 
 app.post('/api/phone/start', async (req, res) => {
   try {
+    const requestedEmulator = cleanEmulatorName(req.body && (req.body.emulator || req.body.avd));
+    const requestedRunner = cleanEmulatorName(req.body && req.body.runner);
+    if (requestedEmulator) setDefaultEmulator(requestedEmulator);
+    if (requestedRunner) setDefaultPhoneRunner(requestedRunner);
+    const emulator = getDefaultEmulator();
     if (remotePhoneAvailable()) {
       const r = await dispatchPhone('start');
-      return res.json({ ok: r.ok, message: r.out, remote: true });
+      return res.json({ ok: r.ok, message: r.out, remote: true, emulator });
     }
-    const r = await phoneCtrl('start');
-    res.json({ ok: r.ok, message: r.out, remote: false });
+    const r = await phoneCtrl('start', 90000, { ANDROID_AVD: emulator });
+    res.json({ ok: r.ok, message: r.out, remote: false, emulator });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
@@ -2089,10 +2259,11 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         // Try to start Android emulator on the local display
         const sdk = process.env.ANDROID_SDK_ROOT || '/usr/local/lib/android/sdk';
         const emulator = path.join(sdk, 'emulator', 'emulator');
-        const avd = process.env.ANDROID_AVD || 'pixel_7_api34';
+        const requestedAvd = cleanEmulatorName(req.body.emulator || req.body.avd);
+        const avd = requestedAvd ? (setDefaultEmulator(requestedAvd) || getDefaultEmulator()) : getDefaultEmulator();
         if (fs.existsSync(emulator)) {
-          await runOnDisplay(`${emulator} -avd ${avd} -no-window -no-audio &`, 3000);
-          return res.json({ ok: true, message: `Эмулятор ${avd} запускается...` });
+          await runOnDisplay(`ANDROID_AVD=${avd} ${emulator} -avd ${avd} -no-window -no-audio &`, 3000);
+          return res.json({ ok: true, message: `Эмулятор ${avd} запускается...`, emulator: avd });
         }
         // Fallback: try the cloud-phone workflow dispatch
         if (remotePhoneAvailable()) {

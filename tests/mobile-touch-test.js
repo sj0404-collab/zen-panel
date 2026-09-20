@@ -400,5 +400,36 @@ check('q50 stale tmux tabs are pruned', server.includes('A detached tmux session
   server.includes('if (s.tmux && !tmuxSessionAlive(s.id))') &&
   server.includes('sessions.delete(s.id)'));
 
+// q51: a surviving session carries the actual project/worktree context and
+// the selected emulator through a hub restart; a new local phone uses the
+// persisted emulator instead of silently reverting to a hard-coded AVD.
+check('q51 project and emulator persistence',
+  server.includes('const repoContext = (dir)') &&
+  server.includes('repoPath: session.repo && session.repo.path') &&
+  server.includes('repoBranch: session.repo && session.repo.branch') &&
+  server.includes('syncTmuxSession') &&
+  server.includes("app.get('/api/emulator/default'") &&
+  server.includes("app.post('/api/emulator/default'") &&
+  server.includes("app.get('/api/phone/runner'") &&
+  server.includes('const getDefaultEmulator = ()') &&
+  server.includes('const getDefaultPhoneRunner = ()') &&
+  server.includes('phoneRunner: session.phoneRunner') &&
+  server.includes('runner: getDefaultPhoneRunner()') &&
+  server.includes("phoneCtrl('start', 90000, { ANDROID_AVD: emulator })") &&
+  server.includes('defaultEmulator: getDefaultEmulator()') &&
+  mob.includes('repoPath: (resume && resume.repoPath)') &&
+  desk.includes('repoPath: (resume && resume.repoPath)'));
+
+// q52: an emulator/runner update is atomic — a failed request must not
+// half-apply (e.g. persist the runner while rejecting the emulator); and repo
+// sync compares stable identity, not the mutable git-status snapshot.
+check('q52 atomic default save + repo identity sync',
+  server.includes('// Validate everything before persisting anything') &&
+  server.includes('const savedEmulator = setDefaultEmulator(emulator)') &&
+  server.includes('const savedRunner = runner ? setDefaultPhoneRunner(runner)') &&
+  server.includes("if (body.runner && !runner) return res.status(400)") &&
+  server.includes('const repoIdentity = (r) => r ?') &&
+  server.includes('repoChanged = repoIdentity(oldRepo) !== repoIdentity(nextRepo)'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
