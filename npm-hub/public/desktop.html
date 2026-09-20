@@ -301,7 +301,8 @@
         <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center;flex-wrap:wrap">
           <input type="text" id="browser-url-desktop" placeholder="https://... — откроется на этом экране" value="https://www.youtube.com" style="flex:1;min-width:180px;padding:6px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')linuxRunBrowser(this.value)">
           <button class="btn btn-p btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url-desktop').value)" title="Открыть на этом экране">Go · 🖥</button>
-          <span style="font-size:11px;color:var(--t3)">звук 80% авто</span>
+          <span id="pulse-status" class="tag" role="button" tabindex="0" onclick="event.stopPropagation();remoteAudioToggle()" onkeydown="if(event.key==='Enter'||event.key===' ')remoteAudioToggle()" title="Включить звук видео с удалённого экрана" style="font-size:10px;cursor:pointer">🔊 звук</span>
+          <span style="font-size:11px;color:var(--t3)">80% авто</span>
         </div>
         <!-- Читалка и ссылки агента: жили во вкладке Chrome, которая дублировала
              «Экран» (два браузера) — теперь это часть экрана. -->

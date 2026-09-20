@@ -2529,7 +2529,7 @@ async function pulseStatus() {
   try {
     const r = await fetch('/api/pulse/status');
     const d = await r.json();
-    el.textContent = d.running ? 'running' : 'stopped';
+    el.textContent = d.running ? ((_remoteAudio && _remoteAudio.ws && _remoteAudio.ws.readyState === 1) ? '🔊 видео' : '🔊 звук') : '🔇 нет звука';
     el.className = 'tag ' + (d.running ? 'tag-on' : 'tag-off');
     const devEl = document.getElementById('pulse-devices');
     if (devEl) {
@@ -2576,6 +2576,9 @@ async function pulseSetVol(val) {
 async function linuxRunBrowser(url, vertical) {
   if (!url) return;
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  // This function is normally called by a tap on Go/YouTube; start the local
+  // audio receiver before the fetch so mobile autoplay rules allow playback.
+  try { remoteAudioStart(); } catch {}
   try {
     const r = await fetch('/api/linux/run', {
       method: 'POST',
@@ -3125,6 +3128,101 @@ async function ghDownloadReleaseModal(fullName) {
     list.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>';
   }
 }
+// ===== REMOTE VIDEO AUDIO =====
+// VNC carries only pixels. The remote Chromium audio is captured from PulseAudio
+// by /ws/audio and played here, in the phone/desktop browser.
+let _remoteAudio = null;
+function remoteAudioBadge(text, on) {
+  const el = document.getElementById('pulse-status');
+  if (!el) return;
+  el.textContent = text;
+  el.title = on ? 'Звук видео идёт на телефон. Нажмите, чтобы выключить.' : 'Включить звук видео';
+  el.className = 'tag ' + (on ? 'tag-on' : 'tag-off');
+}
+function remoteAudioStart() {
+  try {
+    if (_remoteAudio && _remoteAudio.ws && _remoteAudio.ws.readyState <= 1) {
+      _remoteAudio.ctx.resume().catch(() => {});
+      return _remoteAudio;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC || !window.WebSocket) return null;
+    const ctx = new AC();
+    const rate = ctx.sampleRate || 44100;
+    const node = ctx.createScriptProcessor(4096, 2, 2);
+    const q = [];
+    let qFrames = 0, current = null, currentAt = 0, pending = new Uint8Array(0);
+    const state = { ctx, ws: null, node, q, close: false };
+    node.onaudioprocess = (ev) => {
+      const left = ev.outputBuffer.getChannelData(0);
+      const right = ev.outputBuffer.numberOfChannels > 1 ? ev.outputBuffer.getChannelData(1) : left;
+      left.fill(0); if (right !== left) right.fill(0);
+      let n = 0;
+      while (n < left.length) {
+        if (!current || currentAt >= current.length) {
+          current = q.shift(); currentAt = 0;
+          if (!current) break;
+          qFrames -= current.length / 2;
+        }
+        const avail = Math.min(left.length - n, (current.length - currentAt) / 2);
+        for (let i = 0; i < avail; i++) {
+          left[n + i] = current[currentAt + i * 2];
+          if (right !== left) right[n + i] = current[currentAt + i * 2 + 1];
+        }
+        currentAt += avail * 2; n += avail;
+      }
+    };
+    node.connect(ctx.destination);
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(proto + '//' + location.host + '/ws/audio?rate=' + encodeURIComponent(rate));
+    state.ws = ws; _remoteAudio = state;
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => { ctx.resume().catch(() => {}); remoteAudioBadge('🔊 подключение', false); };
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === 'string') {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'ready') remoteAudioBadge('🔊 видео', true);
+          if (msg.type === 'error') remoteAudioBadge('🔇 ' + (msg.error || 'нет потока'), false);
+        } catch {}
+        return;
+      }
+      const bytes = new Uint8Array(ev.data);
+      const all = new Uint8Array(pending.length + bytes.length);
+      all.set(pending); all.set(bytes, pending.length);
+      const usable = all.length - (all.length % 4);
+      pending = all.slice(usable);
+      if (!usable) return;
+      const view = new DataView(all.buffer, all.byteOffset, usable);
+      const samples = new Float32Array(usable / 2);
+      for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
+      q.push(samples); qFrames += samples.length / 2;
+      // Do not let a stalled phone accumulate minutes of delayed audio.
+      while (qFrames > rate * 2 && q.length > 1) qFrames -= q.shift().length / 2;
+    };
+    ws.onerror = () => remoteAudioBadge('🔇 нет потока', false);
+    ws.onclose = () => {
+      if (_remoteAudio === state) { try { node.disconnect(); } catch {} _remoteAudio = null; }
+      remoteAudioBadge('🔇 звук', false);
+    };
+    ctx.resume().catch(() => {});
+    return state;
+  } catch { return null; }
+}
+function remoteAudioStop() {
+  const a = _remoteAudio;
+  _remoteAudio = null;
+  if (!a) return;
+  try { a.close = true; a.ws && a.ws.close(); } catch {}
+  try { a.node.disconnect(); } catch {}
+  try { a.ctx.close(); } catch {}
+  remoteAudioBadge('🔇 звук', false);
+}
+function remoteAudioToggle() {
+  if (_remoteAudio && _remoteAudio.ws && _remoteAudio.ws.readyState <= 1) remoteAudioStop();
+  else remoteAudioStart();
+}
+
 // ===== AUDIO KEEP-ALIVE (background playback) =====
 let _audioCtx = null;
 let _silentOsc = null;
@@ -3155,6 +3253,9 @@ function _resumeAudio() {
   document.addEventListener(evt, () => {
     _ensureAudioCtx();
     _resumeAudio();
+    // A user gesture unlocks the phone speaker; the PCM stream then carries
+    // audio from the video playing in remote Chromium.
+    try { if (typeof remoteAudioStart === 'function') remoteAudioStart(); } catch {}
     document.querySelectorAll('iframe').forEach(f => {
       try { f.contentWindow.postMessage({type:'audio-resume'}, '*'); } catch {}
     });

@@ -43,7 +43,7 @@ export EGL_PLATFORM=x11
 
 INSTALL_PKGS="xvfb openbox xterm tint2 x11vnc websockify novnc dbus-x11 \
   mesa-utils libgl1-mesa-dri libgl1 libegl1 libgles2 libglu1-mesa libgbm1 \
-  x11-utils x11-xserver-utils pcmanfm pulseaudio pavucontrol feh geany \
+  x11-utils x11-xserver-utils pcmanfm pulseaudio pulseaudio-utils pavucontrol feh geany \
   imagemagick xdotool wmctrl xwit xterm idesk tint2 dbus-x11"
 # Проверяем КАЖДЫЙ нужный бинарь: раньше условие смотрело только на Xvfb, и на
 # раннере, где Xvfb есть, а x11vnc нет, установка не запускалась вовсе —

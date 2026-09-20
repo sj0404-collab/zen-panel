@@ -361,7 +361,7 @@
         <div id="linux-more" hidden>
           <input type="text" id="browser-url" placeholder="https://... — откроется на этом экране" value="https://www.youtube.com" style="flex:1;min-width:140px;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')linuxRunBrowser(this.value)">
           <button class="btn btn-p btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url').value)" title="Открыть Chromium прямо на этом экране (DISPLAY=:99)">Go · 🖥</button>
-          <span id="pulse-status" class="tag" style="font-size:10px">🔊</span>
+          <span id="pulse-status" class="tag" role="button" tabindex="0" onclick="event.stopPropagation();remoteAudioToggle()" onkeydown="if(event.key==='Enter'||event.key===' ')remoteAudioToggle()" title="Включить звук видео с удалённого экрана" style="font-size:10px;cursor:pointer">🔊</span>
           <input type="range" id="pulse-vol" min="0" max="100" value="80" style="width:80px" oninput="pulseSetVol(this.value)">
           <span id="pulse-vol-label" style="font-size:11px;font-family:monospace;min-width:36px;text-align:right">80%</span>
           <button class="btn btn-sm" onclick="pulseToggleMute()" title="Мьют">🔇</button>

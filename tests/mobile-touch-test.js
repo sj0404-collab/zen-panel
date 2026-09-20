@@ -346,5 +346,19 @@ check('q42b dialogs cleaned', keep.includes('async function dismissStrayDialogs'
   /tickCount % 2 === 1\) await dismissStrayDialogs/.test(keep) &&
   server.includes('dismissStrayDialogs'));
 
+
+// q43: звук видео — VNC сам звук не передаёт, поэтому PulseAudio идёт
+// отдельным PCM-потоком в браузер телефона/десктопа.
+check('q43a audio websocket bridge', server.includes('REMOTE DESKTOP AUDIO') &&
+  server.includes("u.pathname !== '/ws/audio'") && server.includes('parec') &&
+  server.includes('audioWss.handleUpgrade') && server.includes("'/ws/audio'"));
+check('q43b audio client playback', mob.includes('function remoteAudioStart') &&
+  desk.includes('function remoteAudioStart') && mob.includes("'/ws/audio?rate='") &&
+  desk.includes("'/ws/audio?rate='") && mob.includes('createScriptProcessor') &&
+  desk.includes('createScriptProcessor'));
+check('q43c sound button starts stream', mobHtml.includes('remoteAudioToggle()') &&
+  deskHtml.includes('remoteAudioToggle()') &&
+  keep.includes("['parec', 'pulseaudio-utils']") && startDesktop.includes('pulseaudio-utils'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

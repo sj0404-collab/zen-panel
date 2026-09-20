@@ -177,7 +177,9 @@ const REQUIRED_BINS = [
   ['wmctrl', 'wmctrl'], ['xwit', 'xwit'],
   // Читалка на «Экране» (👁️ OCR + 🔊 TTS) без tesseract не может ничего:
   // /api/ocr отвечал «tesseract не установлен».
-  ['tesseract', 'tesseract-ocr']
+  ['tesseract', 'tesseract-ocr'],
+  // Audio bridge: parec reads the monitor of Chromium's PulseAudio sink.
+  ['parec', 'pulseaudio-utils']
 ];
 
 // Русский язык для OCR: у пакета нет своего исполняемого файла, поэтому в

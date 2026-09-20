@@ -1130,11 +1130,94 @@ app.get('/api/pulse/sinks', async (req, res) => {
 // we fall back to node-pty sessions that live inside this process.
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
+
+// ─── REMOTE DESKTOP AUDIO ───────────────────────────────────────────────────
+// VNC/noVNC transports pixels and input, not the sound produced by Chromium.
+// Capture the PulseAudio default sink monitor and send raw PCM to the browser
+// page over a same-origin WebSocket; the page plays it through Web Audio.
+// This is deliberately separate from the VNC socket: video remains VNC, audio
+// remains an ordinary browser audio stream and works on phones too.
+const audioWss = new WebSocketServer({ noServer: true });
+const audioRate = (req) => {
+  try {
+    const u = new URL(req.url, 'http://localhost');
+    const n = Number(u.searchParams.get('rate') || 44100);
+    return Math.max(8000, Math.min(96000, Number.isFinite(n) ? Math.round(n) : 44100));
+  } catch { return 44100; }
+};
+const audioSource = async () => {
+  const d = await pulseRun('pactl get-default-sink 2>/dev/null');
+  const sink = String(d.out || '').trim().split(/\s+/)[0] || 'auto_null';
+  return sink + '.monitor';
+};
+audioWss.on('connection', async (ws, req) => {
+  let rec = null;
+  let closed = false;
+  const stop = () => {
+    if (closed) return;
+    closed = true;
+    try { if (rec && rec.stdout) rec.stdout.destroy(); } catch {}
+    try { if (rec) rec.kill('SIGTERM'); } catch {}
+  };
+  ws.on('close', stop);
+  ws.on('error', stop);
+  try {
+    const rate = audioRate(req);
+    const bin = await pulseRun('command -v parec 2>/dev/null || command -v pacat 2>/dev/null');
+    const recorder = String(bin.out || '').trim().split(/\s+/)[0];
+    if (!recorder) {
+      ws.send(JSON.stringify({ type: 'error', error: 'parec не установлен (нужен пакет pulseaudio-utils)' }));
+      return stop();
+    }
+    const source = await audioSource();
+    const recordArgs = /pacat(?:\.exe)?$/.test(recorder) ? ['--record'] : [];
+    rec = spawn(recorder, recordArgs.concat([
+      '--device=' + source,
+      '--format=s16le', '--rate=' + rate, '--channels=2', '--latency-msec=40'
+    ]), { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+    rec.stdout.on('data', (chunk) => {
+      if (!closed && ws.readyState === 1 && chunk.length) {
+        try { ws.send(chunk, { binary: true }); } catch { stop(); }
+      }
+    });
+    rec.on('error', (e) => {
+      if (!closed && ws.readyState === 1) {
+        try { ws.send(JSON.stringify({ type: 'error', error: e.message })); } catch {}
+      }
+      stop();
+    });
+    rec.on('exit', (code) => {
+      if (!closed && code && ws.readyState === 1) {
+        try { ws.send(JSON.stringify({ type: 'error', error: 'аудиозахват завершился: ' + code })); } catch {}
+      }
+      if (!closed) stop();
+    });
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'ready', rate, channels: 2, source }));
+  } catch (e) {
+    if (ws.readyState === 1) {
+      try { ws.send(JSON.stringify({ type: 'error', error: e.message })); } catch {}
+    }
+    stop();
+  }
+});
+server.on('upgrade', (req, socket, head) => {
+  let u;
+  try { u = new URL(req.url, 'http://' + (req.headers.host || 'localhost')); }
+  catch { try { socket.destroy(); } catch {} return; }
+  if (u.pathname !== '/ws/audio') return;
+  try {
+    audioWss.handleUpgrade(req, socket, head, (ws) => audioWss.emit('connection', ws, req));
+  } catch (e) {
+    console.log('  ⚠ audio upgrade: ' + e.message);
+    try { socket.destroy(); } catch {}
+  }
+});
+
 // Paths owned by their own upgrade handlers below (cloud phone VNC + the
 // always-on desktop). Handling the same socket twice makes ws throw
 // «server.handleUpgrade() was called more than once» — and that crash took the
 // whole hub down, so the list is shared and every handler is guarded.
-const WS_CLAIMED = new Set(['/ws/vnc', '/ws/desktop', '/novnc/ws/desktop', '/websockify', '/novnc/websockify']);
+const WS_CLAIMED = new Set(['/ws/audio', '/ws/vnc', '/ws/desktop', '/novnc/ws/desktop', '/websockify', '/novnc/websockify']);
 server.on('upgrade', (req, socket, head) => {
   // Route the single 'upgrade' event: /ws → PTY, others → their own blocks.
   let pathname = '';
