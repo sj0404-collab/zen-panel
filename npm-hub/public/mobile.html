@@ -353,6 +353,7 @@
           <button class="btn btn-sm" onclick="linuxKeyboard()" title="Клавиатура телефона (в YouTube: k — пуск/пауза, f — во весь экран, m — звук)">⌨</button>
           <button class="btn btn-sm" id="linux-zoom-btn" onclick="linuxZoomToggle()" title="Заполнить / весь стол / 1:1">🔎</button>
           <button class="btn btn-sm" id="linux-perf-btn" onclick="linuxPerfToggle()" title="Плавность: плавно / баланс / чётко">⚡</button>
+          <button class="btn btn-sm" id="linux-mouse-btn" onclick="linuxMouseToggle()" title="Виртуальная мышь: сенсор, две кнопки, колесо стрелками">🖱</button>
           <button class="btn btn-sm" onclick="linuxFullscreen()" title="На весь экран + поворот в ландшафт">⛶</button>
           <span id="linux-note"></span>
           <button class="btn btn-sm" id="linux-more-btn" onclick="linuxMoreToggle()" style="margin-left:auto" title="Адрес, звук, починить">⋯</button>
@@ -405,6 +406,33 @@
             background:rgba(13,17,23,.8);color:#e6edf3;border:1px solid rgba(240,246,252,.25);
             border-radius:50%;width:40px;height:40px;font-size:16px;line-height:1}
           @media (max-width:560px){ .linux-hint{display:none!important} }
+          /* ── Виртуальная мышь ──────────────────────────────────────────────
+             Палец по картинке — плохой курсор: он закрывает то место, куда
+             целишься, промах по мелкой кнопке уходит в пустоту, а скролл
+             вообще некуда деть. Поэтому мышь отдельная: слева сенсор, справа
+             ЛКМ/ПКМ, в центре колесо стрелками. */
+          #linux-mouse{position:absolute;left:0;right:0;bottom:0;z-index:99990;display:flex;gap:8px;align-items:stretch;
+            padding:8px;background:linear-gradient(180deg,rgba(13,17,23,.78),rgba(13,17,23,.95));
+            border-top:1px solid rgba(240,246,252,.18);backdrop-filter:blur(6px);
+            touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+          #linux-mouse[hidden]{display:none}
+          .lm-pad{flex:1 1 auto;min-width:96px;min-height:104px;border-radius:12px;border:1px dashed rgba(240,246,252,.28);
+            background:rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;color:var(--t3);
+            font-size:10px;line-height:1.35;text-align:center;touch-action:none;position:relative;overflow:hidden}
+          .lm-pad.active{background:rgba(88,166,255,.16);border-color:var(--acc)}
+          .lm-pad-hint{pointer-events:none;padding:0 8px}
+          .lm-buttons{display:flex;flex-direction:column;gap:6px;width:74px;flex:0 0 auto}
+          .lm-btn{flex:1;border-radius:10px;border:1px solid rgba(240,246,252,.22);background:rgba(255,255,255,.07);
+            color:#e6edf3;font-size:12px;font-weight:700;touch-action:none}
+          .lm-btn.on,.lm-btn:active{background:var(--acc);color:#0d1117;border-color:var(--acc)}
+          .lm-wheel{display:flex;flex-direction:column;gap:4px;width:88px;align-items:center;justify-content:center;flex:0 0 auto}
+          .lm-wheel-mid{display:flex;gap:4px}
+          .lm-arr{width:40px;height:30px;border-radius:8px;border:1px solid rgba(240,246,252,.22);
+            background:rgba(255,255,255,.07);color:#e6edf3;font-size:13px;line-height:1;touch-action:none}
+          .lm-arr.on,.lm-arr:active{background:var(--acc);color:#0d1117;border-color:var(--acc)}
+          .lm-close{position:absolute;top:2px;right:4px;width:24px;height:24px;border-radius:50%;
+            border:1px solid rgba(240,246,252,.25);background:rgba(13,17,23,.75);color:#e6edf3;font-size:11px;line-height:1;padding:0}
+          #p-linux.linux-full #linux-mouse{padding-bottom:max(8px,env(safe-area-inset-bottom))}
         </style>
         <div id="browser-agent-hint" style="display:none;padding:8px 10px;background:rgba(88,166,255,.14);border-bottom:1px solid var(--bdr);font-size:12px;color:var(--acc);align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0">
           <span>🔗 Агент прислал ссылку:</span><a id="browser-agent-url" href="#" target="_blank" style="color:var(--acc);word-break:break-all"></a>
@@ -417,9 +445,31 @@
             <button class="btn btn-sm" onclick="linuxKeyboard()" title="Клавиатура телефона (в YouTube: k — пуск/пауза, f — во весь экран, m — звук)">⌨</button>
             <button class="btn btn-sm" onclick="linuxZoomToggle()" title="Заполнить / 1:1">🔍</button>
             <button class="btn btn-sm" onclick="linuxPerfToggle()" title="Плавность: плавно / баланс / чётко">⚡</button>
+            <button class="btn btn-sm" onclick="linuxMouseToggle()" title="Виртуальная мышь: сенсор, две кнопки, колесо стрелками">🖱</button>
             <button class="btn btn-sm" onclick="linuxFullscreen()" title="Выйти из полного экрана">✕</button>
           </div>
           <iframe id="linux-frame" style="width:100%;height:100%;border:none;display:none" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
+          <!-- Виртуальная мышь: сенсор (палец двигает курсор), две кнопки и
+               колесо стрелками. Работает поверх картинки экрана и не мешает
+               прямым касаниям по ней. -->
+          <div id="linux-mouse" hidden>
+            <div class="lm-pad" id="lm-pad">
+              <span class="lm-pad-hint">СЕНСОР · тяни — курсор, тап — клик, два тапа — двойной</span>
+            </div>
+            <div class="lm-buttons">
+              <button class="lm-btn" id="lm-left" onpointerdown="vMouseDown(1)" onpointerup="vMouseUp(1)" onpointercancel="vMouseUp(1)" onpointerleave="vMouseUp(1)">ЛКМ</button>
+              <button class="lm-btn" id="lm-right" onpointerdown="vMouseDown(4)" onpointerup="vMouseUp(4)" onpointercancel="vMouseUp(4)" onpointerleave="vMouseUp(4)">ПКМ</button>
+            </div>
+            <div class="lm-wheel">
+              <button class="lm-arr" data-dir="up" onpointerdown="vMouseWheelStart('up')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">▲</button>
+              <div class="lm-wheel-mid">
+                <button class="lm-arr" data-dir="left" onpointerdown="vMouseWheelStart('left')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">◀</button>
+                <button class="lm-arr" data-dir="right" onpointerdown="vMouseWheelStart('right')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">▶</button>
+              </div>
+              <button class="lm-arr" data-dir="down" onpointerdown="vMouseWheelStart('down')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">▼</button>
+            </div>
+            <button class="lm-close" onclick="linuxMouseToggle()" title="Скрыть мышь">✕</button>
+          </div>
           <div id="linux-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
             <div style="font-size:48px;margin-bottom:16px">🖥</div>
             <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Один экран</div>

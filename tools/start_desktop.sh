@@ -44,12 +44,12 @@ export EGL_PLATFORM=x11
 INSTALL_PKGS="xvfb openbox xterm tint2 x11vnc websockify novnc dbus-x11 \
   mesa-utils libgl1-mesa-dri libgl1 libegl1 libgles2 libglu1-mesa libgbm1 \
   x11-utils x11-xserver-utils pcmanfm pulseaudio pavucontrol feh geany \
-  imagemagick xdotool wmctrl xterm idesk tint2 dbus-x11"
+  imagemagick xdotool wmctrl xwit xterm idesk tint2 dbus-x11"
 # Проверяем КАЖДЫЙ нужный бинарь: раньше условие смотрело только на Xvfb, и на
 # раннере, где Xvfb есть, а x11vnc нет, установка не запускалась вовсе —
 # x11vnc потом падал с «No such file or directory», а экран оставался чёрным.
 MISSING_BINS=""
-for _b in Xvfb openbox x11vnc xterm idesk tint2 feh convert pcmanfm; do
+for _b in Xvfb openbox x11vnc xterm idesk tint2 feh convert pcmanfm xwit; do
   command -v "$_b" >/dev/null 2>&1 || MISSING_BINS="$MISSING_BINS $_b"
 done
 if [ -n "$MISSING_BINS" ]; then
@@ -58,7 +58,7 @@ if [ -n "$MISSING_BINS" ]; then
   # shellcheck disable=SC2086
   sudo apt-get install -y -qq $INSTALL_PKGS || true
   MISSING_BINS=""
-  for _b in Xvfb openbox x11vnc xterm idesk tint2 feh convert; do
+  for _b in Xvfb openbox x11vnc xterm idesk tint2 feh convert xwit; do
     command -v "$_b" >/dev/null 2>&1 || MISSING_BINS="$MISSING_BINS $_b"
   done
   [ -n "$MISSING_BINS" ] && warn "всё ещё нет:$MISSING_BINS (проверьте sudo/apt на раннере)"
@@ -348,6 +348,29 @@ if pgrep -x idesk >/dev/null 2>&1; then :; elif command -v idesk >/dev/null 2>&1
 elif ! pgrep -x pcmanfm >/dev/null 2>&1; then
   pcmanfm --desktop >/dev/null 2>&1 & sleep 1
 fi
+# idesk рисует иконки окнами override-redirect: WM их не переставляет, и при
+# перерисовке они оказываются ПОВЕРХ окна браузера (та самая «наложенность» на
+# экране телефона). xwit умеет их опустить.
+lower_idesk_windows() {
+  local _ids _bases _b _w _n
+  _ids=$(xwininfo -root -children 2>/dev/null | awk '/[0-9]+x64\+/{print $1}')
+  [ -z "$_ids" ] && return 0
+  _bases=""
+  for _id in $_ids; do
+    _b=$(printf '%#x' $(( 0x${_id#0x} & 0x3ff00000 )))
+    case " $_bases " in *" $_b "*) ;; *) _bases="$_bases $_b" ;; esac
+  done
+  _n=0
+  for _w in $(xwininfo -root -children 2>/dev/null | grep -oE '0x[0-9a-f]+' | sort -u); do
+    _b=$(printf '%#x' $(( 0x${_w#0x} & 0x3ff00000 )))
+    case " $_bases " in *" $_b "*) xwit -id "$_w" -lower 2>/dev/null && _n=$((_n+1));; esac
+  done
+  log "иконки стола опущены под окна: $_n (клиенты:$_bases)"
+}
+if command -v xwit >/dev/null 2>&1; then
+  lower_idesk_windows || true
+fi
+
 pgrep -x tint2 >/dev/null 2>&1 || { tint2 >/dev/null 2>&1 & }
 
 # Wait until one of them answers (noVNC preferred, VNC fallback).

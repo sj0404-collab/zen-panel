@@ -295,6 +295,7 @@
           <button class="btn btn-sm" id="linux-perf-btn-desktop" onclick="linuxPerfToggle('desktop')" title="Плавность: плавно / баланс / чётко">⚡</button>
           <button class="btn btn-sm" onclick="linuxKeyboard('desktop')" title="Экранная клавиатура">⌨</button>
           <button class="btn btn-sm" onclick="linuxReload()" title="Переподключить экран">⟳</button>
+          <button class="btn btn-sm" id="linux-mouse-btn" onclick="linuxMouseToggle()" title="Виртуальная мышь: сенсор, две кнопки, колесо стрелками">🖱</button>
           <button class="btn btn-sm" onclick="linuxFullscreen('desktop')" title="На весь экран">⛶</button>
         </div>
         <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center;flex-wrap:wrap">
@@ -329,9 +330,49 @@
           #p-linux.on{display:flex;flex-direction:column;overflow:hidden}
           #linux-stack-desktop{flex:1 1 auto;min-height:0}
           #linux-frame-desktop{width:100%;height:100%;border:none}
+          /* ── Виртуальная мышь ─────────────────────────────────────────── */
+          #linux-mouse{position:absolute;left:0;right:0;bottom:0;z-index:99990;display:flex;gap:8px;align-items:stretch;
+            padding:8px;background:linear-gradient(180deg,rgba(13,17,23,.78),rgba(13,17,23,.95));
+            border-top:1px solid rgba(240,246,252,.18);touch-action:none;user-select:none}
+          #linux-mouse[hidden]{display:none}
+          .lm-pad{flex:1 1 auto;min-width:140px;min-height:88px;border-radius:12px;border:1px dashed rgba(240,246,252,.28);
+            background:rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;color:var(--t3);
+            font-size:11px;text-align:center;touch-action:none;position:relative;cursor:crosshair}
+          .lm-pad.active{background:rgba(88,166,255,.16);border-color:var(--acc)}
+          .lm-pad-hint{pointer-events:none;padding:0 8px}
+          .lm-buttons{display:flex;flex-direction:column;gap:6px;width:74px;flex:0 0 auto}
+          .lm-btn{flex:1;border-radius:10px;border:1px solid rgba(240,246,252,.22);background:rgba(255,255,255,.07);
+            color:#e6edf3;font-size:12px;font-weight:700;touch-action:none;cursor:pointer}
+          .lm-btn.on,.lm-btn:active{background:var(--acc);color:#0d1117;border-color:var(--acc)}
+          .lm-wheel{display:flex;flex-direction:column;gap:4px;width:88px;align-items:center;justify-content:center;flex:0 0 auto}
+          .lm-wheel-mid{display:flex;gap:4px}
+          .lm-arr{width:40px;height:28px;border-radius:8px;border:1px solid rgba(240,246,252,.22);
+            background:rgba(255,255,255,.07);color:#e6edf3;font-size:13px;line-height:1;touch-action:none;cursor:pointer}
+          .lm-arr.on,.lm-arr:active{background:var(--acc);color:#0d1117;border-color:var(--acc)}
+          .lm-close{position:absolute;top:2px;right:4px;width:24px;height:24px;border-radius:50%;
+            border:1px solid rgba(240,246,252,.25);background:rgba(13,17,23,.75);color:#e6edf3;font-size:11px;line-height:1;padding:0;cursor:pointer}
         </style>
         <div id="linux-stack-desktop" style="flex:1;position:relative;background:#000">
           <iframe id="linux-frame-desktop" style="width:100%;height:100%;border:none;display:none" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
+          <!-- Виртуальная мышь: сенсор, две кнопки и колесо стрелками -->
+          <div id="linux-mouse" hidden>
+            <div class="lm-pad" id="lm-pad">
+              <span class="lm-pad-hint">СЕНСОР · тяни — курсор, тап — клик, два тапа — двойной</span>
+            </div>
+            <div class="lm-buttons">
+              <button class="lm-btn" id="lm-left" onpointerdown="vMouseDown(1)" onpointerup="vMouseUp(1)" onpointercancel="vMouseUp(1)" onpointerleave="vMouseUp(1)">ЛКМ</button>
+              <button class="lm-btn" id="lm-right" onpointerdown="vMouseDown(4)" onpointerup="vMouseUp(4)" onpointercancel="vMouseUp(4)" onpointerleave="vMouseUp(4)">ПКМ</button>
+            </div>
+            <div class="lm-wheel">
+              <button class="lm-arr" data-dir="up" onpointerdown="vMouseWheelStart('up')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">▲</button>
+              <div class="lm-wheel-mid">
+                <button class="lm-arr" data-dir="left" onpointerdown="vMouseWheelStart('left')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">◀</button>
+                <button class="lm-arr" data-dir="right" onpointerdown="vMouseWheelStart('right')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">▶</button>
+              </div>
+              <button class="lm-arr" data-dir="down" onpointerdown="vMouseWheelStart('down')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">▼</button>
+            </div>
+            <button class="lm-close" onclick="linuxMouseToggle()" title="Скрыть мышь">✕</button>
+          </div>
           <div id="linux-placeholder-desktop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
             <div style="font-size:48px;margin-bottom:16px">🖥</div>
             <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Linux Screen</div>

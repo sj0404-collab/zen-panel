@@ -1930,6 +1930,10 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
           const tail = await shTail(blog, 3);
           return res.json({ ok: false, error: 'браузер не запустился (' + (r.err || 'нет процесса').slice(0, 120) + '): ' + tail });
         }
+        // Иконки рабочего стола (idesk) — окна поверх всех: без этого шага
+        // свежее окно браузера оказывалось «под» иконками, и на экране
+        // телефона это выглядело как наложенный поверх страницы рабочий стол.
+        try { setTimeout(() => { try { require('./vnc-keepalive').lowerDesktopIcons(); } catch {} }, 1500); } catch {}
         // Громкость на макс и снять mute чтобы ютуб был слышен
         try { await pulseRun('pactl set-sink-mute @DEFAULT_SINK@ 0 2>/dev/null || true'); await pulseRun('pactl set-sink-volume @DEFAULT_SINK@ 90% 2>/dev/null || true'); } catch {}
         return res.json({ ok: true, message: `Браузер запущен${vertical?' (вертикально)':''}: ${url} — звук вкл.`, vertical, winSize });
@@ -1952,10 +1956,12 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
       }
       case 'terminal': {
         await runOnDisplay(`xterm -geometry 120x30+100+100 &`, 3000);
+        try { require('./vnc-keepalive').lowerDesktopIcons(); } catch {}
         return res.json({ ok: true, message: 'Терминал открыт на рабочем столе' });
       }
       case 'files': {
         await runOnDisplay(`(pcmanfm || nautilus || xdg-open ~/hub-work) &`, 3000);
+        try { require('./vnc-keepalive').lowerDesktopIcons(); } catch {}
         return res.json({ ok: true, message: 'Файловый менеджер открыт' });
       }
       default:

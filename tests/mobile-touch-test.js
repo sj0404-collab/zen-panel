@@ -10,6 +10,8 @@ const desk = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/desktop-
 const mgr = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/src/storage/manager.js'), 'utf8');
 const mobHtml = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/mobile.html'), 'utf8');
 const deskHtml = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/desktop.html'), 'utf8');
+const keep = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/src/vnc-keepalive.js'), 'utf8');
+const startDesktop = fs.readFileSync(path.join(__dirname, '..', 'tools/start_desktop.sh'), 'utf8');
 const mainKt = fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/java/dev/zen/hub/MainActivity.kt'), 'utf8');
 
 let pass = 0, fail = 0;
@@ -258,6 +260,66 @@ check('q37e vnc desktop ui', deskHtml.includes('id="p-linux"') &&
 check('q37f vnc workflow', /job|vnc:/.test(fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8')) &&
   fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8').includes('start_desktop.sh') &&
   fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8').includes('slot=vnc'));
+
+
+// q38: touch on the terminal — tap types, long-press selects (user bug
+// «каждый тап бесконечно копирует весь текст при запуске клавиатуры»).
+// (a) никакой копировки по удержанию/контекстному меню
+check('q38a no copy on touch', !/holdTimer\s*=\s*setTimeout\([^)]*copySelection/.test(mob) &&
+  !/holdTimer\s*=\s*setTimeout\([^)]*copySelection/.test(desk) &&
+  !/onContext\s*=\s*\(e\)\s*=>\s*\{[^}]*copySelection\(/.test(mob) &&
+  !/onContext\s*=\s*\(e\)\s*=>\s*\{[^}]*copySelection\(/.test(desk));
+// (b) тап возвращает фокус (клавиатура) и НЕ прячет её на старте касания
+check('q38b tap focuses', /function setupTermTouch/.test(mob) &&
+  /term\.focus\(\)/.test(mob.slice(mob.indexOf('function setupTermTouch'), mob.indexOf('async function createTerm'))) &&
+  /term\.focus\(\)/.test(desk.slice(desk.indexOf('function setupTermTouch'), desk.indexOf('async function createTerm'))) &&
+  !/const onStart = \(e\) => \{[\s\S]{0,400}?term\.blur\(\)/.test(mob.slice(mob.indexOf('function setupTermTouch'), mob.indexOf('async function createTerm'))));
+// (c) удержание выделяет слово под пальцем, протяжка расширяет по строкам
+check('q38c hold selects', mob.includes('function termSelectWordAt(') && desk.includes('function termSelectWordAt(') &&
+  mob.includes('term.select(') && mob.includes('term.selectLines(') && mob.includes('function termCellAt('));
+// (d) без выделения НЕ копируем последние 200 строк — только подсказка
+check('q38d no silent full-buffer copy', !mob.includes('buf.length - 200') && !desk.includes('buf.length - 200') &&
+  mob.includes('Сначала выдели текст') && desk.includes('Сначала выдели текст'));
+// (e) выделение чистого текста работает: никакого preventDefault на старте тапа,
+//     который убивает нативное выделение страницы
+const mobTouch = mob.slice(mob.indexOf('function setupTermTouch'), mob.indexOf('async function createTerm'));
+check('q38e native selection alive', mobTouch.includes("addEventListener('touchstart', onStart, { passive: true })") &&
+  mobTouch.includes("addEventListener('touchmove', onMove, { passive: false })") &&
+  mobTouch.includes("getSelection() || ''"));
+
+
+// q39: «наложение» на Экране — иконки рабочего стола всплывали ПОВЕРХ окна
+// браузера (жалоба 19.09: контент страницы смешан с иконками стола).
+// Лечение: иконки idesk (окна override-redirect, WM их не переставляет)
+// опускаются под окна приложений — при старте стола, при лечении keepalive,
+// раз в 30 с и сразу после запуска приложения.
+check('q39a icons lowered by keepalive', keep.includes('async function lowerDesktopIcons') &&
+  keep.includes('lowerDesktopIcons }') && keep.includes('tickCount % 2 === 0') &&
+  /iconsRaised[\s\S]{0,120}lowerDesktopIcons/.test(keep));
+check('q39b xwit installed by hub', keep.includes("['xwit', 'xwit']") &&
+  startDesktop.includes('xwit') && startDesktop.includes('-lower'));
+check('q39c launch lowers icons', (server.match(/require\('\.\/vnc-keepalive'\)\.lowerDesktopIcons/g) || []).length >= 2);
+
+
+// q40: виртуальная мышь на «Экране» — сенсор, две кнопки, колесо стрелками
+// (вместо «палец по картинке»: он закрывает то место, куда целишься).
+check('q40a panel markup', (mobHtml.match(/id="linux-mouse"/g) || []).length === 1 &&
+  (deskHtml.match(/id="linux-mouse"/g) || []).length === 1 &&
+  mobHtml.includes('id="lm-pad"') && deskHtml.includes('id="lm-pad"') &&
+  mobHtml.includes('id="lm-left"') && mobHtml.includes('id="lm-right"'));
+check('q40b wheel arrows', ['up', 'down', 'left', 'right'].every((d) =>
+  mobHtml.includes('data-dir="' + d + '"') && deskHtml.includes('data-dir="' + d + '"')) &&
+  mobHtml.includes('vMouseWheelStart(\'up\')'));
+check('q40c touchpad logic', mob.includes('function vMouseInitPad') && desk.includes('function vMouseInitPad') &&
+  mob.includes('VMOUSE_SENS') && desk.includes('VMOUSE_SENS') &&
+  mob.includes('pad.addEventListener(\'pointermove\'') && mob.includes('wasTap'));
+check('q40d rfb pointer api', mob.includes('mouse: {') && desk.includes('mouse: {') &&
+  mob.includes('r._sendMouse(p.x, p.y, mask | 0)') && desk.includes('r._sendMouse(p.x, p.y, mask | 0)') &&
+  mob.includes('click(mask)') && mob.includes('wheel(mask)'));
+check('q40e wheel masks', mob.includes('up: 8, down: 16, left: 32, right: 64') &&
+  desk.includes('up: 8, down: 16, left: 32, right: 64'));
+check('q40f follow cursor', mob.includes('_follow()') && desk.includes('_follow()') &&
+  mob.includes('viewportChangePos') && desk.includes('viewportChangePos'));
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

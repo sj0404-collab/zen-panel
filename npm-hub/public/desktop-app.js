@@ -624,27 +624,111 @@ function attachTermScroll(id, panel) {
   return { upd, destroy() { if (ro) ro.disconnect(); window.removeEventListener('resize', resizeHandler); } };
 }
 
-// ===== TAP-TO-FOCUS + LONG-PRESS COPY =====
+// ===== ТЕРМИНАЛ НА ПАЛЬЦЕ =====
+// Раньше: ЛЮБОЕ удержание дольше 600 мс копировало текст (а без выделения —
+// последние 200 строк буфера, то есть «весь экран»), а тап дольше 500 мс не
+// возвращал фокус — клавиатура не открывалась. Жалоба: «каждый тап бесконечно
+// копирует весь текст при запуске клавиатуры, когда я хочу печатать».
+// Теперь: тап — печатать (клавиатура), удержание — выделить слово под пальцем,
+// тянуть — расширить выделение по строкам, ⧉ — скопировать.
+function termCellAt(term, x, y) {
+  try {
+    const screen = term.element && term.element.querySelector('.xterm-screen');
+    if (!screen) return null;
+    const r = screen.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const col = Math.floor((x - r.left) / (r.width / term.cols));
+    const rowInView = Math.floor((y - r.top) / (r.height / term.rows));
+    if (col < 0 || rowInView < 0 || col >= term.cols || rowInView >= term.rows) return null;
+    const row = (term.buffer.active.viewportY || 0) + rowInView;
+    return { col, row };
+  } catch { return null; }
+}
+
+// Выделяем слово под пальцем; если там пустота — всю непустую строку.
+function termSelectWordAt(term, x, y) {
+  const cell = termCellAt(term, x, y);
+  if (!cell) return false;
+  try {
+    const line = term.buffer.active.getLine(cell.row);
+    if (!line) return false;
+    const text = line.translateToString(true);
+    const isWord = (ch) => !!ch && !/\s/.test(ch);
+    let s = Math.min(cell.col, Math.max(0, text.length - 1));
+    let e = s;
+    if (isWord(text[s])) {
+      while (s > 0 && isWord(text[s - 1])) s--;
+      while (e < text.length - 1 && isWord(text[e + 1])) e++;
+    } else {
+      const trimmed = text.trim();
+      if (!trimmed) return false;
+      s = text.indexOf(trimmed);
+      e = s + trimmed.length - 1;
+    }
+    term.select(s, cell.row, e - s + 1);
+    return true;
+  } catch { return false; }
+}
+
 function setupTermTouch(termEl, term) {
   if (!isTouch) return null;
-  let startY = 0, startX = 0, startT = 0, scrolled = false, longPress=false, holdTimer=null;
+  let startY = 0, startX = 0, startT = 0;
+  let scrolled = false, selecting = false, anchorRow = 0, holdTimer = null;
   const onStart = (e) => {
-    const tt=e.touches[0]; startY=tt.clientY; startX=tt.clientX; startT=Date.now(); scrolled=false; longPress=false;
-    term.blur(); clearTimeout(holdTimer);
-    holdTimer=setTimeout(()=>{ if(!scrolled){ longPress=true; try{if(navigator.vibrate) navigator.vibrate(30);}catch{} copySelection(); } },600);
+    const t = e.touches[0];
+    startY = t.clientY; startX = t.clientX; startT = Date.now();
+    scrolled = false; selecting = false;
+    clearTimeout(holdTimer);
+    // Клавиатуру НЕ прячем: тап по терминалу должен её открывать (печатать),
+    // а не закрывать.
+    holdTimer = setTimeout(() => {
+      if (scrolled) return;
+      const cell = termCellAt(term, startX, startY);
+      if (!cell) return;
+      selecting = true;
+      anchorRow = cell.row;
+      try { if (navigator.vibrate) navigator.vibrate(20); } catch {}
+      if (termSelectWordAt(term, startX, startY)) {
+        fmInfo('выделено — тяни, чтобы расширить, затем ⧉ чтобы скопировать');
+      }
+    }, 550);
   };
   const onMove = (e) => {
-    const tt=e.touches[0];
-    if(Math.abs(tt.clientY-startY)>8 || Math.abs(tt.clientX-startX)>8){ scrolled=true; clearTimeout(holdTimer); term.blur(); }
+    const t = e.touches[0];
+    if (selecting) {
+      // Тянем выделение по строкам.
+      const cell = termCellAt(term, t.clientX, t.clientY);
+      if (cell && typeof term.selectLines === 'function') {
+        try { term.selectLines(Math.min(anchorRow, cell.row), Math.max(anchorRow, cell.row)); } catch {}
+      }
+      e.preventDefault();
+      return;
+    }
+    if (Math.abs(t.clientY - startY) > 8 || Math.abs(t.clientX - startX) > 8) {
+      scrolled = true;
+      clearTimeout(holdTimer);
+      // Прокрутка с открытой клавиатурой неудобна — прячем её только здесь.
+      try { if (term.textarea === document.activeElement) term.blur(); } catch {}
+    }
   };
   const onEnd = (e) => {
     clearTimeout(holdTimer);
-    if(longPress){ e.preventDefault(); return; }
-    if(!scrolled && Date.now()-startT<500){ e.preventDefault(); term.focus(); }
+    if (selecting) {
+      selecting = false;
+      const sel = (term.getSelection() || '').trim();
+      fmInfo(sel ? ('выделено ' + sel.length + ' симв. — ⧉ чтобы скопировать') : 'ничего не выделено');
+      return;
+    }
+    if (!scrolled && Date.now() - startT < 550) {
+      // Тап = печатать: открываем клавиатуру и снимаем старое выделение.
+      try { term.clearSelection(); } catch {}
+      term.focus();
+    }
   };
-  const onContext=(e)=>{ e.preventDefault(); copySelection(); return false; };
+  // Долгий тап браузера (контекстное меню) — тоже выделяем, а не копируем молча.
+  const onContext = (e) => { e.preventDefault(); termSelectWordAt(term, e.clientX, e.clientY); return false; };
   termEl.addEventListener('touchstart', onStart, { passive: true });
-  termEl.addEventListener('touchmove', onMove, { passive: true });
+  termEl.addEventListener('touchmove', onMove, { passive: false });
   termEl.addEventListener('touchend', onEnd, { passive: false });
   termEl.addEventListener('contextmenu', onContext);
   return { destroy() { clearTimeout(holdTimer); termEl.removeEventListener('touchstart', onStart); termEl.removeEventListener('touchmove', onMove); termEl.removeEventListener('touchend', onEnd); termEl.removeEventListener('contextmenu', onContext); } };
@@ -867,17 +951,13 @@ async function copySelection() {
   const term = activeTab && activeTab.term;
   if (!term) return;
   let txt = '';
-  try { txt = term.getSelection() || ''; } catch {}
+  try { txt = (term.getSelection() || '').trim(); } catch {}
   if (!txt) {
-    try {
-      const buf = term.buffer.active;
-      const from = Math.max(0, buf.length - 200);
-      const lines = [];
-      for (let y = from; y < buf.length; y++) lines.push(buf.getLine(y).translateToString(true));
-      txt = lines.join('\n').replace(/\s+$/, '');
-    } catch {}
+    // Раньше здесь молча копировались последние 200 строк буфера — из-за этого
+    // «любой тап копировал весь текст». Теперь объясняем, как выделить.
+    fmInfo('Сначала выдели текст: удерживай палец на строке и тяни, потом ⧉');
+    return;
   }
-  if (!txt) { fmInfo('Нечего копировать'); return; }
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(txt);
@@ -2144,6 +2224,94 @@ function linuxPatchFrame(fr) {
           if (clip) { clip.checked = mode === 'clip'; fire(clip); }
           return Boolean(sel);
         },
+        // ── Виртуальная мышь ────────────────────────────────────────────────
+        // Работает через тот же RFB, что и обычное управление: координаты в
+        // CSS-пикселях канвы, как их ждёт rfb._sendMouse(). Палец по сенсору
+        // НЕ должен попадать в кадр — иначе ноVNC отправит свой клик, поэтому
+        // сенсор, кнопки и стрелки живут в родительской странице, а сюда
+        // приходят только готовые команды.
+        mouse: {
+          rf() { const w = doc.defaultView; return (w && w.__rfb) || null; },
+          canvas() { return doc.querySelector('canvas'); },
+          dot() {
+            let d = doc.getElementById('hub-vmouse-dot');
+            if (!d) {
+              d = doc.createElement('div');
+              d.id = 'hub-vmouse-dot';
+              d.style.cssText = 'position:fixed;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;'
+                + 'background:rgba(88,166,255,.35);border:2px solid #58a6ff;box-shadow:0 0 8px rgba(0,0,0,.7);'
+                + 'pointer-events:none;z-index:2147483000;display:none';
+              doc.body.appendChild(d);
+            }
+            return d;
+          },
+          pos() {
+            if (!this._p) {
+              const c = this.canvas();
+              this._p = { x: Math.round((c ? c.clientWidth : 0) / 2), y: Math.round((c ? c.clientHeight : 0) / 2) };
+            }
+            return this._p;
+          },
+          _clamp() {
+            const c = this.canvas(), p = this.pos();
+            if (c) {
+              p.x = Math.max(0, Math.min(Math.max(0, c.clientWidth - 1), p.x));
+              p.y = Math.max(0, Math.min(Math.max(0, c.clientHeight - 1), p.y));
+            }
+            return p;
+          },
+          _draw() {
+            const c = this.canvas(), d = this.dot(), p = this.pos();
+            if (!c || !d) return;
+            const r = c.getBoundingClientRect();
+            d.style.display = 'block';
+            d.style.left = (r.left + p.x) + 'px';
+            d.style.top = (r.top + p.y) + 'px';
+          },
+          // Стол больше экрана телефона (режим «крупно», 1:1): когда курсор
+          // подходит к краю видимого куска, картинка подъезжает за ним — иначе
+          // мышью достать до угла стола невозможно.
+          _follow() {
+            const r = this.rf(), c = this.canvas();
+            if (!r || !c) return;
+            const d = r._display;
+            if (!d || !d.clipViewport || !d._viewportLoc) return;
+            const s = d.scale || 1;
+            if (!s) return;
+            const vw = (c.clientWidth || 0) / s, vh = (c.clientHeight || 0) / s;
+            if (!vw || !vh) return;
+            const p = this.pos();
+            const dx = p.x / s + d._viewportLoc.x, dy = p.y / s + d._viewportLoc.y;
+            const m = 28 / s;                       // начинаем подъезжать за 28 css-px до края
+            let mx = 0, my = 0;
+            if (dx < d._viewportLoc.x + m) mx = dx - (d._viewportLoc.x + m);
+            else if (dx > d._viewportLoc.x + vw - m) mx = dx - (d._viewportLoc.x + vw - m);
+            if (dy < d._viewportLoc.y + m) my = dy - (d._viewportLoc.y + m);
+            else if (dy > d._viewportLoc.y + vh - m) my = dy - (d._viewportLoc.y + vh - m);
+            if (mx || my) { try { d.viewportChangePos(Math.round(mx), Math.round(my)); } catch {} }
+          },
+          _send(mask) {
+            const r = this.rf(), p = this.pos();
+            if (!r) return false;
+            try { r._sendMouse(p.x, p.y, mask | 0); return true; } catch { return false; }
+          },
+          // сдвиг курсора (dx, dy в CSS-пикселях стола), mask — зажатые кнопки
+          move(dx, dy, mask) {
+            const p = this.pos();
+            p.x += dx; p.y += dy;
+            this._clamp(); this._follow(); this._draw();
+            this._send(mask | 0);
+            return { x: p.x, y: p.y };
+          },
+          // перевести курсор в точку кадра (панорама/поворот экрана)
+          to(x, y, mask) { const p = this.pos(); p.x = x; p.y = y; this._clamp(); this._draw(); this._send(mask | 0); return { x: p.x, y: p.y }; },
+          button(mask, down) { return this._send(down ? (mask | 0) : 0); },
+          click(mask) { this.button(mask, true); setTimeout(() => { try { this.button(mask, false); } catch {} }, 70); return true; },
+          // колесо: 8 — вверх, 16 — вниз, 32 — влево, 64 — вправо
+          wheel(mask) { if (!this._send(mask | 0)) return false; this._send(0); return true; },
+          center() { this._p = null; this._clamp(); this._draw(); return this.pos(); },
+          state() { const p = this.pos(); return { x: p.x, y: p.y, dot: !!doc.getElementById('hub-vmouse-dot') }; }
+        },
         info() {
           const sel = doc.getElementById('noVNC_setting_resize');
           const cv = doc.querySelector('canvas');
@@ -2179,6 +2347,171 @@ setInterval(() => {
   const fr = document.getElementById('linux-frame-desktop');
   if (!fr || !fr.dataset.src || fr.style.display === 'none') { try { linuxConnect('desktop'); } catch {} }
 }, 15000);
+
+// ===== ВИРТУАЛЬНАЯ МЫШЬ =====
+// Раньше «мышью» служил сам палец по картинке экрана: он закрывает то место,
+// куда целишься, промах уходил в пустоту, а прокрутки не было вовсе. Теперь
+// мышь отдельная и как настоящая: слева СЕНСОР (тянешь — курсор едет, тап —
+// клик, два тапа — двойной клик), справа две кнопки (ЛКМ/ПКМ, их можно
+// зажать и перетаскивать) и колесо стрелками (▲▼ вверх/вниз, ◀▶ влево/вправо).
+let linuxMouseOn = false;
+let vMouseWheelTimer = null;
+const VMOUSE_SENS = 1.8;            // палец прошёл 10 px — курсор 18 px стола
+const vMouseHeld = { 1: false, 4: false };
+const VMOUSE_WHEEL_MASK = { up: 8, down: 16, left: 32, right: 64 };
+
+// Доступ к мыши внутри кадра noVNC (кадр наш, поэтому contentDocument открыт).
+function vMouseFrame() {
+  const fr = document.getElementById('linux-frame-desktop');
+  try { return (fr && fr.contentDocument && fr.contentDocument.__hub) || null; } catch { return null; }
+}
+function vMouseApi() {
+  const h = vMouseFrame();
+  return (h && h.mouse) || null;
+}
+function vMouseReady() { return !!vMouseApi(); }
+function vMouseHeldMask() { return (vMouseHeld[1] ? 1 : 0) | (vMouseHeld[4] ? 4 : 0); }
+
+function vMouseMove(dx, dy) {
+  const m = vMouseApi();
+  if (!m) return false;
+  try { m.move(dx, dy, vMouseHeldMask()); return true; } catch { return false; }
+}
+function vMouseClick(mask) {
+  const m = vMouseApi();
+  if (!m) return false;
+  try { m.click(mask || 1); linuxSetNote('🖱 клик'); return true; } catch { return false; }
+}
+function vMouseDown(mask) {
+  vMouseHeld[mask] = true;
+  const m = vMouseApi();
+  try { if (m) m.button(mask, true); } catch {}
+  const b = document.getElementById(mask === 4 ? 'lm-right' : 'lm-left');
+  if (b) b.classList.add('on');
+  linuxSetNote(mask === 4 ? '🖱 правая кнопка зажата — тяни по сенсору' : '🖱 левая зажата — тяни, чтобы перетащить');
+}
+function vMouseUp(mask) {
+  if (!vMouseHeld[mask]) return;
+  vMouseHeld[mask] = false;
+  const m = vMouseApi();
+  try { if (m) m.button(mask, false); } catch {}
+  const b = document.getElementById(mask === 4 ? 'lm-right' : 'lm-left');
+  if (b) b.classList.remove('on');
+  linuxSetNote('');
+}
+function vMouseWheelStart(dir) {
+  vMouseWheelStop();
+  const fire = () => {
+    const m = vMouseApi();
+    try { if (m) m.wheel(VMOUSE_WHEEL_MASK[dir]); } catch {}
+  };
+  fire();
+  // Держишь стрелку — колесо крутится дальше само (≈7 щелчков в секунду).
+  vMouseWheelTimer = setInterval(fire, 140);
+  const b = document.querySelector('.lm-arr[data-dir="' + dir + '"]');
+  if (b) b.classList.add('on');
+}
+function vMouseWheelStop() {
+  if (vMouseWheelTimer) { clearInterval(vMouseWheelTimer); vMouseWheelTimer = null; }
+  document.querySelectorAll('.lm-arr.on').forEach((b) => b.classList.remove('on'));
+}
+
+// Показать/скрыть мышь. Состояние помним: если мышь нужна, она нужна всегда.
+function linuxMouseToggle(force) {
+  const el = document.getElementById('linux-mouse');
+  const btn = document.getElementById('linux-mouse-btn');
+  linuxMouseOn = force === undefined ? !linuxMouseOn : !!force;
+  if (el) el.hidden = !linuxMouseOn;
+  if (btn) btn.classList.toggle('on', linuxMouseOn);
+  try { localStorage.setItem('hub_vmouse', linuxMouseOn ? '1' : '0'); } catch {}
+  if (linuxMouseOn) {
+    if (!vMouseReady()) linuxSetNote('🖱 мышь включится, как только экран догрузится');
+    else linuxSetNote('🖱 сенсор — курсор, ЛКМ/ПКМ — кнопки, стрелки — колесо');
+    // курсор ставим в середину экрана, иначе он появляется «из ниоткуда»
+    const m = vMouseApi();
+    try { if (m) m.center(); } catch {}
+    if (!el) return;
+  } else {
+    vMouseWheelStop();
+    vMouseUp(1); vMouseUp(4);
+  }
+}
+
+// Сенсор: тянешь палец — курсор едет; тап — клик; два тапа — двойной клик.
+function vMouseInitPad() {
+  const pad = document.getElementById('lm-pad');
+  if (!pad || pad.__wired) return;
+  pad.__wired = true;
+  let drag = null, lastTap = 0;
+  const pt = (e) => {
+    const t = (e.touches && e.touches[0]) || e;
+    return { x: t.clientX || 0, y: t.clientY || 0 };
+  };
+  const down = (e) => {
+    const p = pt(e);
+    drag = { x: p.x, y: p.y, t: Date.now(), moved: 0 };
+    pad.classList.add('active');
+    try { if (e.pointerId !== undefined) pad.setPointerCapture(e.pointerId); } catch {}
+    try { e.preventDefault(); } catch {}
+  };
+  const move = (e) => {
+    if (!drag) return;
+    const p = pt(e);
+    const dx = p.x - drag.x, dy = p.y - drag.y;
+    drag.x = p.x; drag.y = p.y;
+    drag.moved += Math.abs(dx) + Math.abs(dy);
+    try { e.preventDefault(); } catch {}
+    if (!dx && !dy) return;
+    vMouseMove(dx * VMOUSE_SENS, dy * VMOUSE_SENS);
+  };
+  const up = (e) => {
+    if (!drag) return;
+    const wasTap = drag.moved < 10 && Date.now() - drag.t < 320;
+    drag = null;
+    pad.classList.remove('active');
+    try { e.preventDefault(); } catch {}
+    if (!wasTap) return;
+    const now = Date.now();
+    const dbl = now - lastTap < 320;
+    lastTap = now;
+    vMouseClick(1);
+    if (dbl) setTimeout(() => { vMouseClick(1); }, 30);   // двойной клик
+  };
+  pad.addEventListener('pointerdown', down);
+  pad.addEventListener('pointermove', move);
+  pad.addEventListener('pointerup', up);
+  pad.addEventListener('pointercancel', up);
+  pad.addEventListener('pointerleave', (e) => { if (drag) up(e); });
+  pad.addEventListener('contextmenu', (e) => e.preventDefault());
+  // На старых WebView Pointer Events могут не прийти — дублируем тач-событиями.
+  if (!window.PointerEvent) {
+    pad.addEventListener('touchstart', (e) => { const t = e.touches[0]; down({ clientX: t.clientX, clientY: t.clientY }); }, { passive: false });
+    pad.addEventListener('touchmove', (e) => { const t = e.touches[0]; move({ clientX: t.clientX, clientY: t.clientY, preventDefault() {} }); }, { passive: false });
+    pad.addEventListener('touchend', (e) => up(e));
+  }
+}
+
+// Колесо и кнопки не должны «залипать», если палец ушёл с панели.
+function vMouseInitGuards() {
+  if (window.__vmouseGuards) return;
+  window.__vmouseGuards = true;
+  ['pointerup', 'pointercancel', 'touchend'].forEach((ev) => window.addEventListener(ev, () => {
+    vMouseWheelStop();
+    vMouseUp(1); vMouseUp(4);
+  }, { passive: true }));
+  // Клавиатура телефона открыта — сенсор не должен ловить её тапы.
+  window.addEventListener('blur', () => { vMouseWheelStop(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) vMouseWheelStop(); });
+}
+
+function vMouseRestore() {
+  let want = false;
+  try { want = localStorage.getItem('hub_vmouse') === '1'; } catch {}
+  vMouseInitPad();
+  vMouseInitGuards();
+  if (want) linuxMouseToggle(true);
+}
+try { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', vMouseRestore); else vMouseRestore(); } catch {}
 
 // ===== BROWSER (Chrome / YouTube) =====
 function browserGo(url, prefix) {

@@ -174,7 +174,7 @@ const REQUIRED_BINS = [
   ['Xvfb', 'xvfb'], ['openbox', 'openbox'], ['x11vnc', 'x11vnc'], ['xterm', 'xterm'],
   ['tint2', 'tint2'], ['idesk', 'idesk'], ['feh', 'feh'], ['convert', 'imagemagick'],
   ['pcmanfm', 'pcmanfm'], ['xdotool', 'xdotool'], ['pulseaudio', 'pulseaudio'],
-  ['wmctrl', 'wmctrl']
+  ['wmctrl', 'wmctrl'], ['xwit', 'xwit']
 ];
 let lastPkgTry = 0;
 let aptUpdated = false;
@@ -601,6 +601,51 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * display. This is the difference between «noVNC отвечает» and «на экране
  * что-то видно».
  */
+/**
+ * Иконки рабочего стола (idesk) — окна override-redirect, оконный менеджер их
+ * не переставляет. Когда idesk перерисовывается (или keepalive заново красит
+ * обои через feh), его окна оказываются ПОВЕРХ окна браузера — ровно та
+ * «наложенность» на экране телефона, где иконки видны сквозь веб-страницу.
+ * xwit умеет опускать такие окна; список берём по размеру иконки (64x64 —
+ * только иконки, проверено на живом экране).
+ */
+const ICON_PX = Number(process.env.VNC_ICON_PX || 64);
+// Размеры иконок берём из самих .lnk (Width/Height), а если их нет — 64.
+function iconSizes() {
+  const sizes = new Set([ICON_PX]);
+  try {
+    for (const f of fs.readdirSync(path.join(HOME, '.idesktop'))) {
+      if (!f.endsWith('.lnk')) continue;
+      const src = fs.readFileSync(path.join(HOME, '.idesktop', f), 'utf8');
+      const w = Number((src.match(/^\s*Width:\s*(\d+)/m) || [])[1]);
+      if (w >= 16 && w <= 256) sizes.add(w);
+    }
+  } catch {}
+  return [...sizes];
+}
+
+async function lowerDesktopIcons() {
+  if (!(await which('xwit'))) return false;
+  const r = await sh(`DISPLAY=${DISPLAY} xwininfo -root -children 2>/dev/null`, 10000);
+  // Разбираем список окон: id + геометрия. Иконки узнаём по размеру из .lnk,
+  // затем берём КЛИЕНТА X11, которому они принадлежат (старшие биты id) и
+  // опускаем все его окна — у idesk подписи и подсказки это ОТДЕЛЬНЫЕ окна
+  // (17 px высотой), поэтому «опустить только 64x64» оставляло подписи висеть
+  // поверх страницы.
+  const win = [];
+  for (const line of String(r.out || '').split('\n')) {
+    const m = line.match(/(0x[0-9a-f]+)\s+.*?\s(\d+)x(\d+)[+-]-?\d+[+-]-?\d+/i);
+    if (m) win.push({ id: m[1], w: Number(m[2]), h: Number(m[3]) });
+  }
+  const sizes = iconSizes();
+  const bases = new Set();
+  for (const w of win) if (sizes.includes(w.w) && sizes.includes(w.h)) bases.add((parseInt(w.id, 16) & 0x3ff00000) >>> 0);
+  if (!bases.size) return 0;
+  const ids = win.filter((w) => bases.has((parseInt(w.id, 16) & 0x3ff00000) >>> 0)).map((w) => w.id);
+  for (const id of ids) await sh(`DISPLAY=${DISPLAY} xwit -id ${id} -lower 2>/dev/null`, 5000);
+  return ids.length;
+}
+
 /** Текущий размер стола из xdpyinfo (для диагностики). */
 async function desktopSize() {
   const r = await sh(`DISPLAY=${DISPLAY} xdpyinfo 2>/dev/null | grep -m1 dimensions`, 8000);
@@ -634,6 +679,10 @@ async function ensureEssentials() {
     else state.note = 'x11vnc не поднялся: ' + (await sh(`tail -n 2 ${JSON.stringify(path.join(LOG_DIR, 'x11vnc.log'))}`, 5000)).out.slice(0, 160);
   }
   if (!(await pgrep('tint2'))) { await sh(`DISPLAY=${DISPLAY} nohup tint2 >/dev/null 2>&1 &`, 6000); fixes.push('tint2'); }
+  // idesk перерисовывает иконки поверх окон — при старте idesk и после
+  // перекраски обоев опускаем их под окна приложений.
+  const iconsRaised = fixes.includes('idesk') || fixes.includes('обои');
+  if (iconsRaised) { await sleep(1200); await lowerDesktopIcons(); }
   // Обои — последними: feh выставляет корневой pixmap и сразу выходит (процесса
   // нет), а любой перезапуск Xvfb этот pixmap обнуляет — тогда экран снова
   // чёрный при живых иконках (проверено скриншотом).
@@ -784,6 +833,7 @@ async function localStatus() {
 let repoRootRef = null;
 let ticking = false;
 
+let tickCount = 0;
 async function tick() {
   if (!state.enabled || ticking) return;
   ticking = true;
@@ -802,6 +852,10 @@ async function tick() {
     state.x11vnc = vnc ? 'up' : 'down';
     state.icons = icons ? 'up' : 'down';
     state.bar = bar ? 'up' : 'down';
+    // Раз в минуту возвращаем иконки под окна приложений: idesk умеет
+    // перерисоваться и всплыть поверх браузера сам по себе.
+    tickCount++;
+    if (x && icons && tickCount % 2 === 0) await lowerDesktopIcons();
     if (!x || !vnc || !ui || !wm || !icons || !bar) {
       const why = [!x && 'нет X', !wm && 'нет openbox', !icons && 'нет idesk (иконки)',
         !bar && 'нет tint2 (панель)', !vnc && `нет x11vnc:${VNC_PORT}`, !ui && 'нет noVNC-UI']
@@ -900,4 +954,4 @@ function start(opts = {}) {
   };
 }
 
-module.exports = { start, gradientPng, SHORTCUTS };
+module.exports = { start, gradientPng, SHORTCUTS, lowerDesktopIcons };
