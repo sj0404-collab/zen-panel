@@ -2883,10 +2883,23 @@ app.get('/api/tunnel', (req, res) => {
         sinkList = await pulseRun('pactl list short sinks 2>/dev/null');
       }
     }
+    // Remove duplicate null-sink modules left by older hub restarts. Pulse
+    // silently renames a second sink to browser_youtube.2, so checking only
+    // the sink list is not enough; keep the first module for each base name.
+    let mods = await pulseRun('pactl list short modules 2>/dev/null');
+    const keptNull = new Set();
+    for (const line of String(mods.out || '').split('\n')) {
+      const m = line.trim().match(/^(\d+)\s+module-null-sink\s+(.+)$/);
+      const nm = m && m[2].match(/(?:^|\s)sink_name=(cloud_phone|browser_youtube)(?:\s|$)/);
+      if (m && nm) {
+        if (keptNull.has(nm[1])) await pulseRun('pactl unload-module ' + m[1] + ' 2>/dev/null || true');
+        else keptNull.add(nm[1]);
+      }
+    }
     // Remove every loopback owned by the previous audio implementation. Its
     // browser_youtube.monitor -> browser_youtube path fed audio back into the
     // same sink, causing hiss/stutter and audio that continued after video end.
-    const mods = await pulseRun('pactl list short modules 2>/dev/null');
+    mods = await pulseRun('pactl list short modules 2>/dev/null');
     for (const line of String(mods.out || '').split('\n')) {
       const m = line.trim().match(/^(\d+)\s+module-loopback\s/);
       if (m) await pulseRun('pactl unload-module ' + m[1] + ' 2>/dev/null || true');

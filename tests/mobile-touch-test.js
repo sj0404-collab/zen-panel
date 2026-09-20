@@ -364,7 +364,8 @@ check('q43c audio client playback and flush', mob.includes('function remoteAudio
 check('q43d sound button and clean Pulse path', mobHtml.includes('remoteAudioToggle()') &&
   deskHtml.includes('remoteAudioToggle()') &&
   keep.includes("['parec', 'pulseaudio-utils']") && startDesktop.includes('pulseaudio-utils') &&
-  server.includes('module-loopback') && server.includes('unload-module') &&
+  server.includes('module-loopback') && server.includes('module-null-sink') &&
+  server.includes('keptNull') && server.includes('unload-module') &&
   !server.includes('source=browser_youtube.monitor sink=auto_null'));
 
 
