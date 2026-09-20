@@ -2004,7 +2004,13 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         // «перекрытым/фоновым» и душит рендер и медиа — видео в YouTube просто
         // не идёт, а картинка обновляется рывками. Список --disable-features
         // слит в один: второй флаг перекрывает первый.
-        const chromeFlags = `--no-sandbox --test-type --disable-gpu --autoplay-policy=no-user-gesture-required`
+        // Do not pass --disable-gpu here: it made the video decoder available but
+        // forced every frame's composition/rasterization onto the CPU. On Xvfb
+        // there is no physical GPU, so use Chrome's SwiftShader GPU process;
+        // this is still much faster than a fully disabled GPU and keeps the
+        // accelerated video path alive.
+        const chromeFlags = `--no-sandbox --test-type --autoplay-policy=no-user-gesture-required`
+          + ` --use-gl=swiftshader --ignore-gpu-blocklist --enable-gpu-rasterization --enable-oop-rasterization`
           + ` --disable-features=PreloadMediaEngagementData,AutoplayIgnoreWebAudio,CalculateNativeWinOcclusion,MediaEngagementBypassAutoplayPolicies`
           + ` --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling`
           + ` --use-fake-ui-for-media-stream`

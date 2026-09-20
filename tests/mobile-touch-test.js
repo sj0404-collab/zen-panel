@@ -368,5 +368,11 @@ check('q44 chrome media codec priority', /BROWSER_BIN=\$\(command -v google-chro
   server.includes('PULSE_SINK=browser_youtube') && server.includes("browserProfile = googleAvailable ? 'google' : 'chromium'") &&
   server.includes('--no-default-browser-check') && server.includes('--disable-signin-promo'));
 
+// q45: browser video keeps the GPU compositor/raster path on Xvfb. The old
+// --disable-gpu contradicted accelerated video decode and made FPS low.
+check('q45 gpu compositor for video', !server.includes('--test-type --disable-gpu --autoplay-policy') &&
+  server.includes('--use-gl=swiftshader') && server.includes('--ignore-gpu-blocklist') &&
+  server.includes('--enable-gpu-rasterization') && server.includes('--enable-oop-rasterization'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
