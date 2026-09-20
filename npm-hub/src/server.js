@@ -1565,6 +1565,8 @@ const tmuxWake = (session) => { if (session.tmux && session.clients.size > 0) tm
 
 wss.on('connection', (ws) => {
   let session = null;
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (raw) => {
     let msg;
@@ -1703,6 +1705,18 @@ wss.on('connection', (ws) => {
     }
   });
 });
+
+// Heartbeat: protocol-level ping/pong lets the server reap clients that died
+// without a close frame (mobile radio drops, tunnel flaps). Without it, dead
+// sockets would stay attached to sessions forever and the tmux poller would
+// keep streaming to ghosts, while every reconnect appended another zombie.
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!ws.isAlive) { try { ws.terminate(); } catch {} continue; }
+    ws.isAlive = false;
+    try { ws.ping(); } catch { try { ws.terminate(); } catch {} }
+  }
+}, 30000);
 
 // ─── GET /api/sessions — живые серверные сессии ───
 // Используется standalone терминалом (/term): показывает, что можно

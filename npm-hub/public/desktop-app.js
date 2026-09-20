@@ -22,11 +22,19 @@ window.addEventListener('resize', () => {
 // Мгновенный переподъём вкладок после фонизации / потери сети.
 function kickReconnect() {
   tabs.forEach(t => {
-    if (t.manualClose) return;
+    if (t.manualClose || !t.connect) return;
     const s = t.ws;
-    if (s && (s.readyState === WebSocket.OPEN || s.readyState === WebSocket.CONNECTING)) return;
+    if (s && s.readyState === WebSocket.OPEN) {
+      // Looks open but silent for too long → it is dead on the far side
+      // (tunnel flap while the tab was hidden). Force it closed so onclose
+      // reconnects immediately instead of waiting for the next keepalive.
+      if (t.lastPong && Date.now() - t.lastPong > 45000) { t.retry = 0; try { s.close(); } catch {} }
+      return;
+    }
+    if (s && s.readyState === WebSocket.CONNECTING) return; // connect watchdog aborts stale attempts
     if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
-    if (t.connect) { t.lastPong = 0; try { t.connect(); } catch (e) { /* ignore */ } }
+    t.lastPong = 0; t.retry = 0;
+    try { t.connect(); } catch (e) { /* ignore */ }
   });
 }
 window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') kickReconnect(); });
@@ -803,8 +811,8 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
     repoHead: (resume && resume.repoHead) || null, repoDirty: !!(resume && resume.repoDirty),
     repoStatus: (resume && resume.repoStatus) || '', emulator: (resume && resume.emulator) || null,
     phoneRunner: (resume && resume.phoneRunner) || null, ws: null, term, fitAddon, el: panel,
-    manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null,
-    keepAlive: null, resizeObs: null, touchHandler: null, connect: () => {} };
+    manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null, connectTimer: null,
+    retry: 0, disconnected: false, keepAlive: null, resizeObs: null, touchHandler: null, connect: () => {} };
   tabs.push(td);
   td.scroll = attachTermScroll(id, panel);
   td.touchHandler = setupTermTouch(document.getElementById('term-' + id), term);
@@ -812,9 +820,21 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   const connect = () => {
     const socket = new WebSocket(`${protocol}//${location.host}/ws`);
     td.ws = socket;
+    // Watchdog: a connection attempt that lingers in CONNECTING (stalled,
+    // half-open tunnel) would otherwise hang the tab forever — no open, no
+    // close. Force it closed so the reconnect path takes over.
+    if (td.connectTimer) { clearTimeout(td.connectTimer); td.connectTimer = null; }
+    td.connectTimer = setTimeout(() => {
+      if (td.ws === socket && socket.readyState === WebSocket.CONNECTING) {
+        try { socket.close(); } catch {}
+      }
+    }, 8000);
 
     socket.onopen = () => {
+      if (td.connectTimer) { clearTimeout(td.connectTimer); td.connectTimer = null; }
       td.lastPong = Date.now();
+      td.retry = 0;
+      td.disconnected = false;
       socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : effectiveToolId, sessionId: id, cwd,
         repoPath: (resume && resume.repoPath) || null, emulator: (resume && resume.emulator) || null,
         phoneRunner: (resume && resume.phoneRunner) || null, cols: term.cols, rows: term.rows }));
@@ -829,9 +849,18 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
     };
     socket.onclose = () => {
       if (td.manualClose) return;
+      if (td.ws !== socket) return; // superseded by a newer socket; it owns reconnection
+      if (td.connectTimer) { clearTimeout(td.connectTimer); td.connectTimer = null; }
       if (td.reconnectTimer) { clearTimeout(td.reconnectTimer); td.reconnectTimer = null; }
-      term.write('\r\n\x1b[33m[Disconnected — reconnecting...]\x1b[0m\r\n');
-      td.reconnectTimer = setTimeout(connect, 3000);
+      if (!td.disconnected) {
+        term.write('\r\n\x1b[33m[Disconnected — reconnecting...]\x1b[0m\r\n');
+        td.disconnected = true;
+      }
+      // Exponential backoff with jitter: fast while the server is flapping,
+      // gentle during a long outage, and reset to instant on the next open.
+      const delay = Math.min(3000 * Math.pow(2, td.retry), 30000) + Math.round(Math.random() * 400);
+      td.retry = Math.min(td.retry + 1, 6);
+      td.reconnectTimer = setTimeout(connect, delay);
     };
     return socket;
   };

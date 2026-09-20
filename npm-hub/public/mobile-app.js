@@ -1074,8 +1074,8 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
     repoHead: (resume && resume.repoHead) || null, repoDirty: !!(resume && resume.repoDirty),
     repoStatus: (resume && resume.repoStatus) || '', emulator: (resume && resume.emulator) || null,
     phoneRunner: (resume && resume.phoneRunner) || null, term, fitAddon, socket: null, pty: null,
-    manualClose: false, lastPong: 0, reconnectTimer: null, keepAlive: null,
-    resizeObs: null, touchHandler: null, connect: () => {} };
+    manualClose: false, lastPong: 0, reconnectTimer: null, connectTimer: null,
+    retry: 0, disconnected: false, keepAlive: null, resizeObs: null, touchHandler: null, connect: () => {} };
   tabs.push(tab);
   activeTab = tab;
 
@@ -1110,9 +1110,21 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   const connect = () => {
     const socket = new WebSocket(`${protocol}//${location.host}/ws`);
     tab.socket = socket;
+    // Watchdog: a connection attempt stuck in CONNECTING (stalled tunnel) would
+    // otherwise hang the tab forever — no open, no close. Force it closed so
+    // the reconnect path takes over.
+    if (tab.connectTimer) { clearTimeout(tab.connectTimer); tab.connectTimer = null; }
+    tab.connectTimer = setTimeout(() => {
+      if (tab.socket === socket && socket.readyState === WebSocket.CONNECTING) {
+        try { socket.close(); } catch {}
+      }
+    }, 8000);
 
     socket.onopen = () => {
+      if (tab.connectTimer) { clearTimeout(tab.connectTimer); tab.connectTimer = null; }
       tab.lastPong = Date.now();
+      tab.retry = 0;
+      tab.disconnected = false;
       socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : effectiveToolId, sessionId: id, cwd,
         repoPath: (resume && resume.repoPath) || null, emulator: (resume && resume.emulator) || null,
         phoneRunner: (resume && resume.phoneRunner) || null, cols: term.cols, rows: term.rows }));
@@ -1133,9 +1145,17 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
 
     socket.onclose = () => {
       if (tab.manualClose) return;
+      if (tab.socket !== socket) return; // superseded by a newer socket; it owns reconnection
+      if (tab.connectTimer) { clearTimeout(tab.connectTimer); tab.connectTimer = null; }
       if (tab.reconnectTimer) { clearTimeout(tab.reconnectTimer); tab.reconnectTimer = null; }
-      term.write('\r\n\x1b[33m[Disconnected — reconnecting...]\x1b[0m\r\n');
-      tab.reconnectTimer = setTimeout(connect, 3000);
+      if (!tab.disconnected) {
+        term.write('\r\n\x1b[33m[Disconnected — reconnecting...]\x1b[0m\r\n');
+        tab.disconnected = true;
+      }
+      // Exponential backoff with jitter — fast while flapping, gentle on hiccups.
+      const delay = Math.min(3000 * Math.pow(2, tab.retry), 30000) + Math.round(Math.random() * 400);
+      tab.retry = Math.min(tab.retry + 1, 6);
+      tab.reconnectTimer = setTimeout(connect, delay);
     };
   };
   tab.connect = connect;
@@ -3193,21 +3213,39 @@ function _resumeAudio() {
 
 // Handle visibility change — re-init audio when returning to tab
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) {
-    _resumeAudio();
-    // Reconnect any broken WebSocket terminals
-    if (typeof tabs !== 'undefined') {
-      tabs.forEach(t => {
-        if (t.socket && t.socket.readyState > 1 && !t.manualClose) {
-          if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
-          // Trigger reconnect via showPage
-          if (typeof activeTab !== 'undefined' && t === activeTab) {
-            t.term?.writeln?.('\x1b[33m[Reconnecting...]\x1b[0m');
-          }
-        }
-      });
+  if (document.hidden) return;
+  _resumeAudio();
+  if (typeof tabs === 'undefined') return;
+  // Kick any broken terminal back to life the moment the page is visible
+  // again (background sleep drops the WS; a plain onclose delay is too slow).
+  tabs.forEach(t => {
+    if (t.manualClose || !t.connect) return;
+    const s = t.socket;
+    if (s && s.readyState === WebSocket.OPEN) {
+      // Looks open but silent for too long → dead on the far side (tunnel
+      // flap during background). Force it closed so onclose reconnects at once.
+      if (t.lastPong && Date.now() - t.lastPong > 45000) { t.retry = 0; try { s.close(); } catch {} }
+      return;
     }
-  }
+    if (s && s.readyState === WebSocket.CONNECTING) return; // connect watchdog aborts stale attempts
+    if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
+    t.lastPong = 0; t.retry = 0;
+    if (t === activeTab) t.term?.writeln?.('\x1b[33m[Reconnecting...]\x1b[0m');
+    try { t.connect(); } catch (e) { /* ignore */ }
+  });
+});
+// Also recover the moment connectivity returns.
+window.addEventListener('online', () => {
+  if (typeof tabs === 'undefined') return;
+  tabs.forEach(t => {
+    if (t.manualClose || !t.connect) return;
+    const s = t.socket;
+    if (s && s.readyState === WebSocket.OPEN) return;
+    if (s && s.readyState === WebSocket.CONNECTING) return;
+    if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
+    t.lastPong = 0; t.retry = 0;
+    try { t.connect(); } catch (e) { /* ignore */ }
+  });
 });
 
 // Periodic keep-alive — ping server every 30s to keep tunnel/session alive
