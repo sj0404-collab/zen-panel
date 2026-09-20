@@ -189,7 +189,6 @@
       <button class="tb" onclick="openStandaloneTerminal()">Терминал</button>
       <button class="tb" onclick="showPage('files')">Файлы</button>
       <button class="tb" onclick="showPage('linux')">🖥 Экран</button>
-      <button class="tb" onclick="showPage('browser')">🌐 Chrome</button>
       <button class="tb" onclick="showPage('git')">🐙 Git</button>
     </div>
     <div class="topbar-right">
@@ -296,19 +295,85 @@
           <button class="btn btn-sm" id="linux-perf-btn-desktop" onclick="linuxPerfToggle('desktop')" title="Плавность: плавно / баланс / чётко">⚡</button>
           <button class="btn btn-sm" onclick="linuxKeyboard('desktop')" title="Экранная клавиатура">⌨</button>
           <button class="btn btn-sm" onclick="linuxReload()" title="Переподключить экран">⟳</button>
+          <button class="btn btn-sm" id="linux-mouse-btn" onclick="linuxMouseToggle()" title="Виртуальная мышь: сенсор, две кнопки, колесо стрелками">🖱</button>
           <button class="btn btn-sm" onclick="linuxFullscreen('desktop')" title="На весь экран">⛶</button>
         </div>
         <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center;flex-wrap:wrap">
           <input type="text" id="browser-url-desktop" placeholder="https://... — откроется на этом экране" value="https://www.youtube.com" style="flex:1;min-width:180px;padding:6px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')linuxRunBrowser(this.value)">
           <button class="btn btn-p btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url-desktop').value)" title="Открыть на этом экране">Go · 🖥</button>
-          <span style="font-size:11px;color:var(--t3)">звук 80% авто</span>
+          <span id="pulse-status" class="tag" role="button" tabindex="0" onclick="event.stopPropagation();remoteAudioToggle()" onkeydown="if(event.key==='Enter'||event.key===' ')remoteAudioToggle()" title="Включить звук видео с удалённого экрана" style="font-size:10px;cursor:pointer">🔊 звук</span>
+          <span style="font-size:11px;color:var(--t3)">80% авто</span>
+        </div>
+        <!-- Читалка и ссылки агента: жили во вкладке Chrome, которая дублировала
+             «Экран» (два браузера) — теперь это часть экрана. -->
+        <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0;align-items:center;flex-wrap:wrap;font-size:11px">
+          <span style="color:var(--pur);font-weight:700">🔊 TTS/OCR:</span>
+          <button class="btn btn-p btn-sm" id="tts-play-btn-desk" onclick="ttsToggleDesk()">▶ Читать</button>
+          <button class="btn btn-sm" onclick="ttsStopDesk()">⏹ Стоп</button>
+          <select id="tts-voice-desk" style="padding:4px 6px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:11px;max-width:120px"></select>
+          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--t2)"><input type="range" id="tts-rate-desk" min="0.5" max="2" step="0.1" value="1" style="width:60px" oninput="ttsSetRateDesk(this.value)"> <span id="tts-rate-label-desk">1×</span></label>
+          <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-autoscroll-desk" checked> Авто-скролл</label>
+          <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-bg-desk" checked> В фоне</label>
+          <button class="btn btn-sm" onclick="ocrCaptureDesk()">👁️ OCR</button>
+          <span id="tts-status-desk" style="font-size:10px;color:var(--t3);margin-left:auto">готов</span>
+        </div>
+        <div id="browser-agent-hint-desk" style="display:none;padding:6px 8px;background:rgba(88,166,255,.14);border-bottom:1px solid var(--bdr);font-size:12px;color:var(--acc);gap:8px;align-items:center;flex-shrink:0">
+          <span>🔗 Агент прислал ссылку:</span><a id="browser-agent-url-desk" href="#" style="color:var(--acc);word-break:break-all"></a>
+          <button class="btn btn-p btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-agent-url-desk').textContent)">🖥 Открыть на экране</button>
+          <button class="btn btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-agent-url-desk').textContent, true)">📱 вертикально</button>
         </div>
         <style>
           /* ⛶ — экран на весь экран без потери noVNC-сессии */
           #p-linux.linux-full{position:fixed!important;inset:0!important;height:100vh!important;z-index:99999;background:#000}
+          /* Кадр экрана занимает ВСЮ свободную высоту. Раньше страница
+             включалась как display:block, поэтому flex:1 у кадра не работал и
+             iframe схлопывался до ~150 px — экран был виден полоской. */
+          #p-linux.on{display:flex;flex-direction:column;overflow:hidden}
+          #linux-stack-desktop{flex:1 1 auto;min-height:0}
+          #linux-frame-desktop{width:100%;height:100%;border:none}
+          /* ── Виртуальная мышь ─────────────────────────────────────────── */
+          #linux-mouse{position:absolute;left:0;right:0;bottom:0;z-index:99990;display:flex;gap:8px;align-items:stretch;
+            padding:8px;background:linear-gradient(180deg,rgba(13,17,23,.78),rgba(13,17,23,.95));
+            border-top:1px solid rgba(240,246,252,.18);touch-action:none;user-select:none}
+          #linux-mouse[hidden]{display:none}
+          .lm-pad{flex:1 1 auto;min-width:140px;min-height:88px;border-radius:12px;border:1px dashed rgba(240,246,252,.28);
+            background:rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;color:var(--t3);
+            font-size:11px;text-align:center;touch-action:none;position:relative;cursor:crosshair}
+          .lm-pad.active{background:rgba(88,166,255,.16);border-color:var(--acc)}
+          .lm-pad-hint{pointer-events:none;padding:0 8px}
+          .lm-buttons{display:flex;flex-direction:column;gap:6px;width:74px;flex:0 0 auto}
+          .lm-btn{flex:1;border-radius:10px;border:1px solid rgba(240,246,252,.22);background:rgba(255,255,255,.07);
+            color:#e6edf3;font-size:12px;font-weight:700;touch-action:none;cursor:pointer}
+          .lm-btn.on,.lm-btn:active{background:var(--acc);color:#0d1117;border-color:var(--acc)}
+          .lm-wheel{display:flex;flex-direction:column;gap:4px;width:88px;align-items:center;justify-content:center;flex:0 0 auto}
+          .lm-wheel-mid{display:flex;gap:4px}
+          .lm-arr{width:40px;height:28px;border-radius:8px;border:1px solid rgba(240,246,252,.22);
+            background:rgba(255,255,255,.07);color:#e6edf3;font-size:13px;line-height:1;touch-action:none;cursor:pointer}
+          .lm-arr.on,.lm-arr:active{background:var(--acc);color:#0d1117;border-color:var(--acc)}
+          .lm-close{position:absolute;top:2px;right:4px;width:24px;height:24px;border-radius:50%;
+            border:1px solid rgba(240,246,252,.25);background:rgba(13,17,23,.75);color:#e6edf3;font-size:11px;line-height:1;padding:0;cursor:pointer}
         </style>
         <div id="linux-stack-desktop" style="flex:1;position:relative;background:#000">
           <iframe id="linux-frame-desktop" style="width:100%;height:100%;border:none;display:none" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
+          <!-- Виртуальная мышь: сенсор, две кнопки и колесо стрелками -->
+          <div id="linux-mouse" hidden>
+            <div class="lm-pad" id="lm-pad">
+              <span class="lm-pad-hint">СЕНСОР · тяни — курсор, тап — клик, два тапа — двойной</span>
+            </div>
+            <div class="lm-buttons">
+              <button class="lm-btn" id="lm-left" onpointerdown="vMouseDown(1)" onpointerup="vMouseUp(1)" onpointercancel="vMouseUp(1)" onpointerleave="vMouseUp(1)">ЛКМ</button>
+              <button class="lm-btn" id="lm-right" onpointerdown="vMouseDown(4)" onpointerup="vMouseUp(4)" onpointercancel="vMouseUp(4)" onpointerleave="vMouseUp(4)">ПКМ</button>
+            </div>
+            <div class="lm-wheel">
+              <button class="lm-arr" data-dir="up" onpointerdown="vMouseWheelStart('up')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">▲</button>
+              <div class="lm-wheel-mid">
+                <button class="lm-arr" data-dir="left" onpointerdown="vMouseWheelStart('left')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">◀</button>
+                <button class="lm-arr" data-dir="right" onpointerdown="vMouseWheelStart('right')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">▶</button>
+              </div>
+              <button class="lm-arr" data-dir="down" onpointerdown="vMouseWheelStart('down')" onpointerup="vMouseWheelStop()" onpointercancel="vMouseWheelStop()" onpointerleave="vMouseWheelStop()">▼</button>
+            </div>
+            <button class="lm-close" onclick="linuxMouseToggle()" title="Скрыть мышь">✕</button>
+          </div>
           <div id="linux-placeholder-desktop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
             <div style="font-size:48px;margin-bottom:16px">🖥</div>
             <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Linux Screen</div>
@@ -319,40 +384,6 @@
       </div>
 
       <!-- GIT — local + GitHub repos + builds -->
-      <!-- BROWSER — Chrome вкладка -->
-      <div class="page" id="p-browser" style="padding:0;flex-direction:column;height:100%">
-        <div style="display:flex;gap:6px;padding:8px;background:var(--bg1);border-bottom:1px solid var(--bdr);align-items:center;flex-wrap:wrap">
-          <button class="btn btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-desk')?.value||'')">←</button>
-          <button class="btn btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-desk')?.value||'')">→</button>
-          <button class="btn btn-sm" onclick="document.getElementById('browser-frame-desk').src=document.getElementById('browser-frame-desk').src">⟳</button>
-          <input type="text" id="browser-url-desk" placeholder="https://..." value="https://www.google.com" style="flex:1;min-width:160px;padding:6px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')hubBrowserGo(this.value)">
-          <button class="btn btn-p btn-sm" onclick="hubBrowserGo(document.getElementById('browser-url-desk').value)">Go</button>
-          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-url-desk').value)">🖥</button>
-          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-url-desk').value,true)">📱</button>
-          <button class="btn btn-sm" onclick="browserFullscreenVerticalDesk()" title="9:16 фуллскрин">⛶ 9:16</button>
-          <button class="btn btn-sm" onclick="browserCopyUrlDesk()" title="Копировать">⧉</button>
-        </div>
-        <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg1);border-bottom:1px solid var(--bdr);align-items:center;flex-wrap:wrap;font-size:11px">
-          <span style="color:var(--pur);font-weight:700">🔊 TTS/OCR:</span>
-          <button class="btn btn-p btn-sm" id="tts-play-btn-desk" onclick="ttsToggleDesk()">▶ Читать</button>
-          <button class="btn btn-sm" onclick="ttsStopDesk()">⏹</button>
-          <select id="tts-voice-desk" style="padding:4px 6px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:11px;max-width:120px"></select>
-          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--t2)"><input type="range" id="tts-rate-desk" min="0.5" max="2" step="0.1" value="1" style="width:60px" oninput="ttsSetRateDesk(this.value)"> <span id="tts-rate-label-desk">1×</span></label>
-          <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-autoscroll-desk" checked> Авто-скролл</label>
-          <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-bg-desk" checked> В фоне</label>
-          <button class="btn btn-sm" onclick="ocrCaptureDesk()">👁️ OCR</button>
-          <span id="tts-status-desk" style="font-size:10px;color:var(--t3);margin-left:auto">готов</span>
-        </div>
-        <div id="browser-agent-hint-desk" style="display:none;padding:8px;background:rgba(88,166,255,.12);border-bottom:1px solid var(--bdr);font-size:12px;color:var(--acc);gap:8px;align-items:center">
-          <span>🔗 Агент:</span><a id="browser-agent-url-desk" href="#" style="color:var(--acc)"></a>
-          <button class="btn btn-p btn-sm" onclick="hubBrowserGo(document.getElementById('browser-agent-url-desk').textContent)">Открыть</button>
-          <button class="btn btn-sm" onclick="browserOpenDesktop(document.getElementById('browser-agent-url-desk').textContent)">🖥</button>
-        </div>
-        <div style="flex:1;position:relative;background:#fff;display:flex;flex-direction:column">
-          <iframe id="browser-frame-desk" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads" style="flex:1;width:100%;border:none;background:#fff;display:block" allow="clipboard-read; clipboard-write"></iframe>
-          <div id="browser-placeholder-desk" style="position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#0a0e14;color:var(--t3);flex-direction:column">Введите URL</div>
-        </div>
-      </div>
       <div class="page" id="p-git">
         <div class="ph"><h1>🐙 Git</h1><p>Локальный репозиторий + GitHub аккаунт: все репозитории, ветки, коммиты, сборки</p></div>
 

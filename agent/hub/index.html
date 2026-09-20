@@ -939,7 +939,14 @@ async function abortRun(){
 }
 
 function toggleTerm(){
-  try{ document.activeElement.blur(); }
+  // Кнопка ▣ в шапке: убрать клавиатуру телефона (иначе она закрывает вывод)
+  // и подвести к терминалу. Раньше строка обрывалась без catch{} — это ломало
+  // синтаксис ВСЕГО inline-скрипта, поэтому страница агента не работала вовсе.
+  try{ document.activeElement.blur(); }catch{}
+  toggleDrawer();
+  const term = document.getElementById('term');
+  if (term && term.scrollIntoView) term.scrollIntoView({ block: 'end', behavior: 'smooth' });
+}
 // Долгий тап в терминале — копировать
 (function(){
   const termEl = document.getElementById('term');
@@ -951,7 +958,15 @@ function toggleTerm(){
   termEl.addEventListener('touchmove', e=>{ const tt=e.touches[0]; if(Math.abs(tt.clientY-stY)>8||Math.abs(tt.clientX-stX)>8){ scrolled=true; clearTimeout(hold); } }, {passive:true});
   termEl.addEventListener('touchend', e=>{ clearTimeout(hold); if(longp) e.preventDefault(); }, {passive:false});
   termEl.addEventListener('contextmenu', e=>{ e.preventDefault(); const sel=window.getSelection().toString()||termEl.textContent.slice(-2000); if(sel) navigator.clipboard?.writeText(sel).catch(()=>{}); return false; });
-})();catch{} $('drawer').classList.toggle('on'); }
+})();
+
+// Кнопка ▣ в шапке: показать/скрыть выдвижной терминал (тот же шелл, что у
+// агента). Заголовок функции тут был потерян предыдущей правкой — из-за
+// «голого» catch{} ломался синтаксис всего inline-скрипта.
+function toggleDrawer(){
+  try{ document.activeElement.blur(); }catch{}
+  $('drawer').classList.toggle('on');
+}
 
 async function runCmd(){
   const c=$('cmd').value.trim(); if(!c) return;
