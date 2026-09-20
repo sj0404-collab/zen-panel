@@ -1960,7 +1960,20 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         return res.json({ ok: true, message: 'Терминал открыт на рабочем столе' });
       }
       case 'files': {
-        await runOnDisplay(`(pcmanfm || nautilus || xdg-open ~/hub-work) &`, 3000);
+        // Через обёртку: pcmanfm на этом раннере показывает пустой диалог
+        // «Desktop manager is not active» — на телефоне это чужое окно поверх
+        // стола. Обёртка поднимает менеджер и сразу гасит диалог.
+        let launched = false;
+        try {
+          const ka = require('./vnc-keepalive');
+          const launcher = await ka.ensureFilesLauncher();
+          if (launcher) {
+            await runOnDisplay(`setsid nohup ${JSON.stringify(launcher)} "$HOME/hub-work" >/dev/null 2>&1 &`, 3000);
+            launched = true;
+          }
+        } catch {}
+        if (!launched) await runOnDisplay(`(pcmanfm || nautilus || xdg-open ~/hub-work) &`, 3000);
+        try { setTimeout(() => { try { require('./vnc-keepalive').dismissStrayDialogs(); } catch {} }, 5000); } catch {}
         try { require('./vnc-keepalive').lowerDesktopIcons(); } catch {}
         return res.json({ ok: true, message: 'Файловый менеджер открыт' });
       }

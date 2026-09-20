@@ -374,7 +374,7 @@ async function ensureWallpaper(force) {
 
 const SHORTCUTS = [
   { name: 'Терминал',   exec: 'xterm',                                          glyph: '>_',   c1: '#1f6feb', c2: '#0d419d', icon: 'utilities-terminal' },
-  { name: 'Файлы',      exec: 'pcmanfm $HOME/hub-work',                         glyph: 'F',    c1: '#bb8009', c2: '#7d5e05', icon: 'system-file-manager' },
+  { name: 'Файлы',      exec: 'hub-files $HOME/hub-work',                       glyph: 'F',    c1: '#bb8009', c2: '#7d5e05', icon: 'system-file-manager' },
   { name: 'Google',     exec: '$BROWSER --start-maximized https://www.google.com', glyph: 'G', c1: '#1a73e8', c2: '#0b47a1', icon: 'google-chrome' },
   { name: 'YouTube',    exec: '$BROWSER --start-maximized https://www.youtube.com', glyph: 'YT', c1: '#cc0000', c2: '#7a0000', icon: 'youtube' },
   { name: 'Hub',        exec: '$BROWSER --start-maximized http://127.0.0.1:$PORT', glyph: 'H', c1: '#8957e5', c2: '#4c2889', icon: 'applications-internet' },
@@ -382,7 +382,7 @@ const SHORTCUTS = [
   { name: 'AI',         exec: 'xterm -title "OpenCode" -e bash -lc "opencode; exec bash"', glyph: 'AI', c1: '#00a887', c2: '#005f4c', icon: 'utilities-terminal' },
   { name: 'Редактор',   exec: '(command -v geany >/dev/null && geany) || (command -v gedit >/dev/null && gedit) || xterm -e nano', glyph: '</>', c1: '#d29922', c2: '#7a5605', icon: 'accessories-text-editor' },
   { name: 'Звук',       exec: 'pavucontrol',                                     glyph: '♪',    c1: '#2596be', c2: '#124e63', icon: 'multimedia-volume-control' },
-  { name: 'Проекты',    exec: 'pcmanfm $HOME/hub-work',                          glyph: 'P',    c1: '#3fb950', c2: '#1b6d2c', icon: 'folder' }
+  { name: 'Проекты',    exec: 'hub-files $HOME/hub-work',                        glyph: 'P',    c1: '#3fb950', c2: '#1b6d2c', icon: 'folder' }
 ];
 
 async function ensureShortcutIcons(magick, font) {
@@ -406,6 +406,9 @@ async function ensureShortcutIcons(magick, font) {
 }
 
 async function ensureShortcuts(port) {
+  // Обёртка для файлового менеджера (см. ensureFilesLauncher): без неё на
+  // экране всплывает паразитный диалог pcmanfm.
+  const filesLauncher = await ensureFilesLauncher();
   const magick = (await which('convert')) ? 'convert' : (await which('magick')) ? 'magick' : null;
   const font = findFont();
   const icons = await ensureShortcutIcons(magick, font);
@@ -457,7 +460,8 @@ async function ensureShortcuts(port) {
     if (s.name === 'Редактор' && !available.has('geany') && !available.has('gedit') && !available.has('xterm')) continue;
     const icon = (icons[s.name] && fs.existsSync(icons[s.name])) ? icons[s.name] : s.icon;
     const exec = s.exec.replace(/\$BROWSER\b/g, browser).replace(/\$PORT\b/g, String(port || 8090))
-      .replace(/\$HOME\b/g, HOME);
+      .replace(/\$HOME\b/g, HOME)
+      .replace(/^hub-files\b/, filesLauncher ? JSON.stringify(filesLauncher) : 'pcmanfm');
     const body = [
       '[Desktop Entry]',
       'Version=1.0',
@@ -637,6 +641,58 @@ function iconSizes() {
     }
   } catch {}
   return [...sizes];
+}
+
+// pcmanfm на этом раннере при КАЖДОМ запуске показывает пустое окно
+// «Error — Desktop manager is not active» (проверено и локально, и на раннере:
+// он поднимает свой менеджер рабочего стола, а тот уже занят idesk). Файловый
+// менеджер при этом работает, но на экране телефона диалог выглядит как чужое
+// окно поверх стола. Поэтому файлы открываем обёрткой: она поднимает pcmanfm и
+// сразу гасит этот диалог.
+const FILES_LAUNCHER = path.join(HOME, '.npm-hub', 'bin', 'hub-files');
+async function ensureFilesLauncher() {
+  const script = [
+    '#!/bin/bash',
+    '# Открывает файловый менеджер и убирает паразитный диалог pcmanfm',
+    '# «Desktop manager is not active» (idesk уже держит рабочий стол).',
+    'export DISPLAY="${VNC_DISPLAY:-:99}"',
+    'target="${1:-$HOME/hub-work}"',
+    '(pcmanfm "$target" >/dev/null 2>&1 &) || true',
+    'for _ in $(seq 1 12); do',
+    '  sleep 1',
+    '  for w in $(xdotool search --name "^Error$" 2>/dev/null); do',
+    '    if xprop -id "$w" WM_CLASS 2>/dev/null | grep -q pcmanfm; then',
+    '      xdotool windowkill "$w" 2>/dev/null || true',
+    '      exit 0',
+    '    fi',
+    '  done',
+    '  pgrep -x pcmanfm >/dev/null 2>&1 || exit 0',
+    'done',
+    ''
+  ].join('\n');
+  try {
+    fs.mkdirSync(path.dirname(FILES_LAUNCHER), { recursive: true });
+    fs.writeFileSync(FILES_LAUNCHER, script);
+    fs.chmodSync(FILES_LAUNCHER, 0o755);
+    return FILES_LAUNCHER;
+  } catch { return null; }
+}
+
+// Разово погасить такой диалог, если он уже висит (пути запуска мимо ярлыка:
+// двойной клик по иконке, «Файлы» из панели, ручной pcmanfm).
+async function dismissStrayDialogs() {
+  if (!(await which('xdotool'))) return 0;
+  const r = await sh(`DISPLAY=${DISPLAY} xdotool search --name '^Error$' 2>/dev/null`, 8000);
+  const ids = String(r.out || '').split('\n').map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
+  let n = 0;
+  for (const id of ids) {
+    const cls = await sh(`DISPLAY=${DISPLAY} xprop -id ${id} WM_CLASS 2>/dev/null | grep -c pcmanfm`, 5000);
+    if (String(cls.out || '').trim() === '1') {
+      await sh(`DISPLAY=${DISPLAY} xdotool windowkill ${id} 2>/dev/null`, 5000);
+      n++;
+    }
+  }
+  return n;
 }
 
 async function lowerDesktopIcons() {
@@ -871,6 +927,7 @@ async function tick() {
     // перерисоваться и всплыть поверх браузера сам по себе.
     tickCount++;
     if (x && icons && tickCount % 2 === 0) await lowerDesktopIcons();
+    if (x && tickCount % 2 === 1) await dismissStrayDialogs();
     if (!x || !vnc || !ui || !wm || !icons || !bar) {
       const why = [!x && 'нет X', !wm && 'нет openbox', !icons && 'нет idesk (иконки)',
         !bar && 'нет tint2 (панель)', !vnc && `нет x11vnc:${VNC_PORT}`, !ui && 'нет noVNC-UI']
@@ -969,4 +1026,4 @@ function start(opts = {}) {
   };
 }
 
-module.exports = { start, gradientPng, SHORTCUTS, lowerDesktopIcons };
+module.exports = { start, gradientPng, SHORTCUTS, lowerDesktopIcons, dismissStrayDialogs, ensureFilesLauncher };

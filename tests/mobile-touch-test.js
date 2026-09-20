@@ -294,7 +294,7 @@ check('q38e native selection alive', mobTouch.includes("addEventListener('touchs
 // опускаются под окна приложений — при старте стола, при лечении keepalive,
 // раз в 30 с и сразу после запуска приложения.
 check('q39a icons lowered by keepalive', keep.includes('async function lowerDesktopIcons') &&
-  keep.includes('lowerDesktopIcons }') && keep.includes('tickCount % 2 === 0') &&
+  /module\.exports = \{[^}]*lowerDesktopIcons/.test(keep) && keep.includes('tickCount % 2 === 0') &&
   /iconsRaised[\s\S]{0,120}lowerDesktopIcons/.test(keep));
 check('q39b xwit installed by hub', keep.includes("['xwit', 'xwit']") &&
   startDesktop.includes('xwit') && startDesktop.includes('-lower'));
@@ -333,6 +333,18 @@ check('q41a ocr helper uses module exec', !server.includes('const {_exec} = requ
   server.includes('/api/screenshot'));
 check('q41b hub installs tesseract', keep.includes("['tesseract', 'tesseract-ocr']") &&
   keep.includes("OCR_LANG_PKG = 'tesseract-ocr-rus'") && keep.includes('ocrLangMissing'));
+
+
+// q42: файловый менеджер открывается без паразитного диалога pcmanfm
+// «Desktop manager is not active» (idesk уже держит рабочий стол). Файлы на
+// экране — через обёртку hub-files, плюс разовая уборка залипшего диалога.
+check('q42a files launcher', keep.includes('FILES_LAUNCHER') && keep.includes('ensureFilesLauncher') &&
+  keep.includes("exec: 'hub-files $HOME/hub-work'") &&
+  (keep.match(/hub-files \$HOME\/hub-work/g) || []).length === 2 &&
+  keep.includes('filesLauncher ? JSON.stringify(filesLauncher)'));
+check('q42b dialogs cleaned', keep.includes('async function dismissStrayDialogs') &&
+  /tickCount % 2 === 1\) await dismissStrayDialogs/.test(keep) &&
+  server.includes('dismissStrayDialogs'));
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
