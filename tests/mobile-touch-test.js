@@ -395,7 +395,7 @@ check('q48 terminal sessions survive hub restart', server.includes("app.get('/ap
   desk.includes('restoreServerSessions') && mob.includes('color: toolColor, icon: toolIcon') &&
   desk.includes('toolColor: color, toolIcon: icon'));
 check('q49 desktop tab opens one websocket', (desk.match(/td\.connect = connect;/g) || []).length === 1 &&
-  (desk.match(/socket\.send\(JSON\.stringify\(\{ type: 'open'/g) || []).length === 1));
+  (desk.match(/socket\.send\(JSON\.stringify\(\{ type: 'open'/g) || []).length === 1);
 check('q50 stale tmux tabs are pruned', server.includes('A detached tmux session can be killed') &&
   server.includes('if (s.tmux && !tmuxSessionAlive(s.id))') &&
   server.includes('sessions.delete(s.id)'));
