@@ -2007,7 +2007,11 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         // Бинарь ищем на месте: на раннере может быть chromium, chromium-browser,
         // google-chrome или google-chrome-stable — раньше здесь был жёстко
         // забит chromium-browser, и «Go · 🖥» молча не открывал ничего.
-        const binPick = `BROWSER_BIN=$(command -v chromium || command -v chromium-browser || command -v google-chrome || command -v google-chrome-stable || true); if [ -z "$BROWSER_BIN" ]; then exit 3; fi`;
+        // Prefer Google Chrome: the runner's Chromium build can lack H.264/AAC
+        // codecs, so a video page showed its controls but ended with
+        // NotSupportedError and generated no PulseAudio sink input at all.
+        // Chrome is installed on GitHub runners and carries the media codecs.
+        const binPick = `BROWSER_BIN=$(command -v google-chrome-stable || command -v google-chrome || command -v chromium || command -v chromium-browser || true); if [ -z "$BROWSER_BIN" ]; then exit 3; fi`;
         // Браузер пишет свой вывод в лог: без него «не открылось» невозможно
         // объяснить, а именно так и выглядел сломанный «Go · 🖥».
         const blog = path.join(LOG_DIR, 'browser.log');

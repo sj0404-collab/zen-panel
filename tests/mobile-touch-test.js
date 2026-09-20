@@ -360,5 +360,12 @@ check('q43c sound button starts stream', mobHtml.includes('remoteAudioToggle()')
   deskHtml.includes('remoteAudioToggle()') &&
   keep.includes("['parec', 'pulseaudio-utils']") && startDesktop.includes('pulseaudio-utils'));
 
+
+// q44: video launch prefers a codec-complete Google Chrome over a bare
+// Chromium build; the latter showed controls but returned NotSupportedError
+// for H.264/AAC media and produced no PulseAudio sink input.
+check('q44 chrome media codec priority', /BROWSER_BIN=\$\(command -v google-chrome-stable \|\| command -v google-chrome \|\| command -v chromium/.test(server) &&
+  server.includes('PULSE_SINK=browser_youtube'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
