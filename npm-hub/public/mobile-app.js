@@ -2141,9 +2141,14 @@ async function linuxConnect() {
   let u = d.url;
   // noVNC: без кнопки «Подключение», с авто-реконнектом, масштабом и профилем
   // картинки (плавность/качество — кнопка ⚡).
-  if (u && !u.includes('autoconnect')) {
-    u += (u.includes('?') ? '&' : '?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
-    u = linuxProfileQuery(u);
+  if (u) {
+    // keepalive already returns autoconnect=true; the old condition skipped
+    // linuxProfileQuery in that case, leaving noVNC at quality=6/compression=2
+    // and making video updates needlessly heavy on a phone.
+    if (!/[?&]autoconnect=/.test(u)) {
+      u += (u.includes('?') ? '&' : '?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+    }
+    if (!/[?&]quality=/.test(u)) u = linuxProfileQuery(u);
   }
   if (fr) {
     // Единственное место, где iframe меняет src: иначе noVNC перезагружался бы

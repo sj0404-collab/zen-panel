@@ -745,7 +745,7 @@ async function ensureEssentials() {
   } else if (!(await portOpen(VNC_PORT))) {
     const vlog = JSON.stringify(path.join(LOG_DIR, 'x11vnc.log'));
     await sh(`nohup x11vnc -display ${DISPLAY} -nopw -forever -shared -bg -localhost -rfbport ${VNC_PORT}`
-      + ` -noxdamage -wirecopyrect top -alwaysshared -wait 6 -defer 6 -threads >>${vlog} 2>&1 &`, 12000);
+      + ` -noxdamage -wirecopyrect top -alwaysshared -wait 2 -defer 2 -threads >>${vlog} 2>&1 &`, 12000);
     for (let i = 0; i < 12; i++) {
       if (await portOpen(VNC_PORT)) break;
       await sleep(700);

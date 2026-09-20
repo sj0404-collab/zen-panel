@@ -386,6 +386,9 @@ check('q45 Mesa GPU compositor and Android UA', !server.includes('--test-type --
   server.includes('Pixel Tablet') && server.includes('Pixel 8'));
 check('q46 Mesa package and VNC latency', keep.includes("['glxinfo', 'mesa-utils']") &&
   startDesktop.includes('-wait 2 -defer 2'));
+check('q47 noVNC smooth profile is applied to live URL', mob.includes("if (!/[?&]quality=/.test(u)) u = linuxProfileQuery(u)") &&
+  desk.includes("if (!/[?&]quality=/.test(u))") &&
+  mob.includes('quality: 3') && desk.includes('quality: 3'));
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

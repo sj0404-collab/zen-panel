@@ -2071,10 +2071,17 @@ async function linuxStatus(prefix) {
   }
 }
 function linuxQuery(u) {
-  if (u && !u.includes('autoconnect')) {
-    u += (u.includes('?') ? '&' : '?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
-    const p = LINUX_PROFILES[linuxPerf] || LINUX_PROFILES.smooth;
-    u += `&quality=${p.quality}&compression=${p.compression}`;
+  if (u) {
+    // keepalive already returns autoconnect=true; still apply the selected
+    // quality/compression profile to that URL so video is not sent at the
+    // heavier noVNC defaults.
+    if (!/[?&]autoconnect=/.test(u)) {
+      u += (u.includes('?') ? '&' : '?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+    }
+    if (!/[?&]quality=/.test(u)) {
+      const p = LINUX_PROFILES[linuxPerf] || LINUX_PROFILES.smooth;
+      u += `&quality=${p.quality}&compression=${p.compression}`;
+    }
   }
   return u;
 }
