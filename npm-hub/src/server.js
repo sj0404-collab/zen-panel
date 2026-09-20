@@ -1554,6 +1554,17 @@ wss.on('connection', (ws) => {
 // подхватить после перезагрузки страницы или с другого устройства.
 app.get('/api/sessions', (req, res) => {
   const list = [];
+  // A detached tmux session can be killed outside the hub. Prune its in-memory
+  // record before listing, otherwise every reconnect would resurrect a stale
+  // tab forever (the mobile drawer then showed nameless/undefined sessions).
+  for (const s of [...sessions.values()]) {
+    if (s.tmux && !tmuxSessionAlive(s.id)) {
+      if (s.poller) { clearInterval(s.poller); s.poller = null; }
+      try { fs.unlinkSync(s.logPath); } catch {}
+      deleteSessionMeta(s.id);
+      sessions.delete(s.id);
+    }
+  }
   const push = (s) => list.push({
     id: s.id, cwd: s.cwd || null, toolId: s.toolId || null,
     toolName: s.toolName || 'Terminal', color: s.color || '#58a6ff',
