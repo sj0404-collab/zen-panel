@@ -1145,6 +1145,15 @@ const audioRate = (req) => {
     return Math.max(8000, Math.min(96000, Number.isFinite(n) ? Math.round(n) : 44100));
   } catch { return 44100; }
 };
+const ensureBrowserAudioSink = async () => {
+  const ls = await pulseRun('pactl list short sinks 2>/dev/null');
+  if (!/\tbrowser_youtube(?:\.\d+)?\t/.test(String(ls.out || ''))) {
+    await pulseRun('pactl load-module module-null-sink sink_name=browser_youtube sink_properties=device.description=Hub-browser_youtube 2>/dev/null || true');
+  }
+  // Route the Chromium launched by this hub to the sink whose monitor we
+  // stream. A null sink is intentional: the phone is the real speaker.
+  await pulseRun('pactl set-default-sink browser_youtube 2>/dev/null || true');
+};
 const audioSource = async () => {
   const d = await pulseRun('pactl get-default-sink 2>/dev/null');
   const sink = String(d.out || '').trim().split(/\s+/)[0] || 'auto_null';
@@ -1958,6 +1967,9 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         const isYoutube = /youtube\.com|youtu\.be/i.test(url);
         // PulseAudio со звуком: проверяем и стартуем если упал
         try {
+          await ensureBrowserAudioSink();
+        } catch {}
+        try {
           const chk = await pulseRun('pulseaudio --check 2>&1; echo $?');
           if (!chk.out || !chk.out.trim().endsWith('0')) {
             await pulseRun('pulseaudio --start --disallow-exit --exit-idle-time=-1 2>&1');
@@ -2000,7 +2012,7 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         // объяснить, а именно так и выглядел сломанный «Go · 🖥».
         const blog = path.join(LOG_DIR, 'browser.log');
         const launch = (extraFlags) => runOnDisplay(
-          `${binPick}; setsid nohup "$BROWSER_BIN" ${chromeFlags} ${extraFlags} '${escaped}' >>${JSON.stringify(blog)} 2>&1 & sleep 3; `
+          `${binPick}; PULSE_SINK=browser_youtube setsid nohup "$BROWSER_BIN" ${chromeFlags} ${extraFlags} '${escaped}' >>${JSON.stringify(blog)} 2>&1 & sleep 3; `
           + `pgrep -f "$(basename "$BROWSER_BIN")" | head -1`, 12000);
         let r = await launch(uaFlag);
         let started = Boolean(r.out && /^\d+$/m.test(r.out));
@@ -2828,9 +2840,12 @@ app.get('/api/tunnel', (req, res) => {
     for (const name of sinks) {
       await pulseRun(`pactl load-module module-null-sink sink_name=${name} sink_properties=device.description="Hub-${name}" 2>/dev/null || true`);
     }
-    // Load loopback so any audio on these sinks is audible
-    await pulseRun('pactl load-module module-loopback source=cloud_phone.monitor 2>/dev/null || true');
-    await pulseRun('pactl load-module module-loopback source=browser_youtube.monitor 2>/dev/null || true');
+    // Keep the browser sink isolated from the capture stream. The old
+    // loopback omitted `sink=auto_null`, so after a restart Pulse could make
+    // browser_youtube loop back into itself and Chrome had no clean stream.
+    await pulseRun('pactl set-default-sink browser_youtube 2>/dev/null || true');
+    await pulseRun('pactl load-module module-loopback source=cloud_phone.monitor sink=auto_null 2>/dev/null || true');
+    await pulseRun('pactl load-module module-loopback source=browser_youtube.monitor sink=auto_null 2>/dev/null || true');
     console.log('  🔊 Virtual audio sinks ready: cloud_phone, browser_youtube');
   } catch {}
 })();
