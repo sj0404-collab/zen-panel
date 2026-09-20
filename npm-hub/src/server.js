@@ -1990,7 +1990,15 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         // снесло бы первым же обновлением). На своём раннере ~ сохраняется.
         const profileRoot = path.join(DATA_DIR, 'chrome-profile');
         try { fs.mkdirSync(profileRoot, { recursive: true }); } catch {}
-        const userData = vertical ? path.join(profileRoot, 'vertical') : profileRoot;
+        // Keep Google Chrome and Chromium in different profiles. The old
+        // shared profile could leave a Chromium process alive; then starting
+        // Chrome only sent the URL to that old process and the codec problem
+        // silently returned. Chrome profiles also need their own first-run
+        // state, so we can skip the Terms/Welcome window below.
+        const googleAvailable = ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
+          '/usr/local/bin/google-chrome', '/usr/local/bin/google-chrome-stable'].some(fs.existsSync);
+        const browserProfile = googleAvailable ? 'google' : 'chromium';
+        const userData = path.join(profileRoot, browserProfile, vertical ? 'vertical' : 'normal');
         // Хром с поддержкой звука и автоплея
         // Флаги под headless-VNC: без них Chromium считает окно на Xvfb
         // «перекрытым/фоновым» и душит рендер и медиа — видео в YouTube просто
@@ -2001,7 +2009,7 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
           + ` --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling`
           + ` --use-fake-ui-for-media-stream`
           + ` --enable-accelerated-video-decode --disable-frame-rate-limit`
-          + ` --window-size=${mobile ? mobileWin : winSize} --window-position=${mobile ? '0,0' : '20,20'} --user-data-dir=${userData} --no-first-run --disable-infobars --disable-dev-shm-usage`;
+          + ` --window-size=${mobile ? mobileWin : winSize} --window-position=${mobile ? '0,0' : '20,20'} --user-data-dir=${userData} --no-first-run --no-default-browser-check --disable-signin-promo --disable-infobars --disable-dev-shm-usage`;
         // Мобильный user-agent для вертикального ютуба (чтобы открылся m.youtube.com/shorts)
         const uaFlag = (vertical && isYoutube) ? `--user-agent='Mozilla/5.0 (Linux; Android 10; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36'` : '';
         // Бинарь ищем на месте: на раннере может быть chromium, chromium-browser,
