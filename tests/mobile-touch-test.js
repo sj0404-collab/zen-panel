@@ -321,5 +321,18 @@ check('q40e wheel masks', mob.includes('up: 8, down: 16, left: 32, right: 64') &
 check('q40f follow cursor', mob.includes('_follow()') && desk.includes('_follow()') &&
   mob.includes('viewportChangePos') && desk.includes('viewportChangePos'));
 
+
+// q41: читалка на «Экране» — /api/ocr и /api/screenshot падали с
+// «_exec is not a function» (в модуле хелпер объявлен как `const { exec: _exec }`,
+// а в OCR-хелпере его повторно доставали как `const {_exec}` — такого свойства
+// у child_process нет). Проверяем, что такого дубля больше нет и что OCR-пакеты
+// хаб ставит сам.
+check('q41a ocr helper uses module exec', !server.includes('const {_exec} = require(') &&
+  server.includes('const { exec: _exec } = require(') &&
+  server.includes('const ocrRun = (cmd) => new Promise') &&
+  server.includes('/api/screenshot'));
+check('q41b hub installs tesseract', keep.includes("['tesseract', 'tesseract-ocr']") &&
+  keep.includes("OCR_LANG_PKG = 'tesseract-ocr-rus'") && keep.includes('ocrLangMissing'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

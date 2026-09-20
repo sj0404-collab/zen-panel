@@ -1972,7 +1972,11 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
 
 // ─── OCR + SCREENSHOT для TTS/чтения в фоне ───
 const ocrRun = (cmd) => new Promise((resolve)=>{
-  const {_exec} = require('child_process');
+  // Здесь был ПОВТОРНЫЙ require, который доставал из child_process свойство с
+  // именем _exec — такого свойства у модуля нет, и /api/ocr вместе с
+  // /api/screenshot падали с «_exec is not a function»: читалка TTS/OCR на
+  // «Экране» не работала вообще. Хелпер _exec уже объявлен выше в модуле
+  // (переименование exec при разрушении объекта), берём его оттуда.
   _exec(cmd, {timeout: 15000}, (err, stdout, stderr)=>{
     resolve({ok: !err, out: (stdout||'').trim(), err: (stderr||'').trim()});
   });

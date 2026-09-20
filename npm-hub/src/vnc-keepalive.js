@@ -174,14 +174,28 @@ const REQUIRED_BINS = [
   ['Xvfb', 'xvfb'], ['openbox', 'openbox'], ['x11vnc', 'x11vnc'], ['xterm', 'xterm'],
   ['tint2', 'tint2'], ['idesk', 'idesk'], ['feh', 'feh'], ['convert', 'imagemagick'],
   ['pcmanfm', 'pcmanfm'], ['xdotool', 'xdotool'], ['pulseaudio', 'pulseaudio'],
-  ['wmctrl', 'wmctrl'], ['xwit', 'xwit']
+  ['wmctrl', 'wmctrl'], ['xwit', 'xwit'],
+  // Читалка на «Экране» (👁️ OCR + 🔊 TTS) без tesseract не может ничего:
+  // /api/ocr отвечал «tesseract не установлен».
+  ['tesseract', 'tesseract-ocr']
 ];
+
+// Русский язык для OCR: у пакета нет своего исполняемого файла, поэтому в
+// REQUIRED_BINS он не попадает — проверяем сам файл языковой модели.
+const OCR_LANG_PKG = 'tesseract-ocr-rus';
+async function ocrLangMissing() {
+  const r = await sh('ls /usr/share/tesseract-ocr/*/tessdata/rus.traineddata 2>/dev/null | head -1', 8000);
+  return !String(r.out || '').trim();
+}
 let lastPkgTry = 0;
 let aptUpdated = false;
 
 async function ensurePackages(force) {
   const missing = [];
   for (const [bin, pkg] of REQUIRED_BINS) if (!(await which(bin))) missing.push(pkg);
+  if (!missing.includes('tesseract-ocr') && (await which('tesseract')) && (await ocrLangMissing())) {
+    missing.push(OCR_LANG_PKG);
+  }
   state.missing = missing;
   if (!missing.length) return { ok: true, missing: [] };
   if (!force && Date.now() - lastPkgTry < 5 * 60 * 1000) return { ok: false, missing, throttled: true };
@@ -203,6 +217,7 @@ async function ensurePackages(force) {
   }
   const still = [];
   for (const [bin, pkg] of REQUIRED_BINS) if (missing.includes(pkg) && !(await which(bin))) still.push(pkg);
+  if (missing.includes(OCR_LANG_PKG) && (await ocrLangMissing())) still.push(OCR_LANG_PKG);
   state.missing = still;
   return { ok: still.length === 0, missing: still };
 }
