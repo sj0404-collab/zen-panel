@@ -83,6 +83,7 @@ async function init() {
     tUrl.style.display = '';
     window.__tunnelUrl = tunnelR.url;
   }
+  await restoreServerSessions();
   renderDashboard(); renderSidebar();
   setTimeout(() => { initFM(); fmBrowse(workDir || homeDir); }, 300);
 }
@@ -114,8 +115,7 @@ async function hubUpdate() {
     fmInfo(`Актуальная версия (${check.version}), обновлений нет.`);
     return;
   }
-  const want = `На GitHub есть новая версия: сейчас ${check.current}, доступно ${check.latest} (+${check.behind} коммит.)\n\nОбновить сейчас? Терминалы и туннель переживут рестарт.`;
-  if (!confirm(want)) { busy('🔄'); return; }
+  fmInfo(`Новая версия: ${check.current} → ${check.latest} (+${check.behind} коммит.) — обновляю…`);
   try {
     const apply = await fetch('/api/update', { method: 'POST' }).then(r => r.json());
     if (!apply.success) {
@@ -225,6 +225,8 @@ function showPage(p) {
 }
 
 showPage('files');
+// восстанавливаем адрес облачного телефона и держим его актуальным
+(function(){ try { cpRestoreLastUrl(); } catch {} })();
 
 // ===== GIT VIEW =====
 let gitPathRef = '';
@@ -537,6 +539,21 @@ function renderSidebar() {
 }
 
 // ======== SESSIONS ========
+// Reattach the browser UI to tmux sessions that survived a hub restart.
+async function restoreServerSessions() {
+  try {
+    const r = await fetch('/api/sessions');
+    const d = await r.json();
+    if (!d.success || !Array.isArray(d.sessions)) return;
+    const known = new Set(tabs.map(t => t.id));
+    for (const s of d.sessions) {
+      if (!s || !s.id || known.has(String(s.id))) continue;
+      known.add(String(s.id));
+      await createTerm(s.toolId || '_terminal', s.cwd || homeDir, !s.toolId || s.toolId === '_terminal', s);
+    }
+    renderTabs(); renderSidebar();
+  } catch {}
+}
 function showNewTermModal() {
   document.getElementById('newterm-grid').innerHTML = `
     <div class="newterm-tool" onclick="openStandaloneTerminal()">
@@ -623,43 +640,129 @@ function attachTermScroll(id, panel) {
   return { upd, destroy() { if (ro) ro.disconnect(); window.removeEventListener('resize', resizeHandler); } };
 }
 
-// ===== TAP-TO-FOCUS + LONG-PRESS COPY =====
+// ===== ТЕРМИНАЛ НА ПАЛЬЦЕ =====
+// Раньше: ЛЮБОЕ удержание дольше 600 мс копировало текст (а без выделения —
+// последние 200 строк буфера, то есть «весь экран»), а тап дольше 500 мс не
+// возвращал фокус — клавиатура не открывалась. Жалоба: «каждый тап бесконечно
+// копирует весь текст при запуске клавиатуры, когда я хочу печатать».
+// Теперь: тап — печатать (клавиатура), удержание — выделить слово под пальцем,
+// тянуть — расширить выделение по строкам, ⧉ — скопировать.
+function termCellAt(term, x, y) {
+  try {
+    const screen = term.element && term.element.querySelector('.xterm-screen');
+    if (!screen) return null;
+    const r = screen.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const col = Math.floor((x - r.left) / (r.width / term.cols));
+    const rowInView = Math.floor((y - r.top) / (r.height / term.rows));
+    if (col < 0 || rowInView < 0 || col >= term.cols || rowInView >= term.rows) return null;
+    const row = (term.buffer.active.viewportY || 0) + rowInView;
+    return { col, row };
+  } catch { return null; }
+}
+
+// Выделяем слово под пальцем; если там пустота — всю непустую строку.
+function termSelectWordAt(term, x, y) {
+  const cell = termCellAt(term, x, y);
+  if (!cell) return false;
+  try {
+    const line = term.buffer.active.getLine(cell.row);
+    if (!line) return false;
+    const text = line.translateToString(true);
+    const isWord = (ch) => !!ch && !/\s/.test(ch);
+    let s = Math.min(cell.col, Math.max(0, text.length - 1));
+    let e = s;
+    if (isWord(text[s])) {
+      while (s > 0 && isWord(text[s - 1])) s--;
+      while (e < text.length - 1 && isWord(text[e + 1])) e++;
+    } else {
+      const trimmed = text.trim();
+      if (!trimmed) return false;
+      s = text.indexOf(trimmed);
+      e = s + trimmed.length - 1;
+    }
+    term.select(s, cell.row, e - s + 1);
+    return true;
+  } catch { return false; }
+}
+
 function setupTermTouch(termEl, term) {
   if (!isTouch) return null;
-  let startY = 0, startX = 0, startT = 0, scrolled = false, longPress=false, holdTimer=null;
+  let startY = 0, startX = 0, startT = 0;
+  let scrolled = false, selecting = false, anchorRow = 0, holdTimer = null;
   const onStart = (e) => {
-    const tt=e.touches[0]; startY=tt.clientY; startX=tt.clientX; startT=Date.now(); scrolled=false; longPress=false;
-    term.blur(); clearTimeout(holdTimer);
-    holdTimer=setTimeout(()=>{ if(!scrolled){ longPress=true; try{if(navigator.vibrate) navigator.vibrate(30);}catch{} copySelection(); } },600);
+    const t = e.touches[0];
+    startY = t.clientY; startX = t.clientX; startT = Date.now();
+    scrolled = false; selecting = false;
+    clearTimeout(holdTimer);
+    // Клавиатуру НЕ прячем: тап по терминалу должен её открывать (печатать),
+    // а не закрывать.
+    holdTimer = setTimeout(() => {
+      if (scrolled) return;
+      const cell = termCellAt(term, startX, startY);
+      if (!cell) return;
+      selecting = true;
+      anchorRow = cell.row;
+      try { if (navigator.vibrate) navigator.vibrate(20); } catch {}
+      if (termSelectWordAt(term, startX, startY)) {
+        fmInfo('выделено — тяни, чтобы расширить, затем ⧉ чтобы скопировать');
+      }
+    }, 550);
   };
   const onMove = (e) => {
-    const tt=e.touches[0];
-    if(Math.abs(tt.clientY-startY)>8 || Math.abs(tt.clientX-startX)>8){ scrolled=true; clearTimeout(holdTimer); term.blur(); }
+    const t = e.touches[0];
+    if (selecting) {
+      // Тянем выделение по строкам.
+      const cell = termCellAt(term, t.clientX, t.clientY);
+      if (cell && typeof term.selectLines === 'function') {
+        try { term.selectLines(Math.min(anchorRow, cell.row), Math.max(anchorRow, cell.row)); } catch {}
+      }
+      e.preventDefault();
+      return;
+    }
+    if (Math.abs(t.clientY - startY) > 8 || Math.abs(t.clientX - startX) > 8) {
+      scrolled = true;
+      clearTimeout(holdTimer);
+      // Прокрутка с открытой клавиатурой неудобна — прячем её только здесь.
+      try { if (term.textarea === document.activeElement) term.blur(); } catch {}
+    }
   };
   const onEnd = (e) => {
     clearTimeout(holdTimer);
-    if(longPress){ e.preventDefault(); return; }
-    if(!scrolled && Date.now()-startT<500){ e.preventDefault(); term.focus(); }
+    if (selecting) {
+      selecting = false;
+      const sel = (term.getSelection() || '').trim();
+      fmInfo(sel ? ('выделено ' + sel.length + ' симв. — ⧉ чтобы скопировать') : 'ничего не выделено');
+      return;
+    }
+    if (!scrolled && Date.now() - startT < 550) {
+      // Тап = печатать: открываем клавиатуру и снимаем старое выделение.
+      try { term.clearSelection(); } catch {}
+      term.focus();
+    }
   };
-  const onContext=(e)=>{ e.preventDefault(); copySelection(); return false; };
+  // Долгий тап браузера (контекстное меню) — тоже выделяем, а не копируем молча.
+  const onContext = (e) => { e.preventDefault(); termSelectWordAt(term, e.clientX, e.clientY); return false; };
   termEl.addEventListener('touchstart', onStart, { passive: true });
-  termEl.addEventListener('touchmove', onMove, { passive: true });
+  termEl.addEventListener('touchmove', onMove, { passive: false });
   termEl.addEventListener('touchend', onEnd, { passive: false });
   termEl.addEventListener('contextmenu', onContext);
   return { destroy() { clearTimeout(holdTimer); termEl.removeEventListener('touchstart', onStart); termEl.removeEventListener('touchmove', onMove); termEl.removeEventListener('touchend', onEnd); termEl.removeEventListener('contextmenu', onContext); } };
 }
 
-async function createTerm(toolId, cwdOverride, plainTerminal) {
+async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   closeModal('modal-newterm');
-  const tool = tools.find(t => t.id === toolId);
-  const isPlain = plainTerminal || toolId === '_terminal' || !tool;
+  const resume = resumeSession && resumeSession.id ? resumeSession : null;
+  const effectiveToolId = resume ? (resume.toolId || '_terminal') : toolId;
+  const tool = tools.find(t => t.id === effectiveToolId);
+  const isPlain = resume ? (!tool || effectiveToolId === '_terminal') : (plainTerminal || toolId === '_terminal' || !tool);
 
-  const id = 'term_' + Date.now();
+  const id = resume ? String(resume.id) : ('term_' + Date.now());
   const cwdInput = document.getElementById('newterm-cwd')?.value?.trim();
-  const cwd = cwdOverride || cwdInput || toolDirs[toolId] || homeDir;
+  const cwd = (resume && resume.cwd) || cwdOverride || cwdInput || toolDirs[effectiveToolId] || homeDir;
 
-  if (toolId && !isPlain) {
-    toolDirs[toolId] = cwd;
+  if (effectiveToolId && !isPlain) {
+    toolDirs[effectiveToolId] = cwd;
     await fetch('/api/last-dir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toolId, dir: cwd }) });
   }
   if (!recentPaths.includes(cwd)) {
@@ -681,9 +784,9 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   term.loadAddon(new WebLinksAddon.WebLinksAddon());
 
   const dirShort = (homeDir ? cwd.replace(homeDir, '~') : cwd).split('\\').pop();
-  const displayName = isPlain ? 'Terminal' : tool.name;
-  const color = isPlain ? '#58a6ff' : tool.color;
-  const icon = isPlain ? '>_' : tool.icon;
+  const displayName = (resume && resume.toolName) || (isPlain ? 'Terminal' : tool.name);
+  const color = (resume && resume.color) || (isPlain ? '#58a6ff' : tool.color);
+  const icon = (resume && resume.icon) || (isPlain ? '>_' : tool.icon);
   const panel = document.createElement('div');
   panel.className = 'term-panel';
   panel.id = 'panel-' + id;
@@ -693,7 +796,10 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
   await new Promise(r => setTimeout(r, 30));
   fitAddon.fit();
 
-  const td = { id, toolId, toolName: displayName, color, icon, dirShort, ws: null, term, fitAddon, el: panel, manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null, keepAlive: null, resizeObs: null, touchHandler: null, connect: () => {} };
+  const td = { id, toolId: effectiveToolId, toolName: displayName, color, icon,
+    toolColor: color, toolIcon: icon, dirShort, ws: null, term, fitAddon, el: panel,
+    manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null,
+    keepAlive: null, resizeObs: null, touchHandler: null, connect: () => {} };
   tabs.push(td);
   td.scroll = attachTermScroll(id, panel);
   td.touchHandler = setupTermTouch(document.getElementById('term-' + id), term);
@@ -704,7 +810,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
 
     socket.onopen = () => {
       td.lastPong = Date.now();
-      socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : toolId, sessionId: id, cwd, cols: term.cols, rows: term.rows }));
+      socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : effectiveToolId, sessionId: id, cwd, cols: term.cols, rows: term.rows }));
       if (!isTouch) term.focus();
     };
     socket.onmessage = (e) => {
@@ -736,7 +842,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal) {
 
   term.onData((d) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'input', data: d })); });
   term.onResize(({ cols, rows }) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'resize', cols, rows })); });
-  connect();
+  // The socket was opened above; do not open a second connection for one tab.
   td.resizeObs = new ResizeObserver(() => { if (activeTab?.id === id) fitAddon.fit(); });
   td.resizeObs.observe(panel);
 
@@ -866,17 +972,13 @@ async function copySelection() {
   const term = activeTab && activeTab.term;
   if (!term) return;
   let txt = '';
-  try { txt = term.getSelection() || ''; } catch {}
+  try { txt = (term.getSelection() || '').trim(); } catch {}
   if (!txt) {
-    try {
-      const buf = term.buffer.active;
-      const from = Math.max(0, buf.length - 200);
-      const lines = [];
-      for (let y = from; y < buf.length; y++) lines.push(buf.getLine(y).translateToString(true));
-      txt = lines.join('\n').replace(/\s+$/, '');
-    } catch {}
+    // Раньше здесь молча копировались последние 200 строк буфера — из-за этого
+    // «любой тап копировал весь текст». Теперь объясняем, как выделить.
+    fmInfo('Сначала выдели текст: удерживай палец на строке и тяни, потом ⧉');
+    return;
   }
-  if (!txt) { fmInfo('Нечего копировать'); return; }
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(txt);
@@ -1565,6 +1667,19 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ===== CLOUD PHONE =====
+// Последний адрес облачного телефона: писался, но не восстанавливался —
+// после перезагрузки панели поле оставалось пустым.
+let cpLastUrl = '';
+function cpRestoreLastUrl() {
+  try {
+    const last = localStorage.getItem('cp.lastUrl');
+    if (!last) return;
+    cpLastUrl = last;
+    const el = document.getElementById('cp-url-desktop') || document.getElementById('cp-url');
+    if (el && !el.value) el.value = last;
+  } catch {}
+}
+
 function cloudPhoneUrl(suffix) {
   const proto = location.protocol === 'https:' ? 'https' : 'http';
   return proto + '://' + location.host + '/phone/' + (suffix || 'vnc.html');
@@ -1657,6 +1772,7 @@ async function phoneBrowserOpen(url, prefix) {
   if (!/^https?:\/\//i.test(val)) val = 'https://' + val;
   if (urlEl) urlEl.value = val;
   try { localStorage.setItem('cp.lastUrl', val); } catch {}
+  cpLastUrl = val;
   const d = await cloudPhoneStatus(pfx);
   if (!d.running) {
     phoneMsg('Телефон не запущен. Нажмите «▶ Старт».');
@@ -1686,40 +1802,22 @@ if (document.getElementById('p-linux')) linuxAutoConnect();
 // ===== LINUX DESKTOP (VNC) =====
 
 let browserHistDesk=[], browserIdxDesk=-1;
+// Вкладку Chrome убрали (она дублировала «Экран»): любая ссылка открывается
+// прямо на удалённом рабочем столе.
 function hubBrowserGo(url){
   if(!url) return;
   url=url.trim(); if(!/^https?:\/\//i.test(url)) url='https://'+url;
-  const inp=document.getElementById('browser-url-desk');
+  const inp=document.getElementById('browser-url-desktop');
   if(inp) inp.value=url;
-  const blockedSites = /google\.com|youtube\.com|youtu\.be|github\.com|chat\.openai\.com/i;
-  if(blockedSites.test(url)){
-    const isYt=/youtube|youtu\.be/i.test(url);
-    browserOpenDesktop(url, isYt);
-    return;
-  }
-  const frame=document.getElementById('browser-frame-desk');
-  if(!frame) return;
-  browserHistDesk=browserHistDesk.slice(0,browserIdxDesk+1);
-  browserHistDesk.push(url); browserIdxDesk=browserHistDesk.length-1;
-  frame.src=url;
-  // Проверка блокировки iframe
-  setTimeout(()=>{
-    try{
-      const doc=frame.contentDocument;
-      if(!doc || !doc.body || doc.body.innerText.includes('ERR_BLOCKED')){
-        const hint=document.getElementById('browser-agent-hint-desk');
-        if(hint){ hint.innerHTML='<span>⚠️ Блокирует iframe —</span> <button class=\"btn btn-p btn-sm\" onclick=\"browserOpenDesktop(\''+url.replace(/'/g,"\\'")+ '\')\">🖥</button>'; hint.style.display='flex'; }
-      }
-    }catch(e){
-      const hint=document.getElementById('browser-agent-hint-desk');
-      if(hint){ hint.innerHTML='<span>⚠️ Блокирует iframe —</span> <button class=\"btn btn-p btn-sm\" onclick=\"browserOpenDesktop(\''+url.replace(/'/g,"\\'")+ '\')\">🖥</button>'; hint.style.display='flex'; }
-    }
-  },1500);
   try{localStorage.setItem('hub_browser_last',url);}catch{}
-  showPage('browser');
+  const isYt=/youtube|youtu\.be/i.test(url);
+  linuxRunBrowser(url, isYt);
+  fmInfo('🌐 '+url+' → открываю на экране');
+  showPage('linux');
 }
+
 function browserOpenDesktop(url, vertical){
-  if(!url) url=document.getElementById('browser-url-desk')?.value||'';
+  if(!url) url=document.getElementById('browser-url-desktop')?.value||'';
   if(!url) return;
   url=url.trim(); if(!/^https?:\/\//i.test(url)) url='https://'+url;
   linuxRunBrowser(url, !!vertical);
@@ -1759,15 +1857,7 @@ function ttsStopDesk(){ if(typeof ttsStop==='function') ttsStop(); else speechSy
 function ttsSetRateDesk(v){ const el=document.getElementById('tts-rate-label-desk'); if(el) el.textContent=v+'×'; if(typeof ttsSetRate==='function') ttsSetRate(v); }
 function ocrCaptureDesk(){
   if(typeof ocrCapture==='function') ocrCapture();
-  else alert('OCR: используй мобильную версию');
-}
-function browserFullscreenVerticalDesk(){
-  const url=document.getElementById('browser-url-desk')?.value||'https://m.youtube.com/shorts/';
-  browserOpenDesktop(url, true);
-  setTimeout(()=>{
-    const c=document.getElementById('p-browser');
-    try{ if(c && c.requestFullscreen) c.requestFullscreen().catch(()=>{}); }catch{}
-  },1100);
+  else fmInfo('OCR: распознавание доступно в мобильной панели');
 }
 function browserAgentHintDesk(url){
   if(!url) return;
@@ -1933,7 +2023,8 @@ async function ocrCapture(){
     if(txt && !txt.includes('Текст не доступен')){
       if(st) st.textContent='OK (текст)';
       ttsQueue=[txt.slice(0,3000)]; ttsIdx=0;
-      if(confirm('Распознано '+txt.slice(0,120)+'... Начать чтение?')) ttsToggle();
+      ttsToggle();
+      fmInfo('Читаю распознанное: '+txt.slice(0,80)+'…');
       return;
     }
     // Иначе скриншот VNC + tesseract на сервере
@@ -1944,15 +2035,15 @@ async function ocrCapture(){
       if(st) st.textContent='OCR готово: '+d.text.slice(0,30)+'...';
       // Кладём в буфер и предлагаем читать
       ttsQueue=[txt.slice(0,4000)];
-      if(confirm('OCR: '+txt.slice(0,200)+'... Читать?')) { ttsIdx=0; ttsSpeaking=false; ttsToggle(); }
-      else { navigator.clipboard?.writeText(txt).catch(()=>{}); }
+      ttsIdx=0; ttsSpeaking=false; ttsToggle();
+      fmInfo('OCR: читаю распознанное ('+txt.length+' символов)');
     } else {
       if(st) st.textContent='OCR: '+ (d.error||'нет текста');
-      alert('OCR не нашёл текст: '+(d.error||'попробуй другой сайт'));
+      fmInfo('OCR не нашёл текст: '+(d.error||'попробуй другую страницу'));
     }
   }catch(e){
     if(st) st.textContent='OCR ошибка';
-    alert('OCR ошибка: '+e.message);
+    fmInfo('OCR ошибка: '+e.message);
   }
 }
 function ocrCaptureDesk(){ ocrCapture(); }
@@ -2001,10 +2092,17 @@ async function linuxStatus(prefix) {
   }
 }
 function linuxQuery(u) {
-  if (u && !u.includes('autoconnect')) {
-    u += (u.includes('?') ? '&' : '?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
-    const p = LINUX_PROFILES[linuxPerf] || LINUX_PROFILES.smooth;
-    u += `&quality=${p.quality}&compression=${p.compression}`;
+  if (u) {
+    // keepalive already returns autoconnect=true; still apply the selected
+    // quality/compression profile to that URL so video is not sent at the
+    // heavier noVNC defaults.
+    if (!/[?&]autoconnect=/.test(u)) {
+      u += (u.includes('?') ? '&' : '?') + 'autoconnect=true&reconnect=true&reconnect_delay=2000&resize=scale';
+    }
+    if (!/[?&]quality=/.test(u)) {
+      const p = LINUX_PROFILES[linuxPerf] || LINUX_PROFILES.smooth;
+      u += `&quality=${p.quality}&compression=${p.compression}`;
+    }
   }
   return u;
 }
@@ -2154,6 +2252,94 @@ function linuxPatchFrame(fr) {
           if (clip) { clip.checked = mode === 'clip'; fire(clip); }
           return Boolean(sel);
         },
+        // ── Виртуальная мышь ────────────────────────────────────────────────
+        // Работает через тот же RFB, что и обычное управление: координаты в
+        // CSS-пикселях канвы, как их ждёт rfb._sendMouse(). Палец по сенсору
+        // НЕ должен попадать в кадр — иначе ноVNC отправит свой клик, поэтому
+        // сенсор, кнопки и стрелки живут в родительской странице, а сюда
+        // приходят только готовые команды.
+        mouse: {
+          rf() { const w = doc.defaultView; return (w && w.__rfb) || null; },
+          canvas() { return doc.querySelector('canvas'); },
+          dot() {
+            let d = doc.getElementById('hub-vmouse-dot');
+            if (!d) {
+              d = doc.createElement('div');
+              d.id = 'hub-vmouse-dot';
+              d.style.cssText = 'position:fixed;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;'
+                + 'background:rgba(88,166,255,.35);border:2px solid #58a6ff;box-shadow:0 0 8px rgba(0,0,0,.7);'
+                + 'pointer-events:none;z-index:2147483000;display:none';
+              doc.body.appendChild(d);
+            }
+            return d;
+          },
+          pos() {
+            if (!this._p) {
+              const c = this.canvas();
+              this._p = { x: Math.round((c ? c.clientWidth : 0) / 2), y: Math.round((c ? c.clientHeight : 0) / 2) };
+            }
+            return this._p;
+          },
+          _clamp() {
+            const c = this.canvas(), p = this.pos();
+            if (c) {
+              p.x = Math.max(0, Math.min(Math.max(0, c.clientWidth - 1), p.x));
+              p.y = Math.max(0, Math.min(Math.max(0, c.clientHeight - 1), p.y));
+            }
+            return p;
+          },
+          _draw() {
+            const c = this.canvas(), d = this.dot(), p = this.pos();
+            if (!c || !d) return;
+            const r = c.getBoundingClientRect();
+            d.style.display = 'block';
+            d.style.left = (r.left + p.x) + 'px';
+            d.style.top = (r.top + p.y) + 'px';
+          },
+          // Стол больше экрана телефона (режим «крупно», 1:1): когда курсор
+          // подходит к краю видимого куска, картинка подъезжает за ним — иначе
+          // мышью достать до угла стола невозможно.
+          _follow() {
+            const r = this.rf(), c = this.canvas();
+            if (!r || !c) return;
+            const d = r._display;
+            if (!d || !d.clipViewport || !d._viewportLoc) return;
+            const s = d.scale || 1;
+            if (!s) return;
+            const vw = (c.clientWidth || 0) / s, vh = (c.clientHeight || 0) / s;
+            if (!vw || !vh) return;
+            const p = this.pos();
+            const dx = p.x / s + d._viewportLoc.x, dy = p.y / s + d._viewportLoc.y;
+            const m = 28 / s;                       // начинаем подъезжать за 28 css-px до края
+            let mx = 0, my = 0;
+            if (dx < d._viewportLoc.x + m) mx = dx - (d._viewportLoc.x + m);
+            else if (dx > d._viewportLoc.x + vw - m) mx = dx - (d._viewportLoc.x + vw - m);
+            if (dy < d._viewportLoc.y + m) my = dy - (d._viewportLoc.y + m);
+            else if (dy > d._viewportLoc.y + vh - m) my = dy - (d._viewportLoc.y + vh - m);
+            if (mx || my) { try { d.viewportChangePos(Math.round(mx), Math.round(my)); } catch {} }
+          },
+          _send(mask) {
+            const r = this.rf(), p = this.pos();
+            if (!r) return false;
+            try { r._sendMouse(p.x, p.y, mask | 0); return true; } catch { return false; }
+          },
+          // сдвиг курсора (dx, dy в CSS-пикселях стола), mask — зажатые кнопки
+          move(dx, dy, mask) {
+            const p = this.pos();
+            p.x += dx; p.y += dy;
+            this._clamp(); this._follow(); this._draw();
+            this._send(mask | 0);
+            return { x: p.x, y: p.y };
+          },
+          // перевести курсор в точку кадра (панорама/поворот экрана)
+          to(x, y, mask) { const p = this.pos(); p.x = x; p.y = y; this._clamp(); this._draw(); this._send(mask | 0); return { x: p.x, y: p.y }; },
+          button(mask, down) { return this._send(down ? (mask | 0) : 0); },
+          click(mask) { this.button(mask, true); setTimeout(() => { try { this.button(mask, false); } catch {} }, 70); return true; },
+          // колесо: 8 — вверх, 16 — вниз, 32 — влево, 64 — вправо
+          wheel(mask) { if (!this._send(mask | 0)) return false; this._send(0); return true; },
+          center() { this._p = null; this._clamp(); this._draw(); return this.pos(); },
+          state() { const p = this.pos(); return { x: p.x, y: p.y, dot: !!doc.getElementById('hub-vmouse-dot') }; }
+        },
         info() {
           const sel = doc.getElementById('noVNC_setting_resize');
           const cv = doc.querySelector('canvas');
@@ -2190,6 +2376,171 @@ setInterval(() => {
   if (!fr || !fr.dataset.src || fr.style.display === 'none') { try { linuxConnect('desktop'); } catch {} }
 }, 15000);
 
+// ===== ВИРТУАЛЬНАЯ МЫШЬ =====
+// Раньше «мышью» служил сам палец по картинке экрана: он закрывает то место,
+// куда целишься, промах уходил в пустоту, а прокрутки не было вовсе. Теперь
+// мышь отдельная и как настоящая: слева СЕНСОР (тянешь — курсор едет, тап —
+// клик, два тапа — двойной клик), справа две кнопки (ЛКМ/ПКМ, их можно
+// зажать и перетаскивать) и колесо стрелками (▲▼ вверх/вниз, ◀▶ влево/вправо).
+let linuxMouseOn = false;
+let vMouseWheelTimer = null;
+const VMOUSE_SENS = 1.8;            // палец прошёл 10 px — курсор 18 px стола
+const vMouseHeld = { 1: false, 4: false };
+const VMOUSE_WHEEL_MASK = { up: 8, down: 16, left: 32, right: 64 };
+
+// Доступ к мыши внутри кадра noVNC (кадр наш, поэтому contentDocument открыт).
+function vMouseFrame() {
+  const fr = document.getElementById('linux-frame-desktop');
+  try { return (fr && fr.contentDocument && fr.contentDocument.__hub) || null; } catch { return null; }
+}
+function vMouseApi() {
+  const h = vMouseFrame();
+  return (h && h.mouse) || null;
+}
+function vMouseReady() { return !!vMouseApi(); }
+function vMouseHeldMask() { return (vMouseHeld[1] ? 1 : 0) | (vMouseHeld[4] ? 4 : 0); }
+
+function vMouseMove(dx, dy) {
+  const m = vMouseApi();
+  if (!m) return false;
+  try { m.move(dx, dy, vMouseHeldMask()); return true; } catch { return false; }
+}
+function vMouseClick(mask) {
+  const m = vMouseApi();
+  if (!m) return false;
+  try { m.click(mask || 1); linuxSetNote('🖱 клик'); return true; } catch { return false; }
+}
+function vMouseDown(mask) {
+  vMouseHeld[mask] = true;
+  const m = vMouseApi();
+  try { if (m) m.button(mask, true); } catch {}
+  const b = document.getElementById(mask === 4 ? 'lm-right' : 'lm-left');
+  if (b) b.classList.add('on');
+  linuxSetNote(mask === 4 ? '🖱 правая кнопка зажата — тяни по сенсору' : '🖱 левая зажата — тяни, чтобы перетащить');
+}
+function vMouseUp(mask) {
+  if (!vMouseHeld[mask]) return;
+  vMouseHeld[mask] = false;
+  const m = vMouseApi();
+  try { if (m) m.button(mask, false); } catch {}
+  const b = document.getElementById(mask === 4 ? 'lm-right' : 'lm-left');
+  if (b) b.classList.remove('on');
+  linuxSetNote('');
+}
+function vMouseWheelStart(dir) {
+  vMouseWheelStop();
+  const fire = () => {
+    const m = vMouseApi();
+    try { if (m) m.wheel(VMOUSE_WHEEL_MASK[dir]); } catch {}
+  };
+  fire();
+  // Держишь стрелку — колесо крутится дальше само (≈7 щелчков в секунду).
+  vMouseWheelTimer = setInterval(fire, 140);
+  const b = document.querySelector('.lm-arr[data-dir="' + dir + '"]');
+  if (b) b.classList.add('on');
+}
+function vMouseWheelStop() {
+  if (vMouseWheelTimer) { clearInterval(vMouseWheelTimer); vMouseWheelTimer = null; }
+  document.querySelectorAll('.lm-arr.on').forEach((b) => b.classList.remove('on'));
+}
+
+// Показать/скрыть мышь. Состояние помним: если мышь нужна, она нужна всегда.
+function linuxMouseToggle(force) {
+  const el = document.getElementById('linux-mouse');
+  const btn = document.getElementById('linux-mouse-btn');
+  linuxMouseOn = force === undefined ? !linuxMouseOn : !!force;
+  if (el) el.hidden = !linuxMouseOn;
+  if (btn) btn.classList.toggle('on', linuxMouseOn);
+  try { localStorage.setItem('hub_vmouse', linuxMouseOn ? '1' : '0'); } catch {}
+  if (linuxMouseOn) {
+    if (!vMouseReady()) linuxSetNote('🖱 мышь включится, как только экран догрузится');
+    else linuxSetNote('🖱 сенсор — курсор, ЛКМ/ПКМ — кнопки, стрелки — колесо');
+    // курсор ставим в середину экрана, иначе он появляется «из ниоткуда»
+    const m = vMouseApi();
+    try { if (m) m.center(); } catch {}
+    if (!el) return;
+  } else {
+    vMouseWheelStop();
+    vMouseUp(1); vMouseUp(4);
+  }
+}
+
+// Сенсор: тянешь палец — курсор едет; тап — клик; два тапа — двойной клик.
+function vMouseInitPad() {
+  const pad = document.getElementById('lm-pad');
+  if (!pad || pad.__wired) return;
+  pad.__wired = true;
+  let drag = null, lastTap = 0;
+  const pt = (e) => {
+    const t = (e.touches && e.touches[0]) || e;
+    return { x: t.clientX || 0, y: t.clientY || 0 };
+  };
+  const down = (e) => {
+    const p = pt(e);
+    drag = { x: p.x, y: p.y, t: Date.now(), moved: 0 };
+    pad.classList.add('active');
+    try { if (e.pointerId !== undefined) pad.setPointerCapture(e.pointerId); } catch {}
+    try { e.preventDefault(); } catch {}
+  };
+  const move = (e) => {
+    if (!drag) return;
+    const p = pt(e);
+    const dx = p.x - drag.x, dy = p.y - drag.y;
+    drag.x = p.x; drag.y = p.y;
+    drag.moved += Math.abs(dx) + Math.abs(dy);
+    try { e.preventDefault(); } catch {}
+    if (!dx && !dy) return;
+    vMouseMove(dx * VMOUSE_SENS, dy * VMOUSE_SENS);
+  };
+  const up = (e) => {
+    if (!drag) return;
+    const wasTap = drag.moved < 10 && Date.now() - drag.t < 320;
+    drag = null;
+    pad.classList.remove('active');
+    try { e.preventDefault(); } catch {}
+    if (!wasTap) return;
+    const now = Date.now();
+    const dbl = now - lastTap < 320;
+    lastTap = now;
+    vMouseClick(1);
+    if (dbl) setTimeout(() => { vMouseClick(1); }, 30);   // двойной клик
+  };
+  pad.addEventListener('pointerdown', down);
+  pad.addEventListener('pointermove', move);
+  pad.addEventListener('pointerup', up);
+  pad.addEventListener('pointercancel', up);
+  pad.addEventListener('pointerleave', (e) => { if (drag) up(e); });
+  pad.addEventListener('contextmenu', (e) => e.preventDefault());
+  // На старых WebView Pointer Events могут не прийти — дублируем тач-событиями.
+  if (!window.PointerEvent) {
+    pad.addEventListener('touchstart', (e) => { const t = e.touches[0]; down({ clientX: t.clientX, clientY: t.clientY }); }, { passive: false });
+    pad.addEventListener('touchmove', (e) => { const t = e.touches[0]; move({ clientX: t.clientX, clientY: t.clientY, preventDefault() {} }); }, { passive: false });
+    pad.addEventListener('touchend', (e) => up(e));
+  }
+}
+
+// Колесо и кнопки не должны «залипать», если палец ушёл с панели.
+function vMouseInitGuards() {
+  if (window.__vmouseGuards) return;
+  window.__vmouseGuards = true;
+  ['pointerup', 'pointercancel', 'touchend'].forEach((ev) => window.addEventListener(ev, () => {
+    vMouseWheelStop();
+    vMouseUp(1); vMouseUp(4);
+  }, { passive: true }));
+  // Клавиатура телефона открыта — сенсор не должен ловить её тапы.
+  window.addEventListener('blur', () => { vMouseWheelStop(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) vMouseWheelStop(); });
+}
+
+function vMouseRestore() {
+  let want = false;
+  try { want = localStorage.getItem('hub_vmouse') === '1'; } catch {}
+  vMouseInitPad();
+  vMouseInitGuards();
+  if (want) linuxMouseToggle(true);
+}
+try { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', vMouseRestore); else vMouseRestore(); } catch {}
+
 // ===== BROWSER (Chrome / YouTube) =====
 function browserGo(url, prefix) {
   const pfx = prefix || '';
@@ -2206,7 +2557,7 @@ async function pulseStatus() {
   try {
     const r = await fetch('/api/pulse/status');
     const d = await r.json();
-    el.textContent = d.running ? 'running' : 'stopped';
+    el.textContent = d.running ? ((_remoteAudio && _remoteAudio.ws && _remoteAudio.ws.readyState === 1) ? '🔊 видео' : '🔊 звук') : '🔇 нет звука';
     el.className = 'tag ' + (d.running ? 'tag-on' : 'tag-off');
     const devEl = document.getElementById('pulse-devices');
     if (devEl) {
@@ -2253,6 +2604,9 @@ async function pulseSetVol(val) {
 async function linuxRunBrowser(url, vertical) {
   if (!url) return;
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  // This function is normally called by a tap on Go/YouTube; start the local
+  // audio receiver before the fetch so mobile autoplay rules allow playback.
+  try { remoteAudioStart(); } catch {}
   try {
     const r = await fetch('/api/linux/run', {
       method: 'POST',
@@ -2802,6 +3156,106 @@ async function ghDownloadReleaseModal(fullName) {
     list.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(e.message) + '</div>';
   }
 }
+// ===== REMOTE VIDEO AUDIO =====
+// VNC carries only pixels. The remote Chromium audio is captured from PulseAudio
+// by /ws/audio and played here, in the phone/desktop browser.
+let _remoteAudio = null;
+function remoteAudioBadge(text, on) {
+  const el = document.getElementById('pulse-status');
+  if (!el) return;
+  el.textContent = text;
+  el.title = on ? 'Звук видео идёт на телефон. Нажмите, чтобы выключить.' : 'Включить звук видео';
+  el.className = 'tag ' + (on ? 'tag-on' : 'tag-off');
+}
+function remoteAudioStart() {
+  try {
+    if (_remoteAudio && _remoteAudio.ws && _remoteAudio.ws.readyState <= 1) {
+      _remoteAudio.ctx.resume().catch(() => {});
+      return _remoteAudio;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC || !window.WebSocket) return null;
+    const ctx = new AC();
+    const rate = ctx.sampleRate || 44100;
+    const node = ctx.createScriptProcessor(4096, 2, 2);
+    const q = [];
+    let qFrames = 0, current = null, currentAt = 0, pending = new Uint8Array(0);
+    const state = { ctx, ws: null, node, q, close: false };
+    node.onaudioprocess = (ev) => {
+      const left = ev.outputBuffer.getChannelData(0);
+      const right = ev.outputBuffer.numberOfChannels > 1 ? ev.outputBuffer.getChannelData(1) : left;
+      left.fill(0); if (right !== left) right.fill(0);
+      let n = 0;
+      while (n < left.length) {
+        if (!current || currentAt >= current.length) {
+          current = q.shift(); currentAt = 0;
+          if (!current) break;
+          qFrames -= current.length / 2;
+        }
+        const avail = Math.min(left.length - n, (current.length - currentAt) / 2);
+        for (let i = 0; i < avail; i++) {
+          left[n + i] = current[currentAt + i * 2];
+          if (right !== left) right[n + i] = current[currentAt + i * 2 + 1];
+        }
+        currentAt += avail * 2; n += avail;
+      }
+    };
+    node.connect(ctx.destination);
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(proto + '//' + location.host + '/ws/audio?rate=' + encodeURIComponent(rate));
+    state.ws = ws; _remoteAudio = state;
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => { ctx.resume().catch(() => {}); remoteAudioBadge('🔊 подключение', false); };
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === 'string') {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'ready') remoteAudioBadge('🔊 видео', true);
+          if (msg.type === 'error') remoteAudioBadge('🔇 ' + (msg.error || 'нет потока'), false);
+        } catch {}
+        return;
+      }
+      const bytes = new Uint8Array(ev.data);
+      const all = new Uint8Array(pending.length + bytes.length);
+      all.set(pending); all.set(bytes, pending.length);
+      const usable = all.length - (all.length % 4);
+      pending = all.slice(usable);
+      if (!usable) return;
+      const view = new DataView(all.buffer, all.byteOffset, usable);
+      const samples = new Float32Array(usable / 2);
+      for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
+      q.push(samples); qFrames += samples.length / 2;
+      // Keep the audio close to the video. A 2-second queue made sound
+      // continue after the video ended and amplified network jitter into
+      // clicks/stutter. At most ~350 ms is enough for mobile jitter.
+      while (qFrames > rate * 0.35 && q.length > 1) qFrames -= q.shift().length / 2;
+    };
+    ws.onerror = () => remoteAudioBadge('🔇 нет потока', false);
+    ws.onclose = () => {
+      // Drop every queued frame immediately; never replay stale PCM after a
+      // video/socket ends or is replaced.
+      q.length = 0; qFrames = 0; current = null; currentAt = 0; pending = new Uint8Array(0);
+      if (_remoteAudio === state) { try { node.disconnect(); } catch {} _remoteAudio = null; }
+      remoteAudioBadge('🔇 звук', false);
+    };
+    ctx.resume().catch(() => {});
+    return state;
+  } catch { return null; }
+}
+function remoteAudioStop() {
+  const a = _remoteAudio;
+  _remoteAudio = null;
+  if (!a) return;
+  try { a.close = true; a.ws && a.ws.close(); } catch {}
+  try { a.node.disconnect(); } catch {}
+  try { a.ctx.close(); } catch {}
+  remoteAudioBadge('🔇 звук', false);
+}
+function remoteAudioToggle() {
+  if (_remoteAudio && _remoteAudio.ws && _remoteAudio.ws.readyState <= 1) remoteAudioStop();
+  else remoteAudioStart();
+}
+
 // ===== AUDIO KEEP-ALIVE (background playback) =====
 let _audioCtx = null;
 let _silentOsc = null;
@@ -2832,6 +3286,9 @@ function _resumeAudio() {
   document.addEventListener(evt, () => {
     _ensureAudioCtx();
     _resumeAudio();
+    // A user gesture unlocks the phone speaker; the PCM stream then carries
+    // audio from the video playing in remote Chromium.
+    try { if (typeof remoteAudioStart === 'function') remoteAudioStart(); } catch {}
     document.querySelectorAll('iframe').forEach(f => {
       try { f.contentWindow.postMessage({type:'audio-resume'}, '*'); } catch {}
     });

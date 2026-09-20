@@ -1130,11 +1130,120 @@ app.get('/api/pulse/sinks', async (req, res) => {
 // we fall back to node-pty sessions that live inside this process.
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
+
+// ─── REMOTE DESKTOP AUDIO ───────────────────────────────────────────────────
+// VNC/noVNC transports pixels and input, not the sound produced by Chromium.
+// Capture the PulseAudio default sink monitor and send raw PCM to the browser
+// page over a same-origin WebSocket; the page plays it through Web Audio.
+// This is deliberately separate from the VNC socket: video remains VNC, audio
+// remains an ordinary browser audio stream and works on phones too.
+const audioWss = new WebSocketServer({ noServer: true });
+const audioRate = (req) => {
+  try {
+    const u = new URL(req.url, 'http://localhost');
+    const n = Number(u.searchParams.get('rate') || 44100);
+    return Math.max(8000, Math.min(96000, Number.isFinite(n) ? Math.round(n) : 44100));
+  } catch { return 44100; }
+};
+const ensureBrowserAudioSink = async () => {
+  const ls = await pulseRun('pactl list short sinks 2>/dev/null');
+  if (!/\tbrowser_youtube(?:\.\d+)?\t/.test(String(ls.out || ''))) {
+    await pulseRun('pactl load-module module-null-sink sink_name=browser_youtube sink_properties=device.description=Hub-browser_youtube 2>/dev/null || true');
+  }
+  // Route the Chromium launched by this hub to the sink whose monitor we
+  // stream. A null sink is intentional: the phone is the real speaker.
+  await pulseRun('pactl set-default-sink browser_youtube 2>/dev/null || true');
+};
+const audioSource = async () => {
+  const d = await pulseRun('pactl get-default-sink 2>/dev/null');
+  const sink = String(d.out || '').trim().split(/\s+/)[0] || 'auto_null';
+  return sink + '.monitor';
+};
+audioWss.on('connection', async (ws, req) => {
+  let rec = null;
+  let closed = false;
+  let pendingAudio = Buffer.alloc(0);
+  const AUDIO_PACKET = 8192; // 46 ms at 44.1 kHz stereo s16le: one cheap WS packet
+  const sendAudio = (force = false) => {
+    while (!closed && ws.readyState === 1 &&
+      (pendingAudio.length >= AUDIO_PACKET || (force && pendingAudio.length >= 4))) {
+      let n = pendingAudio.length >= AUDIO_PACKET ? AUDIO_PACKET : pendingAudio.length - (pendingAudio.length % 4);
+      if (n < 4) break;
+      const packet = pendingAudio.subarray(0, n);
+      pendingAudio = pendingAudio.subarray(n);
+      try { ws.send(packet, { binary: true }); } catch { stop(); break; }
+    }
+  };
+  const stop = () => {
+    if (closed) return;
+    closed = true;
+    pendingAudio = Buffer.alloc(0);
+    try { if (rec && rec.stdout) rec.stdout.destroy(); } catch {}
+    try { if (rec) rec.kill('SIGTERM'); } catch {}
+  };
+  ws.on('close', stop);
+  ws.on('error', stop);
+  try {
+    const rate = audioRate(req);
+    const bin = await pulseRun('command -v parec 2>/dev/null || command -v pacat 2>/dev/null');
+    const recorder = String(bin.out || '').trim().split(/\s+/)[0];
+    if (!recorder) {
+      ws.send(JSON.stringify({ type: 'error', error: 'parec не установлен (нужен пакет pulseaudio-utils)' }));
+      return stop();
+    }
+    const source = await audioSource();
+    const recordArgs = /pacat(?:\.exe)?$/.test(recorder) ? ['--record'] : [];
+    rec = spawn(recorder, recordArgs.concat([
+      '--device=' + source,
+      '--format=s16le', '--rate=' + rate, '--channels=2', '--latency-msec=40'
+    ]), { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+    rec.stdout.on('data', (chunk) => {
+      if (closed || !chunk.length) return;
+      // parec can emit tiny 4–几十-byte chunks when the sink is resampled.
+      // Sending each one separately starves the phone's main thread and makes
+      // both audio and VNC video stutter. Coalesce into ~46 ms PCM packets.
+      pendingAudio = Buffer.concat([pendingAudio, chunk]);
+      sendAudio(false);
+    });
+    rec.on('error', (e) => {
+      if (!closed && ws.readyState === 1) {
+        try { ws.send(JSON.stringify({ type: 'error', error: e.message })); } catch {}
+      }
+      stop();
+    });
+    rec.on('exit', (code) => {
+      sendAudio(true);
+      if (!closed && code && ws.readyState === 1) {
+        try { ws.send(JSON.stringify({ type: 'error', error: 'аудиозахват завершился: ' + code })); } catch {}
+      }
+      if (!closed) stop();
+    });
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'ready', rate, channels: 2, source }));
+  } catch (e) {
+    if (ws.readyState === 1) {
+      try { ws.send(JSON.stringify({ type: 'error', error: e.message })); } catch {}
+    }
+    stop();
+  }
+});
+server.on('upgrade', (req, socket, head) => {
+  let u;
+  try { u = new URL(req.url, 'http://' + (req.headers.host || 'localhost')); }
+  catch { try { socket.destroy(); } catch {} return; }
+  if (u.pathname !== '/ws/audio') return;
+  try {
+    audioWss.handleUpgrade(req, socket, head, (ws) => audioWss.emit('connection', ws, req));
+  } catch (e) {
+    console.log('  ⚠ audio upgrade: ' + e.message);
+    try { socket.destroy(); } catch {}
+  }
+});
+
 // Paths owned by their own upgrade handlers below (cloud phone VNC + the
 // always-on desktop). Handling the same socket twice makes ws throw
 // «server.handleUpgrade() was called more than once» — and that crash took the
 // whole hub down, so the list is shared and every handler is guarded.
-const WS_CLAIMED = new Set(['/ws/vnc', '/ws/desktop', '/novnc/ws/desktop', '/websockify', '/novnc/websockify']);
+const WS_CLAIMED = new Set(['/ws/audio', '/ws/vnc', '/ws/desktop', '/novnc/ws/desktop', '/websockify', '/novnc/websockify']);
 server.on('upgrade', (req, socket, head) => {
   // Route the single 'upgrade' event: /ws → PTY, others → their own blocks.
   let pathname = '';
@@ -1154,10 +1263,11 @@ const TMUX_PREFIX = 'npmhub-';
 const PTY_DIR = path.join(TMP_DIR, 'pty');
 try { fs.mkdirSync(PTY_DIR, { recursive: true }); } catch {}
 
-const tmuxHas = (() => {
+// Check on demand: the keepalive may install tmux after this module starts.
+const tmuxHas = () => {
   try { require('child_process').execSync('which tmux', { stdio: 'ignore', timeout: 3000 }); return true; }
   catch { return false; }
-})();
+};
 
 const safeSessionName = id => TMUX_PREFIX + String(id).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
 const sessionLogPath = id => path.join(PTY_DIR, safeSessionName(id) + '.log');
@@ -1330,7 +1440,7 @@ wss.on('connection', (ws) => {
           sessions.delete(id); // tmux session died while we were detached
         }
         // A session may exist in tmux but not in our (possibly restarted) memory.
-        if (tmuxHas) {
+        if (tmuxHas()) {
           const revived = reviveTmuxSession(id);
           if (revived) {
             session = revived;
@@ -1350,7 +1460,7 @@ wss.on('connection', (ws) => {
         const metaName = tool ? tool.name : 'Terminal';
 
         try {
-          if (tmuxHas && !isWin) {
+          if (tmuxHas() && !isWin) {
             // ❗ tmux requires a login shell name (argv[0]) to start bash as an
             // interactive shell; new-session already does that. Nothing more needed.
             session = createTmuxSession(id, { cwd, cols: msg.cols, rows: msg.rows, toolId: tool ? tool.id : null, toolName: metaName, color: metaColor, icon: metaIcon, toolCmd: tool && tool.cmd !== '_terminal' ? tool.cmd : null }, ws);
@@ -1453,7 +1563,7 @@ app.get('/api/sessions', (req, res) => {
   for (const s of sessions.values()) push(s);
   // Sessions that survived a hub restart still exist as tmux sessions — list
   // them too, reviving their in-memory record so a reconnect replays output.
-  if (tmuxHas) {
+  if (tmuxHas()) {
     try {
       const r = require('child_process').execSync('tmux list-sessions', { stdio: 'pipe', timeout: 3000, encoding: 'utf8' });
       const seen = new Set(sessions.keys());
@@ -1875,6 +1985,9 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         const isYoutube = /youtube\.com|youtu\.be/i.test(url);
         // PulseAudio со звуком: проверяем и стартуем если упал
         try {
+          await ensureBrowserAudioSink();
+        } catch {}
+        try {
           const chk = await pulseRun('pulseaudio --check 2>&1; echo $?');
           if (!chk.out || !chk.out.trim().endsWith('0')) {
             await pulseRun('pulseaudio --start --disallow-exit --exit-idle-time=-1 2>&1');
@@ -1895,29 +2008,52 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         // снесло бы первым же обновлением). На своём раннере ~ сохраняется.
         const profileRoot = path.join(DATA_DIR, 'chrome-profile');
         try { fs.mkdirSync(profileRoot, { recursive: true }); } catch {}
-        const userData = vertical ? path.join(profileRoot, 'vertical') : profileRoot;
+        // Keep Google Chrome and Chromium in different profiles. The old
+        // shared profile could leave a Chromium process alive; then starting
+        // Chrome only sent the URL to that old process and the codec problem
+        // silently returned. Chrome profiles also need their own first-run
+        // state, so we can skip the Terms/Welcome window below.
+        const googleAvailable = ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
+          '/usr/local/bin/google-chrome', '/usr/local/bin/google-chrome-stable'].some(fs.existsSync);
+        const browserProfile = googleAvailable ? 'google' : 'chromium';
+        const userData = path.join(profileRoot, browserProfile, vertical ? 'vertical' : 'normal');
         // Хром с поддержкой звука и автоплея
         // Флаги под headless-VNC: без них Chromium считает окно на Xvfb
         // «перекрытым/фоновым» и душит рендер и медиа — видео в YouTube просто
         // не идёт, а картинка обновляется рывками. Список --disable-features
         // слит в один: второй флаг перекрывает первый.
-        const chromeFlags = `--no-sandbox --test-type --disable-gpu --autoplay-policy=no-user-gesture-required`
+        // Do not pass --disable-gpu here: it made the video decoder available but
+        // forced every frame's composition/rasterization onto the CPU. On Xvfb
+        // there is no physical GPU, so use Chrome's SwiftShader GPU process;
+        // this is still much faster than a fully disabled GPU and keeps the
+        // accelerated video path alive.
+        const chromeFlags = `--no-sandbox --test-type --autoplay-policy=no-user-gesture-required`
+          + ` --use-gl=angle --use-angle=gl --ignore-gpu-blocklist --enable-gpu-rasterization --enable-oop-rasterization`
           + ` --disable-features=PreloadMediaEngagementData,AutoplayIgnoreWebAudio,CalculateNativeWinOcclusion,MediaEngagementBypassAutoplayPolicies`
           + ` --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling`
           + ` --use-fake-ui-for-media-stream`
           + ` --enable-accelerated-video-decode --disable-frame-rate-limit`
-          + ` --window-size=${mobile ? mobileWin : winSize} --window-position=${mobile ? '0,0' : '20,20'} --user-data-dir=${userData} --no-first-run --disable-infobars --disable-dev-shm-usage`;
+          + ` --window-size=${mobile ? mobileWin : winSize} --window-position=${mobile ? '0,0' : '20,20'} --user-data-dir=${userData} --no-first-run --no-default-browser-check --disable-signin-promo --disable-infobars --disable-dev-shm-usage`;
         // Мобильный user-agent для вертикального ютуба (чтобы открылся m.youtube.com/shorts)
-        const uaFlag = (vertical && isYoutube) ? `--user-agent='Mozilla/5.0 (Linux; Android 10; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36'` : '';
+        // Default UA is a tablet so sites serve touch-friendly video pages;
+        // vertical/Shorts gets a phone UA. This is intentional for the remote
+        // screen: the user controls Chrome from a phone/tablet, not a desktop.
+        const uaFlag = vertical
+          ? `--user-agent='Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36'`
+          : `--user-agent='Mozilla/5.0 (Linux; Android 14; Pixel Tablet) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36'`;
         // Бинарь ищем на месте: на раннере может быть chromium, chromium-browser,
         // google-chrome или google-chrome-stable — раньше здесь был жёстко
         // забит chromium-browser, и «Go · 🖥» молча не открывал ничего.
-        const binPick = `BROWSER_BIN=$(command -v chromium || command -v chromium-browser || command -v google-chrome || command -v google-chrome-stable || true); if [ -z "$BROWSER_BIN" ]; then exit 3; fi`;
+        // Prefer Google Chrome: the runner's Chromium build can lack H.264/AAC
+        // codecs, so a video page showed its controls but ended with
+        // NotSupportedError and generated no PulseAudio sink input at all.
+        // Chrome is installed on GitHub runners and carries the media codecs.
+        const binPick = `BROWSER_BIN=$(command -v google-chrome-stable || command -v google-chrome || command -v chromium || command -v chromium-browser || true); if [ -z "$BROWSER_BIN" ]; then exit 3; fi`;
         // Браузер пишет свой вывод в лог: без него «не открылось» невозможно
         // объяснить, а именно так и выглядел сломанный «Go · 🖥».
         const blog = path.join(LOG_DIR, 'browser.log');
         const launch = (extraFlags) => runOnDisplay(
-          `${binPick}; setsid nohup "$BROWSER_BIN" ${chromeFlags} ${extraFlags} '${escaped}' >>${JSON.stringify(blog)} 2>&1 & sleep 3; `
+          `${binPick}; LIBGL_ALWAYS_SOFTWARE=1 MESA_LOADER_DRIVER_OVERRIDE=llvmpipe GALLIUM_DRIVER=llvmpipe EGL_PLATFORM=x11 PULSE_SINK=browser_youtube setsid nohup "$BROWSER_BIN" ${chromeFlags} ${extraFlags} '${escaped}' >>${JSON.stringify(blog)} 2>&1 & sleep 3; `
           + `pgrep -f "$(basename "$BROWSER_BIN")" | head -1`, 12000);
         let r = await launch(uaFlag);
         let started = Boolean(r.out && /^\d+$/m.test(r.out));
@@ -1930,6 +2066,10 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
           const tail = await shTail(blog, 3);
           return res.json({ ok: false, error: 'браузер не запустился (' + (r.err || 'нет процесса').slice(0, 120) + '): ' + tail });
         }
+        // Иконки рабочего стола (idesk) — окна поверх всех: без этого шага
+        // свежее окно браузера оказывалось «под» иконками, и на экране
+        // телефона это выглядело как наложенный поверх страницы рабочий стол.
+        try { setTimeout(() => { try { require('./vnc-keepalive').lowerDesktopIcons(); } catch {} }, 1500); } catch {}
         // Громкость на макс и снять mute чтобы ютуб был слышен
         try { await pulseRun('pactl set-sink-mute @DEFAULT_SINK@ 0 2>/dev/null || true'); await pulseRun('pactl set-sink-volume @DEFAULT_SINK@ 90% 2>/dev/null || true'); } catch {}
         return res.json({ ok: true, message: `Браузер запущен${vertical?' (вертикально)':''}: ${url} — звук вкл.`, vertical, winSize });
@@ -1952,10 +2092,25 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
       }
       case 'terminal': {
         await runOnDisplay(`xterm -geometry 120x30+100+100 &`, 3000);
+        try { require('./vnc-keepalive').lowerDesktopIcons(); } catch {}
         return res.json({ ok: true, message: 'Терминал открыт на рабочем столе' });
       }
       case 'files': {
-        await runOnDisplay(`(pcmanfm || nautilus || xdg-open ~/hub-work) &`, 3000);
+        // Через обёртку: pcmanfm на этом раннере показывает пустой диалог
+        // «Desktop manager is not active» — на телефоне это чужое окно поверх
+        // стола. Обёртка поднимает менеджер и сразу гасит диалог.
+        let launched = false;
+        try {
+          const ka = require('./vnc-keepalive');
+          const launcher = await ka.ensureFilesLauncher();
+          if (launcher) {
+            await runOnDisplay(`setsid nohup ${JSON.stringify(launcher)} "$HOME/hub-work" >/dev/null 2>&1 &`, 3000);
+            launched = true;
+          }
+        } catch {}
+        if (!launched) await runOnDisplay(`(pcmanfm || nautilus || xdg-open ~/hub-work) &`, 3000);
+        try { setTimeout(() => { try { require('./vnc-keepalive').dismissStrayDialogs(); } catch {} }, 5000); } catch {}
+        try { require('./vnc-keepalive').lowerDesktopIcons(); } catch {}
         return res.json({ ok: true, message: 'Файловый менеджер открыт' });
       }
       default:
@@ -1966,7 +2121,11 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
 
 // ─── OCR + SCREENSHOT для TTS/чтения в фоне ───
 const ocrRun = (cmd) => new Promise((resolve)=>{
-  const {_exec} = require('child_process');
+  // Здесь был ПОВТОРНЫЙ require, который доставал из child_process свойство с
+  // именем _exec — такого свойства у модуля нет, и /api/ocr вместе с
+  // /api/screenshot падали с «_exec is not a function»: читалка TTS/OCR на
+  // «Экране» не работала вообще. Хелпер _exec уже объявлен выше в модуле
+  // (переименование exec при разрушении объекта), берём его оттуда.
   _exec(cmd, {timeout: 15000}, (err, stdout, stderr)=>{
     resolve({ok: !err, out: (stdout||'').trim(), err: (stderr||'').trim()});
   });
@@ -2716,15 +2875,39 @@ app.get('/api/tunnel', (req, res) => {
       console.log('  🔊 PulseAudio already running');
       await pulseRun('pactl set-exit-idle-time -1 2>/dev/null');
     }
-    // Create virtual sinks for hub tabs (cloud phone, browser, etc.) — only
-    // if not present yet, so repeated hub restarts don't stack duplicate sinks.
-    const sinks = ['cloud_phone', 'browser_youtube'];
-    for (const name of sinks) {
-      await pulseRun(`pactl load-module module-null-sink sink_name=${name} sink_properties=device.description="Hub-${name}" 2>/dev/null || true`);
+    // Create virtual sinks only when absent: repeated hub restarts must not
+    // stack browser_youtube.2/.3 and their old loopbacks.
+    let sinkList = await pulseRun('pactl list short sinks 2>/dev/null');
+    for (const name of ['cloud_phone', 'browser_youtube']) {
+      if (!new RegExp('\\t' + name + '(?:\\.\\d+)?\\t').test(String(sinkList.out || ''))) {
+        await pulseRun(`pactl load-module module-null-sink sink_name=${name} sink_properties=device.description="Hub-${name}" 2>/dev/null || true`);
+        sinkList = await pulseRun('pactl list short sinks 2>/dev/null');
+      }
     }
-    // Load loopback so any audio on these sinks is audible
-    await pulseRun('pactl load-module module-loopback source=cloud_phone.monitor 2>/dev/null || true');
-    await pulseRun('pactl load-module module-loopback source=browser_youtube.monitor 2>/dev/null || true');
+    // Remove duplicate null-sink modules left by older hub restarts. Pulse
+    // silently renames a second sink to browser_youtube.2, so checking only
+    // the sink list is not enough; keep the first module for each base name.
+    let mods = await pulseRun('pactl list short modules 2>/dev/null');
+    const keptNull = new Set();
+    for (const line of String(mods.out || '').split('\n')) {
+      const m = line.trim().match(/^(\d+)\s+module-null-sink\s+(.+)$/);
+      const nm = m && m[2].match(/(?:^|\s)sink_name=(cloud_phone|browser_youtube)(?:\s|$)/);
+      if (m && nm) {
+        if (keptNull.has(nm[1])) await pulseRun('pactl unload-module ' + m[1] + ' 2>/dev/null || true');
+        else keptNull.add(nm[1]);
+      }
+    }
+    // Remove every loopback owned by the previous audio implementation. Its
+    // browser_youtube.monitor -> browser_youtube path fed audio back into the
+    // same sink, causing hiss/stutter and audio that continued after video end.
+    mods = await pulseRun('pactl list short modules 2>/dev/null');
+    for (const line of String(mods.out || '').split('\n')) {
+      const m = line.trim().match(/^(\d+)\s+module-loopback\s/);
+      if (m) await pulseRun('pactl unload-module ' + m[1] + ' 2>/dev/null || true');
+    }
+    await pulseRun('pactl set-default-sink browser_youtube 2>/dev/null || true');
+    // The phone receives browser_youtube.monitor directly; do not loop it back.
+    await pulseRun('pactl load-module module-loopback source=cloud_phone.monitor sink=auto_null 2>/dev/null || true');
     console.log('  🔊 Virtual audio sinks ready: cloud_phone, browser_youtube');
   } catch {}
 })();
