@@ -113,6 +113,15 @@ app.get('/m/*', (req, res) => {
   noCache(res);
   res.sendFile(path.join(__dirname, '..', 'public', 'mobile.html'));
 });
+// Внешняя память — standalone PWA-зеркало репо и сборок (свой SW и манифест).
+app.get('/vault', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'external-memory.html'));
+});
+app.get('/vault/*', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'external-memory.html'));
+});
 // Standalone terminal site: survives a refresh of the dashboard because its
 // tabs reconnect to the same server-side tmux sessions and replay the buffer.
 // Sessions themselves live on the server, so they run even with no page open.
@@ -454,6 +463,50 @@ app.get('/api/browse', async (req, res) => {
   } catch (e) {
     res.json({ success: false, error: e.message });
   }
+});
+
+// ─── VAULT TREE — рекурсивный слепок рабочей папки для офлайн-зеркала ───
+// Тот же фильтр, что и в файловом менеджере (без node_modules и dot-имён).
+// Файлы крупнее 50 МБ в стек клиента не качаются — помечаются в «big».
+const VAULT_MAX_BYTES = 50 * 1024 * 1024;
+function vaultWalk(dir, depth, ctx) {
+  if (depth > 128) return;
+  let real;
+  try { real = fs.realpathSync(dir); } catch (e) { return; }
+  if (ctx.seen.has(real)) return;
+  ctx.seen.add(real);
+  let names;
+  try { names = fs.readdirSync(dir); } catch (e) { return; }
+  names.sort((a, b) => a.localeCompare(b));
+  for (const n of names) {
+    if (n === 'node_modules' || (n.startsWith('.') && n !== '..')) continue;
+    const p = path.join(dir, n);
+    let st;
+    try { st = fs.lstatSync(p); } catch (e) { continue; }
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) {
+      ctx.entries.push({ path: p, isDir: true, size: 0, mtime: st.mtime ? +st.mtime : 0 });
+      vaultWalk(p, depth + 1, ctx);
+    } else if (st.isFile()) {
+      ctx.entries.push({ path: p, isDir: false, size: st.size, mtime: st.mtime ? +st.mtime : 0 });
+      ctx.files++; ctx.totalBytes += st.size;
+      if (st.size > VAULT_MAX_BYTES) ctx.big.push({ path: p, size: st.size });
+    }
+  }
+}
+app.get('/api/fs/tree', (req, res) => {
+  const hubWork = path.join(HOME, 'hub-work');
+  const defaultRoot = fs.existsSync(hubWork) ? hubWork : HOME;
+  const startPath = req.query.path ? String(req.query.path) : defaultRoot;
+  const ctx = { seen: new Set(), entries: [], big: [], files: 0, totalBytes: 0 };
+  try {
+    vaultWalk(startPath, 0, ctx);
+    res.json({
+      success: true, root: startPath, base: HOME, maxBytes: VAULT_MAX_BYTES,
+      entries: ctx.entries, dirs: ctx.entries.length - ctx.files,
+      files: ctx.files, totalBytes: ctx.totalBytes, big: ctx.big
+    });
+  } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
 // ─── FILE OPERATIONS (universal) ───

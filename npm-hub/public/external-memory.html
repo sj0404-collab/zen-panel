@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0d1117">
+  <title>Внешняя память</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="manifest" href="external-memory.webmanifest">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    :root{--bg0:#0a0e14;--bg1:#0d1117;--bg2:#161b22;--bg3:#1c2128;--bg4:#21262d;--bdr:#30363d;--t1:#e6edf3;--t2:#8b949e;--t3:#484f58;--acc:#58a6ff;--ok:#3fb950;--err:#f85149;--warn:#d29922;--pur:#bc8cff}
+    html,body{height:100%;height:100dvh}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg0);color:var(--t1);display:flex;flex-direction:column}
+    .top{flex-shrink:0;background:var(--bg2);border-bottom:1px solid var(--bdr);padding:12px 14px 8px}
+    .top h1{font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px}
+    .top h1 .g{background:linear-gradient(135deg,var(--acc),var(--pur));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .top .sub{font-size:11px;color:var(--t2);margin-top:2px}
+    .back{float:right;font-size:11px;color:var(--acc);text-decoration:none;margin-top:2px}
+    .status{flex-shrink:0;font-size:11px;color:var(--t2);padding:7px 14px;border-bottom:1px solid var(--bdr);background:var(--bg1);min-height:14px}
+    .vault-status.ok{color:var(--ok)}.vault-status.err{color:var(--err)}
+    .ok-dot,.bad-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:3px}
+    .ok-dot{background:var(--ok);box-shadow:0 0 6px rgba(63,185,80,.6)}
+    .bad-dot{background:var(--err);box-shadow:0 0 6px rgba(248,81,73,.6)}
+    .ctrl{flex-shrink:0;display:flex;gap:6px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--bdr);flex-wrap:wrap;background:var(--bg1)}
+    .ctrl input[type=text]{flex:1;min-width:160px;background:var(--bg2);border:1px solid var(--bdr);color:var(--t1);border-radius:6px;padding:6px 8px;font-size:11px}
+    .ctrl input[type=text]::placeholder{color:var(--t3)}
+    .btn{padding:6px 10px;border-radius:6px;border:1px solid var(--bdr);background:var(--bg4);color:var(--t1);font-size:11px;cursor:pointer;transition:all .12s;white-space:nowrap}
+    .btn:hover{background:var(--bdr)}
+    .btn-pri{background:var(--acc);color:#fff;border-color:var(--acc)}
+    .btn-pri:hover{opacity:.85}
+    .btn-pri:disabled{opacity:.5;cursor:default}
+    .btn.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+    .list{flex:1;overflow-y:auto;padding:8px 10px}
+    .v-row{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;border:1px solid transparent}
+    .v-row:hover{background:var(--bg2);border-color:var(--bdr)}
+    .v-ico{font-size:15px;width:20px;text-align:center;flex-shrink:0}
+    .v-name{flex:1;font-size:12px;word-break:break-all;line-height:1.5}
+    .v-size{display:block;font-size:10px;color:var(--t3)}
+    .v-skip{font-size:10px;color:var(--warn);border:1px solid rgba(210,153,34,.4);padding:1px 6px;border-radius:8px;white-space:nowrap}
+    .v-del{font-size:10px;color:var(--t3);border:1px solid var(--bdr);padding:1px 6px;border-radius:8px;white-space:nowrap}
+    .v-btn{flex-shrink:0;font-size:10px;padding:4px 8px;border:1px solid var(--bdr);border-radius:5px;background:transparent;color:var(--t2);cursor:pointer}
+    .v-btn:hover{color:var(--t1);background:var(--bg4)}
+    .v-btn.v-pri{color:#fff;background:var(--acc);border-color:var(--acc)}
+    .v-empty{padding:28px;text-align:center;color:var(--t3);font-size:12px}
+    .foot{flex-shrink:0;text-align:center;font-size:10px;color:var(--t3);padding:6px}
+  </style>
+</head>
+<body>
+  <div class="top">
+    <a class="back" href="/">← хаб</a>
+    <h1>🗄 <span class="g">Внешняя память</span></h1>
+    <div class="sub">Полное зеркало репо и сборок на устройстве. Работает без сервера: всё, что синхронизировано, остаётся здесь.</div>
+  </div>
+  <div class="status" id="vault-status">Загружаю зеркало…</div>
+  <div class="ctrl">
+    <input type="text" id="vault-root" placeholder="путь на ранере (пусто = домашняя папка)">
+    <button class="btn btn-pri" id="vault-sync">⟳ Синхронизировать</button>
+    <button class="btn" id="vault-builds" onclick="VaultUI.toggleBuilds()">📦 только сборки</button>
+    <input type="text" id="vault-filter" placeholder="фильтр…">
+  </div>
+  <div class="list" id="vault-list"></div>
+  <div class="foot">Файлы крупнее 50 МБ не зеркалируются · копии хранятся только на этом устройстве (IndexedDB)</div>
+  <script src="vault.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('vault-sw.js', { scope: './external-memory.html' }).catch(function () {});
+    }
+  </script>
+</body>
+</html>
