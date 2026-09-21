@@ -336,6 +336,118 @@
 
 const GH = 'https://api.github.com';
 
+// ── OFFLINE-LAYER-BEGIN ─────────────────────────────────────────────
+// Панель лежит в APK и открывается всегда, а данные приходят из
+// api.github.com и с хаба. Без сети они падают, и все вкладки показали бы
+// пустоту. Слой подменяет window.fetch: каждый удачный GET (json/text)
+// сохраняется в localStorage, а при обрыве отдаётся последний ответ — с
+// пометкой «офлайн» в баннере. POST/PUT не кешируются и не повторяются.
+(function () {
+  'use strict';
+  var PREFIX = 'panelcache:';
+  var MAX_ENTRIES = 250;
+  var offline = false, lastSaved = 0, listeners = [];
+
+  function keys() {
+    var out = [];
+    try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf(PREFIX) === 0) out.push(k); } } catch (e) {}
+    return out;
+  }
+  function safeSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { prune(); try { localStorage.setItem(k, v); return true; } catch (e2) { return false; } } }
+  function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function safeRemove(k) { try { localStorage.removeItem(k); } catch (e) {} }
+  function prune() {
+    var ks = keys().map(function (k) { var t = 0; try { t = JSON.parse(safeGet(k)).t || 0; } catch (e) {} return { k: k, t: t }; });
+    ks.sort(function (a, b) { return a.t - b.t; });
+    var drop = Math.max(0, ks.length - MAX_ENTRIES);
+    for (var i = 0; i < drop; i++) safeRemove(ks[i].k);
+  }
+  function store(e) {
+    if (!e || typeof e.body !== 'string' || e.body.length > 800000) return;
+    e.t = Date.now(); lastSaved = e.t;
+    safeSet(PREFIX + e.key, JSON.stringify(e));
+  }
+  function load(key) { var raw = safeGet(PREFIX + key); if (!raw) return null; try { return JSON.parse(raw); } catch (e) { return null; } }
+  function hhmm(t) { try { return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } }
+
+  var bar = null;
+  function banner() {
+    if (bar || !document.body) return bar;
+    bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:2147483647;display:none;align-items:center;gap:8px;justify-content:center;padding:6px 10px;font:600 12px/1.3 system-ui,sans-serif;background:#7a5200;color:#ffe7ad;box-shadow:0 1px 6px rgba(0,0,0,.4)';
+    bar.innerHTML = '<span id="panel-offline-text"></span><button id="panel-offline-retry" style="background:#ffe7ad;color:#4a3200;border:0;border-radius:6px;padding:3px 9px;font:600 12px system-ui;cursor:pointer">Повторить</button>';
+    document.body.appendChild(bar);
+    var r = document.getElementById('panel-offline-retry');
+    if (r) r.onclick = function () { location.reload(); };
+    return bar;
+  }
+  function render() {
+    if (!banner()) return;
+    if (offline) {
+      var el = document.getElementById('panel-offline-text');
+      if (el) el.textContent = '⚡ Офлайн — данные из кеша' + (lastSaved ? ' (' + hhmm(lastSaved) + ')' : '');
+      bar.style.display = 'flex';
+    } else { bar.style.display = 'none'; }
+  }
+  function setOffline(v) {
+    if (offline === v) return;
+    offline = v; render();
+    for (var i = 0; i < listeners.length; i++) { try { listeners[i](offline); } catch (e) {} }
+  }
+
+  var realFetch = (typeof window.fetch === 'function') ? window.fetch.bind(window) : null;
+  function cacheable(req) {
+    if (!realFetch) return null;
+    var method = (req.method || 'GET').toUpperCase();
+    if (method !== 'GET') return null;
+    var url; try { url = new URL(req.url, location.href); } catch (e) { return null; }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    if (/token|secret|password|passwd|auth/i.test(url.pathname + url.search)) return null;
+    return url;
+  }
+  if (realFetch) {
+    window.fetch = function (input, init) {
+      var req;
+      try { req = (typeof input === 'string' || (input && input.url)) ? new Request(input, init) : input; }
+      catch (e) { return realFetch(input, init); }
+      var url = cacheable(req);
+      if (!url) return realFetch(input, init);
+      var key = url.href;
+      return realFetch(input, init).then(function (res) {
+        if (res && res.ok) {
+          setOffline(false);
+          var ct = res.headers.get('content-type') || 'application/json';
+          if (/(json|text|javascript)/i.test(ct)) {
+            try { res.clone().text().then(function (body) { store({ key: key, status: res.status, ct: ct, body: body }); }).catch(function () {}); } catch (e) {}
+          }
+        }
+        return res;
+      }).catch(function (err) {
+        var c = load(key);
+        if (c) { setOffline(true); return new Response(c.body, { status: c.status || 200, headers: { 'content-type': c.ct || 'application/json', 'x-panel-offline': '1' } }); }
+        setOffline(true);
+        throw err;
+      });
+    };
+  }
+
+  window.addEventListener('online', function () { setOffline(false); });
+  window.addEventListener('offline', function () { setOffline(true); });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render); else render();
+  if (!navigator.onLine) setOffline(true);
+
+  window.PanelOffline = {
+    get isOffline() { return offline; },
+    get lastSaved() { return lastSaved; },
+    save: function (key, obj) { store({ key: key, status: 200, ct: 'application/json', body: JSON.stringify(obj) }); },
+    load: load,
+    remove: function (key) { safeRemove(PREFIX + key); },
+    clear: function () { keys().forEach(safeRemove); },
+    on: function (cb) { if (typeof cb === 'function') listeners.push(cb); }
+  };
+})();
+// ── OFFLINE-LAYER-END ───────────────────────────────────────────────
+
 // Where the panel points when nobody has signed in yet. Any account can be
 // added later; this is only the read-only starting view.
 const DEFAULT_OWNER = 'sj0404-collab';
