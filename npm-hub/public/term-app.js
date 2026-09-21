@@ -45,6 +45,7 @@ async function init() {
     seen.add(m.id);
     attachTab(m);
   }
+  await restoreDurableSessions();
   if (tabs.length === 0) showEmpty(true); else showEmpty(false);
   syncZoom();
   refreshSessionsBadge();
@@ -60,6 +61,21 @@ async function init() {
       icon: tool ? tool.icon : '>_', dirShort: dirShortOf(qDir)
     });
   }
+}
+
+async function restoreDurableSessions() {
+  try {
+    const r = await fetch('/api/sessions');
+    const d = await r.json();
+    if (!d.success || !Array.isArray(d.sessions)) return;
+    let created = false;
+    for (const s of d.sessions) {
+      if (!s || !s.id || !s.restore || tabs.some(t => t.id === String(s.id))) continue;
+      attachTab({ ...s, id: String(s.id), cwd: s.cwd || s.repoPath || homeDir });
+      created = true;
+    }
+    if (created) { persistTabs(); refreshSessionsBadge(); }
+  } catch {}
 }
 
 function dirShortOf(cwd) {
@@ -177,7 +193,7 @@ function attachTab(meta) {
   td.tabEl = tabEl;
   // виртуальный скролл + удержание для копирования
   try{ const vp=document.getElementById('term-'+td.id).querySelector('.xterm-viewport'); }catch{}
-  td.scroll = attachTermScroll(td.id, panel);
+  td.scroll = attachTermScroll(td.id, panel, td.term);
   td.touchHandler = setupTermTouch(document.getElementById('term-'+td.id), td.term);
 
   showEmpty(false);
@@ -410,7 +426,6 @@ function attachTermScroll(id, panel){
   upd();
   return{upd,destroy(){ if(ro) ro.disconnect(); window.removeEventListener('resize',resizeHandler); if(bufSub&&bufSub.dispose) bufSub.dispose(); }};
 }
-
 // ===== LONG-PRESS COPY =====
 function setupTermTouch(termEl, term){
   if(!('ontouchstart' in window) && !(navigator.maxTouchPoints||0)) return null;

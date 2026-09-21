@@ -123,21 +123,36 @@ jobs:
         working-directory: fork/npm-hub
         run: npm ci
 
+      - name: Install OpenCode for session recovery
+        run: |
+          set -e
+          export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+          if ! command -v opencode >/dev/null 2>&1; then
+            curl -fsSL https://opencode.ai/install | bash || true
+          fi
+          if ! command -v opencode >/dev/null 2>&1; then
+            npm install -g opencode-ai
+          fi
+          command -v opencode
+          opencode --version || true
+
       - name: Put zen-agent on PATH
         run: |
           printf '#!/bin/sh\nexec node "$GITHUB_WORKSPACE/fork/agent/zen-agent.js" "$@"\n' \
             | sudo tee /usr/local/bin/agent >/dev/null
           sudo chmod +x /usr/local/bin/agent
 
-      - name: Create the work folder
+      - name: Create the work folder and restore repositories
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p ~/hub-work "$HUB_LOGS" 2>/dev/null || true; mkdir -p ~/.npm-hub/logs
           echo "logs dir ready $(ls -ld ~/.npm-hub/logs 2>&1 || ls -ld "$HUB_LOGS" 2>&1)"
+          # Restore repos before importing OpenCode sessions: opencode import
+          # needs the real repository CWD, not an empty placeholder folder.
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
+            WORK_BACKUP_RESTORE_EXISTING=1 bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" \
+            2>&1 | tee -a "$HUB_LOGS/restore-work.log" || true
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || true
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" 2>&1 | tee -a "$HUB_LOGS/restore-hubwork.log" || true
-          # Rebuild any repo that was lost with the previous runner, from the
-          # work-backup branch. Never touches an existing repo (that is newer).
-          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" 2>&1 | tee -a "$HUB_LOGS/restore-work.log" || true
 
       - name: Start the hub and open the tunnel
         run: |
@@ -226,6 +241,8 @@ jobs:
 
       - name: Keep the session alive
         run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"
+          mkdir -p "$HUB_LOGS"
           # Watch the hub and the tunnel instead of sleeping blindly: a dead
           # hub behind a live tunnel answers 502, and a dead tunnel keeps
           # resolving - both look like "the address is there but nothing
@@ -253,9 +270,9 @@ jobs:
             CUR=$(cat $HUB_LOGS/hub-url 2>/dev/null || echo)
             PID=$(cat "$PIDFILE" 2>/dev/null || echo)
             EDGE=""
-            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ]; then
-              code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$CUR/" 2>/dev/null || true)
-              case "$code" in 2*|3*|4*) EDGE=1 ;; esac
+            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ] \
+              && bash "$GITHUB_WORKSPACE/fork/tools/tunnel_health.sh" "$CUR" "/"; then
+              EDGE=1
             fi
             if [ -n "$EDGE" ]; then continue; fi
             # Drop the stale cloudflared before a fresh one takes the port:
@@ -263,7 +280,7 @@ jobs:
             # Bracket pattern - a plain "cloudflared tunnel..." match is
             # suicide against this shell's own command line.
             if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then kill "$PID" 2>/dev/null || true; fi
-            pkill -f "cloudflared [t]unnel --url http://localhost:8090" 2>/dev/null || true
+            pkill -f "cloudflared [t]unnel --url http://127.0.0.1:8090" 2>/dev/null || true
             sleep 1
             echo "::warning::tunnel dead; reopening."
             URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 $HUB_LOGS/tunnel2.log) || continue
@@ -276,6 +293,14 @@ jobs:
                 "url=$URL" "hubUrl=$URL" "desktop=$URL/d" "mobile=$URL/m" \
                 "auth=без пароля" "label=${{ inputs.label }}"
           done
+
+      - name: Final durable repository and session backup
+        if: always()
+        run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
+            bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" --once \
+            2>&1 | tee -a "$HUB_LOGS/work-backup.log" || true
 
       - name: Clear the published session
         run: |
@@ -389,8 +414,32 @@ jobs:
           @('@echo off', ('node "' + $env:GITHUB_WORKSPACE + '/fork/agent/zen-agent.js" %*')) | Set-Content "$bindir/agent.cmd"
           Add-Content $env:GITHUB_PATH $bindir
 
+      - name: Install OpenCode for session recovery
+        shell: pwsh
+        run: |
+          $bin = "$env:USERPROFILE\.opencode\bin"
+          $env:Path = "$bin;$env:USERPROFILE\.local\bin;$env:Path"
+          if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) {
+            npm install -g opencode-ai
+          }
+          if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) {
+            throw "OpenCode installation failed; previous sessions cannot be restored"
+          }
+          opencode --version
+
       - name: Create the work folder
         run: New-Item -ItemType Directory -Force "$env:USERPROFILE\hub-work" | Out-Null
+
+      - name: Restore repositories and OpenCode sessions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$HOME/hub-work" "$HOME/.npm-hub/logs"
+          WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_RESTORE_EXISTING=1 \
+            bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" || true
+          bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" || true
+          bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" || true
 
       - name: Start the hub and open the tunnel
         shell: pwsh
@@ -429,7 +478,7 @@ jobs:
           if (-not (Test-Path $cf)) { throw 'could not download cloudflared' }
 
           $log = "$env:TEMP\cf.log"
-          cmd /c start "" /b "$cf" tunnel --url http://localhost:8090 --no-autoupdate --loglevel info `
+          cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:8090 --no-autoupdate --loglevel info `
             "1>$log" "2>$env:TEMP\cf.err"
 
           $url = $null
@@ -444,9 +493,19 @@ jobs:
             exit 1
           }
 
-          foreach ($i in 1..20) {
-            if ((curl.exe -s -o NUL -w '%{http_code}' -m 15 "$url/api/tools") -match '^[234]') { break }
-            Start-Sleep -Seconds 3
+          $edgeReady = $false
+          $probe = "$env:TEMP\hub-tunnel-probe.html"
+          foreach ($i in 1..30) {
+            $code = curl.exe -sS -L -o $probe -w '%{http_code}' -m 15 "$url/"
+            $body = Get-Content $probe -Raw -ErrorAction SilentlyContinue
+            if ($code -match '^[234]' -and $body -notmatch '(?i)1033') { $edgeReady = $true; break }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $edgeReady) {
+            Write-Host '::error::Cloudflare edge did not become ready (Error 1033).'
+            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Get-Content $log, "$env:TEMP\cf.err" -Tail 25 -ErrorAction SilentlyContinue
+            exit 1
           }
           $url | Out-File -FilePath "$env:TEMP\hub-url.txt" -Encoding utf8 -NoNewline
 
@@ -512,14 +571,17 @@ jobs:
             $edgeOk = $false
             if ((Get-Process -Name cloudflared -ErrorAction SilentlyContinue) -and $cur) {
               try {
-                if ((curl.exe -s -o NUL -w '%{http_code}' -m 10 "$cur/") -match '^[234]') { $edgeOk = $true }
+                $probe = "$env:TEMP\hub-watch-probe.html"
+                $code = curl.exe -sS -L -o $probe -w '%{http_code}' -m 10 "$cur/"
+                $body = Get-Content $probe -Raw -ErrorAction SilentlyContinue
+                if ($code -match '^[234]' -and $body -notmatch '(?i)1033') { $edgeOk = $true }
               } catch { }
             }
             if ($edgeOk) { continue }
             Write-Host '::warning::tunnel dead; reopening.'
             Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
             $log = "$env:TEMP\cf2.log"
-            cmd /c start "" /b "$cf" tunnel --url http://localhost:8090 --no-autoupdate --loglevel info `
+            cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:8090 --no-autoupdate --loglevel info `
               "1>$log" "2>$env:TEMP\cf2.err"
             $url = $null
             foreach ($k in 1..40) {
@@ -528,6 +590,15 @@ jobs:
               if ($text -match 'https://[a-z0-9-]+\.trycloudflare\.com') { $url = $Matches[0]; break }
             }
             if (-not $url) { continue }
+            $edgeReady = $false
+            $probe = "$env:TEMP\hub-tunnel-probe2.html"
+            foreach ($k in 1..30) {
+              $code = curl.exe -sS -L -o $probe -w '%{http_code}' -m 15 "$url/"
+              $body = Get-Content $probe -Raw -ErrorAction SilentlyContinue
+              if ($code -match '^[234]' -and $body -notmatch '(?i)1033') { $edgeReady = $true; break }
+              Start-Sleep -Seconds 2
+            }
+            if (-not $edgeReady) { continue }
             $url | Out-File -FilePath "$env:TEMP\hub-url.txt" -Encoding utf8 -NoNewline
             Write-Host "back up on $url"
             $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
@@ -652,16 +723,16 @@ jobs:
               export VNC_PORT=5901 NOVNC_PORT=6081
               bash "$GITHUB_WORKSPACE/fork/tools/start_desktop.sh" || true
             fi
-            CUR=$(cat $HUB_LOGS/vnc-url 2>/dev/null || echo)
+            CUR=$(cat "$HUB_LOGS/vnc-url" 2>/dev/null || echo)
             PID=$(cat "$PIDFILE" 2>/dev/null || echo)
-            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ]; then
-              code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$CUR/vnc.html" 2>/dev/null || true)
-              case "$code" in 2*|3*|4*) continue ;; esac
+            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ] \
+              && bash "$GITHUB_WORKSPACE/fork/tools/tunnel_health.sh" "$CUR" "/vnc.html"; then
+              continue
             fi
             # Same stale-cloudflared cleanup as the hub job above; bracket
             # pattern so pkill never matches this shell's own command line.
             if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then kill "$PID" 2>/dev/null || true; fi
-            pkill -f "cloudflared [t]unnel --url http://localhost:6081" 2>/dev/null || true
+            pkill -f "cloudflared [t]unnel --url http://127.0.0.1:6081" 2>/dev/null || true
             sleep 1
             echo "::warning::VNC tunnel dead; reopening."
             URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 6081 $HUB_LOGS/vnc-tunnel2.log) || continue

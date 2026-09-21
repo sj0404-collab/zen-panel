@@ -170,6 +170,8 @@ jobs:
         run: |
           # No tunnel secret any more - see the cloudflared note below.
           TOKEN="zen-$(openssl rand -hex 12)"
+          mkdir -p "$HOME/.npm-hub/logs"
+          printf '%s\n' "$TOKEN" > "$HOME/.npm-hub/logs/agent-token"
           cd "$GITHUB_WORKSPACE/fork"
 
           # 0.0.0.0 so the tunnel can reach it; the agent then requires the token for
@@ -247,6 +249,7 @@ jobs:
             tail -25 $HUB_LOGS/tunnel.log
             exit 1
           fi
+          printf '%s\n' "$URL" > "$HOME/.npm-hub/logs/agent-url"
 
           {
             echo "## Zen agent"
@@ -282,7 +285,41 @@ jobs:
       - name: Keep the session alive
         run: |
           echo "Running until cancelled, or for six hours."
-          sleep 21000
+          export HUB_LOGS="$HOME/.npm-hub/logs"
+          mkdir -p "$HUB_LOGS"
+          CF="$HUB_LOGS/agent-tunnel.log"
+          for i in $(seq 1 1400); do
+            sleep 15
+            local_code=$(curl -sS -o /dev/null -w '%{http_code}' -m 10 "http://127.0.0.1:8765/mcp/status" || true)
+            if [ "$local_code" != "200" ]; then
+              echo "::warning::the agent stopped answering ($local_code); restarting it."
+              cd "$GITHUB_WORKSPACE/fork"
+              ZEN_BIND_HOST=0.0.0.0 ZEN_REMOTE_TOKEN="$(cat "$HUB_LOGS/agent-token" 2>/dev/null || true)" MCP_PORT=8765 \
+                ZEN_LONG_TASKS=1 ZEN_LONG_MAX_STEPS=250 \
+                GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+                nohup node agent/zen-agent.js >> "$HUB_LOGS/agent.log" 2>&1 &
+              sleep 8
+            fi
+
+            cur=$(cat "$HUB_LOGS/agent-url" 2>/dev/null || true)
+            pid=$(cat "$HUB_LOGS/cloudflared-8765.pid" 2>/dev/null || true)
+            if [ -n "$cur" ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
+              && bash "$GITHUB_WORKSPACE/fork/tools/tunnel_health.sh" "$cur" "/mcp/status"; then
+              continue
+            fi
+
+            echo "::warning::agent tunnel is unavailable; replacing the stale URL."
+            [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+            URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8765 "$CF") || continue
+            [ -n "$URL" ] || continue
+            printf '%s\n' "$URL" > "$HUB_LOGS/agent-url"
+            token=$(cat "$HUB_LOGS/agent-token" 2>/dev/null || true)
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+                "slot=agent-linux" "kind=CLI-агент" "os=linux" \
+                "url=$URL" "agentUrl=$URL/hub?token=$token" \
+                "agentToken=$token" "branch=$WORK_BRANCH"
+          done
 
       - name: Clear the published session
         run: |
@@ -423,6 +460,7 @@ jobs:
         shell: pwsh
         run: |
           $token = "zen-" + [guid]::NewGuid().ToString("N").Substring(0, 24)
+          $token | Out-File -FilePath "$env:TEMP\agent-token.txt" -Encoding utf8 -NoNewline
           Set-Location "$env:GITHUB_WORKSPACE\fork"
 
           $env:ZEN_BIND_HOST     = "0.0.0.0"
@@ -483,7 +521,7 @@ jobs:
           # without redirects keeps the step waiting on it forever. Both were
           # measured on live runners.
           $log = "$env:TEMP\cf.log"
-          cmd /c start "" /b "$cf" tunnel --url http://localhost:8765 --no-autoupdate --loglevel info `
+          cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:8765 --no-autoupdate --loglevel info `
             "1>$log" "2>$env:TEMP\cf.err"
 
           $url = $null
@@ -500,10 +538,22 @@ jobs:
 
           # The hostname resolves before the edge will serve it; a client that
           # opens it too early sees 502 and blames the agent.
-          foreach ($i in 1..20) {
-            if ((curl.exe -s -o NUL -w "%{http_code}" -m 15 "$url/mcp/status") -match "^[234]") { break }
-            Start-Sleep -Seconds 3
+          $edgeReady = $false
+          $probe = "$env:TEMP\agent-tunnel-probe.html"
+          foreach ($i in 1..30) {
+            $code = curl.exe -sS -L -o $probe -w "%{http_code}" -m 15 "$url/mcp/status"
+            $body = Get-Content $probe -Raw -ErrorAction SilentlyContinue
+            if ($code -match "^[234]" -and $body -notmatch "(?i)1033") { $edgeReady = $true; break }
+            Start-Sleep -Seconds 2
           }
+          if (-not $edgeReady) {
+            Write-Host "::error::Cloudflare edge did not become ready (Error 1033)."
+            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Get-Content $log, "$env:TEMP\cf.err" -Tail 25 -ErrorAction SilentlyContinue
+            exit 1
+          }
+          $url | Out-File -FilePath "$env:TEMP\agent-url.txt" -Encoding utf8 -NoNewline
+          $token | Out-File -FilePath "$env:TEMP\agent-token.txt" -Encoding utf8 -NoNewline
 
           # Array of lines, not a here-string, for the same YAML reason as
           # the autosave script above.
@@ -540,21 +590,64 @@ jobs:
         run: |
           Write-Host "Running until cancelled, or for six hours."
 
-          # Watch what a visitor sees, not a process id. A dead agent behind a
-          # live tunnel answers 502 - which is exactly what happened - and no
-          # pid check would ever notice, because cloudflared was perfectly
-          # healthy the whole time.
+          # Watch what a visitor sees, not only whether a process exists. A
+          # dead connector can leave the old trycloudflare hostname returning
+          # Error 1033 while cloudflared itself is still listed as running.
           for ($i = 0; $i -lt 1400; $i++) {
             Start-Sleep -Seconds 15
             $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:8765/mcp/status")
-            if ($code -eq "200") { continue }
+            if ($code -ne "200") {
+              Write-Host "::warning::the agent stopped answering ($code); restarting it."
+              Set-Location "$env:GITHUB_WORKSPACE\fork"
+              $env:ZEN_BIND_HOST = "0.0.0.0"
+              $env:ZEN_REMOTE_TOKEN = (Get-Content "$env:TEMP\agent-token.txt" -Raw -ErrorAction SilentlyContinue).Trim()
+              $env:MCP_PORT = "8765"
+              $env:GITHUB_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+              cmd /c start "" /b node agent/zen-agent.js `
+                "1>$env:TEMP\agent2.log" "2>$env:TEMP\agent2.err"
+              Start-Sleep -Seconds 8
+            }
 
-            Write-Host "::warning::the agent stopped answering ($code); restarting it."
-            cmd /c start "" /b node agent/zen-agent.js `
-              "1>$env:TEMP\agent2.log" "2>$env:TEMP\agent2.err"
-            Start-Sleep -Seconds 10
+            $cur = ''
+            try { $cur = (Get-Content "$env:TEMP\agent-url.txt" -Raw -ErrorAction Stop).Trim() } catch { }
+            $edgeOk = $false
+            if ((Get-Process -Name cloudflared -ErrorAction SilentlyContinue) -and $cur) {
+              $probe = "$env:TEMP\agent-watch-probe.html"
+              $edgeCode = curl.exe -sS -L -o $probe -w "%{http_code}" -m 10 "$cur/mcp/status"
+              $edgeBody = Get-Content $probe -Raw -ErrorAction SilentlyContinue
+              if ($edgeCode -match "^[234]" -and $edgeBody -notmatch "(?i)1033") { $edgeOk = $true }
+            }
+            if ($edgeOk) { continue }
+
+            Write-Host "::warning::agent tunnel is unavailable; replacing the stale URL."
+            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            $log = "$env:TEMP\cf2.log"
+            cmd /c start "" /b "$env:TEMP\cloudflared.exe" tunnel --url http://127.0.0.1:8765 --no-autoupdate --loglevel info `
+              "1>$log" "2>$env:TEMP\cf2.err"
+            $url = $null
+            foreach ($k in 1..40) {
+              Start-Sleep -Seconds 2
+              $text = (Get-Content $log, "$env:TEMP\cf2.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+              if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+            }
+            if (-not $url) { continue }
+            $edgeReady = $false
+            $probe = "$env:TEMP\agent-tunnel-probe2.html"
+            foreach ($k in 1..30) {
+              $edgeCode = curl.exe -sS -L -o $probe -w "%{http_code}" -m 15 "$url/mcp/status"
+              $edgeBody = Get-Content $probe -Raw -ErrorAction SilentlyContinue
+              if ($edgeCode -match "^[234]" -and $edgeBody -notmatch "(?i)1033") { $edgeReady = $true; break }
+              Start-Sleep -Seconds 2
+            }
+            if (-not $edgeReady) { continue }
+            $url | Out-File -FilePath "$env:TEMP\agent-url.txt" -Encoding utf8 -NoNewline
+            $token = (Get-Content "$env:TEMP\agent-token.txt" -Raw -ErrorAction SilentlyContinue).Trim()
+            $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+            bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+              "slot=agent-windows" "kind=CLI-агент" "os=windows" `
+              "url=$url" "agentUrl=$url/hub?token=$token" `
+              "agentToken=$token" "branch=$env:WORK_BRANCH"
           }
-          Start-Sleep -Seconds 21000
 
       - name: Clear the published session
         shell: pwsh

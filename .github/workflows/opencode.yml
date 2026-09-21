@@ -106,11 +106,21 @@ jobs:
           # is a heavy SPA that janks a phone WebView; the panel opens the
           # gateway at :4100 instead.
           mkdir -p "$HUB_LOGS" "$HOME/.npm-hub/logs" 2>/dev/null || true
+          # The checkout is fresh on every runner. Reapply the previous
+          # runner's uncommitted diff/untracked files before importing chats so
+          # OpenCode starts in the same local repository state.
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
+            WORK_BACKUP_RESTORE_EXISTING=1 bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" \
+            2>&1 | tee -a "$HUB_LOGS/restore-work.log" || true
           cat > $HUB_LOGS/opencode.json <<'JSON'
           { "permission": { "*": "allow" } }
           JSON
           cp $HUB_LOGS/opencode.json "$GITHUB_WORKSPACE/fork/opencode.json" 2>/dev/null || true
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || true
+          # Keep both committed and uncommitted local changes durable while
+          # the OpenCode runner is alive.
+          nohup env WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_INTERVAL=300 \
+            bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" >> "$HUB_LOGS/work-backup.log" 2>&1 &
 
           nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
             > $HUB_LOGS/opencode.log 2>&1 &
@@ -158,6 +168,7 @@ jobs:
             tail -25 $HUB_LOGS/oc-tunnel.log
             exit 1
           fi
+          printf '%s\n' "$URL" > "$HOME/.npm-hub/logs/opencode-url"
 
           {
             echo "## OpenCode"
@@ -193,24 +204,44 @@ jobs:
         run: |
           echo "Running until cancelled, or for six hours."
           export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+          export HUB_LOGS="$HOME/.npm-hub/logs"
+          mkdir -p "$HUB_LOGS"
           for i in $(seq 1 1400); do
             sleep 15
-            if curl -sf -o /dev/null -m 8 "http://127.0.0.1:4096/global/health" \
-              && curl -sf -o /dev/null -m 8 "http://127.0.0.1:4100/"; then
+            if ! curl -sf -o /dev/null -m 8 "http://127.0.0.1:4096/global/health" \
+              || ! curl -sf -o /dev/null -m 8 "http://127.0.0.1:4100/"; then
+              echo "::warning::OpenCode stopped answering; restarting serve + gateway."
+              nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
+                > "$HUB_LOGS/opencode2.log" 2>&1 &
+              sleep 4
+              node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > "$HUB_LOGS/oc-gateway2.log" 2>&1 &
+              sleep 6
+            fi
+
+            cur=$(cat "$HUB_LOGS/opencode-url" 2>/dev/null || true)
+            pid=$(cat "$HUB_LOGS/cloudflared-4100.pid" 2>/dev/null || true)
+            if [ -n "$cur" ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
+              && bash "$GITHUB_WORKSPACE/fork/tools/tunnel_health.sh" "$cur" "/"; then
               continue
             fi
-            echo "::warning::OpenCode stopped answering; restarting serve + gateway."
-            nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
-              > $HUB_LOGS/opencode2.log 2>&1 &
-            sleep 4
-            node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > $HUB_LOGS/oc-gateway2.log 2>&1 &
-            sleep 6
+            echo "::warning::OpenCode tunnel is unavailable; replacing the stale URL."
+            [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+            URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 4100 "$HUB_LOGS/oc-tunnel2.log") || continue
+            [ -n "$URL" ] || continue
+            printf '%s\n' "$URL" > "$HUB_LOGS/opencode-url"
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+                "slot=opencode-linux" "kind=OpenCode" "os=linux" \
+                "url=$URL" "agentUrl=$URL/" "branch=$WORK_BRANCH"
           done
 
       - name: Snapshot audit/code on exit
         if: always()
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
+            bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" --once \
+            2>&1 | tee -a "$HUB_LOGS/work-backup.log" || true
           bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once opencode "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-opencode.log" || true
 
       - name: Clear the published session
@@ -292,6 +323,11 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           Set-Location "$env:GITHUB_WORKSPACE\fork"
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          $env:WORK_BACKUP_ROOT = $HOME
+          $env:WORK_BACKUP_RESTORE_EXISTING = "1"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/restore-work.sh" 2>&1 | Tee-Object -FilePath "$env:TEMP\restore-work.log"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$env:GITHUB_WORKSPACE/fork" 2>&1 | Tee-Object -FilePath "$env:TEMP\restore-audit.log"
 
           # cmd /c start, not Start-Process: a process started with
           # Start-Process is killed when its step ends.
@@ -342,7 +378,7 @@ jobs:
           if (-not (Test-Path $cf)) { throw "could not download cloudflared" }
 
           $log = "$env:TEMP\cf-oc.log"
-          cmd /c start "" /b "$cf" tunnel --url http://localhost:4100 --no-autoupdate --loglevel info `
+          cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:4100 --no-autoupdate --loglevel info `
             "1>$log" "2>$env:TEMP\cf-oc.err"
 
           $url = $null
@@ -357,10 +393,22 @@ jobs:
             exit 1
           }
 
-          foreach ($i in 1..20) {
-            if ((curl.exe -s -o NUL -w "%{http_code}" -m 15 "$url/") -match "^[234]") { break }
-            Start-Sleep -Seconds 3
+          $edgeReady = $false
+          $probe = "$env:TEMP\oc-tunnel-probe.html"
+          foreach ($i in 1..30) {
+            $code = curl.exe -sS -L -o $probe -w "%{http_code}" -m 15 "$url/"
+            $body = Get-Content $probe -Raw -ErrorAction SilentlyContinue
+            if ($code -match "^[234]" -and $body -notmatch "(?i)1033") { $edgeReady = $true; break }
+            Start-Sleep -Seconds 2
           }
+          if (-not $edgeReady) {
+            Write-Host "::error::Cloudflare edge did not become ready (Error 1033)."
+            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Get-Content $log, "$env:TEMP\cf-oc.err" -Tail 25 -ErrorAction SilentlyContinue
+            exit 1
+          }
+
+          $url | Out-File -FilePath "$env:TEMP\opencode-url.txt" -Encoding utf8 -NoNewline
 
           $summary = @(
             "## OpenCode (Windows)",
@@ -394,14 +442,53 @@ jobs:
             Start-Sleep -Seconds 15
             $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:4096/global/health")
             $gcode = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:4100/")
-            if ($code -match "^[234]" -and $gcode -match "^[234]") { continue }
-            Write-Host "::warning::OpenCode stopped answering ($code/$gcode); restarting serve + gateway."
-            cmd /c start "" /b opencode serve --port 4096 --hostname 127.0.0.1 --cors * `
-              "1>$env:TEMP\opencode2.log" "2>$env:TEMP\opencode2.err"
-            Start-Sleep -Seconds 4
-            cmd /c start "" /b node "$env:GITHUB_WORKSPACE\fork\agent\oc-gateway.js" `
-              "1>$env:TEMP\oc-gateway2.log" "2>$env:TEMP\oc-gateway2.err"
-            Start-Sleep -Seconds 10
+            if ($code -notmatch "^[234]" -or $gcode -notmatch "^[234]") {
+              Write-Host "::warning::OpenCode stopped answering ($code/$gcode); restarting serve + gateway."
+              cmd /c start "" /b opencode serve --port 4096 --hostname 127.0.0.1 --cors * `
+                "1>$env:TEMP\opencode2.log" "2>$env:TEMP\opencode2.err"
+              Start-Sleep -Seconds 4
+              cmd /c start "" /b node "$env:GITHUB_WORKSPACE\fork\agent\oc-gateway.js" `
+                "1>$env:TEMP\oc-gateway2.log" "2>$env:TEMP\oc-gateway2.err"
+              Start-Sleep -Seconds 10
+            }
+
+            $cur = ''
+            try { $cur = (Get-Content "$env:TEMP\opencode-url.txt" -Raw -ErrorAction Stop).Trim() } catch { }
+            $edgeOk = $false
+            if ((Get-Process -Name cloudflared -ErrorAction SilentlyContinue) -and $cur) {
+              $probe = "$env:TEMP\oc-watch-probe.html"
+              $edgeCode = curl.exe -sS -L -o $probe -w "%{http_code}" -m 10 "$cur/"
+              $edgeBody = Get-Content $probe -Raw -ErrorAction SilentlyContinue
+              if ($edgeCode -match "^[234]" -and $edgeBody -notmatch "(?i)1033") { $edgeOk = $true }
+            }
+            if ($edgeOk) { continue }
+
+            Write-Host "::warning::OpenCode tunnel is unavailable; replacing the stale URL."
+            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            $log = "$env:TEMP\cf-oc2.log"
+            cmd /c start "" /b "$env:TEMP\cloudflared.exe" tunnel --url http://127.0.0.1:4100 --no-autoupdate --loglevel info `
+              "1>$log" "2>$env:TEMP\cf-oc2.err"
+            $url = $null
+            foreach ($k in 1..40) {
+              Start-Sleep -Seconds 2
+              $text = (Get-Content $log, "$env:TEMP\cf-oc2.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+              if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+            }
+            if (-not $url) { continue }
+            $edgeReady = $false
+            $probe = "$env:TEMP\oc-tunnel-probe2.html"
+            foreach ($k in 1..30) {
+              $edgeCode = curl.exe -sS -L -o $probe -w "%{http_code}" -m 15 "$url/"
+              $edgeBody = Get-Content $probe -Raw -ErrorAction SilentlyContinue
+              if ($edgeCode -match "^[234]" -and $edgeBody -notmatch "(?i)1033") { $edgeReady = $true; break }
+              Start-Sleep -Seconds 2
+            }
+            if (-not $edgeReady) { continue }
+            $url | Out-File -FilePath "$env:TEMP\opencode-url.txt" -Encoding utf8 -NoNewline
+            $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+            bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+              "slot=opencode-windows" "kind=OpenCode" "os=windows" `
+              "url=$url" "agentUrl=$url/" "branch=$env:WORK_BRANCH"
           }
 
       - name: Clear the published session
@@ -423,6 +510,9 @@ jobs:
         shell: pwsh
         run: |
           Set-Location "$env:GITHUB_WORKSPACE\fork"
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          $env:WORK_BACKUP_ROOT = $HOME
+          bash "$env:GITHUB_WORKSPACE/fork/tools/backup-work.sh" --once 2>&1 | Tee-Object -FilePath "$env:TEMP\work-backup.log"
           if (git status --porcelain) {
             git add -A
             git commit -q -m "opencode final save $(Get-Date -Format 'yyyy-MM-dd HH:mm')"

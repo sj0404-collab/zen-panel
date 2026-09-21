@@ -14,6 +14,11 @@ const deskHtml = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/desk
 const keep = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/src/vnc-keepalive.js'), 'utf8');
 const startDesktop = fs.readFileSync(path.join(__dirname, '..', 'tools/start_desktop.sh'), 'utf8');
 const mainKt = fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/java/dev/zen/hub/MainActivity.kt'), 'utf8');
+const panelKt = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/java/dev/zen/panel/MainActivity.kt'), 'utf8');
+const hubWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8');
+const backupWork = fs.readFileSync(path.join(__dirname, '..', 'tools/backup-work.sh'), 'utf8');
+const restoreWork = fs.readFileSync(path.join(__dirname, '..', 'tools/restore-work.sh'), 'utf8');
+const filesApp = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/files-app.js'), 'utf8');
 
 let pass = 0, fail = 0;
 function check(name, cond, extra) {
@@ -213,7 +218,6 @@ check('q34e html buttons', mobHtml.includes('fmUploadFolder()') && deskHtml.incl
 
 // q35: the panel gets its own runner card + rerun + SAF in its APK shell.
 const panel = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/assets/panel/index.html'), 'utf8');
-const panelKt = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/java/dev/zen/panel/MainActivity.kt'), 'utf8');
 check('q35 panel runner', panel.includes('id="runner-card-panel"') &&
   panel.includes('async function runnerPanelScan(') &&
   panel.includes('async function runnerPanelSave(') &&
@@ -456,6 +460,55 @@ check('q53 closing a tab kills the server session',
   mob.includes("/api/sessions/' + encodeURIComponent(id) + '/kill'") &&
   desk.includes("/api/sessions/' + encodeURIComponent(id) + '/kill'") &&
   term.includes("/api/sessions/' + encodeURIComponent(id) + '/kill'"));
+
+// q54: the custom scrollbar controls xterm's normal scrollback, while a
+// full-screen alternate-screen app (OpenCode, vim, htop) receives synthetic
+// wheel events that xterm converts into scroll keys / mouse reporting.
+// A scrollbar cannot directly move that app's private transcript.
+check('q54 alternate-screen program scrolling',
+  mob.includes("b.type === 'alternate'") &&
+  desk.includes("b.type === 'alternate'") &&
+  term.includes("b&&b.type==='alternate'") &&
+  mob.includes("new WheelEvent('wheel'") &&
+  desk.includes("new WheelEvent('wheel'") &&
+  term.includes("new WheelEvent('wheel'") &&
+  term.includes('Math.min(1,((startTop/max)*ratio+dy)/ratio)'));
+
+// q55: Android downloads keep the server filename and recognize compound
+// archives instead of letting DownloadManager rename them to .bin/.ts.
+check('q55 APK preserves archive filenames',
+  mainKt.includes('URLDecoder.decode') && panelKt.includes('URLDecoder.decode') &&
+  mainKt.includes('lower.endsWith(".tar.xz")') && panelKt.includes('lower.endsWith(".tar.xz")') &&
+  mainKt.includes('application/x-xz') && panelKt.includes('application/x-xz') &&
+  mainKt.includes('detectedMime') && panelKt.includes('detectedMime'));
+
+// q56: OpenCode descriptors survive the runner disk and are exposed to a new
+// browser, while explicitly closed tabs remove the descriptor.
+check('q56 durable OpenCode session restore',
+  server.includes("const SESSION_DIR = path.join(DATA_DIR, 'sessions')") &&
+  server.includes('autoRestore') && server.includes('resolveRestoredCwd') &&
+  server.includes('restore: true') && mob.includes('durableIds') &&
+  desk.includes('durableIds') && term.includes('restoreDurableSessions') &&
+  backupWork.includes('"name": os.path.basename') &&
+  restoreWork.includes('WORK_BACKUP_RESTORE_EXISTING'));
+
+// q57: a fresh Hub runner installs OpenCode before chat import and restores
+// repositories before calling opencode import.
+check('q57 startup installs OpenCode before restore',
+  hubWorkflow.includes('Install OpenCode for session recovery') &&
+  hubWorkflow.indexOf('restore-work.sh') < hubWorkflow.indexOf('restore_audit_code.sh') &&
+  hubWorkflow.includes('WORK_BACKUP_RESTORE_EXISTING=1') &&
+  hubWorkflow.includes('Final durable repository and session backup'));
+
+// q58: the archive button packages folders only; selecting an APK or another
+// file always uses the binary-safe original-file download route.
+check('q58 archive does not wrap files',
+  mob.includes('return fmDownloadSingle()') &&
+  desk.includes('return fmDownloadSingle()') &&
+  filesApp.includes('return fmDownload()') &&
+  mob.includes("item.dataset.isdir !== '1'") &&
+  desk.includes("item.dataset.isdir !== '1'") &&
+  filesApp.includes("item.dataset.isdir !== '1'"));
 
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);

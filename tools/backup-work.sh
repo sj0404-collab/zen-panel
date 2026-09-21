@@ -130,13 +130,13 @@ collect() {
         | tar --null -T - --exclude='.git' -czf "$out/untracked.tar.gz" 2>/dev/null ) || true
     [ -s "$out/untracked.tar.gz" ] || rm -f "$out/untracked.tar.gz"
     python3 - "$dir" "$rel" "$out/meta.json" <<'PY' 2>/dev/null || true
-import json, subprocess, sys
+import json, os, subprocess, sys
 d, rel, path = sys.argv[1], sys.argv[2], sys.argv[3]
 def run(c):
     try: return subprocess.check_output(c, cwd=d, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
     except Exception: return ""
 json.dump({
-    "rel": rel, "path": d,
+    "rel": rel, "path": d, "name": os.path.basename(os.path.realpath(d)),
     "branch": run("git branch --show-current") or run("git rev-parse --abbrev-ref HEAD"),
     "head": run("git rev-parse HEAD"),
     "remote": run("git remote get-url origin 2>/dev/null"),

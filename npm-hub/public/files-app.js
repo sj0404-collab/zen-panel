@@ -303,6 +303,11 @@ function fmDownload() {
 
 function fmArchive() {
   if (!fmSelected) return;
+  const item = [...document.querySelectorAll('#fm-list .fm-item.fm-sel')]
+    .find(el => el.dataset.path === fmSelected);
+  // Do not wrap a selected APK/binary in tar.xz. Archives are for folders;
+  // files use the binary-safe download endpoint with their original name.
+  if (item && item.dataset.isdir !== '1') return fmDownload();
   window.open(`/api/fs/archive?path=${encodeURIComponent(fmSelected)}`);
 }
 
