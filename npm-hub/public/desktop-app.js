@@ -872,6 +872,11 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
       if (m.type === 'exit') term.write(`\r\n\x1b[33m[Exited ${m.code}]\x1b[0m\r\n`);
       if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`);
     };
+    socket.onerror = () => {
+      // Force a close on WebViews that report a network error without closing
+      // the socket; onclose owns the single reconnect/backoff path.
+      try { if (socket.readyState !== WebSocket.CLOSED) socket.close(); } catch {}
+    };
     socket.onclose = () => {
       if (td.manualClose) return;
       if (td.ws !== socket) return; // superseded by a newer socket; it owns reconnection

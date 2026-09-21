@@ -1,0 +1,538 @@
+diff --git a/.github/workflows/agent.yml b/.github/workflows/agent.yml
+index b334b3a..62f842a 100644
+--- a/.github/workflows/agent.yml
++++ b/.github/workflows/agent.yml
+@@ -170,6 +170,8 @@ jobs:
+         run: |
+           # No tunnel secret any more - see the cloudflared note below.
+           TOKEN="zen-$(openssl rand -hex 12)"
++          mkdir -p "$HOME/.npm-hub/logs"
++          printf '%s\n' "$TOKEN" > "$HOME/.npm-hub/logs/agent-token"
+           cd "$GITHUB_WORKSPACE/fork"
+ 
+           # 0.0.0.0 so the tunnel can reach it; the agent then requires the token for
+@@ -247,6 +249,7 @@ jobs:
+             tail -25 $HUB_LOGS/tunnel.log
+             exit 1
+           fi
++          printf '%s\n' "$URL" > "$HOME/.npm-hub/logs/agent-url"
+ 
+           {
+             echo "## Zen agent"
+@@ -282,7 +285,41 @@ jobs:
+       - name: Keep the session alive
+         run: |
+           echo "Running until cancelled, or for six hours."
+-          sleep 21000
++          export HUB_LOGS="$HOME/.npm-hub/logs"
++          mkdir -p "$HUB_LOGS"
++          CF="$HUB_LOGS/agent-tunnel.log"
++          for i in $(seq 1 1400); do
++            sleep 15
++            local_code=$(curl -sS -o /dev/null -w '%{http_code}' -m 10 "http://127.0.0.1:8765/mcp/status" || true)
++            if [ "$local_code" != "200" ]; then
++              echo "::warning::the agent stopped answering ($local_code); restarting it."
++              cd "$GITHUB_WORKSPACE/fork"
++              ZEN_BIND_HOST=0.0.0.0 ZEN_REMOTE_TOKEN="$(cat "$HUB_LOGS/agent-token" 2>/dev/null || true)" MCP_PORT=8765 \
++                ZEN_LONG_TASKS=1 ZEN_LONG_MAX_STEPS=250 \
++                GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
++                nohup node agent/zen-agent.js >> "$HUB_LOGS/agent.log" 2>&1 &
++              sleep 8
++            fi
++
++            cur=$(cat "$HUB_LOGS/agent-url" 2>/dev/null || true)
++            pid=$(cat "$HUB_LOGS/cloudflared-8765.pid" 2>/dev/null || true)
++            if [ -n "$cur" ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
++              && bash "$GITHUB_WORKSPACE/fork/tools/tunnel_health.sh" "$cur" "/mcp/status"; then
++              continue
++            fi
++
++            echo "::warning::agent tunnel is unavailable; replacing the stale URL."
++            [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
++            URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8765 "$CF") || continue
++            [ -n "$URL" ] || continue
++            printf '%s\n' "$URL" > "$HUB_LOGS/agent-url"
++            token=$(cat "$HUB_LOGS/agent-token" 2>/dev/null || true)
++            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
++              bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
++                "slot=agent-linux" "kind=CLI-агент" "os=linux" \
++                "url=$URL" "agentUrl=$URL/hub?token=$token" \
++                "agentToken=$token" "branch=$WORK_BRANCH"
++          done
+ 
+       - name: Clear the published session
+         run: |
+@@ -423,6 +460,7 @@ jobs:
+         shell: pwsh
+         run: |
+           $token = "zen-" + [guid]::NewGuid().ToString("N").Substring(0, 24)
++          $token | Out-File -FilePath "$env:TEMP\agent-token.txt" -Encoding utf8 -NoNewline
+           Set-Location "$env:GITHUB_WORKSPACE\fork"
+ 
+           $env:ZEN_BIND_HOST     = "0.0.0.0"
+@@ -483,7 +521,7 @@ jobs:
+           # without redirects keeps the step waiting on it forever. Both were
+           # measured on live runners.
+           $log = "$env:TEMP\cf.log"
+-          cmd /c start "" /b "$cf" tunnel --url http://localhost:8765 --no-autoupdate --loglevel info `
++          cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:8765 --no-autoupdate --loglevel info `
+             "1>$log" "2>$env:TEMP\cf.err"
+ 
+           $url = $null
+@@ -500,10 +538,22 @@ jobs:
+ 
+           # The hostname resolves before the edge will serve it; a client that
+           # opens it too early sees 502 and blames the agent.
+-          foreach ($i in 1..20) {
+-            if ((curl.exe -s -o NUL -w "%{http_code}" -m 15 "$url/mcp/status") -match "^[234]") { break }
+-            Start-Sleep -Seconds 3
++          $edgeReady = $false
++          $probe = "$env:TEMP\agent-tunnel-probe.html"
++          foreach ($i in 1..30) {
++            $code = curl.exe -sS -L -o $probe -w "%{http_code}" -m 15 "$url/mcp/status"
++            $body = Get-Content $probe -Raw -ErrorAction SilentlyContinue
++            if ($code -match "^[234]" -and $body -notmatch "(?i)1033") { $edgeReady = $true; break }
++            Start-Sleep -Seconds 2
+           }
++          if (-not $edgeReady) {
++            Write-Host "::error::Cloudflare edge did not become ready (Error 1033)."
++            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
++            Get-Content $log, "$env:TEMP\cf.err" -Tail 25 -ErrorAction SilentlyContinue
++            exit 1
++          }
++          $url | Out-File -FilePath "$env:TEMP\agent-url.txt" -Encoding utf8 -NoNewline
++          $token | Out-File -FilePath "$env:TEMP\agent-token.txt" -Encoding utf8 -NoNewline
+ 
+           # Array of lines, not a here-string, for the same YAML reason as
+           # the autosave script above.
+@@ -540,21 +590,64 @@ jobs:
+         run: |
+           Write-Host "Running until cancelled, or for six hours."
+ 
+-          # Watch what a visitor sees, not a process id. A dead agent behind a
+-          # live tunnel answers 502 - which is exactly what happened - and no
+-          # pid check would ever notice, because cloudflared was perfectly
+-          # healthy the whole time.
++          # Watch what a visitor sees, not only whether a process exists. A
++          # dead connector can leave the old trycloudflare hostname returning
++          # Error 1033 while cloudflared itself is still listed as running.
+           for ($i = 0; $i -lt 1400; $i++) {
+             Start-Sleep -Seconds 15
+             $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:8765/mcp/status")
+-            if ($code -eq "200") { continue }
+-
+-            Write-Host "::warning::the agent stopped answering ($code); restarting it."
+-            cmd /c start "" /b node agent/zen-agent.js `
+-              "1>$env:TEMP\agent2.log" "2>$env:TEMP\agent2.err"
+-            Start-Sleep -Seconds 10
++            if ($code -ne "200") {
++              Write-Host "::warning::the agent stopped answering ($code); restarting it."
++              Set-Location "$env:GITHUB_WORKSPACE\fork"
++              $env:ZEN_BIND_HOST = "0.0.0.0"
++              $env:ZEN_REMOTE_TOKEN = (Get-Content "$env:TEMP\agent-token.txt" -Raw -ErrorAction SilentlyContinue).Trim()
++              $env:MCP_PORT = "8765"
++              $env:GITHUB_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
++              cmd /c start "" /b node agent/zen-agent.js `
++                "1>$env:TEMP\agent2.log" "2>$env:TEMP\agent2.err"
++              Start-Sleep -Seconds 8
++            }
++
++            $cur = ''
++            try { $cur = (Get-Content "$env:TEMP\agent-url.txt" -Raw -ErrorAction Stop).Trim() } catch { }
++            $edgeOk = $false
++            if ((Get-Process -Name cloudflared -ErrorAction SilentlyContinue) -and $cur) {
++              $probe = "$env:TEMP\agent-watch-probe.html"
++              $edgeCode = curl.exe -sS -L -o $probe -w "%{http_code}" -m 10 "$cur/mcp/status"
++              $edgeBody = Get-Content $probe -Raw -ErrorAction SilentlyContinue
++              if ($edgeCode -match "^[234]" -and $edgeBody -notmatch "(?i)1033") { $edgeOk = $true }
++            }
++            if ($edgeOk) { continue }
++
++            Write-Host "::warning::agent tunnel is unavailable; replacing the stale URL."
++            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
++            $log = "$env:TEMP\cf2.log"
++            cmd /c start "" /b "$env:TEMP\cloudflared.exe" tunnel --url http://127.0.0.1:8765 --no-autoupdate --loglevel info `
++              "1>$log" "2>$env:TEMP\cf2.err"
++            $url = $null
++            foreach ($k in 1..40) {
++              Start-Sleep -Seconds 2
++              $text = (Get-Content $log, "$env:TEMP\cf2.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
++              if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
++            }
++            if (-not $url) { continue }
++            $edgeReady = $false
++            $probe = "$env:TEMP\agent-tunnel-probe2.html"
++            foreach ($k in 1..30) {
++              $edgeCode = curl.exe -sS -L -o $probe -w "%{http_code}" -m 15 "$url/mcp/status"
++              $edgeBody = Get-Content $probe -Raw -ErrorAction SilentlyContinue
++              if ($edgeCode -match "^[234]" -and $edgeBody -notmatch "(?i)1033") { $edgeReady = $true; break }
++              Start-Sleep -Seconds 2
++            }
++            if (-not $edgeReady) { continue }
++            $url | Out-File -FilePath "$env:TEMP\agent-url.txt" -Encoding utf8 -NoNewline
++            $token = (Get-Content "$env:TEMP\agent-token.txt" -Raw -ErrorAction SilentlyContinue).Trim()
++            $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
++            bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
++              "slot=agent-windows" "kind=CLI-агент" "os=windows" `
++              "url=$url" "agentUrl=$url/hub?token=$token" `
++              "agentToken=$token" "branch=$env:WORK_BRANCH"
+           }
+-          Start-Sleep -Seconds 21000
+ 
+       - name: Clear the published session
+         shell: pwsh
+diff --git a/.github/workflows/desks.yml b/.github/workflows/desks.yml
+index 4f54bd4..c7028a4 100644
+--- a/.github/workflows/desks.yml
++++ b/.github/workflows/desks.yml
+@@ -135,7 +135,7 @@ jobs:
+           # allows one, so it could never do this.
+           # Detached, so the step can finish while the tunnel keeps running.
+           $log = "$env:TEMP\cf.log"
+-          cmd /c start "" /b "$cf" tunnel --url http://localhost:6080 --no-autoupdate --loglevel info `
++          cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:6080 --no-autoupdate --loglevel info `
+             "1>$log" "2>$env:TEMP\cf.err"
+ 
+           $url = $null
+@@ -150,12 +150,18 @@ jobs:
+           }
+ 
+           # The hostname exists before the edge will serve it; a client that
+-          # opens it too early sees 502 and blames the desk.
+-          foreach ($try in 1..20) {
++          # opens it too early sees 502 or Error 1033 and blames the desk.
++          $edgeReady = $false
++          foreach ($try in 1..30) {
+             try {
+               $r = Invoke-WebRequest -UseBasicParsing -Uri "$url/health" -TimeoutSec 15
+-              if ($r.StatusCode -eq 200) { break }
+-            } catch { Start-Sleep -Seconds 3 }
++              if ($r.StatusCode -eq 200 -and $r.Content -notmatch '(?i)1033') { $edgeReady = $true; break }
++            } catch { }
++            Start-Sleep -Seconds 2
++          }
++          if (-not $edgeReady) {
++            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
++            throw 'Cloudflare edge did not become ready (Error 1033)'
+           }
+           "DESK_URL=$url" | Out-File -FilePath $env:GITHUB_ENV -Append
+           Write-Host "desk: $url"
+@@ -197,11 +203,19 @@ jobs:
+               Start-Sleep -Seconds 8
+             }
+ 
+-            if (Get-Process cloudflared -ErrorAction SilentlyContinue) { continue }
++            $edgeOk = $false
++            if ((Get-Process cloudflared -ErrorAction SilentlyContinue) -and $env:DESK_URL) {
++              $probe = "$env:TEMP\desk-watch-probe.html"
++              $edgeCode = curl.exe -sS -L -o $probe -w "%{http_code}" -m 10 "$env:DESK_URL/health"
++              $edgeBody = Get-Content $probe -Raw -ErrorAction SilentlyContinue
++              if ($edgeCode -eq '200' -and $edgeBody -notmatch '(?i)1033') { $edgeOk = $true }
++            }
++            if ($edgeOk) { continue }
+ 
+-            Write-Host "::warning::the tunnel exited; restarting it."
++            Write-Host "::warning::the desk tunnel is unavailable; replacing the stale URL."
++            Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+             $log = "$env:TEMP\cf2.log"
+-            cmd /c start "" /b "$cf" tunnel --url http://localhost:6080 --no-autoupdate --loglevel info `
++            cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:6080 --no-autoupdate --loglevel info `
+               "1>$log" "2>$env:TEMP\cf2.err"
+             $url = $null
+             foreach ($try in 1..30) {
+@@ -210,6 +224,16 @@ jobs:
+               if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+             }
+             if ($url) {
++              $edgeReady = $false
++              $probe = "$env:TEMP\desk-tunnel-probe2.html"
++              foreach ($try in 1..30) {
++                $edgeCode = curl.exe -sS -L -o $probe -w "%{http_code}" -m 15 "$url/health"
++                $edgeBody = Get-Content $probe -Raw -ErrorAction SilentlyContinue
++                if ($edgeCode -eq '200' -and $edgeBody -notmatch '(?i)1033') { $edgeReady = $true; break }
++                Start-Sleep -Seconds 2
++              }
++              if (-not $edgeReady) { continue }
++              $env:DESK_URL = $url
+               Write-Host "back up on $url"
+               $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+               bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+diff --git a/.github/workflows/hub.yml b/.github/workflows/hub.yml
+index fd89bd3..8136552 100644
+--- a/.github/workflows/hub.yml
++++ b/.github/workflows/hub.yml
+@@ -226,6 +226,8 @@ jobs:
+ 
+       - name: Keep the session alive
+         run: |
++          export HUB_LOGS="$HOME/.npm-hub/logs"
++          mkdir -p "$HUB_LOGS"
+           # Watch the hub and the tunnel instead of sleeping blindly: a dead
+           # hub behind a live tunnel answers 502, and a dead tunnel keeps
+           # resolving - both look like "the address is there but nothing
+@@ -253,9 +255,9 @@ jobs:
+             CUR=$(cat $HUB_LOGS/hub-url 2>/dev/null || echo)
+             PID=$(cat "$PIDFILE" 2>/dev/null || echo)
+             EDGE=""
+-            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ]; then
+-              code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$CUR/" 2>/dev/null || true)
+-              case "$code" in 2*|3*|4*) EDGE=1 ;; esac
++            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ] \
++              && bash "$GITHUB_WORKSPACE/fork/tools/tunnel_health.sh" "$CUR" "/"; then
++              EDGE=1
+             fi
+             if [ -n "$EDGE" ]; then continue; fi
+             # Drop the stale cloudflared before a fresh one takes the port:
+@@ -263,7 +265,7 @@ jobs:
+             # Bracket pattern - a plain "cloudflared tunnel..." match is
+             # suicide against this shell's own command line.
+             if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then kill "$PID" 2>/dev/null || true; fi
+-            pkill -f "cloudflared [t]unnel --url http://localhost:8090" 2>/dev/null || true
++            pkill -f "cloudflared [t]unnel --url http://127.0.0.1:8090" 2>/dev/null || true
+             sleep 1
+             echo "::warning::tunnel dead; reopening."
+             URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 $HUB_LOGS/tunnel2.log) || continue
+@@ -429,7 +431,7 @@ jobs:
+           if (-not (Test-Path $cf)) { throw 'could not download cloudflared' }
+ 
+           $log = "$env:TEMP\cf.log"
+-          cmd /c start "" /b "$cf" tunnel --url http://localhost:8090 --no-autoupdate --loglevel info `
++          cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:8090 --no-autoupdate --loglevel info `
+             "1>$log" "2>$env:TEMP\cf.err"
+ 
+           $url = $null
+@@ -444,9 +446,19 @@ jobs:
+             exit 1
+           }
+ 
+-          foreach ($i in 1..20) {
+-            if ((curl.exe -s -o NUL -w '%{http_code}' -m 15 "$url/api/tools") -match '^[234]') { break }
+-            Start-Sleep -Seconds 3
++          $edgeReady = $false
++          $probe = "$env:TEMP\hub-tunnel-probe.html"
++          foreach ($i in 1..30) {
++            $code = curl.exe -sS -L -o $probe -w '%{http_code}' -m 15 "$url/"
++            $body = Get-Content $probe -Raw -ErrorAction SilentlyContinue
++            if ($code -match '^[234]' -and $body -notmatch '(?i)1033') { $edgeReady = $true; break }
++            Start-Sleep -Seconds 2
++          }
++          if (-not $edgeReady) {
++            Write-Host '::error::Cloudflare edge did not become ready (Error 1033).'
++            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
++            Get-Content $log, "$env:TEMP\cf.err" -Tail 25 -ErrorAction SilentlyContinue
++            exit 1
+           }
+           $url | Out-File -FilePath "$env:TEMP\hub-url.txt" -Encoding utf8 -NoNewline
+ 
+@@ -512,14 +524,17 @@ jobs:
+             $edgeOk = $false
+             if ((Get-Process -Name cloudflared -ErrorAction SilentlyContinue) -and $cur) {
+               try {
+-                if ((curl.exe -s -o NUL -w '%{http_code}' -m 10 "$cur/") -match '^[234]') { $edgeOk = $true }
++                $probe = "$env:TEMP\hub-watch-probe.html"
++                $code = curl.exe -sS -L -o $probe -w '%{http_code}' -m 10 "$cur/"
++                $body = Get-Content $probe -Raw -ErrorAction SilentlyContinue
++                if ($code -match '^[234]' -and $body -notmatch '(?i)1033') { $edgeOk = $true }
+               } catch { }
+             }
+             if ($edgeOk) { continue }
+             Write-Host '::warning::tunnel dead; reopening.'
+             Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+             $log = "$env:TEMP\cf2.log"
+-            cmd /c start "" /b "$cf" tunnel --url http://localhost:8090 --no-autoupdate --loglevel info `
++            cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:8090 --no-autoupdate --loglevel info `
+               "1>$log" "2>$env:TEMP\cf2.err"
+             $url = $null
+             foreach ($k in 1..40) {
+@@ -528,6 +543,15 @@ jobs:
+               if ($text -match 'https://[a-z0-9-]+\.trycloudflare\.com') { $url = $Matches[0]; break }
+             }
+             if (-not $url) { continue }
++            $edgeReady = $false
++            $probe = "$env:TEMP\hub-tunnel-probe2.html"
++            foreach ($k in 1..30) {
++              $code = curl.exe -sS -L -o $probe -w '%{http_code}' -m 15 "$url/"
++              $body = Get-Content $probe -Raw -ErrorAction SilentlyContinue
++              if ($code -match '^[234]' -and $body -notmatch '(?i)1033') { $edgeReady = $true; break }
++              Start-Sleep -Seconds 2
++            }
++            if (-not $edgeReady) { continue }
+             $url | Out-File -FilePath "$env:TEMP\hub-url.txt" -Encoding utf8 -NoNewline
+             Write-Host "back up on $url"
+             $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
+@@ -652,16 +676,16 @@ jobs:
+               export VNC_PORT=5901 NOVNC_PORT=6081
+               bash "$GITHUB_WORKSPACE/fork/tools/start_desktop.sh" || true
+             fi
+-            CUR=$(cat $HUB_LOGS/vnc-url 2>/dev/null || echo)
++            CUR=$(cat "$HUB_LOGS/vnc-url" 2>/dev/null || echo)
+             PID=$(cat "$PIDFILE" 2>/dev/null || echo)
+-            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ]; then
+-              code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$CUR/vnc.html" 2>/dev/null || true)
+-              case "$code" in 2*|3*|4*) continue ;; esac
++            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && [ -n "$CUR" ] \
++              && bash "$GITHUB_WORKSPACE/fork/tools/tunnel_health.sh" "$CUR" "/vnc.html"; then
++              continue
+             fi
+             # Same stale-cloudflared cleanup as the hub job above; bracket
+             # pattern so pkill never matches this shell's own command line.
+             if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then kill "$PID" 2>/dev/null || true; fi
+-            pkill -f "cloudflared [t]unnel --url http://localhost:6081" 2>/dev/null || true
++            pkill -f "cloudflared [t]unnel --url http://127.0.0.1:6081" 2>/dev/null || true
+             sleep 1
+             echo "::warning::VNC tunnel dead; reopening."
+             URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 6081 $HUB_LOGS/vnc-tunnel2.log) || continue
+diff --git a/.github/workflows/opencode.yml b/.github/workflows/opencode.yml
+index 8c8a097..f4258f4 100644
+--- a/.github/workflows/opencode.yml
++++ b/.github/workflows/opencode.yml
+@@ -158,6 +158,7 @@ jobs:
+             tail -25 $HUB_LOGS/oc-tunnel.log
+             exit 1
+           fi
++          printf '%s\n' "$URL" > "$HOME/.npm-hub/logs/opencode-url"
+ 
+           {
+             echo "## OpenCode"
+@@ -193,18 +194,35 @@ jobs:
+         run: |
+           echo "Running until cancelled, or for six hours."
+           export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
++          export HUB_LOGS="$HOME/.npm-hub/logs"
++          mkdir -p "$HUB_LOGS"
+           for i in $(seq 1 1400); do
+             sleep 15
+-            if curl -sf -o /dev/null -m 8 "http://127.0.0.1:4096/global/health" \
+-              && curl -sf -o /dev/null -m 8 "http://127.0.0.1:4100/"; then
++            if ! curl -sf -o /dev/null -m 8 "http://127.0.0.1:4096/global/health" \
++              || ! curl -sf -o /dev/null -m 8 "http://127.0.0.1:4100/"; then
++              echo "::warning::OpenCode stopped answering; restarting serve + gateway."
++              nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
++                > "$HUB_LOGS/opencode2.log" 2>&1 &
++              sleep 4
++              node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > "$HUB_LOGS/oc-gateway2.log" 2>&1 &
++              sleep 6
++            fi
++
++            cur=$(cat "$HUB_LOGS/opencode-url" 2>/dev/null || true)
++            pid=$(cat "$HUB_LOGS/cloudflared-4100.pid" 2>/dev/null || true)
++            if [ -n "$cur" ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
++              && bash "$GITHUB_WORKSPACE/fork/tools/tunnel_health.sh" "$cur" "/"; then
+               continue
+             fi
+-            echo "::warning::OpenCode stopped answering; restarting serve + gateway."
+-            nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
+-              > $HUB_LOGS/opencode2.log 2>&1 &
+-            sleep 4
+-            node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > $HUB_LOGS/oc-gateway2.log 2>&1 &
+-            sleep 6
++            echo "::warning::OpenCode tunnel is unavailable; replacing the stale URL."
++            [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
++            URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 4100 "$HUB_LOGS/oc-tunnel2.log") || continue
++            [ -n "$URL" ] || continue
++            printf '%s\n' "$URL" > "$HUB_LOGS/opencode-url"
++            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
++              bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
++                "slot=opencode-linux" "kind=OpenCode" "os=linux" \
++                "url=$URL" "agentUrl=$URL/" "branch=$WORK_BRANCH"
+           done
+ 
+       - name: Snapshot audit/code on exit
+@@ -342,7 +360,7 @@ jobs:
+           if (-not (Test-Path $cf)) { throw "could not download cloudflared" }
+ 
+           $log = "$env:TEMP\cf-oc.log"
+-          cmd /c start "" /b "$cf" tunnel --url http://localhost:4100 --no-autoupdate --loglevel info `
++          cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:4100 --no-autoupdate --loglevel info `
+             "1>$log" "2>$env:TEMP\cf-oc.err"
+ 
+           $url = $null
+@@ -357,11 +375,23 @@ jobs:
+             exit 1
+           }
+ 
+-          foreach ($i in 1..20) {
+-            if ((curl.exe -s -o NUL -w "%{http_code}" -m 15 "$url/") -match "^[234]") { break }
+-            Start-Sleep -Seconds 3
++          $edgeReady = $false
++          $probe = "$env:TEMP\oc-tunnel-probe.html"
++          foreach ($i in 1..30) {
++            $code = curl.exe -sS -L -o $probe -w "%{http_code}" -m 15 "$url/"
++            $body = Get-Content $probe -Raw -ErrorAction SilentlyContinue
++            if ($code -match "^[234]" -and $body -notmatch "(?i)1033") { $edgeReady = $true; break }
++            Start-Sleep -Seconds 2
++          }
++          if (-not $edgeReady) {
++            Write-Host "::error::Cloudflare edge did not become ready (Error 1033)."
++            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
++            Get-Content $log, "$env:TEMP\cf-oc.err" -Tail 25 -ErrorAction SilentlyContinue
++            exit 1
+           }
+ 
++          $url | Out-File -FilePath "$env:TEMP\opencode-url.txt" -Encoding utf8 -NoNewline
++
+           $summary = @(
+             "## OpenCode (Windows)",
+             "",
+@@ -394,14 +424,53 @@ jobs:
+             Start-Sleep -Seconds 15
+             $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:4096/global/health")
+             $gcode = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:4100/")
+-            if ($code -match "^[234]" -and $gcode -match "^[234]") { continue }
+-            Write-Host "::warning::OpenCode stopped answering ($code/$gcode); restarting serve + gateway."
+-            cmd /c start "" /b opencode serve --port 4096 --hostname 127.0.0.1 --cors * `
+-              "1>$env:TEMP\opencode2.log" "2>$env:TEMP\opencode2.err"
+-            Start-Sleep -Seconds 4
+-            cmd /c start "" /b node "$env:GITHUB_WORKSPACE\fork\agent\oc-gateway.js" `
+-              "1>$env:TEMP\oc-gateway2.log" "2>$env:TEMP\oc-gateway2.err"
+-            Start-Sleep -Seconds 10
++            if ($code -notmatch "^[234]" -or $gcode -notmatch "^[234]") {
++              Write-Host "::warning::OpenCode stopped answering ($code/$gcode); restarting serve + gateway."
++              cmd /c start "" /b opencode serve --port 4096 --hostname 127.0.0.1 --cors * `
++                "1>$env:TEMP\opencode2.log" "2>$env:TEMP\opencode2.err"
++              Start-Sleep -Seconds 4
++              cmd /c start "" /b node "$env:GITHUB_WORKSPACE\fork\agent\oc-gateway.js" `
++                "1>$env:TEMP\oc-gateway2.log" "2>$env:TEMP\oc-gateway2.err"
++              Start-Sleep -Seconds 10
++            }
++
++            $cur = ''
++            try { $cur = (Get-Content "$env:TEMP\opencode-url.txt" -Raw -ErrorAction Stop).Trim() } catch { }
++            $edgeOk = $false
++            if ((Get-Process -Name cloudflared -ErrorAction SilentlyContinue) -and $cur) {
++              $probe = "$env:TEMP\oc-watch-probe.html"
++              $edgeCode = curl.exe -sS -L -o $probe -w "%{http_code}" -m 10 "$cur/"
++              $edgeBody = Get-Content $probe -Raw -ErrorAction SilentlyContinue
++              if ($edgeCode -match "^[234]" -and $edgeBody -notmatch "(?i)1033") { $edgeOk = $true }
++            }
++            if ($edgeOk) { continue }
++
++            Write-Host "::warning::OpenCode tunnel is unavailable; replacing the stale URL."
++            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
++            $log = "$env:TEMP\cf-oc2.log"
++            cmd /c start "" /b "$env:TEMP\cloudflared.exe" tunnel --url http://127.0.0.1:4100 --no-autoupdate --loglevel info `
++              "1>$log" "2>$env:TEMP\cf-oc2.err"
++            $url = $null
++            foreach ($k in 1..40) {
++              Start-Sleep -Seconds 2
++              $text = (Get-Content $log, "$env:TEMP\cf-oc2.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
++              if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
++            }
++            if (-not $url) { continue }
++            $edgeReady = $false
++            $probe = "$env:TEMP\oc-tunnel-probe2.html"
++            foreach ($k in 1..30) {
++              $edgeCode = curl.exe -sS -L -o $probe -w "%{http_code}" -m 15 "$url/"
++              $edgeBody = Get-Content $probe -Raw -ErrorAction SilentlyContinue
++              if ($edgeCode -match "^[234]" -and $edgeBody -notmatch "(?i)1033") { $edgeReady = $true; break }
++              Start-Sleep -Seconds 2
++            }
++            if (-not $edgeReady) { continue }
++            $url | Out-File -FilePath "$env:TEMP\opencode-url.txt" -Encoding utf8 -NoNewline
++            $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
++            bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
++              "slot=opencode-windows" "kind=OpenCode" "os=windows" `
++              "url=$url" "agentUrl=$url/" "branch=$env:WORK_BRANCH"
+           }
+ 
+       - name: Clear the published session
