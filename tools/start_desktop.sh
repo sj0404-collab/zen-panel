@@ -100,6 +100,15 @@ else
   sleep 2
 fi
 
+# The screen MUST NOT blank: the video plays (audio keeps running via the
+# PulseAudio bridge) but the image would go dark after a minute of no mouse
+# activity - exactly "звук есть, экрана нет" on the phone. Disable the X
+# screen saver and DPMS so the framebuffer stays live forever.
+if command -v xset >/dev/null 2>&1; then
+  xset -display "$DISPLAY_NUM" s off -dpms >/dev/null 2>&1 || true
+  xset -display "$DISPLAY_NUM" s noblank >/dev/null 2>&1 || true
+fi
+
 # Seed the X resource database so xterm is usable (login shell, dark bg).
 if [ -x "$(command -v xrdb)" ]; then
   xrdb -merge <(printf 'xterm*faceName: monospace\nxterm*background: #101418\n') 2>/dev/null || true

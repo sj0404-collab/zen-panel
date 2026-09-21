@@ -3087,8 +3087,13 @@ function remoteAudioStart() {
     }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC || !window.WebSocket) return null;
-    const ctx = new AC();
-    const rate = ctx.sampleRate || 44100;
+    // The bridge streams raw 16-bit PCM: 44.1 kHz stereo is ~1.4 Mbps, far
+    // more than a phone needs. Ask for a lower rate (and play it back at that
+    // same rate) so audio does not saturate the link the video shares.
+    const WANT_RATE = 22050;
+    let ctx;
+    try { ctx = new AC({ sampleRate: WANT_RATE }); } catch { ctx = new AC(); }
+    const rate = ctx.sampleRate || WANT_RATE;
     const node = ctx.createScriptProcessor(4096, 2, 2);
     const q = [];
     let qFrames = 0, current = null, currentAt = 0, pending = new Uint8Array(0);

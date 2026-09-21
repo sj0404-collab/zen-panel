@@ -263,8 +263,8 @@ export default class RFB extends EventTargetMixin {
             this._showDotCursor = options.showDotCursor;
         }
 
-        this._qualityLevel = 6;
-        this._compressionLevel = 2;
+        this._qualityLevel = 3;
+        this._compressionLevel = 7;
     }
 
     // ===== PROPERTIES =====

@@ -102,20 +102,74 @@ function renderParts(parts) {
   return html || '<span class="note">…</span>';
 }
 
+// Incremental, keyed rendering. The old code wiped #log and re-added EVERY
+// message on each 1.2s poll, which thrashed the phone WebView (and scrolled it
+// back to the bottom). Now we keep the rendered nodes, append only new
+// messages and patch the one that is still streaming.
+let renderState = { ids: [], sigs: [], nodes: [] };
+let localNode = null;
+
+function msgToHtml(m, idx) {
+  const info = m.info || m;
+  const parts = m.parts || info.parts || [];
+  const role = info.role || info.type || '';
+  const key = info.id || info.messageID || ('#' + idx);
+  if (role === 'user') {
+    const t = parts.map(partText).filter(Boolean).join('\n') || info.body || '';
+    return { key, role: 'user', html: `<div class="msg user">${esc(t)}</div>` };
+  }
+  return { key, role: 'bot', html: `<div class="msg bot">${renderParts(parts)}</div>` };
+}
+function makeNode(html) {
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  return d.firstElementChild;
+}
+
 function paintMessages(list) {
-  log.innerHTML = '';
-  if (!list || !list.length) { add('<div class="note">Напишите задачу. Это лёгкий чат, не веб OpenCode.</div>'); return; }
-  for (const m of list) {
-    const info = m.info || m;
-    const parts = m.parts || info.parts || [];
-    const role = info.role || info.type || '';
-    if (role === 'user' || info.role === 'user') {
-      const t = parts.map(partText).filter(Boolean).join('\n') || info.body || '';
-      add(`<div class="msg user">${esc(t)}</div>`);
-    } else {
-      add(`<div class="msg bot">${renderParts(parts)}</div>`);
+  const arr = Array.isArray(list) ? list : [];
+  if (!arr.length) {
+    if (renderState.nodes.length) { log.innerHTML = ''; renderState = { ids: [], sigs: [], nodes: [] }; }
+    return;
+  }
+  const built = arr.map(msgToHtml);
+  let common = 0;
+  while (common < built.length && common < renderState.ids.length && built[common].key === renderState.ids[common]) common++;
+  // A message we already rendered changed or the transcript was rewritten:
+  // rebuild from scratch rather than risk duplicates/ghosts.
+  if (common < renderState.ids.length) {
+    log.innerHTML = '';
+    renderState = { ids: [], sigs: [], nodes: [] };
+    localNode = null;
+    common = 0;
+  }
+  // Adopt the optimistic "sending" bubble once the server echoes it.
+  if (localNode && common < built.length && built[common].role === 'user') {
+    localNode.innerHTML = built[common].html;
+    renderState.ids[common] = built[common].key;
+    renderState.sigs[common] = built[common].html;
+    renderState.nodes[common] = localNode;
+    localNode = null;
+    common++;
+  }
+  // Patch in place the already-rendered messages whose content grew (streaming).
+  for (let i = 0; i < common && i < built.length; i++) {
+    if (renderState.sigs[i] !== built[i].html && renderState.nodes[i]) {
+      renderState.nodes[i].innerHTML = built[i].html;
+      renderState.sigs[i] = built[i].html;
     }
   }
+  for (let i = common; i < built.length; i++) {
+    const el = makeNode(built[i].html);
+    if (el) log.appendChild(el);
+    renderState.ids[i] = built[i].key;
+    renderState.sigs[i] = built[i].html;
+    renderState.nodes[i] = el;
+  }
+  renderState.ids.length = built.length;
+  renderState.sigs.length = built.length;
+  renderState.nodes.length = built.length;
+  log.scrollTop = log.scrollHeight;
 }
 
 async function loadModels() {
@@ -161,7 +215,8 @@ async function refresh() {
 
 async function send(text) {
   await ensureSession();
-  add(`<div class="msg user">${esc(text)}</div>`);
+  localNode = makeNode(`<div class="msg user">${esc(text)}</div>`);
+  if (localNode) { log.appendChild(localNode); log.scrollTop = log.scrollHeight; }
   setBusy(true);
   const [providerID, modelID] = (modelEl.value || 'opencode/big-pickle').split('/');
   const body = {
@@ -197,6 +252,7 @@ async function send(text) {
       if (!busyNow && i > 1) break;
     }
   } catch (e) {
+    if (localNode) { localNode.remove(); localNode = null; }
     add(`<div class="err">${esc(e.message)}</div>`);
   } finally { setBusy(false); }
 }

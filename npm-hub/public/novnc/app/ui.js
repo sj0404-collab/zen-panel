@@ -167,8 +167,8 @@ const UI = {
         UI.initSetting('encrypt', (window.location.protocol === "https:"));
         UI.initSetting('view_clip', false);
         UI.initSetting('resize', 'off');
-        UI.initSetting('quality', 6);
-        UI.initSetting('compression', 2);
+        UI.initSetting('quality', 3);
+        UI.initSetting('compression', 7);
         UI.initSetting('shared', true);
         UI.initSetting('view_only', false);
         UI.initSetting('show_dot', false);

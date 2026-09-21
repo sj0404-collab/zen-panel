@@ -1200,9 +1200,10 @@ const audioWss = new WebSocketServer({ noServer: true });
 const audioRate = (req) => {
   try {
     const u = new URL(req.url, 'http://localhost');
-    const n = Number(u.searchParams.get('rate') || 44100);
-    return Math.max(8000, Math.min(96000, Number.isFinite(n) ? Math.round(n) : 44100));
-  } catch { return 44100; }
+    const def = Number(process.env.HUB_AUDIO_RATE) || 22050;
+    const n = Number(u.searchParams.get('rate') || def);
+    return Math.max(8000, Math.min(96000, Number.isFinite(n) ? Math.round(n) : def));
+  } catch { return 22050; }
 };
 const ensureBrowserAudioSink = async () => {
   const ls = await pulseRun('pactl list short sinks 2>/dev/null');
@@ -1550,13 +1551,32 @@ const createTmuxSession = (id, opts, ws) => {
 
 // Feed client keystrokes into the tmux pane byte-for-byte. Using load-buffer +
 // paste-buffer keeps arbitrary UTF-8/escape bytes intact (paste-buffer sends
-// them as terminal input, Enter/newline included).
-const tmuxInput = (id, data) => {
+// them as terminal input, Enter/newline included). Rapid typing arrives as a
+// burst of tiny WS messages; if we pumped every one through spawnSync the
+// event loop (and with it every other client + the audio/video bridges) would
+// stutter — the "keyboard lag" the phone users see. Coalesce a ~30ms burst
+// into ONE tmux write.
+const tmuxInputBuf = new Map(); // id -> { pending, timer }
+const tmuxInputFlush = (id) => {
+  const item = tmuxInputBuf.get(id);
+  if (!item) return;
+  tmuxInputBuf.delete(id);
+  const { pending } = item;
+  if (!pending) return;
   const name = safeSessionName(id);
   const bufName = 'npmhub_io_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
-  const r = tmuxRun(['load-buffer', '-b', bufName, '-'], 3000, data);
-  if (r.status !== 0) return;
-  tmuxRun(['paste-buffer', '-b', bufName, '-t', name, '-d'], 3000);
+  const r = tmuxRun(['load-buffer', '-b', bufName, '-'], 3000, pending);
+  if (r.status === 0) tmuxRun(['paste-buffer', '-b', bufName, '-t', name, '-d'], 3000);
+};
+const tmuxInput = (id, data) => {
+  if (typeof data !== 'string' || !data) return;
+  const item = tmuxInputBuf.get(id) || { pending: '', timer: null };
+  if (item.timer) clearTimeout(item.timer);
+  item.pending += data;
+  // Escape hatch: a monster paste must not wait for the debounce indefinitely.
+  if (item.pending.length > 16384) { tmuxInputFlush(id); return; }
+  item.timer = setTimeout(() => tmuxInputFlush(id), 30);
+  tmuxInputBuf.set(id, item);
 };
 
 // Reschedule all tmux pollers to only run while a client is attached, so idle
