@@ -1,5 +1,6 @@
 let tools = [], homeDir = '', workDir = '', accessMode = 'local';
 let tabs = [], activeTab = null, zoomLevel = 60;
+const OPEN_TABS_LS = 'hub_open_tabs';
 let fmCurrentPath = '', fmSelected = null, fmBackend = 'local';
 let recentPaths = [], toolDirs = {};
 let storages = [];
@@ -27,10 +28,24 @@ function kickReconnect() {
     if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
     if (t.connect) { t.lastPong = 0; try { t.connect(); } catch (e) { /* ignore */ } }
   });
+  syncServerSessionsSoon();
 }
 window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') kickReconnect(); });
 window.addEventListener('focus', () => setTimeout(kickReconnect, 250));
 window.addEventListener('online', kickReconnect);
+
+function persistOpenTabs() {
+  try { localStorage.setItem(OPEN_TABS_LS, JSON.stringify(tabs.filter(t => !t.manualClose).map(t => t.id))); } catch {}
+}
+function loadOpenTabs() {
+  try { const a = JSON.parse(localStorage.getItem(OPEN_TABS_LS) || '[]'); return Array.isArray(a) ? a.map(String) : []; } catch { return []; }
+}
+let sessSyncTimer = null;
+function syncServerSessionsSoon() {
+  if (sessSyncTimer) return;
+  sessSyncTimer = setTimeout(() => { sessSyncTimer = null; syncServerSessions(); }, 500);
+}
+setInterval(() => syncServerSessionsSoon(), 20000);
 
 async function init() {
   const [toolsR, infoR, histR, storR, modelsR, netR, tunnelR] = await Promise.all([
@@ -822,19 +837,27 @@ function renderSidebar() {
 // Reattach the browser UI to tmux sessions that survived a hub restart.
 async function restoreServerSessions() {
   try {
+    const ids = loadOpenTabs();
+    if (!ids.length) return;
     const r = await fetch('/api/sessions');
     const d = await r.json();
     if (!d.success || !Array.isArray(d.sessions)) return;
-    const known = new Set(tabs.map(t => t.id));
-    if (d.sessions.length) showPage('terminal');
-    for (const s of d.sessions) {
-      if (!s || !s.id || known.has(String(s.id))) continue;
-      known.add(String(s.id));
-      await createTerm(s.toolId || '_terminal', s.cwd || homeDir, !s.toolId || s.toolId === '_terminal', s);
+    const byId = {};
+    for (const s of d.sessions) if (s && s.id) byId[String(s.id)] = s;
+    let created = false;
+    for (const id of ids) {
+      if (tabs.some(t => t.id === id)) continue;
+      const s = byId[id];
+      if (s) { await createTerm(s.toolId || '_terminal', s.cwd || homeDir, !s.toolId || s.toolId === '_terminal', s); created = true; }
     }
-    renderTabs(); renderSidebar();
+    // A session that no longer exists on the server (killed elsewhere) should
+    // not linger in the restore list and get resurrected on every page load.
+    const live = ids.filter(id => byId[id] || tabs.some(t => t.id === id));
+    try { localStorage.setItem(OPEN_TABS_LS, JSON.stringify([...new Set([...tabs.map(t => t.id), ...live])])); } catch {}
+    if (created) { renderTabs(); renderSidebar(); }
   } catch {}
 }
+function syncServerSessions() { restoreServerSessions(); }
 function showNewTermModal() {
   document.getElementById('newterm-grid').innerHTML = `
     <div class="newterm-tool" onclick="openTerminal()">
@@ -1083,6 +1106,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
 
   renderTabs();
   renderSidebar();
+  persistOpenTabs();
 
   const panel = document.createElement('div');
   panel.className = 'term-panel on';
@@ -1237,6 +1261,7 @@ function closeTab(id) {
   if (activeTab) switchTab(activeTab.id);
   renderTabs();
   renderSidebar();
+  persistOpenTabs();
 }
 
 function openTerminal() {
