@@ -2643,6 +2643,9 @@ async function refresh() {
 }
 
 function tickAges() {
+  if (document.hidden) return;
+  const any = document.querySelector('.live-age[data-started]');
+  if (!any) return;
   document.querySelectorAll('.live-age[data-started]').forEach(el => {
     const used = Math.max(0, Math.round((Date.now() - Number(el.dataset.started)) / 60000));
     el.textContent = 'идёт ' + used + ' мин · осталось ~' + Math.max(0, 360 - used) + ' мин';
@@ -2658,6 +2661,14 @@ setInterval(tickAges, 1000);
 // Session tab: session-state + run list. 12s is enough to feel live without
 // stacking GitHub calls the way a 5s jobs poll did.
 setInterval(() => { if (page === 'sess' && !document.hidden && Date.now() >= sessPausedUntil) refresh(); }, 12000);
+// Back on screen: catch up immediately instead of waiting for the next tick,
+// and replay anything the offline queue promised to send.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (typeof PanelOffline === 'object' && PanelOffline.flush) PanelOffline.flush();
+  if (page === 'sess' && Date.now() >= sessPausedUntil) refresh();
+  else if (page === 'act' && typeof pollWatch === 'function' && !watchPaused) pollWatch();
+});
 </script>
 </body>
 </html>

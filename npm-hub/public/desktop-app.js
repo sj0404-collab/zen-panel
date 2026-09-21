@@ -28,7 +28,7 @@ function kickReconnect() {
       // Looks open but silent for too long → it is dead on the far side
       // (tunnel flap while the tab was hidden). Force it closed so onclose
       // reconnects immediately instead of waiting for the next keepalive.
-      if (t.lastPong && Date.now() - t.lastPong > 45000) { t.retry = 0; try { s.close(); } catch {} }
+      if (t.lastPong && Date.now() - t.lastPong > 60000) { t.retry = 0; try { s.close(); } catch {} }
       return;
     }
     if (s && s.readyState === WebSocket.CONNECTING) return; // connect watchdog aborts stale attempts
@@ -869,11 +869,15 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   td.connect = connect;
   connect();
 
-  // Keepalive: ping/pong + forced close when the socket goes stale (>45s).
+  // Keepalive: ping/pong + forced close when the socket goes stale (>60s).
+  // Pings only fire while the page is visible: in the background Chrome
+  // throttles timers and the radio, so a ping that cannot be answered would
+  // just fabricate a "dead socket". kickReconnect() re-checks on wake-up.
   td.keepAlive = setInterval(() => {
+    if (document.hidden) return;
     if (td.manualClose || !td.ws) return;
     if (td.ws.readyState === WebSocket.OPEN) {
-      if (Date.now() - td.lastPong > 45000) td.ws.close();
+      if (Date.now() - td.lastPong > 60000) td.ws.close();
       else td.ws.send(JSON.stringify({ type: 'ping' }));
     }
   }, 15000);

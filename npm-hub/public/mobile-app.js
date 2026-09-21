@@ -1163,11 +1163,15 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   tab.connect = connect;
   connect();
 
-  // Keepalive: ping/pong + forced close when the socket goes stale (>45s).
+  // Keepalive: ping/pong + forced close when the socket goes stale (>60s).
+  // Pings only fire while the page is visible: in the background Chrome
+  // throttles timers and the radio, so a ping that cannot be answered would
+  // just fabricate a "dead socket". kickReconnect() re-checks on wake-up.
   tab.keepAlive = setInterval(() => {
+    if (document.hidden) return;
     if (tab.manualClose || !tab.socket) return;
     if (tab.socket.readyState === WebSocket.OPEN) {
-      if (Date.now() - tab.lastPong > 45000) tab.socket.close();
+      if (Date.now() - tab.lastPong > 60000) tab.socket.close();
       else tab.socket.send(JSON.stringify({ type: 'ping' }));
     }
   }, 15000);
