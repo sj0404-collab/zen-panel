@@ -1198,7 +1198,8 @@ function toggleFmMenu(e) {
   document.querySelectorAll('.apply-menu').forEach(m => m.classList.remove('on'));
   const menu = document.getElementById('fm-apply-menu');
   if (!menu) return;
-  const dir = fmCurrentPath || homeDir;
+  // Use the selected folder (fmSelected) if user tapped one, otherwise current path
+  const dir = fmSelected || fmCurrentPath || homeDir;
   menu.innerHTML = tools.filter(t => t.installed).map(t => `
     <div class="apply-item" onclick="event.stopPropagation();fmOpenIn('${escAttr(dir)}','${t.id}')">
       <div class="sb-ico" style="background:${t.color}18;color:${t.color};width:18px;height:18px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:800">${t.icon}</div>
