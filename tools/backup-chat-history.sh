@@ -33,23 +33,28 @@ for o in json.load(sys.stdin):
     print(json.dumps(o, ensure_ascii=False))" \
   >> "$OUT_DIR/sessions.jsonl"
 
-sqlite3 -noheader -separator $'\x1f' "$DB" \
+sqlite3 -json "$DB" \
   "SELECT m.session_id, m.id, m.time_created, m.data
      FROM message m ORDER BY m.time_created;" \
-  | while IFS=$'\x1f' read -r sid mid tc data; do
-      python3 -c "
+  | python3 -c '
 import json,sys
-ms=json.loads('''${data//\'/\\\'}''')
-part=ms.get('part') or ms.get('parts') or []
-text=[]
-for p in part:
-    if isinstance(p,dict):
-        t=p.get('type')
-        c=p.get('text') if t=='text' else ('(tool: %s)'%t if t else '')
-        if c: text.append(str(c))
-    elif isinstance(p,str): text.append(p)
-print(json.dumps({'session_id':'$sid','message_id':'$mid','time_ms':'$tc','role':ms.get('role',''),'message':' '.join(text)},ensure_ascii=False))"
-    done >> "$OUT_DIR/messages.jsonl"
+for o in json.load(sys.stdin):
+    try:
+        ms=json.loads(o.get("data") or "{}")
+    except Exception:
+        ms={}
+    part=ms.get("part") or ms.get("parts") or []
+    text=[]
+    for p in part:
+        if isinstance(p,dict):
+            t=p.get("type")
+            c=p.get("text") if t=="text" else ("(tool: %s)"%t if t else "")
+            if c: text.append(str(c))
+        elif isinstance(p,str): text.append(p)
+    print(json.dumps({"session_id":o.get("session_id"),"message_id":o.get("id"),
+                      "time_ms":o.get("time_created"),"role":ms.get("role",""),
+                      "message":" ".join(text)},ensure_ascii=False))
+' >> "$OUT_DIR/messages.jsonl"
 
 echo "backup-chat-history: wrote $(wc -l < "$OUT_DIR/sessions.jsonl") sessions, $(wc -l < "$OUT_DIR/messages.jsonl") messages to $OUT_DIR"
 

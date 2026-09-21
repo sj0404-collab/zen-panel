@@ -29,10 +29,14 @@ const mimeForPath = (p) => {
     '.ttf': 'font/ttf', '.otf': 'font/otf',
   })[ext] || 'application/octet-stream';
 };
-const WORK_DIR = path.join(HOME, 'hub-work');
+// Both roots are overridable so an operator can keep clones and state on a
+// persistent volume (a mounted folder that survives restarts). By default they
+// live under $HOME, which is stable across tool restarts - unlike /tmp, which
+// the machine may wipe.
+const WORK_DIR = process.env.HUB_WORK_DIR || path.join(HOME, 'hub-work');
 // Home dirs under ~/.npm-hub: the runner works transparently here and never
 // uses the OS /tmp (which the machine may wipe and is invisible to CLI agents).
-const DATA_DIR = path.join(HOME, '.npm-hub');
+const DATA_DIR = process.env.HUB_DATA_DIR || path.join(HOME, '.npm-hub');
 const TMP_DIR = path.join(DATA_DIR, 'tmp');
 const LOG_DIR = path.join(DATA_DIR, 'logs');
 try {

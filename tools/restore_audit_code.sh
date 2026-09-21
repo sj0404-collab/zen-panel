@@ -2,6 +2,7 @@
 # Restore audit.json / code.json from session-state branch into workspace
 set -uo pipefail
 WORK="${1:-${GITHUB_WORKSPACE:-$(pwd)}/fork}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ ! -d "$WORK" ]; then WORK="$(pwd)"; fi
 if [ -d "$WORK/.git" ]; then :; elif [ -d "$WORK/../fork/.git" ]; then WORK="$WORK/../fork"; fi
 BRANCH="session-state"
@@ -81,4 +82,12 @@ except Exception as e:
     print(f"opencode restore failed: {e}", file=sys.stderr)
 PY2
   fi
+fi
+
+# Chat transcripts live in their own folder: chats/<repo>.json holds the full
+# export of every session for this repo. Import them back into the repo (the
+# CWD determines the session directory). opencode import is idempotent, so a
+# re-run just reports the session again. Disable with RESTORE_CHATS=0.
+if [ "${RESTORE_CHATS:-1}" != "0" ] && [ -f "$SCRIPT_DIR/restore-chats.sh" ]; then
+  CHAT_REPO_DIR="$WORK" bash "$SCRIPT_DIR/restore-chats.sh" --state "$TMP/state" 2>&1 | sed 's/^/  /' || true
 fi

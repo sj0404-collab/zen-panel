@@ -99,6 +99,7 @@ if [ -n "$FILE_OVERRIDE" ]; then
   _f="${FILE_OVERRIDE#file=}"
   if [[ "$_f" =~ ^models-(linux|windows|agent(-linux|-windows)?|opencode(-linux|-windows)?|hub(-linux|-windows)?)\.json$ ]] || \
      [[ "$_f" =~ ^(audit|code)\.json$ ]] || \
+     [[ "$_f" =~ ^chats/[A-Za-z0-9._-]{1,80}\.json$ ]] || \
      [[ "$_f" =~ ^saved/(audit|code)(-[a-z0-9-]+)?-[0-9]{8}T[0-9]{6}\.json$ ]] || \
      [[ "$_f" =~ ^saved/(linux|windows|agent(-linux|-windows)?|opencode(-linux|-windows)?|hub(-linux|-windows)?)-[0-9]{8}T[0-9]{6}\.json$ ]]; then
     FILE="$_f"

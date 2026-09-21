@@ -147,6 +147,14 @@ if [ "${1:-}" = "--once" ] || [ "${SNAPSHOT_ONCE:-}" = "1" ]; then
   WORK="${3:-$WORK}"
   if [ ! -d "$WORK" ]; then WORK="$(pwd)"; fi
   if [ ! -d "$WORK/.git" ] && [ -d "$WORK/../fork/.git" ]; then WORK="$WORK/../fork"; fi
+  # Full chat transcripts (chats/<repo>.json) are exported only here, at
+  # shutdown: the payload is large and the 120s daemon path must stay light.
+  # Needs a token so the bundle can reach the session-state branch.
+  if [ "${EXPORT_CHATS:-1}" != "0" ] && [ -f "$SCRIPT_DIR/export-chats.sh" ] \
+    && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
+    CHAT_REPO_DIR="$WORK" PUBLISH="${PUBLISH:-1}" \
+      bash "$SCRIPT_DIR/export-chats.sh" 2>&1 | tee -a "$HUB_LOGS/snapshot-$SLOT.log" || true
+  fi
   do_snapshot
   exit 0
 fi
