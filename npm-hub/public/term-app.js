@@ -134,6 +134,11 @@ function attachTab(meta) {
       if (m.type === 'exit') term.write(`\r\n\x1b[33m[Exited ${m.code}]\x1b[0m\r\n`);
       if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`);
     };
+    socket.onerror = () => {
+      // Always enter the reconnect path on Android WebViews where `error`
+      // may arrive without a subsequent usable close event.
+      try { if (socket.readyState !== WebSocket.CLOSED) socket.close(); } catch {}
+    };
     socket.onclose = () => {
       if (td.manualClose) return;
       if (td.reconnectTimer) { clearTimeout(td.reconnectTimer); td.reconnectTimer = null; }

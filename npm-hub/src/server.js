@@ -891,7 +891,7 @@ const runnerEnv = () => {
     hostname: os.hostname(),
     home: HOME,
     workDir: WORK_DIR,
-    tunnel: (tunnelInfo && tunnelInfo.url) || null,
+    tunnel: (tunnelInfo && tunnelInfo.state === 'ready' && tunnelInfo.url) || null,
     uptimeSec: Math.round(process.uptime())
   };
 };
@@ -1655,7 +1655,9 @@ const stopTmuxPollers = () => {
 const ptySend = (session, message) => {
   const payload = JSON.stringify(message);
   for (const client of [...session.clients]) {
-    if (client.readyState === 1) client.send(payload); else session.clients.delete(client);
+    if (client.readyState !== 1) { session.clients.delete(client); continue; }
+    try { client.send(payload); }
+    catch { session.clients.delete(client); }
   }
 };
 
@@ -1784,6 +1786,13 @@ const tmuxWake = (session) => { if (session.tmux && session.clients.size > 0) tm
 wss.on('connection', (ws) => {
   let session = null;
   ws.isAlive = true;
+  // A phone/network drop can emit `error` before `close`. Without a listener
+  // Node treats that event as uncaught and takes down the entire hub, which
+  // disconnects every terminal tab at once. Detach only this client; the tmux
+  // session keeps running and the browser can attach again with the same id.
+  ws.on('error', () => {
+    if (session) detachPtyClient(session, ws);
+  });
   ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (raw) => {
@@ -1922,6 +1931,11 @@ wss.on('connection', (ws) => {
       }
     }
   });
+});
+wss.on('error', err => {
+  // WebSocket errors belong to one client; never let a broken mobile radio
+  // connection become an uncaught process-level exception.
+  console.log('  ⚠ terminal websocket: ' + (err.message || err));
 });
 
 // Heartbeat: protocol-level ping/pong lets the server reap clients that died
@@ -3198,7 +3212,111 @@ app.get('/api/gh/repos/:owner/:repo/releases', async (req, res) => {
 });
 
 // ─── TUNNEL STATE ───
-let tunnelInfo = null; // { url, type, close }
+// A quick-tunnel URL is ephemeral. Keep its lifecycle separate from the
+// public state so a dead cloudflared process can never leave a clickable URL
+// behind (that stale URL is what produces Cloudflare Error 1033).
+let tunnelInfo = null; // { state, url, type, error, startedAt, retryAt }
+let activeTunnel = null; // { close, onExit, isAlive, healthCheck }
+let tunnelRestartTimer = null;
+let tunnelHealthTimer = null;
+let tunnelStopped = false;
+let tunnelFailure = 0;
+
+function stopManagedTunnel() {
+  tunnelStopped = true;
+  if (tunnelRestartTimer) clearTimeout(tunnelRestartTimer);
+  if (tunnelHealthTimer) clearInterval(tunnelHealthTimer);
+  tunnelRestartTimer = null;
+  tunnelHealthTimer = null;
+  if (activeTunnel && activeTunnel.close) {
+    try { activeTunnel.close(); } catch {}
+  }
+  activeTunnel = null;
+}
+
+function startManagedTunnel(port, type) {
+  tunnelStopped = false;
+  tunnelFailure = 0;
+  const launch = async () => {
+    if (tunnelStopped) return;
+    const startedAt = new Date().toISOString();
+    tunnelInfo = { state: 'starting', url: null, type, error: null, startedAt, retryAt: null };
+    console.log(`  🔗 Starting ${type} tunnel (the URL is withheld until it passes a health check)...`);
+    let result;
+    try {
+      result = await startTunnel(port, type);
+    } catch (e) {
+      result = { error: e.message };
+    }
+    if (tunnelStopped) {
+      if (result && result.close) result.close();
+      return;
+    }
+    if (!result || !result.url) {
+      tunnelFailure += 1;
+      const delay = Math.min(30000, 3000 * tunnelFailure);
+      const error = (result && result.error) || 'tunnel did not start';
+      tunnelInfo = {
+        state: 'error', url: null, type, error, startedAt,
+        retryAt: new Date(Date.now() + delay).toISOString()
+      };
+      console.log(`  ❌ Tunnel error: ${error}`);
+      console.log(`  🔁 Retrying tunnel in ${Math.ceil(delay / 1000)}s.`);
+      tunnelRestartTimer = setTimeout(() => { tunnelRestartTimer = null; launch(); }, delay);
+      return;
+    }
+
+    tunnelFailure = 0;
+    activeTunnel = result;
+    tunnelInfo = {
+      state: 'ready', url: result.url, type: result.type || type,
+      error: null, startedAt, retryAt: null
+    };
+    console.log(`  🌐 Public:  ${result.url}`);
+    console.log(`  📋 Type:    ${result.type || type}`);
+
+    const reconnect = reason => {
+      if (tunnelStopped || tunnelRestartTimer) return;
+      if (tunnelHealthTimer) clearInterval(tunnelHealthTimer);
+      tunnelHealthTimer = null;
+      activeTunnel = null;
+      const delay = 3000;
+      tunnelInfo = {
+        state: 'reconnecting', url: null, type: result.type || type,
+        error: reason, startedAt, retryAt: new Date(Date.now() + delay).toISOString()
+      };
+      console.log(`  ⚠ ${reason}; hiding the stale URL and reopening it.`);
+      tunnelRestartTimer = setTimeout(() => { tunnelRestartTimer = null; launch(); }, delay);
+    };
+
+    // A connector can remain as a process while its edge connection is lost.
+    // Process liveness alone is therefore insufficient to prevent Error 1033.
+    if (typeof result.healthCheck === 'function') {
+      tunnelHealthTimer = setInterval(async () => {
+        if (tunnelStopped || activeTunnel !== result) return;
+        try {
+          const health = await result.healthCheck();
+          if (!health || !health.ok) {
+            try { result.close(); } catch {}
+            reconnect(`public tunnel health check failed${health && health.status ? ` (HTTP ${health.status})` : ''}`);
+          }
+        } catch (e) {
+          try { result.close(); } catch {}
+          reconnect(`public tunnel health check failed (${e.message})`);
+        }
+      }, 30000);
+      tunnelHealthTimer.unref?.();
+    }
+
+    if (typeof result.onExit === 'function') {
+      result.onExit(info => {
+        if (tunnelStopped || info.intentional) return;
+        reconnect(`connector exited${info.code == null ? '' : ` (code ${info.code})`}`);
+      });
+    }
+  };
+  launch();
+}
 
 // ─── START ───
 // One attempt at a time: each listen() call stacks its own 'listening'
@@ -3253,16 +3371,7 @@ function onReady(actualPort) {
     || (process.argv.includes('--tunnel') ? process.argv[process.argv.indexOf('--tunnel') + 1] : null);
 
   if (tunnelType) {
-    console.log(`\n  🔗 Starting ${tunnelType} tunnel...`);
-    startTunnel(actualPort, tunnelType).then((result) => {
-      if (result.url) {
-        tunnelInfo = { url: result.url, type: result.type, close: result.close };
-        console.log(`  🌐 Public:  ${result.url}`);
-        console.log(`  📋 Type:    ${result.type}\n`);
-      } else {
-        console.log(`  ❌ Tunnel error: ${result.error}\n`);
-      }
-    });
+    startManagedTunnel(actualPort, tunnelType);
   } else {
     console.log('');
   }
@@ -3311,10 +3420,23 @@ tryListen(PORT, onReady);
 
 // ─── TUNNEL API ───
 app.get('/api/tunnel', (req, res) => {
-  if (tunnelInfo && tunnelInfo.url) {
-    res.json({ success: true, url: tunnelInfo.url, type: tunnelInfo.type });
+  if (tunnelInfo && tunnelInfo.state === 'ready' && tunnelInfo.url) {
+    res.json({
+      success: true,
+      status: 'ready',
+      url: tunnelInfo.url,
+      type: tunnelInfo.type,
+      startedAt: tunnelInfo.startedAt
+    });
   } else {
-    res.json({ success: false, url: null, type: null });
+    res.json({
+      success: false,
+      status: (tunnelInfo && tunnelInfo.state) || 'disabled',
+      url: null,
+      type: (tunnelInfo && tunnelInfo.type) || null,
+      error: (tunnelInfo && tunnelInfo.error) || null,
+      retryAt: (tunnelInfo && tunnelInfo.retryAt) || null
+    });
   }
 });
 
@@ -3367,10 +3489,14 @@ app.get('/api/tunnel', (req, res) => {
   } catch {}
 })();
 
-process.on('SIGINT', () => {
+const shutdown = () => {
   stopTmuxPollers();
+  stopManagedTunnel();
   sessions.forEach(s => { if (s.pty) { try { s.pty.kill(); } catch {} } });
-  if (tunnelInfo && tunnelInfo.close) tunnelInfo.close();
-  server.close();
-  process.exit(0);
-});
+  server.close(() => process.exit(0));
+  // server.close waits for long-lived WebSockets. Do not keep a runner alive
+  // forever just because a phone disappeared without closing its socket.
+  setTimeout(() => process.exit(0), 2000).unref();
+};
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

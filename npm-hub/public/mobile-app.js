@@ -1169,6 +1169,11 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
       if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`);
     };
 
+    socket.onerror = () => {
+      // Some Android WebViews emit error without a useful close reason. Force
+      // the close path so the existing reconnect/backoff logic always runs.
+      try { if (socket.readyState !== WebSocket.CLOSED) socket.close(); } catch {}
+    };
     socket.onclose = () => {
       if (tab.manualClose) return;
       if (tab.socket !== socket) return; // superseded by a newer socket; it owns reconnection
