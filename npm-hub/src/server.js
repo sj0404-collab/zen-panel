@@ -134,6 +134,40 @@ app.use((req, res, next) => {
   next();
 });
 
+// ─── Idempotency for replayed offline actions ───
+// The panel queues a mutation that failed offline and replays it when the
+// network returns. If the original actually reached us and only the response
+// was lost, a naive replay would run it twice (two artifacts, two commits).
+// The client sends a stable x-hub-idem key; the first response is remembered
+// for a day and handed back instead of executing the action again.
+const IDEM_DIR = path.join(DATA_DIR, 'idem');
+try { fs.mkdirSync(IDEM_DIR, { recursive: true }); } catch {}
+try {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const f of fs.readdirSync(IDEM_DIR)) {
+    const p = path.join(IDEM_DIR, f);
+    try { if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p); } catch {}
+  }
+} catch {}
+app.use((req, res, next) => {
+  const key = req.get('x-hub-idem');
+  if (!key || req.method === 'GET' || req.method === 'HEAD') return next();
+  const file = path.join(IDEM_DIR, safeFilename(key) + '.json');
+  try {
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (j && j.ts && Date.now() - j.ts < 24 * 60 * 60 * 1000) {
+      res.setHeader('x-hub-idem-replay', '1');
+      return res.status(j.status || 200).json(j.body);
+    }
+  } catch {}
+  const origJson = res.json.bind(res);
+  res.json = (body) => {
+    try { fs.writeFileSync(file, JSON.stringify({ ts: Date.now(), status: res.statusCode || 200, body })); } catch {}
+    return origJson(body);
+  };
+  next();
+});
+
 // ── tool metadata: local = offline via Ollama/llama.cpp; free = no paid API key needed; keyEnv = env var required for runtime ──
 const TOOLS = [
   // ── free / local — работают без ключей или через локальные модели ──

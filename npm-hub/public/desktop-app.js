@@ -402,11 +402,13 @@ async function runnerSave() {
   });
   if (!items.length) return;
   if (saveBtn) saveBtn.disabled = true;
-  let r = null;
-  try {
-    r = await fetch('/api/runner/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) }).then(x => x.json());
-  } catch (e) { r = { success: false, error: e.message }; }
+  let r = await HubOffline.post('/api/runner/backup', { items }, 'отправить в ветку');
   const out = document.getElementById('runner-res');
+  if (r.queued) {
+    if (out) out.innerHTML = '<div class="runner-res">⏳ Нет связи — отправка в ветку в очереди, уйдёт автоматически, когда связь вернётся.</div>';
+    if (saveBtn) saveBtn.disabled = false;
+    return;
+  }
   if (!r.success) {
     if (out) out.innerHTML = '<div class="runner-err">' + escHtml(r.error || 'ошибка') + '</div>';
     if (saveBtn) saveBtn.disabled = false;
@@ -1317,14 +1319,14 @@ async function fmMkdir() {
   const name = await fmAsk('Имя папки:');
   if (!name) return;
   const p = fmCurrentPath + '/' + name;
-  await fetch('/api/fs/mkdir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backend: fmBackend, path: p }) });
+  await HubOffline.post('/api/fs/mkdir', { backend: fmBackend, path: p }, 'создать папку');
   fmRefresh();
 }
 
 async function fmCreateFile() {
   const name = await fmAsk('Имя файла:');
   if (!name) return;
-  await fetch('/api/fs/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backend: fmBackend, path: fmCurrentPath + '/' + name, content: '' }) });
+  await HubOffline.post('/api/fs/write', { backend: fmBackend, path: fmCurrentPath + '/' + name, content: '' }, 'создать файл');
   fmRefresh();
 }
 
@@ -1363,14 +1365,10 @@ async function fmSaveGithub() {
   const what = isDirSel ? ('папку «' + name + '»') : ('файл «' + name + '»');
   const note = isDirSel ? '\nПапка будет упакована в tar.xz (GitHub хранит только файлы).' : '';
   if (!(await fmConfirm('Сохранить ' + what + ' в GitHub (session-state, artifacts/)?' + note, 'Сохранить'))) return;
-  try {
-    const r = await fetch('/api/gh/save', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: fmSelected })
-    }).then(r => r.json());
-    if (r.success) await fmInfo((r.packed ? 'Упаковано и сохранено: ' : 'Сохранено: ') + r.url);
-    else await fmInfo('Ошибка: ' + (r.error || 'unknown'));
-  } catch (e) { await fmInfo('Ошибка: ' + e.message); }
+  const r = await HubOffline.post('/api/gh/save', { path: fmSelected }, 'сохранить в GitHub');
+  if (r.queued) await fmInfo('Нет связи — сохранение в очереди, уйдёт автоматически, когда связь вернётся.');
+  else if (r.success) await fmInfo((r.packed ? 'Упаковано и сохранено: ' : 'Сохранено: ') + r.url);
+  else await fmInfo('Ошибка: ' + (r.error || 'unknown'));
 }
 
 // Множественный выбор файлов (все виды, картинки — тоже) и целых папок —

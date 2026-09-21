@@ -21,6 +21,8 @@ check('panel offline layer installs before the panel code',
   html.indexOf('OFFLINE-LAYER-BEGIN') < html.indexOf('async function'));
 check('panel keeps tokens out of the cache', /token\|secret\|password\|passwd\|auth/.test(layer));
 check('panel never caches POST', /method !== 'GET'/.test(layer));
+check('panel routes send-to-branch through the queue',
+  html.includes('PanelOffline.post(`${base}/api/runner/backup`'));
 
 function makeSandbox(mockFetch) {
   const mem = {};
@@ -76,6 +78,16 @@ function makeSandbox(mockFetch) {
   let unknown = false;
   try { await sb.fetch('https://api.github.com/other'); } catch (e) { unknown = true; }
   check('panel unknown URL fails offline', unknown);
+
+  // Queue: send-to-branch survives a dead network and replays once.
+  mode = 'fail';
+  const q = await sb.PanelOffline.post('https://hub.test/api/runner/backup', { items: [] }, 'save');
+  check('apk offline action is queued', q.queued === true && sb.PanelOffline.pending().length === 1);
+  await sb.PanelOffline.post('https://hub.test/api/runner/backup', { items: [] }, 'save');
+  check('apk duplicate collapses', sb.PanelOffline.pending().length === 1);
+  mode = 'ok';
+  await sb.PanelOffline.flush();
+  check('apk flush drains the queue', sb.PanelOffline.pending().length === 0);
 
   console.log('PANEL-OFFLINE: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

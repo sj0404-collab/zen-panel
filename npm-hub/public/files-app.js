@@ -258,7 +258,7 @@ async function fmMkdir() {
   const name = await fmAsk('Имя папки:');
   if (!name) return;
   const p = fmCurrentPath + '/' + name;
-  await fetch('/api/fs/mkdir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backend: fmBackend, path: p }) });
+  await HubOffline.post('/api/fs/mkdir', { backend: fmBackend, path: p }, 'создать папку');
   fmRefresh();
 }
 
@@ -313,14 +313,10 @@ async function fmSaveGithub() {
   const what = isDirSel ? ('папку «' + name + '»') : ('файл «' + name + '»');
   const note = isDirSel ? '\nПапка будет упакована в tar.xz (GitHub хранит только файлы).' : '';
   if (!(await fmConfirm('Сохранить ' + what + ' в GitHub (session-state, artifacts/)?' + note, 'Сохранить'))) return;
-  try {
-    const r = await fetch('/api/gh/save', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: fmSelected })
-    }).then(r => r.json());
-    if (r.success) await fmInfo((r.packed ? 'Упаковано и сохранено: ' : 'Сохранено: ') + r.url);
-    else await fmInfo('Ошибка: ' + (r.error || 'unknown'));
-  } catch (e) { await fmInfo('Ошибка: ' + e.message); }
+  const r = await HubOffline.post('/api/gh/save', { path: fmSelected }, 'сохранить в GitHub');
+  if (r.queued) await fmInfo('Нет связи — сохранение в очереди, уйдёт автоматически, когда связь вернётся.');
+  else if (r.success) await fmInfo((r.packed ? 'Упаковано и сохранено: ' : 'Сохранено: ') + r.url);
+  else await fmInfo('Ошибка: ' + (r.error || 'unknown'));
 }
 
 // ─── UPLOAD ───

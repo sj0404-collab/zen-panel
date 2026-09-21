@@ -370,6 +370,20 @@ const GH = 'https://api.github.com';
   function load(key) { var raw = safeGet(PREFIX + key); if (!raw) return null; try { return JSON.parse(raw); } catch (e) { return null; } }
   function hhmm(t) { try { return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } }
 
+  // ── Очередь изменяющих действий ──
+  // «Отправить в ветку» может не уйти из-за обрыва. Такое действие кладётся
+  // сюда и повторяется при связи; x-hub-idem не даёт выполнить его дважды.
+  var QKEY = 'panelqueue';
+  function qLoad() { try { var v = JSON.parse(safeGet(QKEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+  function qSave(q) { safeSet(QKEY, JSON.stringify(q)); render(); }
+  function qAdd(item) { var q = qLoad().filter(function (x) { return x.key !== item.key; }); q.push(item); qSave(q); }
+  function qRemove(key) { qSave(qLoad().filter(function (x) { return x.key !== key; })); }
+  function idemKey(method, url, body) {
+    var s = method + ' ' + url + ' ' + body, h = 5381, i;
+    for (i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+    return 'k' + h.toString(16) + '-' + s.length;
+  }
+
   var bar = null;
   function banner() {
     if (bar || !document.body) return bar;
@@ -383,9 +397,14 @@ const GH = 'https://api.github.com';
   }
   function render() {
     if (!banner()) return;
-    if (offline) {
+    var n = qLoad().length;
+    if (offline || n) {
       var el = document.getElementById('panel-offline-text');
-      if (el) el.textContent = '⚡ Офлайн — данные из кеша' + (lastSaved ? ' (' + hhmm(lastSaved) + ')' : '');
+      var txt = offline
+        ? ('Офлайн — данные из кеша' + (lastSaved ? ' (' + hhmm(lastSaved) + ')' : ''))
+        : 'Есть связь';
+      if (n) txt += ' · в очереди: ' + n;
+      if (el) el.textContent = (offline ? '⚡ ' : '⏳ ') + txt;
       bar.style.display = 'flex';
     } else { bar.style.display = 'none'; }
   }
@@ -431,10 +450,34 @@ const GH = 'https://api.github.com';
     };
   }
 
-  window.addEventListener('online', function () { setOffline(false); });
+  // ── Отправка очереди ──
+  var flushing = false;
+  function flushQueue() {
+    if (flushing) return Promise.resolve();
+    var q = qLoad();
+    if (!q.length) return Promise.resolve();
+    flushing = true;
+    return (function next(i) {
+      if (i >= q.length) { flushing = false; render(); return; }
+      var it = q[i];
+      return realFetch(it.url, {
+        method: it.method,
+        headers: Object.assign({ 'content-type': 'application/json', 'x-hub-idem': it.key }, it.headers || {}),
+        body: it.body
+      }).then(function (r) {
+        if (r && r.status >= 200 && r.status < 300) { qRemove(it.key); return next(i + 1); }
+        if (r && r.status >= 400 && r.status < 500) { qRemove(it.key); return next(i + 1); }
+        flushing = false; render();
+      }).catch(function () { flushing = false; render(); });
+    })(0);
+  }
+
+  window.addEventListener('online', function () { setOffline(false); flushQueue(); });
   window.addEventListener('offline', function () { setOffline(true); });
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render); else render();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { render(); flushQueue(); });
+  else { render(); flushQueue(); }
   if (!navigator.onLine) setOffline(true);
+  if (typeof setInterval === 'function') setInterval(function () { if (qLoad().length) flushQueue(); }, 30000);
 
   window.PanelOffline = {
     get isOffline() { return offline; },
@@ -443,7 +486,17 @@ const GH = 'https://api.github.com';
     load: load,
     remove: function (key) { safeRemove(PREFIX + key); },
     clear: function () { keys().forEach(safeRemove); },
-    on: function (cb) { if (typeof cb === 'function') listeners.push(cb); }
+    on: function (cb) { if (typeof cb === 'function') listeners.push(cb); },
+    // «Отправить в ветку»: уходит сразу, а без связи — в очередь и повторится.
+    post: function (url, body, label) {
+      var bodyStr = (typeof body === 'string') ? body : JSON.stringify(body || {});
+      var it = { key: idemKey('POST', url, bodyStr), method: 'POST', url: url, headers: {}, body: bodyStr, label: label || url, ts: Date.now() };
+      return realFetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-hub-idem': it.key }, body: it.body })
+        .then(function (r) { setOffline(false); return r.json().catch(function () { return { success: r.ok }; }); })
+        .catch(function () { qAdd(it); setOffline(true); return { success: true, queued: true, offline: true }; });
+    },
+    pending: function () { return qLoad(); },
+    flush: flushQueue
   };
 })();
 // ── OFFLINE-LAYER-END ───────────────────────────────────────────────
@@ -2191,14 +2244,13 @@ async function runnerPanelSave() {
   });
   if (!items.length) return;
   if (save) save.disabled = true;
-  let r;
-  try {
-    r = await fetch(`${base}/api/runner/backup`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items })
-    }).then(x => x.json());
-  } catch (e) { r = { success: false, error: e.message }; }
+  const r = await PanelOffline.post(`${base}/api/runner/backup`, { items }, 'отправить в ветку');
   const out = $('runner-res');
+  if (r.queued) {
+    if (out) out.innerHTML = '<span class="note">⏳ Нет связи — отправка в ветку в очереди, уйдёт автоматически, когда связь вернётся.</span>';
+    if (save) save.disabled = false;
+    return;
+  }
   if (!r.success) {
     if (out) out.innerHTML = `<span class="danger">${esc(r.error || 'ошибка')}</span>`;
     if (save) save.disabled = false;

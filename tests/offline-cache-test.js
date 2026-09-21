@@ -34,6 +34,19 @@ check('sw.js caches the xterm CDN', swSrc.includes('cdn.jsdelivr.net'));
 check('sw.js falls back to a cached page on navigate',
   /req\.mode === 'navigate'/.test(swSrc) && /caches\.match\('\/m'\)/.test(swSrc));
 
+// The save-to-branch actions must go through the queue, not a bare fetch.
+const mobileApp = fs.readFileSync(path.join(PUB, 'mobile-app.js'), 'utf8');
+const desktopApp = fs.readFileSync(path.join(PUB, 'desktop-app.js'), 'utf8');
+const filesApp = fs.readFileSync(path.join(PUB, 'files-app.js'), 'utf8');
+check('mobile routes backup through HubOffline.post', mobileApp.includes("HubOffline.post('/api/runner/backup'"));
+check('desktop routes backup through HubOffline.post', desktopApp.includes("HubOffline.post('/api/runner/backup'"));
+check('mobile/desktop/files route gh/save through HubOffline.post',
+  mobileApp.includes("HubOffline.post('/api/gh/save'") &&
+  desktopApp.includes("HubOffline.post('/api/gh/save'") &&
+  filesApp.includes("HubOffline.post('/api/gh/save'"));
+const server = fs.readFileSync(path.join(__dirname, '..', 'npm-hub', 'src', 'server.js'), 'utf8');
+check('server dedupes replayed actions', server.includes("req.get('x-hub-idem')") && server.includes('IDEM_DIR'));
+
 // ── behavioural test of the fetch wrapper ──
 function makeSandbox(mockFetch) {
   const mem = {};
@@ -67,7 +80,7 @@ function makeSandbox(mockFetch) {
   let mode = 'ok';
   const seen = [];
   const mock = async (input, init) => {
-    seen.push({ url: String(input), method: (init && init.method) || 'GET' });
+    seen.push({ url: String(input), method: (init && init.method) || 'GET', headers: (init && init.headers) || {} });
     if (mode === 'fail') throw new Error('network down');
     return new Response(JSON.stringify({ ok: true, at: seen.length }), {
       status: 200, headers: { 'content-type': 'application/json' }
@@ -100,6 +113,21 @@ function makeSandbox(mockFetch) {
   sb.HubOffline.save('my-state', { tabs: [1, 2] });
   const st = sb.HubOffline.load('my-state');
   check('HubOffline.save/load round-trips', st && st.body === '{"tabs":[1,2]}');
+
+  // ── offline mutation queue ──
+  mode = 'fail';
+  const q1 = await sb.HubOffline.post('https://hub.test/api/runner/backup', { items: [{ path: '/x', dest: 'branch' }] }, 'save');
+  check('offline post is queued, not lost', q1.queued === true);
+  check('queue holds the action', sb.HubOffline.pending().length === 1);
+  await sb.HubOffline.post('https://hub.test/api/runner/backup', { items: [{ path: '/x', dest: 'branch' }] }, 'save');
+  check('duplicate queued action collapses', sb.HubOffline.pending().length === 1);
+
+  mode = 'ok';
+  seen.length = 0;
+  await sb.HubOffline.flush();
+  check('flush drains the queue', sb.HubOffline.pending().length === 0);
+  check('flush replays as POST with an idem key',
+    seen.some(s => s.method === 'POST' && (s.headers['x-hub-idem'] || s.headers['X-Hub-Idem'])));
 
   console.log('OFFLINE-CACHE: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

@@ -90,6 +90,26 @@
     for (var i = 0; i < ks.length; i++) safeRemove(ks[i]);
   }
 
+  // ── Очередь изменяющих действий ──
+  // Изменение, которое не ушло из-за обрыва, кладётся сюда и повторяется при
+  // появлении связи. Ключ x-hub-idem стабилен для одного и того же действия,
+  // поэтому повтор не выполнит его дважды (сервер отвечает сохранённым
+  // ответом). Одинаковые действия схлопываются.
+  var QKEY = 'hubqueue';
+  function qLoad() { try { var v = JSON.parse(safeGet(QKEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+  function qSave(q) { safeSet(QKEY, JSON.stringify(q)); renderBanner(); }
+  function qAdd(item) { var q = qLoad().filter(function (x) { return x.key !== item.key; }); q.push(item); qSave(q); }
+  function qRemove(key) { qSave(qLoad().filter(function (x) { return x.key !== key; })); }
+  function idemKey(method, url, body) {
+    var s = method + ' ' + url + ' ' + body, h = 5381, i;
+    for (i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+    return 'k' + h.toString(16) + '-' + s.length;
+  }
+  function makeItem(url, body, label) {
+    var bodyStr = (typeof body === 'string') ? body : JSON.stringify(body || {});
+    return { key: idemKey('POST', url, bodyStr), method: 'POST', url: url, headers: {}, body: bodyStr, label: label || url, ts: now() };
+  }
+
   // ── Баннер офлайна ──
   var banner = null;
   function ensureBanner() {
@@ -111,11 +131,14 @@
   }
   function renderBanner() {
     if (!ensureBanner()) return;
-    if (offline) {
-      var txt = 'Офлайн — показаны последние данные' +
-        (lastSaved ? ' (сохранено ' + hhmm(lastSaved) + ')' : '');
+    var n = (typeof qLoad === 'function') ? qLoad().length : 0;
+    if (offline || n) {
+      var txt = offline
+        ? ('Офлайн — показаны последние данные' + (lastSaved ? ' (сохранено ' + hhmm(lastSaved) + ')' : ''))
+        : 'Есть связь';
+      if (n) txt += ' · в очереди: ' + n;
       var el = document.getElementById('hub-offline-text');
-      if (el) el.textContent = '⚡ ' + txt;
+      if (el) el.textContent = (offline ? '⚡ ' : '⏳ ') + txt;
       banner.style.display = 'flex';
     } else {
       banner.style.display = 'none';
@@ -184,12 +207,37 @@
     };
   }
 
+  // ── Отправка очереди ──
+  var flushing = false;
+  function flushQueue() {
+    if (flushing) return Promise.resolve();
+    var q = qLoad();
+    if (!q.length) return Promise.resolve();
+    flushing = true;
+    return (function next(i) {
+      if (i >= q.length) { flushing = false; renderBanner(); return; }
+      var it = q[i];
+      return realFetch(it.url, {
+        method: it.method,
+        headers: Object.assign({ 'content-type': 'application/json', 'x-hub-idem': it.key }, it.headers || {}),
+        body: it.body
+      }).then(function (r) {
+        // 2xx — сделано; 4xx — сервер отказал, повторять бессмысленно; 5xx —
+        // временная беда, оставляем и пробуем позже.
+        if (r && r.status >= 200 && r.status < 300) { qRemove(it.key); return next(i + 1); }
+        if (r && r.status >= 400 && r.status < 500) { qRemove(it.key); return next(i + 1); }
+        flushing = false; renderBanner();
+      }).catch(function () { flushing = false; renderBanner(); });
+    })(0);
+  }
+
   // ── События сети ──
-  window.addEventListener('online', function () { setOffline(false); });
+  window.addEventListener('online', function () { setOffline(false); flushQueue(); });
   window.addEventListener('offline', function () { setOffline(true); });
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', renderBanner);
-  else renderBanner();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { renderBanner(); flushQueue(); });
+  else { renderBanner(); flushQueue(); }
   if (!navigator.onLine) setOffline(true);
+  if (typeof setInterval === 'function') setInterval(function () { if (qLoad().length) flushQueue(); }, 30000);
 
   // ── Регистрация service worker (app shell) ──
   if ('serviceWorker' in navigator) {
@@ -206,6 +254,25 @@
     remove: function (key) { safeRemove(PREFIX + key); },
     clear: clearAll,
     on: function (cb) { if (typeof cb === 'function') listeners.push(cb); },
-    renderBanner: renderBanner
+    renderBanner: renderBanner,
+    // Изменяющее действие: уходит сразу, а если связи нет — в очередь и
+    // повторится само. Возвращает { queued: true }, когда связи не было.
+    post: function (url, body, label) {
+      var it = makeItem(url, body, label);
+      return realFetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-hub-idem': it.key },
+        body: it.body
+      }).then(function (r) {
+        setOffline(false);
+        return r.json().catch(function () { return { success: r.ok }; });
+      }).catch(function () {
+        qAdd(it);
+        setOffline(true);
+        return { success: true, queued: true, offline: true };
+      });
+    },
+    pending: function () { return qLoad(); },
+    flush: flushQueue
   };
 })();
