@@ -329,7 +329,26 @@ function attachTermScroll(id, panel){
   const track=panel.querySelector('.term-scroll');
   const thumb=panel.querySelector('.term-scroll-thumb');
   if(!vp||!track||!thumb) return null;
+  const term=(tabs.find(t=>t.id===id)||{}).term;
+  // В alternate screen (vim/htop/OpenCode) нет scrollback-буфера: программе нужно
+  // слать события колеса, а не крутить viewport. Обычный ползунок крутит xterm.
+  const isAlt=()=>{ const b=term&&term.buffer&&term.buffer.active; return !!(b&&b.type==='alternate'); };
+  const fireWheel=(dy)=>{
+    if(!term) return;
+    const scr=termEl.querySelector('.xterm-screen')||termEl;
+    try{ scr.dispatchEvent(new WheelEvent('wheel',{deltaY:dy,deltaMode:0,bubbles:true,cancelable:true,composed:true})); }catch(_){}
+  };
+  let altDrag=0;
+  const updAlt=()=>{
+    thumb.style.display='block';
+    const trackH=track.clientHeight;
+    const th=Math.max(24,Math.min(110,trackH*0.25));
+    altDrag=Math.max(0,Math.min(Math.max(1,trackH-th),altDrag));
+    thumb.style.height=th+'px';
+    thumb.style.transform='translateY('+altDrag+'px)';
+  };
   const upd=()=>{
+    if(isAlt()){ updAlt(); return; }
     const max=vp.scrollHeight - vp.clientHeight;
     if(max<=2){ thumb.style.display='none'; return; }
     thumb.style.display='block';
@@ -343,14 +362,26 @@ function attachTermScroll(id, panel){
   let ro=null;
   if(typeof ResizeObserver!=='undefined'){ ro=new ResizeObserver(upd); ro.observe(track); }
   const resizeHandler=upd; window.addEventListener('resize',resizeHandler);
+  let bufSub=null;
+  if(term&&term.buffer&&term.buffer.onBufferChange){ bufSub=term.buffer.onBufferChange(upd); }
   let dragging=false,startY=0,startTop=0;
   const toTop=(e)=>{
+    if(isAlt()){
+      const dy=e.clientY-startY;
+      startY=e.clientY;
+      const trackH=track.clientHeight;
+      altDrag=Math.max(0,Math.min(Math.max(1,trackH-thumb.clientHeight),altDrag+dy));
+      thumb.style.transform='translateY('+altDrag+'px)';
+      fireWheel(dy*8);
+      e.preventDefault();
+      return;
+    }
     const max=vp.scrollHeight - vp.clientHeight;
     if(max<=0) return;
     const trackH=track.clientHeight;
     const th=Math.max(24, trackH * (vp.clientHeight / vp.scrollHeight));
     const ratio=trackH-th; const dy=e.clientY-startY;
-    vp.scrollTop=Math.max(0,Math.min(1,(startTop/max)*ratio+dy)/ratio)*max;
+    vp.scrollTop=Math.max(0,Math.min(1,((startTop/max)*ratio+dy)/ratio))*max;
     e.preventDefault();
   };
   thumb.addEventListener('pointerdown',(e)=>{dragging=true; startY=e.clientY; startTop=vp.scrollTop; try{thumb.setPointerCapture(e.pointerId);}catch{} e.preventDefault();});
@@ -359,6 +390,16 @@ function attachTermScroll(id, panel){
   thumb.addEventListener('pointerup',endDrag); thumb.addEventListener('pointercancel',endDrag);
   track.addEventListener('pointerdown',(e)=>{
     if(e.target===thumb) return;
+    if(isAlt()){
+      const rect=track.getBoundingClientRect();
+      const down=e.clientY>rect.top+rect.height/2;
+      fireWheel(down?120:-120);
+      const trackH=track.clientHeight;
+      altDrag=Math.max(0,Math.min(Math.max(1,trackH-thumb.clientHeight),altDrag+(down?60:-60)));
+      thumb.style.transform='translateY('+altDrag+'px)';
+      e.preventDefault();
+      return;
+    }
     const max=vp.scrollHeight - vp.clientHeight;
     if(max<=0) return;
     const rect=track.getBoundingClientRect();
@@ -367,7 +408,7 @@ function attachTermScroll(id, panel){
     e.preventDefault();
   });
   upd();
-  return{upd,destroy(){ if(ro) ro.disconnect(); window.removeEventListener('resize',resizeHandler); }};
+  return{upd,destroy(){ if(ro) ro.disconnect(); window.removeEventListener('resize',resizeHandler); if(bufSub&&bufSub.dispose) bufSub.dispose(); }};
 }
 
 // ===== LONG-PRESS COPY =====
