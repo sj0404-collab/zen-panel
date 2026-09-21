@@ -1482,6 +1482,19 @@ async function ensureHubAccess(slot) {
     const r = await fetch(base + '/api/tools', zt
       ? { headers: { 'x-hub-token': zt }, signal: ctl && ctl.signal }
       : { signal: ctl && ctl.signal });
+    // A dead quick tunnel often returns Cloudflare's 530 page with Error
+    // 1033. Treat it as a stale session instead of opening a broken iframe;
+    // the user can relaunch and receive the new ephemeral URL.
+    if (r.status === 530 || r.status === 502 || r.status === 503) {
+      const body = await r.text().catch(() => '');
+      if (/\b1033\b|error\s*code\s*:\s*1033/i.test(body) || r.status === 530) {
+        try { bootLog('проба ' + slot + ': старый Cloudflare-туннель (Error 1033)'); } catch (e2) {}
+        if (confirm('Ссылка на этот туннель устарела (Cloudflare Error 1033).\n\nОК — запустить новый хаб\nОтмена — оставить сессию закрытой')) {
+          await launchHub(slot === 'hub-windows' ? 'windows' : slot === 'hub-linux' ? 'linux' : undefined);
+        }
+        return false;
+      }
+    }
     if (r.status !== 401) { try { bootLog('проба ' + slot + ': ' + r.status); } catch (e2) {} LAST_PROBE_NETFAIL = false; return true; }
   } catch (e) { try { bootLog('проба ' + slot + ': сеть недоступна — туннель/VPN?'); } catch (e2) {} LAST_PROBE_NETFAIL = true; return true; }
   finally { if (to) clearTimeout(to); }
