@@ -135,6 +135,9 @@ jobs:
           echo "logs dir ready $(ls -ld ~/.npm-hub/logs 2>&1 || ls -ld "$HUB_LOGS" 2>&1)"
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || true
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" 2>&1 | tee -a "$HUB_LOGS/restore-hubwork.log" || true
+          # Rebuild any repo that was lost with the previous runner, from the
+          # work-backup branch. Never touches an existing repo (that is newer).
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" 2>&1 | tee -a "$HUB_LOGS/restore-work.log" || true
 
       - name: Start the hub and open the tunnel
         run: |
@@ -159,6 +162,11 @@ jobs:
           export SNAPSHOT_INTERVAL=120
           nohup bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" hub "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-hub.log" 2>&1 &
           echo "snapshot daemon: audit.json + code.json every 120s -> session-state"
+          # Durable work backup: every repo under HOME becomes a git bundle plus
+          # its WIP diff and untracked files on the work-backup branch, so a
+          # runner that dies with unpushed work loses nothing.
+          nohup env WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_INTERVAL=300 bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" >> "$HUB_LOGS/work-backup.log" 2>&1 &
+          echo "work-backup daemon: HOME snapshot every 300s -> work-backup branch"
 
           URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 $HUB_LOGS/tunnel.log)
           if [ -z "$URL" ]; then
