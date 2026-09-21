@@ -3243,24 +3243,31 @@ function remoteAudioStart() {
     const node = ctx.createScriptProcessor(4096, 2, 2);
     const q = [];
     let qFrames = 0, current = null, currentAt = 0, pending = new Uint8Array(0);
+    let channels = 2;
     const state = { ctx, ws: null, node, q, close: false };
     node.onaudioprocess = (ev) => {
       const left = ev.outputBuffer.getChannelData(0);
       const right = ev.outputBuffer.numberOfChannels > 1 ? ev.outputBuffer.getChannelData(1) : left;
       left.fill(0); if (right !== left) right.fill(0);
       let n = 0;
+      const stride = channels;
       while (n < left.length) {
         if (!current || currentAt >= current.length) {
           current = q.shift(); currentAt = 0;
           if (!current) break;
-          qFrames -= current.length / 2;
+          qFrames -= current.length / stride;
         }
-        const avail = Math.min(left.length - n, (current.length - currentAt) / 2);
+        const avail = Math.min(left.length - n, (current.length - currentAt) / stride);
         for (let i = 0; i < avail; i++) {
-          left[n + i] = current[currentAt + i * 2];
-          if (right !== left) right[n + i] = current[currentAt + i * 2 + 1];
+          if (stride === 1) {
+            left[n + i] = current[currentAt + i];
+            if (right !== left) right[n + i] = current[currentAt + i];
+          } else {
+            left[n + i] = current[currentAt + i * 2];
+            if (right !== left) right[n + i] = current[currentAt + i * 2 + 1];
+          }
         }
-        currentAt += avail * 2; n += avail;
+        currentAt += avail * stride; n += avail;
       }
     };
     node.connect(ctx.destination);
@@ -3273,7 +3280,7 @@ function remoteAudioStart() {
       if (typeof ev.data === 'string') {
         try {
           const msg = JSON.parse(ev.data);
-          if (msg.type === 'ready') remoteAudioBadge('🔊 видео', true);
+          if (msg.type === 'ready') { if (msg.channels) channels = msg.channels; remoteAudioBadge('🔊 видео', true); }
           if (msg.type === 'error') remoteAudioBadge('🔇 ' + (msg.error || 'нет потока'), false);
         } catch {}
         return;
@@ -3281,17 +3288,18 @@ function remoteAudioStart() {
       const bytes = new Uint8Array(ev.data);
       const all = new Uint8Array(pending.length + bytes.length);
       all.set(pending); all.set(bytes, pending.length);
-      const usable = all.length - (all.length % 4);
+      const frame = channels * 2;
+      const usable = all.length - (all.length % frame);
       pending = all.slice(usable);
       if (!usable) return;
       const view = new DataView(all.buffer, all.byteOffset, usable);
       const samples = new Float32Array(usable / 2);
       for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
-      q.push(samples); qFrames += samples.length / 2;
+      q.push(samples); qFrames += samples.length / channels;
       // Keep the audio close to the video. A 2-second queue made sound
       // continue after the video ended and amplified network jitter into
       // clicks/stutter. At most ~350 ms is enough for mobile jitter.
-      while (qFrames > rate * 0.35 && q.length > 1) qFrames -= q.shift().length / 2;
+      while (qFrames > rate * 0.35 && q.length > 1) qFrames -= q.shift().length / channels;
     };
     ws.onerror = () => remoteAudioBadge('🔇 нет потока', false);
     ws.onclose = () => {
@@ -3372,5 +3380,8 @@ document.addEventListener('visibilitychange', () => {
 });
 
 setInterval(() => {
+  // In the background the audio WebSocket already keeps the tunnel warm; an
+  // extra HTTP poll only wakes the radio (battery). Ping only while visible.
+  if (document.hidden) return;
   fetch('/api/pulse/status').catch(() => {});
 }, 30000);

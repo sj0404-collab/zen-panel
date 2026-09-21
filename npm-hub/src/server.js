@@ -1205,6 +1205,15 @@ const audioRate = (req) => {
     return Math.max(8000, Math.min(96000, Number.isFinite(n) ? Math.round(n) : def));
   } catch { return 22050; }
 };
+// Stereo doubles the raw-PCM bill for a phone that usually listens through a
+// single speaker. HUB_AUDIO_CHANNELS=1 (or ?channels=1) halves it again.
+const audioChannels = (req) => {
+  try {
+    const u = new URL(req.url, 'http://localhost');
+    const def = Number(process.env.HUB_AUDIO_CHANNELS) || 2;
+    return Number(u.searchParams.get('channels') || def) === 1 ? 1 : 2;
+  } catch { return 2; }
+};
 const ensureBrowserAudioSink = async () => {
   const ls = await pulseRun('pactl list short sinks 2>/dev/null');
   if (!/\tbrowser_youtube(?:\.\d+)?\t/.test(String(ls.out || ''))) {
@@ -1223,14 +1232,37 @@ audioWss.on('connection', async (ws, req) => {
   let rec = null;
   let closed = false;
   let pendingAudio = Buffer.alloc(0);
-  const AUDIO_PACKET = 8192; // 46 ms at 44.1 kHz stereo s16le: one cheap WS packet
+  let channels = 2;
+  const AUDIO_PACKET = 8192; // ~46 ms at 22.05 kHz stereo s16le: one cheap WS packet
+  // Silence gate: an idle remote sink streams pure zeros. Pushing those keeps
+  // the phone's radio and decoder busy for nothing and drains the battery
+  // during background listening. Let the tail through, then throttle to one
+  // keep-alive packet every few seconds so the tunnel never drops the socket.
+  let silentRun = 0;
+  let lastSentAt = Date.now();
+  const SILENT_MAX = Number(process.env.HUB_AUDIO_SILENT_PACKETS) || 32;
+  const isSilent = (buf) => {
+    for (let i = 0; i + 1 < buf.length; i += 2) {
+      const s = buf.readInt16LE(i);
+      if (s > 24 || s < -24) return false;
+    }
+    return true;
+  };
   const sendAudio = (force = false) => {
+    const frame = channels * 2;
     while (!closed && ws.readyState === 1 &&
-      (pendingAudio.length >= AUDIO_PACKET || (force && pendingAudio.length >= 4))) {
-      let n = pendingAudio.length >= AUDIO_PACKET ? AUDIO_PACKET : pendingAudio.length - (pendingAudio.length % 4);
-      if (n < 4) break;
+      (pendingAudio.length >= AUDIO_PACKET || (force && pendingAudio.length >= frame))) {
+      let n = pendingAudio.length >= AUDIO_PACKET ? AUDIO_PACKET : pendingAudio.length - (pendingAudio.length % frame);
+      if (n < frame) break;
       const packet = pendingAudio.subarray(0, n);
       pendingAudio = pendingAudio.subarray(n);
+      if (isSilent(packet)) {
+        silentRun++;
+        if (silentRun > SILENT_MAX && Date.now() - lastSentAt < 4000) continue;
+      } else {
+        silentRun = 0;
+      }
+      lastSentAt = Date.now();
       try { ws.send(packet, { binary: true }); } catch { stop(); break; }
     }
   };
@@ -1245,6 +1277,7 @@ audioWss.on('connection', async (ws, req) => {
   ws.on('error', stop);
   try {
     const rate = audioRate(req);
+    channels = audioChannels(req);
     const bin = await pulseRun('command -v parec 2>/dev/null || command -v pacat 2>/dev/null');
     const recorder = String(bin.out || '').trim().split(/\s+/)[0];
     if (!recorder) {
@@ -1255,7 +1288,7 @@ audioWss.on('connection', async (ws, req) => {
     const recordArgs = /pacat(?:\.exe)?$/.test(recorder) ? ['--record'] : [];
     rec = spawn(recorder, recordArgs.concat([
       '--device=' + source,
-      '--format=s16le', '--rate=' + rate, '--channels=2', '--latency-msec=40'
+      '--format=s16le', '--rate=' + rate, '--channels=' + channels, '--latency-msec=40'
     ]), { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
     rec.stdout.on('data', (chunk) => {
       if (closed || !chunk.length) return;
@@ -1278,7 +1311,7 @@ audioWss.on('connection', async (ws, req) => {
       }
       if (!closed) stop();
     });
-    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'ready', rate, channels: 2, source }));
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'ready', rate, channels, source }));
   } catch (e) {
     if (ws.readyState === 1) {
       try { ws.send(JSON.stringify({ type: 'error', error: e.message })); } catch {}
