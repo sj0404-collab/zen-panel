@@ -914,6 +914,12 @@ function closeTab(id) {
   if (idx === -1) return;
   const tab = tabs[idx];
   tab.manualClose = true;
+  // Closing a tab must end the server-side session, not just detach: a leftover
+  // tmux session is re-attached on the next page load (/api/sessions), so closed
+  // tabs came back and kept piling up. 'kill' terminates it for good.
+  try { if (tab.ws && tab.ws.readyState === 1) tab.ws.send(JSON.stringify({ type: 'kill' })); } catch {}
+  // HTTP fallback: the tab may be mid-reconnect, when a WS frame cannot be sent.
+  try { fetch('/api/sessions/' + encodeURIComponent(id) + '/kill', { method: 'POST' }).catch(() => {}); } catch {}
   if (tab.keepAlive) clearInterval(tab.keepAlive);
   if (tab.resizeObs) tab.resizeObs.disconnect();
   if (tab.scroll?.destroy) tab.scroll.destroy();

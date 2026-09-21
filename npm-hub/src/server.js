@@ -1641,6 +1641,23 @@ const createTmuxSession = (id, opts, ws) => {
   return session;
 };
 
+// Terminate a session for good. Called when a client closes a tab: merely
+// detaching left the tmux session alive, /api/sessions re-attached it on every
+// reload, and closed tabs kept multiplying. Handles both an in-memory record
+// and a session that only survives as tmux after a hub restart.
+const killServerSession = (id) => {
+  const s = sessions.get(id);
+  if (s) {
+    if (s.poller) { clearInterval(s.poller); s.poller = null; }
+    if (s.pty) { try { s.pty.kill('SIGTERM'); } catch {} }
+    try { if (s.logPath) fs.unlinkSync(s.logPath); } catch {}
+  }
+  if (tmuxHas()) { try { tmuxRun(['kill-session', '-t', safeSessionName(id)], 3000); } catch {} }
+  deleteSessionMeta(id);
+  sessions.delete(id);
+  return !!s;
+};
+
 // Feed client keystrokes into the tmux pane byte-for-byte. Using load-buffer +
 // paste-buffer keeps arbitrary UTF-8/escape bytes intact (paste-buffer sends
 // them as terminal input, Enter/newline included). Rapid typing arrives as a
@@ -1879,6 +1896,15 @@ app.get('/api/sessions', (req, res) => {
   }
   list.sort((a, b) => (b.created || 0) - (a.created || 0));
   res.json({ success: true, sessions: list });
+});
+
+// Closing a tab ends its session even if the tab's socket is mid-reconnect, so
+// the kill is also available over plain HTTP.
+app.post('/api/sessions/:id/kill', (req, res) => {
+  const id = String(req.params.id || '');
+  if (!/^term_[0-9]+$/.test(id)) return res.status(400).json({ success: false, error: 'bad session id' });
+  killServerSession(id);
+  res.json({ success: true });
 });
 
 // Manual update from GitHub: pull main, then exit so the workflow keep-alive

@@ -203,7 +203,12 @@ function closeTab(id) {
   if (tab.resizeObs) tab.resizeObs.disconnect();
   if (tab.scroll?.destroy) tab.scroll.destroy();
   if (tab.touchHandler?.destroy) tab.touchHandler.destroy();
-  try { if (tab.ws && tab.ws.readyState === 1) tab.ws.send(JSON.stringify({ type: 'close' })); } catch (e) {}
+  // 'kill' (not 'close'): closing a tab should end the tmux session, otherwise
+  // it survives and is re-attached on the next page load, so closed tabs kept
+  // coming back.
+  try { if (tab.ws && tab.ws.readyState === 1) tab.ws.send(JSON.stringify({ type: 'kill' })); } catch (e) {}
+  // HTTP fallback: the tab may be mid-reconnect, when a WS frame cannot be sent.
+  try { fetch('/api/sessions/' + encodeURIComponent(id) + '/kill', { method: 'POST' }).catch(() => {}); } catch (e) {}
   tab.ws?.close();
   tab.term?.dispose();
   tab.el?.remove();

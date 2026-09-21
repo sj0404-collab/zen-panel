@@ -443,5 +443,20 @@ check('q52 atomic default save + repo identity sync',
   server.includes('const repoIdentity = (r) => r ?') &&
   server.includes('repoChanged = repoIdentity(oldRepo) !== repoIdentity(nextRepo)'));
 
+// q53: closing a tab must kill the server-side session. Detaching alone left a
+// tmux session behind, which /api/sessions re-attached on every reload, so
+// closed tabs came back and kept multiplying. The HTTP kill also covers a tab
+// that is closed while its socket is mid-reconnect.
+const term = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/term-app.js'), 'utf8');
+check('q53 closing a tab kills the server session',
+  server.includes("app.post('/api/sessions/:id/kill'") &&
+  server.includes('const killServerSession = (id)') &&
+  mob.includes("type: 'kill'") && desk.includes("type: 'kill'") &&
+  term.includes("type: 'kill'") && !term.includes("type: 'close'") &&
+  mob.includes("/api/sessions/' + encodeURIComponent(id) + '/kill'") &&
+  desk.includes("/api/sessions/' + encodeURIComponent(id) + '/kill'") &&
+  term.includes("/api/sessions/' + encodeURIComponent(id) + '/kill'"));
+
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
