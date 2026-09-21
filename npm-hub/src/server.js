@@ -1655,7 +1655,9 @@ const stopTmuxPollers = () => {
 const ptySend = (session, message) => {
   const payload = JSON.stringify(message);
   for (const client of [...session.clients]) {
-    if (client.readyState === 1) client.send(payload); else session.clients.delete(client);
+    if (client.readyState !== 1) { session.clients.delete(client); continue; }
+    try { client.send(payload); }
+    catch { session.clients.delete(client); }
   }
 };
 
@@ -1784,6 +1786,13 @@ const tmuxWake = (session) => { if (session.tmux && session.clients.size > 0) tm
 wss.on('connection', (ws) => {
   let session = null;
   ws.isAlive = true;
+  // A phone/network drop can emit `error` before `close`. Without a listener
+  // Node treats that event as uncaught and takes down the entire hub, which
+  // disconnects every terminal tab at once. Detach only this client; the tmux
+  // session keeps running and the browser can attach again with the same id.
+  ws.on('error', () => {
+    if (session) detachPtyClient(session, ws);
+  });
   ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (raw) => {
@@ -1922,6 +1931,11 @@ wss.on('connection', (ws) => {
       }
     }
   });
+});
+wss.on('error', err => {
+  // WebSocket errors belong to one client; never let a broken mobile radio
+  // connection become an uncaught process-level exception.
+  console.log('  ⚠ terminal websocket: ' + (err.message || err));
 });
 
 // Heartbeat: protocol-level ping/pong lets the server reap clients that died
