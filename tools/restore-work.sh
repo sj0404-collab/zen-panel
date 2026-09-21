@@ -27,6 +27,23 @@ log() { echo "[restore-work $(date -u '+%H:%M:%S')] $*" | tee -a "$HUB_LOGS/rest
 
 [ "${WORK_BACKUP_RESTORE:-1}" = "0" ] && { log "disabled"; exit 0; }
 
+# Apply the WIP/untracked part without replacing a repo that the workflow
+# checked out freshly. This is enabled explicitly for the Hub checkout: the
+# old runner's local edits must come back on top of the new checkout.
+apply_payload() {
+  local dir="$1" repodir="$2" label="$3"
+  if [ -s "$repodir/wip.patch" ]; then
+    ( cd "$dir" && git apply --3way --whitespace=nowarn "$repodir/wip.patch" 2>/dev/null \
+      || git apply --whitespace=nowarn "$repodir/wip.patch" 2>/dev/null ) \
+      && log "applied uncommitted changes to $label" \
+      || log "could not reapply uncommitted changes to $label (kept at $repodir/wip.patch)"
+  fi
+  if [ -s "$repodir/untracked.tar.gz" ]; then
+    ( cd "$dir" && tar --keep-old-files -xzf "$repodir/untracked.tar.gz" 2>/dev/null ) \
+      && log "restored untracked files for $label"
+  fi
+}
+
 REMOTE="${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN:-${GITHUB_TOKEN:-}}@github.com/${GITHUB_REPOSITORY:-}.git}"
 
 WORK="$(mktemp -d)"
@@ -52,11 +69,54 @@ if [ -z "${SNAP:-}" ] || [ ! -d "$SNAP" ]; then
 fi
 log "restoring from $SNAP"
 
+find_existing_repo() {
+  local meta="$1"
+  [ "${WORK_BACKUP_RESTORE_EXISTING:-0}" = "1" ] || return 0
+  python3 - "$ROOT" "$meta" <<'PY'
+import json, os, subprocess, sys
+root, meta_path = sys.argv[1:]
+try: meta = json.load(open(meta_path, encoding='utf-8'))
+except Exception: raise SystemExit(0)
+wanted_remote = meta.get('remote') or ''
+wanted_name = meta.get('name') or os.path.basename(str(meta.get('path') or '').rstrip('/'))
+found = []
+for base, dirs, files in os.walk(root):
+    if '.git' not in dirs: continue
+    if any(x in base.split(os.sep) for x in ('node_modules', '.cache', '.npm', '.gradle')):
+        dirs[:] = []
+        continue
+    repo = base
+    try:
+        remote = subprocess.check_output(['git','-C',repo,'remote','get-url','origin'], text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception: remote = ''
+    if wanted_remote and remote != wanted_remote: continue
+    if os.path.basename(repo) == wanted_name: print(repo); raise SystemExit(0)
+    found.append(repo)
+if found: print(found[0])
+PY
+}
+
 restored=0
-for repodir in "$SNAP"/repos/*/; do
-  [ -d "$repodir" ] || continue
-  rel="$(basename "$repodir")"
+while IFS= read -r meta; do
+  [ -f "$meta" ] || continue
+  repodir="$(dirname "$meta")"
+  rel="$(python3 - "$meta" <<'PY'
+import json, sys, os
+try:
+    d=json.load(open(sys.argv[1], encoding='utf-8'))
+    print(d.get('rel') or os.path.basename(os.path.dirname(sys.argv[1])))
+except Exception:
+    print(os.path.basename(os.path.dirname(sys.argv[1])))
+PY
+)"
   dest="$ROOT/$rel"
+  existing="$(find_existing_repo "$meta")"
+  if [ -n "$existing" ] && [ -e "$existing/.git" ]; then
+    apply_payload "$existing" "$repodir" "$(basename "$existing")"
+    restored=$((restored + 1))
+    log "reused existing repo $existing for backup $rel"
+    continue
+  fi
   if [ -e "$dest/.git" ]; then
     log "skip $rel: already a repo at $dest"
     continue
@@ -75,19 +135,10 @@ for repodir in "$SNAP"/repos/*/; do
     mkdir -p "$dest"
     ( cd "$dest" && git init -q )
   fi
-  if [ -s "$repodir/wip.patch" ]; then
-    ( cd "$dest" && git apply --3way --whitespace=nowarn "$repodir/wip.patch" 2>/dev/null \
-      || git apply --whitespace=nowarn "$repodir/wip.patch" 2>/dev/null ) \
-      && log "applied uncommitted changes to $rel" \
-      || log "could not reapply uncommitted changes to $rel (kept at $repodir/wip.patch)"
-  fi
-  if [ -s "$repodir/untracked.tar.gz" ]; then
-    ( cd "$dest" && tar -xzf "$repodir/untracked.tar.gz" 2>/dev/null ) \
-      && log "restored untracked files for $rel"
-  fi
+  apply_payload "$dest" "$repodir" "$rel"
   restored=$((restored + 1))
   log "restored $rel -> $dest"
-done
+done < <(find "$SNAP/repos" -type f -name meta.json -print 2>/dev/null)
 
 if [ -s "$SNAP/files.tar.gz" ]; then
   # --keep-old-files: never overwrite whatever the fresh runner already has.

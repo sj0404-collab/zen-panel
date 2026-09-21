@@ -837,13 +837,19 @@ function renderSidebar() {
 // Reattach the browser UI to tmux sessions that survived a hub restart.
 async function restoreServerSessions() {
   try {
-    const ids = loadOpenTabs();
-    if (!ids.length) return;
+    const storedIds = loadOpenTabs();
     const r = await fetch('/api/sessions');
     const d = await r.json();
     if (!d.success || !Array.isArray(d.sessions)) return;
     const byId = {};
     for (const s of d.sessions) if (s && s.id) byId[String(s.id)] = s;
+    // A new runner has no browser localStorage from the old device. The Hub
+    // marks durable OpenCode descriptors as restore=true so they still open
+    // automatically in their restored repo.
+    const durableIds = d.sessions.filter(s => s && (s.restore || (s.autoRestore && s.toolId === 'opencode')))
+      .map(s => String(s.id));
+    const ids = [...new Set([...storedIds, ...durableIds])];
+    if (!ids.length) return;
     let created = false;
     for (const id of ids) {
       if (tabs.some(t => t.id === id)) continue;
@@ -984,7 +990,6 @@ function attachTermScroll(id, panel) {
   upd();
   return { upd, destroy() { if (ro) ro.disconnect(); window.removeEventListener('resize', resizeHandler); if (bufSub && bufSub.dispose) bufSub.dispose(); } };
 }
-
 // ===== ТЕРМИНАЛ НА ПАЛЬЦЕ =====
 // Раньше: ЛЮБОЕ удержание дольше 600 мс копировало текст (а без выделения —
 // последние 200 строк буфера, то есть «весь экран»), а тап дольше 500 мс не
@@ -1171,7 +1176,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
 
   term.open(termEl);
   fitAddon.fit();
-  tab.scroll = attachTermScroll(id, panel);
+  tab.scroll = attachTermScroll(id, panel, term);
   tab.touchHandler = setupTermTouch(termEl, term);
 
   const connect = () => {
@@ -1783,6 +1788,11 @@ function fmDownloadSingle() {
 
 function fmArchive() {
   if (!fmSelected) return;
+  const item = [...document.querySelectorAll('#fm-list .fm-item.fm-sel')]
+    .find(el => el.dataset.path === fmSelected);
+  // Files must stay files: the archive action is for directories. This is
+  // especially important for APKs, which should never become app.tar.xz.
+  if (item && item.dataset.isdir !== '1') return fmDownloadSingle();
   window.open(`/api/fs/archive?path=${encodeURIComponent(fmSelected)}`);
 }
 

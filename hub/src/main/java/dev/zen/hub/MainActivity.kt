@@ -29,6 +29,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import org.json.JSONObject
+import java.net.URLDecoder
 
 /**
  * NPM Hub: a connect page served from inside the APK, then the hub itself.
@@ -193,7 +194,9 @@ class MainActivity : ComponentActivity() {
                     setDestinationInExternalPublicDir(
                         Environment.DIRECTORY_DOWNLOADS, name
                     )
-                    setMimeType(mimeType ?: mimeForName(name))
+                    val detectedMime = mimeType?.takeUnless { it.isBlank() || it == "application/octet-stream" }
+                        ?: mimeForName(name)
+                    setMimeType(detectedMime)
                 }
                 val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
                 dm.enqueue(request)
@@ -204,12 +207,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Pulls "foo.apk" out of `attachment; filename="foo.apk"; filename*=UTF-8''foo.apk`.
+    // Prefer RFC 5987 filename*=, then the legacy filename=. This preserves
+    // compound names such as app.tar.xz and release.apk instead of letting
+    // DownloadManager invent a .bin/.ts extension from the MIME type.
     private fun dispositionFilename(cd: String?): String? {
-        if (cd == null) return null
-        var name = Regex("""filename\*?=(?:UTF-8''|")?([^";]+)""")
+        if (cd.isNullOrBlank()) return null
+        val encoded = Regex("""filename\*\s*=\s*UTF-8''([^;]+)""", RegexOption.IGNORE_CASE)
             .find(cd)?.groupValues?.getOrNull(1)
-            ?.replace("\"", "")?.trim()
+        val plain = Regex("""filename\s*=\s*(?:"([^"]+)"|([^;]+))""", RegexOption.IGNORE_CASE)
+            .find(cd)?.let { it.groupValues[1].ifBlank { it.groupValues[2] } }
+        var name = (encoded?.let { runCatching { URLDecoder.decode(it.trim(), "UTF-8") }.getOrNull() }
+            ?: plain)?.trim()?.trim('"')
         if (name.isNullOrBlank() || name.equals("download", ignoreCase = true)) return null
         name = name.replace(Regex("""[/\\:*?"<>|%{}]"""), "_").trim()
         return name.ifBlank { null }
@@ -217,24 +225,43 @@ class MainActivity : ComponentActivity() {
 
     private fun urlFilename(url: String?): String {
         val clean = url?.substringBefore('?') ?: return "download.bin"
-        return clean.substringAfterLast('/').ifBlank { "download.bin" }
+        val raw = clean.substringAfterLast('/').ifBlank { return "download.bin" }
+        return runCatching { URLDecoder.decode(raw, "UTF-8") }
+            .getOrDefault(raw).replace(Regex("""[/\\:*?"<>|%{}]"""), "_")
+            .ifBlank { "download.bin" }
     }
 
     private fun mimeForName(name: String): String {
-        val ext = name.substringAfterLast('.', "").lowercase()
-        return when (ext) {
-            "apk" -> "application/vnd.android.package-archive"
-            "zip" -> "application/zip"
-            "tar" -> "application/x-tar"
-            "xz" -> "application/x-xz"
-            "gz" -> "application/gzip"
-            "deb" -> "application/x-debian-package"
-            "png" -> "image/png"
-            "jpg", "jpeg" -> "image/jpeg"
-            "pdf" -> "application/pdf"
-            "html", "htm" -> "text/html"
-            "json" -> "application/json"
-            "txt", "md", "log" -> "text/plain"
+        val lower = name.lowercase()
+        return when {
+            lower.endsWith(".apk") -> "application/vnd.android.package-archive"
+            lower.endsWith(".aab") -> "application/octet-stream"
+            lower.endsWith(".apks") || lower.endsWith(".xapk") -> "application/zip"
+            lower.endsWith(".tar.xz") -> "application/x-xz"
+            lower.endsWith(".tar.gz") || lower.endsWith(".tgz") -> "application/gzip"
+            lower.endsWith(".tar.bz2") || lower.endsWith(".tbz2") -> "application/x-bzip2"
+            lower.endsWith(".tar.zst") || lower.endsWith(".tzst") -> "application/zstd"
+            lower.endsWith(".tar") -> "application/x-tar"
+            lower.endsWith(".xz") -> "application/x-xz"
+            lower.endsWith(".gz") -> "application/gzip"
+            lower.endsWith(".bz2") -> "application/x-bzip2"
+            lower.endsWith(".zst") -> "application/zstd"
+            lower.endsWith(".zip") -> "application/zip"
+            lower.endsWith(".7z") -> "application/x-7z-compressed"
+            lower.endsWith(".rar") -> "application/vnd.rar"
+            lower.endsWith(".deb") -> "application/vnd.debian.binary-package"
+            lower.endsWith(".rpm") -> "application/x-rpm"
+            lower.endsWith(".jar") -> "application/java-archive"
+            lower.endsWith(".json") -> "application/json"
+            lower.endsWith(".xml") -> "application/xml"
+            lower.endsWith(".html") || lower.endsWith(".htm") -> "text/html"
+            lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".log") -> "text/plain"
+            lower.endsWith(".png") -> "image/png"
+            lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
+            lower.endsWith(".webp") -> "image/webp"
+            lower.endsWith(".pdf") -> "application/pdf"
+            lower.endsWith(".mp4") -> "video/mp4"
+            lower.endsWith(".mp3") -> "audio/mpeg"
             else -> "application/octet-stream"
         }
     }

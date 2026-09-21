@@ -22,14 +22,24 @@ const app = express();
 const HOME = os.homedir();
 const safeFilename = (s) => String(s).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
 const mimeForPath = (p) => {
-  const ext = (path.extname(p) || '').toLowerCase();
-  return ({ '.apk': 'application/vnd.android.package-archive', '.zip': 'application/zip',
-    '.tar': 'application/x-tar', '.xz': 'application/x-xz', '.gz': 'application/gzip',
-    '.deb': 'application/x-debian-package', '.png': 'image/png', '.jpg': 'image/jpeg',
+  const lower = String(p || '').toLowerCase();
+  if (lower.endsWith('.apk')) return 'application/vnd.android.package-archive';
+  if (lower.endsWith('.aab')) return 'application/octet-stream';
+  if (lower.endsWith('.apks') || lower.endsWith('.xapk') || lower.endsWith('.zip')) return 'application/zip';
+  if (lower.endsWith('.tar.xz')) return 'application/x-xz';
+  if (lower.endsWith('.tar.gz') || lower.endsWith('.tgz')) return 'application/gzip';
+  if (lower.endsWith('.tar.bz2') || lower.endsWith('.tbz2')) return 'application/x-bzip2';
+  if (lower.endsWith('.tar.zst') || lower.endsWith('.tzst')) return 'application/zstd';
+  if (lower.endsWith('.tar')) return 'application/x-tar';
+  const ext = (path.extname(lower) || '').toLowerCase();
+  return ({ '.xz': 'application/x-xz', '.gz': 'application/gzip', '.bz2': 'application/x-bzip2',
+    '.zst': 'application/zstd', '.7z': 'application/x-7z-compressed', '.rar': 'application/vnd.rar',
+    '.deb': 'application/vnd.debian.binary-package', '.rpm': 'application/x-rpm',
+    '.jar': 'application/java-archive', '.png': 'image/png', '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg', '.pdf': 'application/pdf', '.html': 'text/html',
-    '.htm': 'text/html', '.json': 'application/json', '.txt': 'text/plain',
-    '.md': 'text/plain', '.log': 'text/plain', '.js': 'application/javascript',
-    '.css': 'text/css', '.mp4': 'video/mp4', '.webm': 'video/webm',
+    '.htm': 'text/html', '.json': 'application/json', '.xml': 'application/xml',
+    '.txt': 'text/plain', '.md': 'text/plain', '.log': 'text/plain', '.js': 'application/javascript',
+    '.css': 'text/css', '.csv': 'text/csv', '.mp4': 'video/mp4', '.webm': 'video/webm',
     '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.webp': 'image/webp',
     '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff',
     '.ttf': 'font/ttf', '.otf': 'font/otf',
@@ -1500,7 +1510,11 @@ const sessions = new Map(); // sessionId -> { id, pty?, tmux?, cwd, toolId, clie
 
 const TMUX_PREFIX = 'npmhub-';
 const PTY_DIR = path.join(TMP_DIR, 'pty');
-try { fs.mkdirSync(PTY_DIR, { recursive: true }); } catch {}
+// Session descriptors are durable; PTY logs remain temporary because they can
+// grow without bound. The descriptor is enough to recreate OpenCode in the
+// same repository after a fresh runner starts.
+const SESSION_DIR = path.join(DATA_DIR, 'sessions');
+try { fs.mkdirSync(PTY_DIR, { recursive: true }); fs.mkdirSync(SESSION_DIR, { recursive: true }); } catch {}
 
 // Check on demand: the keepalive may install tmux after this module starts.
 const tmuxHas = () => {
@@ -1510,7 +1524,8 @@ const tmuxHas = () => {
 
 const safeSessionName = id => TMUX_PREFIX + String(id).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
 const sessionLogPath = id => path.join(PTY_DIR, safeSessionName(id) + '.log');
-const sessionMetaPath = id => path.join(PTY_DIR, safeSessionName(id) + '.meta.json');
+const sessionMetaPath = id => path.join(SESSION_DIR, safeSessionName(id) + '.meta.json');
+const legacySessionMetaPath = id => path.join(PTY_DIR, safeSessionName(id) + '.meta.json');
 
 // Keep project identity beside the tmux session. cwd alone is not enough for
 // a cloned/local repo because the UI needs to know which unfinished worktree
@@ -1557,6 +1572,7 @@ const writeSessionMeta = (session) => {
     session.phoneRunner = session.phoneRunner || getDefaultPhoneRunner();
     fs.writeFileSync(sessionMetaPath(session.id), JSON.stringify({
       id: session.id, cwd: session.cwd, toolId: session.toolId,
+      toolCmd: session.toolCmd || null, autoRestore: session.autoRestore !== false,
       toolName: session.toolName || 'Terminal', color: session.color || '#58a6ff',
       icon: session.icon || '>_', created: session.created || Date.now(),
       emulator: session.emulator,
@@ -1589,10 +1605,39 @@ const syncTmuxSession = (session) => {
   }
   return session;
 };
-const deleteSessionMeta = (id) => { try { fs.unlinkSync(sessionMetaPath(id)); } catch {} };
+const deleteSessionMeta = (id) => {
+  for (const p of [sessionMetaPath(id), legacySessionMetaPath(id)]) {
+    try { fs.unlinkSync(p); } catch {}
+  }
+};
 const readSessionMeta = (id) => {
-  try { return JSON.parse(fs.readFileSync(sessionMetaPath(id), 'utf8')); }
-  catch { return null; }
+  for (const p of [sessionMetaPath(id), legacySessionMetaPath(id)]) {
+    try { return JSON.parse(fs.readFileSync(p, 'utf8')); }
+    catch {}
+  }
+  return null;
+};
+
+// A GitHub runner can come back with the same repo at a different absolute
+// workspace path. Prefer the old cwd when it still exists, otherwise resolve
+// the saved repository identity against the durable hub-work directory.
+const resolveRestoredCwd = (meta) => {
+  const candidates = [meta && meta.cwd, meta && meta.repoPath,
+    WORK_DIR, meta && meta.repoName && path.join(WORK_DIR, meta.repoName),
+    meta && meta.repoName && path.join(HOME, meta.repoName), HOME].filter(Boolean);
+  const wantedRemote = meta && meta.repoRemote;
+  let first = null;
+  for (const candidate of candidates) {
+    try {
+      const resolved = path.resolve(String(candidate));
+      if (!fs.statSync(resolved).isDirectory()) continue;
+      if (!first) first = resolved;
+      if (!wantedRemote) return resolved;
+      const repo = repoContext(resolved);
+      if (repo && repo.remote === wantedRemote) return resolved;
+    } catch {}
+  }
+  return first;
 };
 
 const tmuxRun = (args, timeout, input) => {
@@ -1681,11 +1726,12 @@ const reviveTmuxSession = (id) => {
   const logPath = sessionLogPath(id);
   const offset = (() => { try { return fs.statSync(logPath).size; } catch { return 0; } })();
   const meta = readSessionMeta(id) || {};
-  const session = { id, tmux: true, cwd: meta.cwd || meta.repoPath || null,
+  const session = { id, tmux: true, cwd: resolveRestoredCwd(meta) || meta.cwd || meta.repoPath || null,
     repo: meta.repoPath ? { path: meta.repoPath, name: meta.repoName, remote: meta.repoRemote,
       branch: meta.repoBranch, head: meta.repoHead, dirty: !!meta.repoDirty, status: meta.repoStatus || '' } : null,
     emulator: meta.emulator || tmuxSessionEmulator(id) || getDefaultEmulator(),
     phoneRunner: meta.phoneRunner || getDefaultPhoneRunner(), toolId: meta.toolId || null,
+    toolCmd: meta.toolCmd || null, autoRestore: meta.autoRestore !== false,
     toolName: meta.toolName, color: meta.color, icon: meta.icon, created: meta.created || Date.now(),
     clients: new Set(), output: '', resumed: true, offset: 0, logPath, poller: null, lastLeave: 0 };
   sessions.set(id, session);
@@ -1712,7 +1758,8 @@ const createTmuxSession = (id, opts, ws) => {
   const session = { id, tmux: true, cwd: opts.cwd, repo: repoContext(opts.cwd),
     emulator: cleanEmulatorName(opts.emulator) || getDefaultEmulator(),
     phoneRunner: cleanEmulatorName(opts.phoneRunner) || getDefaultPhoneRunner(),
-    toolId: opts.toolId, toolName: opts.toolName, color: opts.color,
+    toolId: opts.toolId, toolCmd: opts.toolCmd || null, autoRestore: opts.autoRestore !== false,
+    toolName: opts.toolName, color: opts.color,
     icon: opts.icon, created: Date.now(), clients: new Set(), output: '', resumed: false,
     offset: 0, logPath, poller: null, lastLeave: 0 };
   sessions.set(id, session);
@@ -1802,6 +1849,7 @@ wss.on('connection', (ws) => {
     switch (msg.type) {
       case 'open': {
         const id = msg.sessionId || ('term_' + Date.now());
+        const savedMeta = readSessionMeta(id);
         const existing = sessions.get(id);
         if (existing && (!existing.tmux || tmuxSessionAlive(id))) {
           session = existing;
@@ -1825,10 +1873,10 @@ wss.on('connection', (ws) => {
             return;
           }
         }
-        const tool = TOOLS.find(t => t.id === msg.toolId);
+        const tool = TOOLS.find(t => t.id === (msg.toolId || (savedMeta && savedMeta.toolId)));
         const isWin = process.platform === 'win32';
         const shell = isWin ? (process.env.COMSPEC || 'cmd.exe') : (process.env.SHELL || '/bin/sh');
-        let cwd = msg.cwd || msg.repoPath || HOME;
+        let cwd = msg.cwd || msg.repoPath || (savedMeta && resolveRestoredCwd(savedMeta)) || HOME;
         try {
           if (!fs.statSync(cwd).isDirectory()) throw new Error('cwd missing');
         } catch {
@@ -1845,7 +1893,9 @@ wss.on('connection', (ws) => {
             // ❗ tmux requires a login shell name (argv[0]) to start bash as an
             // interactive shell; new-session already does that. Nothing more needed.
             session = createTmuxSession(id, { cwd, cols: msg.cols, rows: msg.rows, toolId: tool ? tool.id : null, toolName: metaName, color: metaColor, icon: metaIcon,
-              emulator: msg.emulator, phoneRunner: msg.phoneRunner, toolCmd: tool && tool.cmd !== '_terminal' ? tool.cmd : null }, ws);
+              emulator: msg.emulator || (savedMeta && savedMeta.emulator), phoneRunner: msg.phoneRunner || (savedMeta && savedMeta.phoneRunner),
+              toolCmd: (savedMeta && savedMeta.toolCmd) || (tool && tool.cmd !== '_terminal' ? tool.cmd : null),
+              autoRestore: savedMeta ? savedMeta.autoRestore !== false : tool?.id === 'opencode' }, ws);
           } else {
             const p = pty.spawn(shell, [], {
               name: 'xterm-256color',
@@ -1856,6 +1906,8 @@ wss.on('connection', (ws) => {
             });
             session = { id, pty: p, cwd, emulator: cleanEmulatorName(msg.emulator) || getDefaultEmulator(),
               phoneRunner: cleanEmulatorName(msg.phoneRunner) || getDefaultPhoneRunner(), toolId: tool ? tool.id : null,
+              toolCmd: (savedMeta && savedMeta.toolCmd) || (tool && tool.cmd !== '_terminal' ? tool.cmd : null),
+              autoRestore: savedMeta ? savedMeta.autoRestore !== false : tool?.id === 'opencode',
               toolName: metaName, color: metaColor, icon: metaIcon, created: Date.now(), clients: new Set(), output: '', resumed: false, lastLeave: 0 };
             sessions.set(id, session);
             writeSessionMeta(session);
@@ -1992,7 +2044,8 @@ app.get('/api/sessions', (req, res) => {
       repoDirty: !!(repo && repo.dirty), repoStatus: repo && repo.status || '',
       emulator: s.emulator || getDefaultEmulator(), phoneRunner: s.phoneRunner || getDefaultPhoneRunner(),
       toolId: s.toolId || null, toolName: s.toolName || 'Terminal',
-      color: s.color || '#58a6ff', icon: s.icon || '>_', resumed: !!s.resumed, tmux: !!s.tmux,
+      color: s.color || '#58a6ff', icon: s.icon || '>_',
+      autoRestore: s.autoRestore !== false, resumed: !!s.resumed, tmux: !!s.tmux,
       clients: s.clients ? s.clients.size : 0, created: s.created || 0
     });
   };
@@ -2013,6 +2066,32 @@ app.get('/api/sessions', (req, res) => {
       }
     } catch {}
   }
+  // A fresh runner has no tmux processes, but durable OpenCode descriptors
+  // survive in ~/.npm-hub/sessions and are included so a new browser can
+  // recreate them automatically in the restored repository.
+  try {
+    const listed = new Set(list.map(s => String(s.id)));
+    for (const file of fs.readdirSync(SESSION_DIR)) {
+      if (!file.endsWith('.meta.json')) continue;
+      const meta = readSessionMeta(file.slice(0, -'.meta.json'.length).replace(/^npmhub-/, ''));
+      if (!meta || meta.autoRestore === false || !meta.id || listed.has(String(meta.id))) continue;
+      const cwd = resolveRestoredCwd(meta);
+      if (!cwd) continue;
+      list.push({
+        id: meta.id, cwd, repoPath: meta.repoPath || cwd,
+        repoName: meta.repoName || null, repoRemote: meta.repoRemote || null,
+        repoBranch: meta.repoBranch || null, repoHead: meta.repoHead || null,
+        repoDirty: !!meta.repoDirty, repoStatus: meta.repoStatus || '',
+        emulator: meta.emulator || getDefaultEmulator(),
+        phoneRunner: meta.phoneRunner || getDefaultPhoneRunner(),
+        toolId: meta.toolId || 'opencode', toolName: meta.toolName || 'OpenCode',
+        color: meta.color || '#00d4aa', icon: meta.icon || 'OC',
+        autoRestore: true, restore: true, resumed: false, tmux: false, clients: 0,
+        created: meta.created || 0
+      });
+      listed.add(String(meta.id));
+    }
+  } catch {}
   list.sort((a, b) => (b.created || 0) - (a.created || 0));
   res.json({ success: true, sessions: list });
 });
