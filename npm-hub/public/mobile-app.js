@@ -1810,31 +1810,94 @@ async function fmSaveGithub() {
 }
 
 // SAF-пикер на телефоне: множественный выбор любых файлов, включая
-// картинки. У млножественного режима.ACTION_GET_CONTENT открывает
+// картинки. У множественного режима ACTION_GET_CONTENT открывает
 // полноценный менеджер с галочками — Android готов к этому.
+// Прогресс: fetch() не даёт upload.onprogress, поэтому файлы уходят через
+// XMLHttpRequest, а имя/размер/скорость/ETA рисуются в #fm-transfer.
+function fmTransferEls() {
+  const box = document.getElementById('fm-transfer');
+  if (!box) return null;
+  return {
+    box,
+    name: document.getElementById('fm-transfer-name'),
+    bar: document.getElementById('fm-transfer-bar'),
+    speed: document.getElementById('fm-transfer-speed'),
+    progress: document.getElementById('fm-transfer-progress'),
+    time: document.getElementById('fm-transfer-time'),
+    transferred: document.getElementById('fm-transfer-transferred'),
+    total: document.getElementById('fm-transfer-total')
+  };
+}
+function fmTransferUpdate(t, st) {
+  if (!t) return;
+  const elapsed = Math.max(1, Date.now() - st.startedAt);
+  const pct = st.totalBytes ? Math.min(100, st.doneBytes / st.totalBytes * 100) : 0;
+  const speed = st.doneBytes / elapsed * 1000;
+  const remain = st.totalBytes - st.doneBytes;
+  const eta = speed > 8 ? Math.round(remain / speed) : null;
+  const etaTxt = eta == null ? '—' : eta < 60 ? eta + ' с' : Math.floor(eta / 60) + ' мин ' + (eta % 60) + ' с';
+  if (t.name) t.name.textContent = (st.fileIndex + ' из ' + st.totalFiles) + ' · ' + st.fileName + ' (' + fmtBytes(st.fileSize) + ')';
+  if (t.bar) t.bar.style.width = pct.toFixed(1) + '%';
+  if (t.speed) t.speed.textContent = fmtBytes(speed);
+  if (t.progress) t.progress.textContent = fmtBytes(st.doneBytes) + ' / ' + fmtBytes(st.totalBytes) + ' (' + pct.toFixed(0) + '%)';
+  if (t.time) t.time.textContent = etaTxt;
+  if (t.transferred) t.transferred.textContent = st.doneFiles + ' / ' + st.totalFiles;
+  if (t.total) t.total.textContent = ' файлов';
+  if (t.box && t.box.style.display !== 'block') t.box.style.display = 'block';
+}
+function fmTransferReset(t) {
+  if (!t) return;
+  if (t.bar) t.bar.style.width = '0%';
+  ['name', 'speed', 'progress', 'time', 'transferred', 'total'].forEach(k => { if (t[k]) t[k].textContent = ''; });
+  t.box.style.display = 'none';
+}
+async function uploadFiles(files, mode) {
+  if (!files || !files.length) return;
+  const info = document.getElementById('fm-info');
+  const t = fmTransferEls();
+  const st = {
+    startedAt: Date.now(),
+    totalBytes: files.reduce((s, f) => s + (f && f.size || 0), 0),
+    doneBytes: 0, doneFiles: 0, totalFiles: files.length,
+    fileIndex: 0, fileName: '', fileSize: 0
+  };
+  if (info) info.textContent = '';
+  let ok = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const rel = mode === 'folder' ? (file.webkitRelativePath || file.name).replace(/^\/+/, '') : file.name;
+    const target = fmCurrentPath + '/' + rel;
+    st.fileIndex = i + 1; st.fileName = rel; st.fileSize = file.size || 0; st.doneFiles = i;
+    fmTransferUpdate(t, st);
+    let fileDone = 0;
+    const uploaded = await new Promise(resolve => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/fs/upload?path=' + encodeURIComponent(target));
+      xhr.upload.onprogress = e => {
+        if (!e.lengthComputable) return;
+        st.doneBytes = st.doneBytes - fileDone + e.loaded;
+        fileDone = e.loaded;
+        fmTransferUpdate(t, st);
+      };
+      xhr.onload = () => { try { resolve(JSON.parse(xhr.responseText).success); } catch { resolve(false); } };
+      xhr.onerror = () => resolve(false);
+      xhr.send(file);
+    });
+    st.doneBytes = st.doneBytes - fileDone + (file.size || 0);
+    st.doneFiles = i + 1;
+    if (uploaded) ok++;
+    fmTransferUpdate(t, st);
+  }
+  if (t) t.box.style.display = 'none';
+  if (info) info.textContent = (mode === 'folder' ? 'Папка: ' : '') + ok + ' из ' + files.length + ' загружено' + (ok === files.length ? '' : ' (некоторые не прошли)');
+  fmRefresh();
+}
 async function fmUpload() {
   const input = document.createElement('input');
   input.type = 'file';
   input.multiple = true; // все виды файлов (accept не задан — включая картинки, APK…)
-  input.onchange = async () => {
-    const files = [...input.files];
-    if (!files.length) return;
-    const info = document.getElementById('fm-info');
-    if (info) info.textContent = 'загружаю…';
-    let ok = 0;
-    for (const file of files) {
-      const target = fmCurrentPath + '/' + file.name;
-      try {
-        const r = await fetch('/api/fs/upload?path=' + encodeURIComponent(target), {
-          method: 'POST', body: file
-        });
-        const j = await r.json().catch(() => ({}));
-        if (j && j.success) ok++;
-      } catch (e) { /* keep going */ }
-    }
-    if (info) info.textContent = ok + ' из ' + files.length + ' загружено' + (ok === files.length ? '' : ' (некоторые не прошли)');
-    fmRefresh();
-  };
+  input.onchange = () => uploadFiles([...input.files]);
+  fmTransferReset(fmTransferEls());
   input.click();
 }
 
@@ -1844,26 +1907,8 @@ function fmUploadFolder() {
   input.type = 'file';
   input.multiple = true;
   input.webkitdirectory = true;
-  input.onchange = async () => {
-    const files = [...input.files];
-    if (!files.length) return;
-    const info = document.getElementById('fm-info');
-    if (info) info.textContent = 'загружаю папку…';
-    let ok = 0;
-    for (const file of files) {
-      const rel = file.webkitRelativePath || file.name;
-      const target = fmCurrentPath + '/' + rel.replace(/^\/+/, '');
-      try {
-        const r = await fetch('/api/fs/upload?path=' + encodeURIComponent(target), {
-          method: 'POST', body: file
-        });
-        const j = await r.json().catch(() => ({}));
-        if (j && j.success) ok++;
-      } catch (e) { /* keep going */ }
-    }
-    if (info) info.textContent = 'Папка: ' + ok + ' из ' + files.length + ' загружено';
-    fmRefresh();
-  };
+  input.onchange = () => uploadFiles([...input.files], 'folder');
+  fmTransferReset(fmTransferEls());
   input.click();
 }
 

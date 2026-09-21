@@ -510,6 +510,17 @@ check('q58 archive does not wrap files',
   desk.includes("item.dataset.isdir !== '1'") &&
   filesApp.includes("item.dataset.isdir !== '1'"));
 
+// q59: phone uploads show name/size/percentage/speed/ETA via XHR upload
+// events — fetch() has no onprogress, so the queue runs on XMLHttpRequest
+// and renders into the #fm-transfer box in mobile.html.
+check('q59 upload progress UI',
+  mob.includes('xhr.upload.onprogress') &&
+  mob.includes('function fmTransferUpdate(') &&
+  mob.includes('fmTransferEls()') &&
+  mobHtml.includes('id="fm-transfer-bar"') &&
+  mobHtml.includes('id="fm-transfer-progress"') &&
+  mob.includes("st.fileName + ' (' + fmtBytes(st.fileSize) + ')'"));
+
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
