@@ -27,12 +27,23 @@
   .err { color:#ff7b72; }
   .ok { color:#3fb950; }
   .note { font-size:12px; color:#55555f; margin-top:12px; text-align:center; }
+  .lock { text-align:center; margin:4px 0 14px; }
+  .lock .age { font-size:12px; color:#8a8a9e; margin-bottom:10px; }
+  .link { display:block; text-align:center; font-size:13px; color:#58a6ff;
+          margin:6px 0 0; text-decoration:none; }
+  .spacer { height:8px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="logo">◆ NPM Hub</div>
   <div class="sub">Запуск хаба на GitHub Actions</div>
+  <div id="lockscreen" class="lock" style="display:none">
+    <div class="age" id="lockage"></div>
+    <button class="ghost" id="lock-open">Подключиться</button>
+    <button id="lock-vault">Внешняя память</button>
+    <a class="link" href="#" id="lock-settings">Настройки</a>
+  </div>
   <label>GitHub-токен (repo + workflow)
     <input id="token" type="password" placeholder="ghp_…" autocomplete="off"
            autocorrect="off" autocapitalize="none" spellcheck="false">
@@ -43,6 +54,7 @@
   </label>
   <button id="launch">Запустить хаб</button>
   <button id="reopen" class="ghost" style="display:none">Открыть последний</button>
+  <button id="vault" class="ghost">Внешняя память</button>
   <div id="log" class="log"></div>
   <div class="note">Токен хранится только на этом устройстве.</div>
 </div>
@@ -126,15 +138,57 @@ function readLast() {
 // ── UI ──
 try { $('token').value = localStorage.getItem('hub_gh_token') || ''; } catch (e) {}
 try { $('runner').value = localStorage.getItem('hub_runner') || ''; } catch (e) {}
-(function showReopen() {
-  const last = readLast();
+let last = readLast();
+const nowMs = Date.now();
+function lastOriginToken() {
+  const u = last && last.url;
+  if (!u) return { base: '', zt: '' };
+  try {
+    const p = new URL(u);
+    return { base: p.origin, zt: p.searchParams.get('zt') || '' };
+  } catch (e) { return { base: '', zt: '' }; }
+}
+function vaultUrl() {
+  const { base, zt } = lastOriginToken();
+  if (!base) return '';
+  return base.replace(/\/+$/, '') + '/external-memory.html' + (zt ? '?zt=' + encodeURIComponent(zt) : '');
+}
+function openLast() { if (last && last.url) location.href = last.url; }
+function openVault() {
+  const u = vaultUrl();
+  if (!u) { log('Сначала подключись к хабу — адрес появится после запуска.', 'err'); return; }
+  location.href = u;
+}
+let lockTimer = null;
+(function autoLock() {
   if (!last || !last.url) return;
-  const age = Math.max(0, Math.round((Date.now() - (last.at || 0)) / 60000));
-  const b = $('reopen');
-  b.style.display = '';
-  b.textContent = `Открыть последний (${age} мин назад)`;
-  b.onclick = () => { location.href = last.url; };
+  const age = Math.max(0, nowMs - (last.at || 0));
+  const ageMin = Math.round(age / 60000);
+  const lock = $('lockscreen');
+  if (age <= 30 * 60 * 1000) {
+    lock.style.display = '';
+    const total = 3;
+    let left = total;
+    const ageEl = $('lockage');
+    ageEl.textContent = 'Хаб (' + ageMin + ' мин назад) живой. Открываю через ' + left + '…';
+    lockTimer = setInterval(() => {
+      const next = --left;
+      if (next <= 0) { clearInterval(lockTimer); openLast(); return; }
+      ageEl.textContent = 'Хаб (' + ageMin + ' мин назад) живой. Открываю через ' + next + '…';
+    }, 1000);
+  } else {
+    const b = $('reopen');
+    if (b) {
+      b.style.display = '';
+      b.textContent = 'Открыть последний (' + ageMin + ' мин назад)';
+      b.onclick = openLast;
+    }
+  }
 })();
+$('lock-open').onclick = () => { clearInterval(lockTimer); openLast(); };
+$('lock-settings').onclick = (e) => { e.preventDefault(); clearInterval(lockTimer); $('lockscreen').style.display = 'none'; };
+$('lock-vault').onclick = () => openVault();
+$('vault').onclick = () => openVault();
 $('launch').onclick = async () => {
   const token = ($('token').value || '').trim();
   if (!token) { log('Вставьте GitHub-токен.', 'err'); return; }
