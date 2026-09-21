@@ -7,6 +7,7 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/mobile.h
 const server = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/src/server.js'), 'utf8');
 const mob = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/mobile-app.js'), 'utf8');
 const desk = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/desktop-app.js'), 'utf8');
+const remoteAudio = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/remote-audio.js'), 'utf8');
 const mgr = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/src/storage/manager.js'), 'utf8');
 const mobHtml = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/mobile.html'), 'utf8');
 const deskHtml = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/desktop.html'), 'utf8');
@@ -355,12 +356,20 @@ check('q43a audio websocket bridge', server.includes('REMOTE DESKTOP AUDIO') &&
 check('q43b PCM packets are coalesced', server.includes('AUDIO_PACKET = 8192') &&
   server.includes('pendingAudio') && server.includes('sendAudio(false)') &&
   server.includes("'--latency-msec=40'"));
-check('q43c audio client playback and flush', mob.includes('function remoteAudioStart') &&
-  desk.includes('function remoteAudioStart') && mob.includes("'/ws/audio?rate='") &&
-  desk.includes("'/ws/audio?rate='") && mob.includes('createScriptProcessor') &&
-  desk.includes('createScriptProcessor') && mob.includes('rate * 0.35') &&
-  desk.includes('rate * 0.35') && mob.includes('pending = new Uint8Array(0)') &&
-  desk.includes('pending = new Uint8Array(0)'));
+check('q43c audio client decodes and schedules', mob.includes('function remoteAudioStart') &&
+  desk.includes('function remoteAudioStart') && mob.includes('window.RemoteAudio') &&
+  desk.includes('window.RemoteAudio') && remoteAudio.includes("'/ws/audio?codec='") &&
+  remoteAudio.includes('createBufferSource') && remoteAudio.includes('AudioDecoder') &&
+  remoteAudio.includes('opusHead') && remoteAudio.includes('const feed ='));
+check('q43e opus negotiated end to end', server.includes("require('opusscript')") &&
+  server.includes('OpusScript') && server.includes("codec === 'opus'") &&
+  server.includes('const sendOpus') && server.includes('frameMs') &&
+  remoteAudio.includes('EncodedAudioChunk') && remoteAudio.includes('f32-planar') &&
+  remoteAudio.includes("codec: 'opus'"));
+check('q43f shared player loaded before app', mobHtml.includes('src="remote-audio.js"') &&
+  deskHtml.includes('src="remote-audio.js"') &&
+  mobHtml.indexOf('remote-audio.js') < mobHtml.indexOf('mobile-app.js') &&
+  deskHtml.indexOf('remote-audio.js') < deskHtml.indexOf('desktop-app.js'));
 check('q43d sound button and clean Pulse path', mobHtml.includes('remoteAudioToggle()') &&
   deskHtml.includes('remoteAudioToggle()') &&
   keep.includes("['parec', 'pulseaudio-utils']") && startDesktop.includes('pulseaudio-utils') &&

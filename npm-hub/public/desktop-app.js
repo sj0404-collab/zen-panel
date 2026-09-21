@@ -2615,7 +2615,7 @@ async function pulseStatus() {
   try {
     const r = await fetch('/api/pulse/status');
     const d = await r.json();
-    el.textContent = d.running ? ((_remoteAudio && _remoteAudio.ws && _remoteAudio.ws.readyState === 1) ? '🔊 видео' : '🔊 звук') : '🔇 нет звука';
+    el.textContent = d.running ? ((window.RemoteAudio && RemoteAudio.live()) ? '🔊 видео' : '🔊 звук') : '🔇 нет звука';
     el.className = 'tag ' + (d.running ? 'tag-on' : 'tag-off');
     const devEl = document.getElementById('pulse-devices');
     if (devEl) {
@@ -3215,116 +3215,17 @@ async function ghDownloadReleaseModal(fullName) {
   }
 }
 // ===== REMOTE VIDEO AUDIO =====
-// VNC carries only pixels. The remote Chromium audio is captured from PulseAudio
-// by /ws/audio and played here, in the phone/desktop browser.
-let _remoteAudio = null;
-function remoteAudioBadge(text, on) {
-  const el = document.getElementById('pulse-status');
-  if (!el) return;
-  el.textContent = text;
-  el.title = on ? 'Звук видео идёт на телефон. Нажмите, чтобы выключить.' : 'Включить звук видео';
-  el.className = 'tag ' + (on ? 'tag-on' : 'tag-off');
-}
+// The PCM/Opus stream from /ws/audio is decoded and scheduled by remote-audio.js
+// (shared with the mobile client). These wrappers keep the old call sites and
+// the "🔊" status line working.
 function remoteAudioStart() {
-  try {
-    if (_remoteAudio && _remoteAudio.ws && _remoteAudio.ws.readyState <= 1) {
-      _remoteAudio.ctx.resume().catch(() => {});
-      return _remoteAudio;
-    }
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC || !window.WebSocket) return null;
-    // The bridge streams raw 16-bit PCM: 44.1 kHz stereo is ~1.4 Mbps, far
-    // more than a desktop viewport needs. Ask for a lower rate (and play it
-    // back at that same rate) so audio does not saturate the video link.
-    const WANT_RATE = 22050;
-    let ctx;
-    try { ctx = new AC({ sampleRate: WANT_RATE }); } catch { ctx = new AC(); }
-    const rate = ctx.sampleRate || WANT_RATE;
-    const node = ctx.createScriptProcessor(4096, 2, 2);
-    const q = [];
-    let qFrames = 0, current = null, currentAt = 0, pending = new Uint8Array(0);
-    let channels = 2;
-    const state = { ctx, ws: null, node, q, close: false };
-    node.onaudioprocess = (ev) => {
-      const left = ev.outputBuffer.getChannelData(0);
-      const right = ev.outputBuffer.numberOfChannels > 1 ? ev.outputBuffer.getChannelData(1) : left;
-      left.fill(0); if (right !== left) right.fill(0);
-      let n = 0;
-      const stride = channels;
-      while (n < left.length) {
-        if (!current || currentAt >= current.length) {
-          current = q.shift(); currentAt = 0;
-          if (!current) break;
-          qFrames -= current.length / stride;
-        }
-        const avail = Math.min(left.length - n, (current.length - currentAt) / stride);
-        for (let i = 0; i < avail; i++) {
-          if (stride === 1) {
-            left[n + i] = current[currentAt + i];
-            if (right !== left) right[n + i] = current[currentAt + i];
-          } else {
-            left[n + i] = current[currentAt + i * 2];
-            if (right !== left) right[n + i] = current[currentAt + i * 2 + 1];
-          }
-        }
-        currentAt += avail * stride; n += avail;
-      }
-    };
-    node.connect(ctx.destination);
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(proto + '//' + location.host + '/ws/audio?rate=' + encodeURIComponent(rate));
-    state.ws = ws; _remoteAudio = state;
-    ws.binaryType = 'arraybuffer';
-    ws.onopen = () => { ctx.resume().catch(() => {}); remoteAudioBadge('🔊 подключение', false); };
-    ws.onmessage = (ev) => {
-      if (typeof ev.data === 'string') {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.type === 'ready') { if (msg.channels) channels = msg.channels; remoteAudioBadge('🔊 видео', true); }
-          if (msg.type === 'error') remoteAudioBadge('🔇 ' + (msg.error || 'нет потока'), false);
-        } catch {}
-        return;
-      }
-      const bytes = new Uint8Array(ev.data);
-      const all = new Uint8Array(pending.length + bytes.length);
-      all.set(pending); all.set(bytes, pending.length);
-      const frame = channels * 2;
-      const usable = all.length - (all.length % frame);
-      pending = all.slice(usable);
-      if (!usable) return;
-      const view = new DataView(all.buffer, all.byteOffset, usable);
-      const samples = new Float32Array(usable / 2);
-      for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
-      q.push(samples); qFrames += samples.length / channels;
-      // Keep the audio close to the video. A 2-second queue made sound
-      // continue after the video ended and amplified network jitter into
-      // clicks/stutter. At most ~350 ms is enough for mobile jitter.
-      while (qFrames > rate * 0.35 && q.length > 1) qFrames -= q.shift().length / channels;
-    };
-    ws.onerror = () => remoteAudioBadge('🔇 нет потока', false);
-    ws.onclose = () => {
-      // Drop every queued frame immediately; never replay stale PCM after a
-      // video/socket ends or is replaced.
-      q.length = 0; qFrames = 0; current = null; currentAt = 0; pending = new Uint8Array(0);
-      if (_remoteAudio === state) { try { node.disconnect(); } catch {} _remoteAudio = null; }
-      remoteAudioBadge('🔇 звук', false);
-    };
-    ctx.resume().catch(() => {});
-    return state;
-  } catch { return null; }
+  try { return window.RemoteAudio ? window.RemoteAudio.start() : null; } catch { return null; }
 }
 function remoteAudioStop() {
-  const a = _remoteAudio;
-  _remoteAudio = null;
-  if (!a) return;
-  try { a.close = true; a.ws && a.ws.close(); } catch {}
-  try { a.node.disconnect(); } catch {}
-  try { a.ctx.close(); } catch {}
-  remoteAudioBadge('🔇 звук', false);
+  try { window.RemoteAudio && window.RemoteAudio.stop(); } catch {}
 }
 function remoteAudioToggle() {
-  if (_remoteAudio && _remoteAudio.ws && _remoteAudio.ws.readyState <= 1) remoteAudioStop();
-  else remoteAudioStart();
+  try { window.RemoteAudio && window.RemoteAudio.toggle(); } catch {}
 }
 
 // ===== AUDIO KEEP-ALIVE (background playback) =====

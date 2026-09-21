@@ -12,6 +12,12 @@ const StorageManager = require('./storage/manager');
 const ModelManager = require('./models/manager');
 const { startTunnel } = require('./tunnel');
 
+// Opus for the remote-audio bridge. Pure JS (asm.js/wasm) on purpose: it also
+// loads on the Windows runners, where native modules are painful to build.
+// Optional — without it the bridge keeps using raw PCM.
+let OpusScript = null;
+try { OpusScript = require('opusscript'); } catch {}
+
 const app = express();
 const HOME = os.homedir();
 const safeFilename = (s) => String(s).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
@@ -1196,8 +1202,10 @@ const wss = new WebSocketServer({ noServer: true });
 
 // ─── REMOTE DESKTOP AUDIO ───────────────────────────────────────────────────
 // VNC/noVNC transports pixels and input, not the sound produced by Chromium.
-// Capture the PulseAudio default sink monitor and send raw PCM to the browser
-// page over a same-origin WebSocket; the page plays it through Web Audio.
+// Capture the PulseAudio default sink monitor and stream it to the browser page
+// over a same-origin WebSocket. The default codec is Opus (via the pure-JS
+// opusscript encoder), one 20 ms frame per binary message; a browser that
+// cannot decode Opus (no WebCodecs) asks for `?codec=pcm` and gets raw PCM.
 // This is deliberately separate from the VNC socket: video remains VNC, audio
 // remains an ordinary browser audio stream and works on phones too.
 const audioWss = new WebSocketServer({ noServer: true });
@@ -1237,6 +1245,10 @@ audioWss.on('connection', async (ws, req) => {
   let closed = false;
   let pendingAudio = Buffer.alloc(0);
   let channels = 2;
+  let codec = 'pcm';        // negotiated below: 'opus' when the client can decode
+  let opusEnc = null;       // OpusScript encoder while codec === 'opus'
+  let opusFrameSamples = 0; // samples per channel in one 20 ms Opus frame
+  let opusFrameBytes = 0;
   const AUDIO_PACKET = 8192; // ~46 ms at 22.05 kHz stereo s16le: one cheap WS packet
   // Silence gate: an idle remote sink streams pure zeros. Pushing those keeps
   // the phone's radio and decoder busy for nothing and drains the battery
@@ -1270,18 +1282,60 @@ audioWss.on('connection', async (ws, req) => {
       try { ws.send(packet, { binary: true }); } catch { stop(); break; }
     }
   };
+  // One WS binary message = exactly one Opus frame (20 ms). The client decodes
+  // each message with WebCodecs and schedules it on the audio clock, so a late
+  // packet becomes a tiny gap at most instead of the old ScriptProcessor
+  // underrun (which zero-filled the whole output buffer = "резкая тишина").
+  const sendOpus = () => {
+    while (!closed && ws.readyState === 1 && pendingAudio.length >= opusFrameBytes) {
+      const frame = pendingAudio.subarray(0, opusFrameBytes);
+      pendingAudio = pendingAudio.subarray(opusFrameBytes);
+      if (isSilent(frame)) {
+        silentRun++;
+        if (silentRun > SILENT_MAX && Date.now() - lastSentAt < 4000) continue;
+      } else {
+        silentRun = 0;
+      }
+      let packet = null;
+      try { packet = opusEnc.encode(frame, opusFrameSamples); } catch { continue; }
+      if (!packet || !packet.length) continue;
+      lastSentAt = Date.now();
+      try { ws.send(Buffer.from(packet), { binary: true }); } catch { stop(); break; }
+    }
+  };
   const stop = () => {
     if (closed) return;
     closed = true;
     pendingAudio = Buffer.alloc(0);
     try { if (rec && rec.stdout) rec.stdout.destroy(); } catch {}
     try { if (rec) rec.kill('SIGTERM'); } catch {}
+    try { if (opusEnc) opusEnc.delete(); } catch {}
+    opusEnc = null;
   };
   ws.on('close', stop);
   ws.on('error', stop);
   try {
     const rate = audioRate(req);
     channels = audioChannels(req);
+    let want = 'opus';
+    try {
+      const u = new URL(req.url, 'http://localhost');
+      want = String(u.searchParams.get('codec') || process.env.HUB_AUDIO_CODEC || 'opus').toLowerCase();
+    } catch {}
+    // Opus only accepts 8/12/16/24/48 kHz, so snap the capture rate to 48 kHz
+    // when needed. A 20 ms frame at 48 kHz mono is ~60 bytes (~24 kbps).
+    let captureRate = rate;
+    if (want === 'opus' && OpusScript) {
+      if (![8000, 12000, 16000, 24000, 48000].includes(captureRate)) captureRate = 48000;
+      opusFrameSamples = Math.round(captureRate / 50);
+      opusFrameBytes = opusFrameSamples * channels * 2;
+      try {
+        opusEnc = new OpusScript(captureRate, channels, OpusScript.Application.AUDIO);
+        const bitrate = Number(process.env.HUB_OPUS_BITRATE) || (channels === 1 ? 24000 : 48000);
+        try { opusEnc.encoderCTL(4002, bitrate); } catch {} // OPUS_SET_BITRATE
+        codec = 'opus';
+      } catch { opusEnc = null; codec = 'pcm'; }
+    }
     const bin = await pulseRun('command -v parec 2>/dev/null || command -v pacat 2>/dev/null');
     const recorder = String(bin.out || '').trim().split(/\s+/)[0];
     if (!recorder) {
@@ -1292,15 +1346,16 @@ audioWss.on('connection', async (ws, req) => {
     const recordArgs = /pacat(?:\.exe)?$/.test(recorder) ? ['--record'] : [];
     rec = spawn(recorder, recordArgs.concat([
       '--device=' + source,
-      '--format=s16le', '--rate=' + rate, '--channels=' + channels, '--latency-msec=40'
+      '--format=s16le', '--rate=' + captureRate, '--channels=' + channels,
+      codec === 'opus' ? '--latency-msec=20' : '--latency-msec=40'
     ]), { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
     rec.stdout.on('data', (chunk) => {
       if (closed || !chunk.length) return;
       // parec can emit tiny 4–几十-byte chunks when the sink is resampled.
       // Sending each one separately starves the phone's main thread and makes
-      // both audio and VNC video stutter. Coalesce into ~46 ms PCM packets.
+      // both audio and VNC video stutter. Coalesce into whole packets.
       pendingAudio = Buffer.concat([pendingAudio, chunk]);
-      sendAudio(false);
+      if (codec === 'opus') sendOpus(); else sendAudio(false);
     });
     rec.on('error', (e) => {
       if (!closed && ws.readyState === 1) {
@@ -1309,13 +1364,13 @@ audioWss.on('connection', async (ws, req) => {
       stop();
     });
     rec.on('exit', (code) => {
-      sendAudio(true);
+      if (codec === 'opus') sendOpus(); else sendAudio(true);
       if (!closed && code && ws.readyState === 1) {
         try { ws.send(JSON.stringify({ type: 'error', error: 'аудиозахват завершился: ' + code })); } catch {}
       }
       if (!closed) stop();
     });
-    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'ready', rate, channels, source }));
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'ready', rate: captureRate, channels, source, codec, frameMs: codec === 'opus' ? 20 : 0 }));
   } catch (e) {
     if (ws.readyState === 1) {
       try { ws.send(JSON.stringify({ type: 'error', error: e.message })); } catch {}
