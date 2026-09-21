@@ -1,4 +1,4 @@
-let tabs = [], activeTab = null, zoomLevel = 100;
+let tabs = [], activeTab = null, zoomLevel = 60;
 let tools = [], homeDir = '', recentPaths = [];
 const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;
 const LS_KEY = 'npmhub.term.tabs.v1';

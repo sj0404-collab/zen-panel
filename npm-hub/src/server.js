@@ -1661,6 +1661,7 @@ const ptySend = (session, message) => {
 
 const attachPtyClient = (session, ws) => {
   session.clients.add(ws);
+  session.lastLeave = 0;
   ws.send(JSON.stringify({ type: 'opened', id: session.id, resumed: session.resumed }));
   if (session.output) ws.send(JSON.stringify({ type: 'output', id: session.id, data: session.output, replay: true }));
 };
@@ -1668,6 +1669,7 @@ const attachPtyClient = (session, ws) => {
 const detachPtyClient = (session, ws) => {
   if (!session) return;
   session.clients.delete(ws);
+  if (session.clients.size === 0) session.lastLeave = Date.now();
 };
 
 // Reconnect path: a hub restart (or server swap) does not kill tmux sessions.
@@ -1683,7 +1685,7 @@ const reviveTmuxSession = (id) => {
     emulator: meta.emulator || tmuxSessionEmulator(id) || getDefaultEmulator(),
     phoneRunner: meta.phoneRunner || getDefaultPhoneRunner(), toolId: meta.toolId || null,
     toolName: meta.toolName, color: meta.color, icon: meta.icon, created: meta.created || Date.now(),
-    clients: new Set(), output: '', resumed: true, offset: 0, logPath, poller: null };
+    clients: new Set(), output: '', resumed: true, offset: 0, logPath, poller: null, lastLeave: 0 };
   sessions.set(id, session);
   // Backfill metadata for sessions created before project/emulator persistence
   // existed. No clone is made and the tmux process is not restarted.
@@ -1710,7 +1712,7 @@ const createTmuxSession = (id, opts, ws) => {
     phoneRunner: cleanEmulatorName(opts.phoneRunner) || getDefaultPhoneRunner(),
     toolId: opts.toolId, toolName: opts.toolName, color: opts.color,
     icon: opts.icon, created: Date.now(), clients: new Set(), output: '', resumed: false,
-    offset: 0, logPath, poller: null };
+    offset: 0, logPath, poller: null, lastLeave: 0 };
   sessions.set(id, session);
   // Pin the selected emulator in tmux as well as in the sidecar. This lets a
   // legacy session recover its original choice even if the global default has
@@ -1845,7 +1847,7 @@ wss.on('connection', (ws) => {
             });
             session = { id, pty: p, cwd, emulator: cleanEmulatorName(msg.emulator) || getDefaultEmulator(),
               phoneRunner: cleanEmulatorName(msg.phoneRunner) || getDefaultPhoneRunner(), toolId: tool ? tool.id : null,
-              toolName: metaName, color: metaColor, icon: metaIcon, created: Date.now(), clients: new Set(), output: '', resumed: false };
+              toolName: metaName, color: metaColor, icon: metaIcon, created: Date.now(), clients: new Set(), output: '', resumed: false, lastLeave: 0 };
             sessions.set(id, session);
             writeSessionMeta(session);
 
@@ -1933,6 +1935,22 @@ setInterval(() => {
     try { ws.ping(); } catch { try { ws.terminate(); } catch {} }
   }
 }, 30000);
+
+// Stale sessions: when a phone panel (or a desktop tab) is killed by the OS /
+// force-stopped / loses radio before its /api/sessions/:id/kill lands, the
+// tmux session lives on and every /api/sessions poll revives it — so old
+// 'Zen Panel' tabs accumulate forever. Reap sessions that have had zero
+// clients for a long stretch; the two live sessions the user keeps open stay
+// untouched (they have attached clients).
+const SESSIONS_IDLE_REAP_MS = 15 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const s of [...sessions.values()]) {
+    if (s.clients.size > 0) continue;
+    const since = s.lastLeave || s.created || 0;
+    if (since && now - since > SESSIONS_IDLE_REAP_MS) killServerSession(s.id);
+  }
+}, 60000);
 
 // ─── GET /api/sessions — живые серверные сессии ───
 // Используется standalone терминалом (/term): показывает, что можно

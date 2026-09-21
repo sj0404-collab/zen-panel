@@ -1,5 +1,5 @@
 let tools = [], homeDir = '', workDir = '', accessMode = 'local';
-let tabs = [], activeTab = null, zoomLevel = 100;
+let tabs = [], activeTab = null, zoomLevel = 60;
 let fmCurrentPath = '', fmSelected = null, fmBackend = 'local';
 let recentPaths = [], toolDirs = {};
 let storages = [];
