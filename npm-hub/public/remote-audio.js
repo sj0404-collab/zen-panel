@@ -48,9 +48,13 @@
 
   function start() {
     try {
-      if (current && current.ws && current.ws.readyState <= 1) {
-        current.ctx.resume().catch(() => {});
-        return current;
+      if (current) {
+        const rs = current.ws ? current.ws.readyState : 3;
+        if (rs <= 1) { current.ctx.resume().catch(() => {}); return current; }
+        // A closing/closed socket from a reconnect: tear the old player down
+        // first, otherwise its already-scheduled buffers keep playing under the
+        // new stream — heard as an echo.
+        stop();
       }
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC || !window.WebSocket) return null;
@@ -77,6 +81,7 @@
         nextTime: 0,
         lead: 0.08,
         stable: 0,
+        dropped: 0,
         sources: new Set(),
         decoded: 0,
         decodeErrors: 0,
@@ -98,20 +103,25 @@
       // clock. The lead absorbs network jitter; it grows on starvation and
       // decays after long stable stretches, so latency stays low without ever
       // zero-filling the output like the old ScriptProcessor did.
+      //
+      // Hard rule: never schedule over audio that is already queued. If a stall
+      // (hidden tab, GC, a burst of decoded frames) leaves more than MAX_LEAD
+      // in flight, the delayed chunks are DROPPED and we resync to the live
+      // edge. The previous code moved nextTime backwards while the old buffers
+      // were still pending, so two copies played at once — that was the echo.
+      const MAX_LEAD = 0.35;
       const schedule = (buffer) => {
         if (state.close) return;
         const now = ctx.currentTime;
+        if (state.nextTime - now > MAX_LEAD) { state.dropped++; state.stable = 0; return; }
         let t = state.nextTime;
-        if (t < now + 0.004) {
+        if (t < now + 0.005) {
           t = now + state.lead;
           state.stable = 0;
-          state.lead = Math.min(state.lead * 1.5, 0.30);
-        } else if (t - now > 0.5) {
-          t = now + state.lead; // too much backlog: stay close to the video
-          state.nextTime = t;
+          state.lead = Math.min(state.lead * 1.5, 0.25);
         } else if (++state.stable > 150) {
           state.stable = 0;
-          state.lead = Math.max(0.06, state.lead * 0.97);
+          state.lead = Math.max(0.05, state.lead * 0.97);
         }
         const src = ctx.createBufferSource();
         src.buffer = buffer;

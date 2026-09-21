@@ -1895,6 +1895,15 @@ const gitQ = (args) => new Promise((resolve) => {
 
 const GIT_BRANCH = (process.env.GITHUB_REF || '').replace(/^refs\/heads\//, '') || 'main';
 
+// The updater pulls new commits, but package.json can gain a dependency (e.g.
+// opusscript). Reconcile node_modules before restarting, otherwise the new code
+// silently falls back (no Opus) until the next full workflow run.
+const npmQ = (args) => new Promise((resolve) => {
+  const child = spawn('npm', args, { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'pipe'], timeout: 180000 });
+  child.on('close', (code) => resolve({ code }));
+  child.on('error', () => resolve({ code: -1 }));
+});
+
 app.get('/api/update', async (req, res) => {
   const { code, out } = await gitQ(['fetch', 'origin', GIT_BRANCH]);
   if (code !== 0) return res.json({ success: false, error: 'fetch не удался: git exited ' + code + ' — ' + out.slice(0, 300) });
@@ -1932,9 +1941,16 @@ app.post('/api/update', async (req, res) => {
   const newSha = (await gitQ(['rev-parse', '--short', 'HEAD'])).out;
   console.log(`[updater] pulled ${head.slice(0, 7)}..${newSha} (${behindN} commits); restarting hub`);
   res.json({ success: true, updated: true, behind: behindN, current: newSha, restarting: true });
-  // Breathe so the response reaches the browser, then exit: the workflow
-  // keep-alive loop notices the dead process and relaunches it on this code.
-  setTimeout(() => { try { server.close(); } catch (e) {} process.exit(0); }, 400);
+  // Install any newly added dependency (keeps node_modules, unlike npm ci) and
+  // only then exit: the workflow keep-alive loop relaunches us on the new code.
+  (async () => {
+    try {
+      const r = await npmQ(['install', '--omit=dev', '--no-audit', '--no-fund']);
+      console.log(`[updater] npm install ${r.code === 0 ? 'ok' : 'failed (' + r.code + ')'}`);
+    } catch (e) { console.log('[updater] npm install error: ' + e.message); }
+    try { server.close(); } catch (e) {}
+    process.exit(0);
+  })();
 });
 
 // ─── CLOUD PHONE (Android emulator + VNC) ───

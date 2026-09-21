@@ -370,6 +370,9 @@ check('q43f shared player loaded before app', mobHtml.includes('src="remote-audi
   deskHtml.includes('src="remote-audio.js"') &&
   mobHtml.indexOf('remote-audio.js') < mobHtml.indexOf('mobile-app.js') &&
   deskHtml.indexOf('remote-audio.js') < deskHtml.indexOf('desktop-app.js'));
+check('q43g audio scheduler never overlaps queued audio', remoteAudio.includes('const MAX_LEAD') &&
+  remoteAudio.includes('state.dropped') && !remoteAudio.includes('too much backlog') &&
+  remoteAudio.includes('state.nextTime - now > MAX_LEAD') && remoteAudio.includes('rs <= 1'));
 check('q43d sound button and clean Pulse path', mobHtml.includes('remoteAudioToggle()') &&
   deskHtml.includes('remoteAudioToggle()') &&
   keep.includes("['parec', 'pulseaudio-utils']") && startDesktop.includes('pulseaudio-utils') &&
