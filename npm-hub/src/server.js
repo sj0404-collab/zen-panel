@@ -1181,8 +1181,9 @@ app.post('/api/git/fm', express.json(), async (req, res) => {
     if (!dir || !dir.startsWith('/') || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
       return res.json({ success: false, error: 'папки на сервере нет: ' + dir });
     }
+    const repoRoot = findRepoRoot(dir);
+    const isRepo = !!repoRoot;
     const msg = (message && String(message).trim()) || gitFmDefaultMsg();
-    const isRepo = fs.existsSync(path.join(dir, '.git'));
     if (action === 'init') {
       if (isRepo) return res.json({ success: false, error: 'это уже git-репозиторий — просто коммить' });
       await gitRun(dir, ['init', '-b', 'main']);
@@ -1195,32 +1196,32 @@ app.post('/api/git/fm', express.json(), async (req, res) => {
     }
     if (action === 'commit') {
       if (!isRepo) return res.json({ success: false, needInit: true, error: 'это ещё не репозиторий — создай его кнопкой ниже' });
-      await gitFmEnsureIdent(dir);
-      const changed = await gitRun(dir, ['status', '--porcelain']);
+      await gitFmEnsureIdent(repoRoot);
+      const changed = await gitRun(repoRoot, ['status', '--porcelain']);
       if (!changed.trim()) return res.json({ success: true, committed: false, out: 'Коммитить нечего — рабочее дерево чистое' });
-      await gitRun(dir, ['add', '-A']);
-      const out = await gitRun(dir, ['commit', '-m', msg]);
+      await gitRun(repoRoot, ['add', '-A']);
+      const out = await gitRun(repoRoot, ['commit', '-m', msg]);
       if (out && /fatal|error/i.test(out)) return res.json({ success: false, error: out });
-      return res.json({ success: true, out: out || ('коммит: ' + msg), committed: true, branch: (await gitRun(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim() || 'main' });
+      return res.json({ success: true, out: out || ('коммит: ' + msg), committed: true, branch: (await gitRun(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim() || 'main' });
     }
     if (action === 'push') {
       if (!isRepo) return res.json({ success: false, needInit: true, error: 'это ещё не репозиторий — создай его кнопкой ниже' });
-      await gitFmEnsureIdent(dir);
-      const changed = await gitRun(dir, ['status', '--porcelain']);
+      await gitFmEnsureIdent(repoRoot);
+      const changed = await gitRun(repoRoot, ['status', '--porcelain']);
       if (changed.trim()) {
-        await gitRun(dir, ['add', '-A']);
-        const c = await gitRun(dir, ['commit', '-m', msg]);
+        await gitRun(repoRoot, ['add', '-A']);
+        const c = await gitRun(repoRoot, ['commit', '-m', msg]);
         if (c && /fatal|error/i.test(c)) return res.json({ success: false, error: c });
       }
-      const cur = (await gitRun(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim() || 'main';
+      const cur = (await gitRun(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim() || 'main';
       const target = (branch && String(branch).trim()) || cur;
-      const origin = (await gitRun(dir, ['remote'])).trim().split(/\s+/)[0] || '';
+      const origin = (await gitRun(repoRoot, ['remote'])).trim().split(/\s+/)[0] || '';
       if (!origin) {
         const url = (remote && String(remote).trim()) || '';
         if (!url) return res.json({ success: false, needRemote: true, error: 'Нет origin — укажи URL репозитория, например https://github.com/user/repo.git' });
-        await gitRun(dir, ['remote', 'add', 'origin', url]);
+        await gitRun(repoRoot, ['remote', 'add', 'origin', url]);
       }
-      const p = await gitFmPush(dir, target);
+      const p = await gitFmPush(repoRoot, target);
       if (p.code !== 0) return res.json({ success: false, error: p.out || ('push отклонён (код ' + p.code + ')') });
       return res.json({ success: true, committed: true, branch: target, out: p.out && !/everything up-to-date/i.test(p.out) ? p.out : ('запушено в ветку ' + target) });
     }
@@ -1230,11 +1231,21 @@ app.post('/api/git/fm', express.json(), async (req, res) => {
   }
 });
 
-const resolveRepo = async (p) => {
-  if (p && fs.existsSync(p) && fs.statSync(p).isDirectory()) {
-    if (fs.existsSync(path.join(p, '.git'))) return p;
-    return null;
+const findRepoRoot = (p) => {
+  if (!p || !fs.existsSync(p) || !fs.statSync(p).isDirectory()) return null;
+  let cur = p;
+  while (cur !== '/') {
+    if (fs.existsSync(path.join(cur, '.git'))) return cur;
+    const next = path.dirname(cur);
+    if (next === cur) break;
+    cur = next;
   }
+  return null;
+};
+
+const resolveRepo = async (p) => {
+  const found = findRepoRoot(p);
+  if (found) return found;
   const cands = repoCandidates();
   return cands[0] || null;
 };
