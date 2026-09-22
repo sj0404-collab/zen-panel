@@ -646,7 +646,7 @@ document.querySelectorAll('.modal-bg').forEach(bg => {
 function attachTermScroll(id, panel) {
   const termEl = document.getElementById('term-' + id);
   const vp = termEl.querySelector('.xterm-viewport');
-  const track = panel.querySelector('.term-scroll');
+  const track = panel.querySelector('.term-scroll-track');
   const thumb = panel.querySelector('.term-scroll-thumb');
   if (!vp || !track || !thumb) return null;
   const term = (tabs.find(t => t.id === id) || {}).term;
@@ -658,6 +658,28 @@ function attachTermScroll(id, panel) {
     const scr = termEl.querySelector('.xterm-screen') || termEl;
     try { scr.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, deltaMode: 0, bubbles: true, cancelable: true, composed: true })); } catch (_) {}
   };
+  // Стрелки ▲▼ в полосе прокрутки терминала: крутят его по нажатию/удержанию
+  // (на телефоне прокрутка пальцем по тексту часто не работает).
+  const scrollStep = (dir) => {
+    if (isAlt()) { fireWheel(dir === 'up' ? -140 : 140); return; }
+    const max = vp.scrollHeight - vp.clientHeight;
+    if (max <= 0) return;
+    const step = Math.max(70, Math.round(vp.clientHeight * 0.45));
+    vp.scrollTop = Math.max(0, Math.min(max, vp.scrollTop + (dir === 'up' ? -step : step)));
+  };
+  let arrTimer = null;
+  const arrStop = () => { if (arrTimer) { clearInterval(arrTimer); arrTimer = null; } };
+  const bindArr = (btn, dir) => {
+    if (!btn) return;
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      btn.classList.add('on'); scrollStep(dir); arrStop();
+      arrTimer = setInterval(() => scrollStep(dir), 90);
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => btn.addEventListener(ev, () => { btn.classList.remove('on'); arrStop(); }));
+  };
+  bindArr(panel.querySelector('.term-scroll-arr.up'), 'up');
+  bindArr(panel.querySelector('.term-scroll-arr.down'), 'down');
   let altDrag = 0;
   const updAlt = () => {
     thumb.style.display = 'block';
@@ -739,7 +761,7 @@ function attachTermScroll(id, panel) {
   });
 
   upd();
-  return { upd, destroy() { if (ro) ro.disconnect(); window.removeEventListener('resize', resizeHandler); if (bufSub && bufSub.dispose) bufSub.dispose(); } };
+  return { upd, destroy() { arrStop(); if (ro) ro.disconnect(); window.removeEventListener('resize', resizeHandler); if (bufSub && bufSub.dispose) bufSub.dispose(); } };
 }
 // ===== ТЕРМИНАЛ НА ПАЛЬЦЕ =====
 // Раньше: ЛЮБОЕ удержание дольше 600 мс копировало текст (а без выделения —
@@ -891,7 +913,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   const panel = document.createElement('div');
   panel.className = 'term-panel';
   panel.id = 'panel-' + id;
-  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color}"></div>${displayName}</div><div class="term-info">${dirShort}</div><button class="btn btn-sm" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll" id="tscroll-${id}"><div class="term-scroll-thumb" id="tthumb-${id}"></div></div></div>`;
+  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color}"></div>${displayName}</div><div class="term-info">${dirShort}</div><button class="btn btn-sm" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll" id="tscroll-${id}"><button class="term-scroll-arr up">▲</button><div class="term-scroll-track"><div class="term-scroll-thumb" id="tthumb-${id}"></div></div><button class="term-scroll-arr down">▼</button></div></div>`;
   document.getElementById('term-container').appendChild(panel);
   term.open(document.getElementById('term-' + id));
   await new Promise(r => setTimeout(r, 30));

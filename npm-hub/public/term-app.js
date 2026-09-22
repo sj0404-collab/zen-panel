@@ -135,7 +135,7 @@ function attachTab(meta) {
   const panel = document.createElement('div');
   panel.className = 'term-panel';
   panel.id = 'panel-' + id;
-  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span></div><div class="term-info">${dirShort}</div><button class="btn" style="padding:2px 8px;font-size:10px" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll"><div class="term-scroll-thumb"></div></div></div><div class="term-resumed" id="resumed-${id}">✓ Восстановлено</div>`;
+  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span></div><div class="term-info">${dirShort}</div><button class="btn" style="padding:2px 8px;font-size:10px" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll"><button class="term-scroll-arr up">▲</button><div class="term-scroll-track"><div class="term-scroll-thumb"></div></div><button class="term-scroll-arr down">▼</button></div></div><div class="term-resumed" id="resumed-${id}">✓ Восстановлено</div>`;
   document.getElementById('term-container').appendChild(panel);
   term.open(document.getElementById('term-' + id));
   setTimeout(() => fitAddon.fit(), 30);
@@ -369,7 +369,7 @@ function syncZoom() {
 function attachTermScroll(id, panel){
   const termEl=document.getElementById('term-'+id);
   const vp=termEl.querySelector('.xterm-viewport');
-  const track=panel.querySelector('.term-scroll');
+  const track=panel.querySelector('.term-scroll-track');
   const thumb=panel.querySelector('.term-scroll-thumb');
   if(!vp||!track||!thumb) return null;
   const term=(tabs.find(t=>t.id===id)||{}).term;
@@ -381,6 +381,28 @@ function attachTermScroll(id, panel){
     const scr=termEl.querySelector('.xterm-screen')||termEl;
     try{ scr.dispatchEvent(new WheelEvent('wheel',{deltaY:dy,deltaMode:0,bubbles:true,cancelable:true,composed:true})); }catch(_){}
   };
+  // Стрелки ▲▼ внизу полосы прокрутки: по нажатию (и удержанию) крутят терминал.
+  // На телефоне прокрутка пальцем по тексту часто не работает — стрелки это чинят.
+  const scrollStep=(dir)=>{
+    if(isAlt()){ fireWheel(dir==='up'?-140:140); return; }
+    const max=vp.scrollHeight-vp.clientHeight;
+    if(max<=0) return;
+    const step=Math.max(70,Math.round(vp.clientHeight*0.45));
+    vp.scrollTop=Math.max(0,Math.min(max,vp.scrollTop+(dir==='up'?-step:step)));
+  };
+  let arrTimer=null;
+  const arrStop=()=>{ if(arrTimer){ clearInterval(arrTimer); arrTimer=null; } };
+  const bindArr=(btn,dir)=>{
+    if(!btn) return;
+    btn.addEventListener('pointerdown',(e)=>{
+      e.preventDefault(); e.stopPropagation();
+      btn.classList.add('on'); scrollStep(dir); arrStop();
+      arrTimer=setInterval(()=>scrollStep(dir),90);
+    });
+    ['pointerup','pointercancel','pointerleave'].forEach(ev=>btn.addEventListener(ev,()=>{ btn.classList.remove('on'); arrStop(); }));
+  };
+  bindArr(panel.querySelector('.term-scroll-arr.up'),'up');
+  bindArr(panel.querySelector('.term-scroll-arr.down'),'down');
   let altDrag=0;
   const updAlt=()=>{
     thumb.style.display='block';
@@ -451,7 +473,7 @@ function attachTermScroll(id, panel){
     e.preventDefault();
   });
   upd();
-  return{upd,destroy(){ if(ro) ro.disconnect(); window.removeEventListener('resize',resizeHandler); if(bufSub&&bufSub.dispose) bufSub.dispose(); }};
+  return{upd,destroy(){ arrStop(); if(ro) ro.disconnect(); window.removeEventListener('resize',resizeHandler); if(bufSub&&bufSub.dispose) bufSub.dispose(); }};
 }
 // ===== LONG-PRESS COPY =====
 function setupTermTouch(termEl, term){
