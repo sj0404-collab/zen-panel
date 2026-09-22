@@ -574,10 +574,9 @@ app.get('/api/fs/download', async (req, res) => {
   try {
     const backend = storage.get(req.query.backend || 'local');
     const filename = path.basename(req.query.path).replace(/[\r\n"]/g, '_');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    const inline = req.query.inline === '1';
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${filename}"`);
     res.setHeader('Content-Type', mimeForPath(filename));
-    // Binary-safe read: StorageBase.read() forces utf-8, which corrupts APKs
-    // and other binaries. Backends are all local/remote Paths, so stream raw.
     const data = await backend.readBinary(req.query.path);
     if (data === null || data === undefined) { res.end(); return; }
     res.end(data);
@@ -2808,6 +2807,27 @@ app.post('/api/linux/run', express.json(), async (req, res) => {
         return res.json({ ok: false, error: 'unknown action: ' + action });
     }
   } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ─── CHROME PROFILE: persist Google account across restarts ───
+const CHROME_PROFILE_ROOT = path.join(DATA_DIR, 'chrome-profile');
+app.get('/api/chrome/profile/status', (req, res) => {
+  try {
+    const googleProfile = path.join(CHROME_PROFILE_ROOT, 'google');
+    const chromiumProfile = path.join(CHROME_PROFILE_ROOT, 'chromium');
+    const hasGoogle = fs.existsSync(googleProfile) && fs.readdirSync(googleProfile).length > 0;
+    const hasChromium = fs.existsSync(chromiumProfile) && fs.readdirSync(chromiumProfile).length > 0;
+    res.json({ success: true, exists: hasGoogle || hasChromium, google: hasGoogle, chromium: hasChromium });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+app.post('/api/chrome/profile/clear', (req, res) => {
+  try {
+    const googleProfile = path.join(CHROME_PROFILE_ROOT, 'google');
+    const chromiumProfile = path.join(CHROME_PROFILE_ROOT, 'chromium');
+    if (fs.existsSync(googleProfile)) fs.rmSync(googleProfile, { recursive: true, force: true });
+    if (fs.existsSync(chromiumProfile)) fs.rmSync(chromiumProfile, { recursive: true, force: true });
+    res.json({ success: true, message: 'Профиль Chrome очищен' });
+  } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
 // ─── OCR + SCREENSHOT для TTS/чтения в фоне ───

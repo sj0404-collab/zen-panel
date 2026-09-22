@@ -1983,6 +1983,17 @@ function fmUploadFolder() {
   input.click();
 }
 
+async function fmOpenScreen() {
+  if (!fmSelected) return;
+  const isDir = document.querySelector('#fm-list .fm-item.fm-sel[data-isdir="1"]') != null;
+  const url = location.origin + (isDir
+    ? '/api/fs/archive?path=' + encodeURIComponent(fmSelected)
+    : '/api/fs/download?inline=1&path=' + encodeURIComponent(fmSelected));
+  linuxRunBrowser(url);
+  showPage('linux');
+  setTimeout(() => linuxConnect(), 800);
+}
+
 function gitFmDefaultMsg() {
   const d = new Date();
   const p = n => String(n).padStart(2, '0');
