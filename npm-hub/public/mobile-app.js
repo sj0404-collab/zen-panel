@@ -1,7 +1,7 @@
 let tools = [], homeDir = '', workDir = '', accessMode = 'local';
 let tabs = [], activeTab = null, zoomLevel = 60;
 const OPEN_TABS_LS = 'hub_open_tabs';
-let fmCurrentPath = '', fmSelected = null, fmBackend = 'local';
+let fmCurrentPath = '', fmSelected = null, fmBackend = 'local', fmCacheInfo = '';
 let recentPaths = [], toolDirs = {};
 let storages = [];
 let models = [], selectedModel = 'openrouter/owl-alpha';
@@ -1519,6 +1519,134 @@ function sendKey(key) {
 }
 
 // ===== FILE MANAGER =====
+// Кеш файлов/папок на устройстве (IndexedDB, как у PWA) — переживает смерть
+// раннера. Реализация в offline.js (window.HubOffline.idb); здесь — тонкая
+// обёртка и кнопки «👁 Открыть во вкладке» / «💾 В кеш».
+const _fsm = (() => { try { return (window.HubOffline && HubOffline.idb) ? HubOffline.idb : null; } catch (e) { return null; } })();
+function fsmPutList(key, json) {
+  if (!_fsm) return Promise.resolve();
+  return _fsm.put('list', { key, status: 200, ct: 'application/json', body: JSON.stringify(json), ts: Date.now() });
+}
+function fsmGetList(key) {
+  if (!_fsm) return Promise.resolve(null);
+  return _fsm.get('list', key).then(r => {
+    if (!r || !r.body) return null;
+    try { return { json: JSON.parse(r.body) }; } catch (e) { return null; }
+  }).catch(() => null);
+}
+function fsmPutBlob(key, blob) {
+  if (!_fsm || !blob) return Promise.resolve();
+  return _fsm.put('blob', { key, blob, ts: Date.now() });
+}
+function fsmGetBlob(key) {
+  if (!_fsm) return Promise.resolve(null);
+  return _fsm.get('blob', key).catch(() => null);
+}
+const FSM_WARM_MAX = 50 * 1024 * 1024;
+function fsmWarm(filePath) {
+  const item = [...document.querySelectorAll('#fm-list .fm-item')]
+    .find(e => e.dataset.path === filePath);
+  const size = item ? (parseInt(item.dataset.size, 10) || 0) : 0;
+  if (!size || size > FSM_WARM_MAX) return;
+  fsmCacheOneFile(filePath, false);
+}
+async function fsmCacheOneFile(p, force) {
+  const key = fmBackend + '|' + p;
+  if (!force) {
+    const ex = await fsmGetBlob(key);
+    if (ex && ex.blob) return true;
+  }
+  try {
+    const res = await fetch('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p));
+    if (!res.ok) return false;
+    const blob = await res.blob();
+    if (!blob || !blob.size) return false;
+    await fsmPutBlob(key, blob);
+    return true;
+  } catch (e) { return false; }
+}
+async function fsmCacheFolder(p) {
+  const MAX = 40 * 1024 * 1024;
+  let total = 0, files = [];
+  const walk = async (dir) => {
+    if (total > MAX) return;
+    const r = await fetch('/api/browse?backend=' + fmBackend + '&path=' + encodeURIComponent(dir)).then(r => r.json()).catch(() => null);
+    if (!r || !r.success) return;
+    fsmPutList(fmBackend + '|' + dir, r);
+    for (const it of (r.items || [])) {
+      if (total > MAX) return;
+      if (it.isDir) await walk(it.path);
+      else files.push(it.path);
+    }
+  };
+  await walk(p);
+  let saved = 0;
+  for (const f of files) {
+    if (total > MAX) break;
+    const b = await (async () => { try { const r = await fetch('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(f)); if (!r.ok) return null; const x = await r.blob(); total += x.size; return x; } catch (e) { return null; } })();
+    if (b && b.size) { await fsmPutBlob(fmBackend + '|' + f, b); saved++; }
+  }
+  return files.length ? saved > 0 : true;
+}
+function mSaveBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+function fmCacheSelection() {
+  const sel = [...document.querySelectorAll('#fm-list .fm-item.fm-sel')];
+  if (!sel.length && fmSelected) {
+    const all = [...document.querySelectorAll('#fm-list .fm-item')];
+    const hit = all.find(e => e.dataset.path === fmSelected);
+    if (hit) sel.push(hit);
+  }
+  if (!sel.length) { fmInfo('Выберите файл или папку'); return; }
+  const real = sel.filter(Boolean);
+  const count = real.length;
+  let ok = 0;
+  (async () => {
+    for (const el of real) {
+      const p = el.dataset.path;
+      const isDir = el.dataset.isdir === '1';
+      if (!p) continue;
+      const done = isDir ? await fsmCacheFolder(p) : await fsmCacheOneFile(p, true);
+      if (done) ok++;
+    }
+    fmInfo('💾 В кеш сохранено: ' + ok + ' из ' + count + (HubOffline && HubOffline.isOffline ? ' (офлайн)' : ''));
+  })();
+}
+function fmOpenView() {
+  if (!fmSelected) return;
+  const list = document.querySelectorAll('#fm-list .fm-item.fm-sel');
+  if (list.length > 1) { fmInfo('Выберите один файл для просмотра во вкладке.'); return; }
+  const item = [...document.querySelectorAll('#fm-list .fm-item.fm-sel')]
+    .find(el => el.dataset.path === fmSelected);
+  if (item && item.dataset.isdir === '1') { fmInfo('Это папка — для просмотра выберите файл.'); return; }
+  const url = `/api/fs/view?backend=${encodeURIComponent(fmBackend)}&path=${encodeURIComponent(fmSelected)}`;
+  if (HubOffline && HubOffline.isOffline) {
+    fsmGetBlob(fmBackend + '|' + fmSelected).then(rec => {
+      if (rec && rec.blob) {
+        const name = String(fmSelected).split(/[/\\]/).pop();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(rec.blob);
+        a.download = name;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+        fmInfo('🧊 Показан из кеша: ' + name);
+      } else {
+        fmInfo('Нет связи и файла в кеше — откройте вкладку при онлайн-доступе');
+      }
+    });
+    return;
+  }
+  fsmWarm(fmSelected);
+  window.open(url, '_blank', 'noopener');
+}
 async function initFM() {
   const devR = await fetch('/api/devices').then(r => r.json());
   if (devR.success) {
@@ -1543,8 +1671,26 @@ function fmSwitchBackend(backend, startPath) {
 }
 
 async function fmBrowse(p) {
-  const r = await fetch("/api/browse?backend=" + fmBackend + "&path=" + encodeURIComponent(p)).then(r => r.json());
-  if (!r.success) return;
+  const key = fmBackend + '|' + p;
+  let r = null;
+  let fromCache = false;
+  try {
+    const res = await fetch("/api/browse?backend=" + fmBackend + "&path=" + encodeURIComponent(p));
+    if (res.headers.get('x-hub-offline') === '1') fromCache = true;
+    const j = await res.json();
+    if (j && j.success) { r = j; if (!fromCache) fsmPutList(key, j); }
+    else if (j && j.offline) { /* ниже — кеш */ }
+    else r = j;
+  } catch (e) { /* network/parse error */ }
+  if (!r || !r.success) {
+    const c = await fsmGetList(key);
+    if (c && c.json && c.json.success) { r = c.json; fromCache = true; fmCacheInfo = 'кеш'; }
+  }
+  if (!r || !r.success) {
+    const list = document.getElementById("fm-list");
+    if (list) list.innerHTML = '<div style="padding:20px;color:var(--t3);text-align:center">Сервер недоступен, данных в кеше нет</div>';
+    return;
+  }
   fmCurrentPath = r.path;
   const pathEl = document.getElementById("fm-path");
   if (pathEl) pathEl.value = fmBackend === "local" ? "" : "[" + fmBackend + "] " + r.path;
@@ -1573,6 +1719,7 @@ async function fmBrowse(p) {
     div.dataset.path = escHtml(item.path);
     div.dataset.name = escHtml(item.name);
     div.setAttribute('data-isdir', item.isDir ? '1' : '0');
+    div.dataset.size = String(item.size || 0);
     div.onclick = function() { fmTap(this); };
     
     const iconSpan = document.createElement("span");
@@ -1596,7 +1743,7 @@ async function fmBrowse(p) {
   list.innerHTML = "";
   list.appendChild(fragment);
   
-  if (infoEl) infoEl.textContent = r.items ? r.items.length + " элементов | " + fmBackend : "0 элементов | " + fmBackend;
+  if (infoEl) infoEl.textContent = (fromCache ? '🧊 ' + fmCacheInfo + ' · ' : '') + (r.items ? r.items.length + " элементов | " + fmBackend : "0 элементов | " + fmBackend);
 }
 
 function fmTap(el) {
@@ -1847,14 +1994,32 @@ function fmDownloadMulti() {
   const items = sel.length ? sel : (fmSelected ? [{ dataset: { path: fmSelected } }] : []);
   items.forEach(el => {
     const p = el.dataset.path;
-    if (p) dlNow('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p), String(p).split(/[/\\]/).pop());
+    if (!p) return;
+    const name = String(p).split(/[/\\]/).pop();
+    if (HubOffline && HubOffline.isOffline) {
+      fsmGetBlob(fmBackend + '|' + p).then(rec => {
+        if (rec && rec.blob) mSaveBlob(rec.blob, name);
+        else fmInfo('Нет связи, в кеше нет: ' + name);
+      });
+    } else {
+      dlNow('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p), name);
+      fsmWarm(p);
+    }
   });
 }
 
 function fmDownloadSingle() {
   if (!fmSelected) return;
   const name = String(fmSelected).split(/[/\\]/).pop();
+  if (HubOffline && HubOffline.isOffline) {
+    fsmGetBlob(fmBackend + '|' + fmSelected).then(rec => {
+      if (rec && rec.blob) { mSaveBlob(rec.blob, name); fmInfo('🧊 Из кеша: ' + name); }
+      else fmInfo('Нет связи и файла в кеше');
+    });
+    return;
+  }
   dlNow('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(fmSelected), name);
+  fsmWarm(fmSelected);
 }
 
 function fmArchive() {

@@ -14,6 +14,7 @@ function kickReconnect() {
     if (s && (s.readyState === WebSocket.OPEN || s.readyState === WebSocket.CONNECTING)) return;
     if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
     t.lastPong = 0;
+    t.retry = 1000;
     try { if (t.connect) t.connect(); } catch (e) {}
   });
 }
@@ -166,6 +167,7 @@ function attachTab(meta) {
     td.ws = socket;
     socket.onopen = () => {
       td.lastPong = Date.now();
+      td.retry = 1000;
       opened();
       if (!isTouch) term.focus();
     };
@@ -177,16 +179,21 @@ function attachTab(meta) {
       if (m.type === 'exit') { term.write(`\r\n\x1b[33m[Exited ${m.code} — нажми ⟲, чтобы перезапустить]\x1b[0m\r\n`); termRecoverShow('⚠ Сессия завершилась — перезапустите агента'); }
       if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`);
     };
-    socket.onerror = () => {
-      // Always enter the reconnect path on Android WebViews where `error`
-      // may arrive without a subsequent usable close event.
-      try { if (socket.readyState !== WebSocket.CLOSED) socket.close(); } catch {}
-    };
     socket.onclose = () => {
       if (td.manualClose) return;
       if (td.reconnectTimer) { clearTimeout(td.reconnectTimer); td.reconnectTimer = null; }
       term.write('\r\n\x1b[33m[Disconnected — reconnecting...]\x1b[0m\r\n');
-      td.reconnectTimer = setTimeout(connect, 3000);
+      // Backoff: хаб рестартует при обновлении — соединение должно выживать, а
+      // не зацикливаться. Начало — 1с, каждая неудача ×1.5, потолок 20с.
+      td.retry = td.retry || 1000;
+      const delay = Math.min(td.retry, 20000);
+      td.retry = Math.round(td.retry * 1.5);
+      td.reconnectTimer = setTimeout(connect, delay);
+    };
+    socket.onerror = () => {
+      // Always enter the reconnect path on Android WebViews where `error`
+      // may arrive without a subsequent usable close event.
+      try { if (socket.readyState !== WebSocket.CLOSED) socket.close(); } catch {}
     };
     return socket;
   };
