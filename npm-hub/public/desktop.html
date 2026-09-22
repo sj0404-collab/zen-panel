@@ -287,6 +287,7 @@
               <button class="btn" onclick="fmSaveGithub()" title="Сохранить в GitHub">⬆️GH</button>
               <button class="btn" onclick="fmUpload()" title="Файлы (множественный выбор, любые типы, картинки — тоже)">⬆</button>
               <button class="btn" onclick="fmUploadFolder()" title="Целую папку мышью — загрузит рекурсивно">⬆📁</button>
+              <button class="btn" onclick="gitFmShow()" title="Ручной git: создать репо / коммит / push этой папки">📝 git</button>
               <div style="position:relative">
                 <button class="btn btn-p" onclick="toggleFmMenu(event)">▶</button>
                 <div class="apply-menu" id="fm-apply-menu"></div>
@@ -500,6 +501,24 @@
       <div class="modal-actions">
         <button class="btn" onclick="closeModal('modal-browser')">Отмена</button>
         <button class="btn btn-ok" onclick="selectBrowserPath()">Выбрать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FM Git Modal -->
+  <div class="modal-bg" id="modal-gitfm">
+    <div class="modal">
+      <h2>Git: коммит папки</h2>
+      <div id="gitfm-status" style="font-size:10px;color:var(--t3);margin-bottom:10px"></div>
+      <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Сообщение коммита</label><input type="text" id="gitfm-msg" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+      <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">Ветка для push (пусто = текущая)</label><input type="text" id="gitfm-branch" value="main" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+      <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--t2)">URL репозитория для push (если нет origin)</label><input type="text" id="gitfm-remote" placeholder="https://github.com/user/repo.git" style="width:100%;padding:7px;background:var(--bg0);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);font-size:12px;font-family:monospace;margin-top:3px"></div>
+      <div id="gitfm-out" style="font-size:11px;color:var(--t2);margin-bottom:4px;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow:auto"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-gitfm')">Закрыть</button>
+        <button class="btn" id="gitfm-init" onclick="gitFmDo('init')">Создать репо</button>
+        <button class="btn" onclick="gitFmDo('commit')">Коммит</button>
+        <button class="btn btn-ok" onclick="gitFmDo('push')">Коммит + push</button>
       </div>
     </div>
   </div>

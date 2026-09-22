@@ -1572,6 +1572,65 @@ function fmUploadFolder() {
   input.click();
 }
 
+function gitFmDefaultMsg() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return 'обновление ' + p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+async function gitFmShow() {
+  const msg = document.getElementById('gitfm-msg');
+  const out = document.getElementById('gitfm-out');
+  const stEl = document.getElementById('gitfm-status');
+  if (out) out.textContent = '';
+  if (msg) msg.value = gitFmDefaultMsg();
+  if (stEl) stEl.textContent = 'папка: ' + fmCurrentPath;
+  document.getElementById('modal-gitfm').classList.add('on');
+  const r = await fetch('/api/git/status?path=' + encodeURIComponent(fmCurrentPath)).then(r => r.json());
+  const initBtn = document.getElementById('gitfm-init');
+  if (initBtn) initBtn.style.display = r.success ? 'none' : 'inline-block';
+  if (r.success) {
+    const br = document.getElementById('gitfm-branch');
+    if (br) br.value = r.branch;
+    if (stEl) stEl.textContent = r.repo + ' · ветка ' + r.branch + (r.dirty ? ' · есть изменения' : ' · чисто');
+  } else if (initBtn && stEl) {
+    stEl.textContent = 'папка: ' + fmCurrentPath + ' · не репозиторий';
+  }
+}
+async function gitFmDo(action) {
+  const out = document.getElementById('gitfm-out');
+  if (out) { out.textContent = '…'; out.style.color = 'var(--t2)'; }
+  try {
+    const r = await fetch('/api/git/fm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path: fmCurrentPath,
+        action,
+        message: (document.getElementById('gitfm-msg') || {}).value || '',
+        branch: (document.getElementById('gitfm-branch') || {}).value || '',
+        remote: (document.getElementById('gitfm-remote') || {}).value || ''
+      })
+    }).then(r => r.json());
+    let text;
+    if (r.needRemote) {
+      text = '✗ ' + (r.error || 'Заполни URL репозитория выше и повтори');
+      const rem = document.getElementById('gitfm-remote');
+      if (rem) rem.focus();
+    } else if (r.needInit) {
+      text = '✗ ' + (r.error || 'Сначала создай репо') + ' — жми «Создать репо» или укажи remote и «Коммит + push»';
+    } else if (r.success) {
+      text = '✓ ' + (r.out || 'готово');
+      fmRefresh();
+      gitFmShow();
+    } else {
+      text = '✗ ' + (r.error || 'ошибка');
+    }
+    if (out) { out.textContent = text; out.style.color = r.success ? 'var(--ok)' : 'var(--err)'; }
+  } catch (e) {
+    if (out) { out.textContent = '✗ ' + e.message; out.style.color = 'var(--err)'; }
+  }
+}
+
 function setupDropZone() {
   const zone = document.getElementById('fm-list');
   if (!zone || zone.dataset.dz) return;
