@@ -36,6 +36,7 @@ function renderDashboard() {
     const dir = toolDirs[t.id] || homeDir;
     const badges = (t.local ? '<span class="mini-badge" style="border-color:var(--ok);color:var(--ok)">LOCAL</span>' : '')
       + (t.free ? '<span class="mini-badge" style="border-color:#7ee787;color:#7ee787">FREE</span>' : '')
+      + (t.phone ? '<span class="mini-badge" style="border-color:#10b981;color:#10b981">📱 PHONE</span>' : '')
       + (t.keyEnv ? '<span class="mini-badge" style="border-color:var(--warn);color:var(--warn)" title="нужен ключ: ' + escHtml(t.keyEnv) + '">🔑 KEY</span>' : '');
     return `<div class="card">
       <div class="card-h">
