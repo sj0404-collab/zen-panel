@@ -1148,13 +1148,86 @@ const GIT_ROOT = (() => {
   return cands[0] || WORK_DIR;
 })();
 
-const gitRun = (repo, args) => new Promise((resolve) => {
+const gitRun = (repo, args, pre = []) => new Promise((resolve) => {
   const out = [];
-  const child = spawn('git', args, { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn('git', [...pre, ...args], { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', d => out.push(String(d)));
-  child.stderr.on('data', () => {});
+  child.stderr.on('data', d => out.push(String(d)));
   child.on('close', () => resolve(out.join('').trimEnd()));
   child.on('error', () => resolve(''));
+});
+
+const gitFmAuth = process.env.GH_TOKEN ? ['-c', 'credential.username=x-access-token',
+  '-c', 'credential.helper=!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'] : [];
+const gitFmDefaultMsg = () => {
+  const d = new Date(); const p = n => String(n).padStart(2, '0');
+  return 'обновление ' + p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+};
+const gitFmEnsureIdent = async (repo) => {
+  if (!(await gitRun(repo, ['config', 'user.name'])).trim()) await gitRun(repo, ['config', 'user.name', 'NPM Hub']);
+  if (!(await gitRun(repo, ['config', 'user.email'])).trim()) await gitRun(repo, ['config', 'user.email', 'hub@local']);
+};
+const gitFmPush = (repo, branch) => new Promise((resolve) => {
+  let out = '';
+  const child = spawn('git', [...gitFmAuth, 'push', 'origin', 'HEAD:' + branch], { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
+  child.stdout.on('data', d => { out += String(d); });
+  child.stderr.on('data', d => { out += String(d); });
+  child.on('close', code => resolve({ code, out: out.trim() }));
+  child.on('error', e => resolve({ code: 1, out: 'не удалось запустить git: ' + (e && e.message || '') }));
+});
+app.post('/api/git/fm', express.json(), async (req, res) => {
+  const { path: dir, action, message, branch, remote } = req.body || {};
+  try {
+    if (!dir || !dir.startsWith('/') || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+      return res.json({ success: false, error: 'папки на сервере нет: ' + dir });
+    }
+    const msg = (message && String(message).trim()) || gitFmDefaultMsg();
+    const isRepo = fs.existsSync(path.join(dir, '.git'));
+    if (action === 'init') {
+      if (isRepo) return res.json({ success: false, error: 'это уже git-репозиторий — просто коммить' });
+      await gitRun(dir, ['init', '-b', 'main']);
+      if (!fs.existsSync(path.join(dir, '.git'))) await gitRun(dir, ['init']);
+      await gitFmEnsureIdent(dir);
+      await gitRun(dir, ['add', '-A']);
+      const out = await gitRun(dir, ['commit', '-m', msg]);
+      if (out && /fatal|error/i.test(out)) return res.json({ success: false, error: out });
+      return res.json({ success: true, out: out || ('репозиторий создан · коммит: ' + msg), committed: true, branch: 'main' });
+    }
+    if (action === 'commit') {
+      if (!isRepo) return res.json({ success: false, needInit: true, error: 'это ещё не репозиторий — создай его кнопкой ниже' });
+      await gitFmEnsureIdent(dir);
+      const changed = await gitRun(dir, ['status', '--porcelain']);
+      if (!changed.trim()) return res.json({ success: true, committed: false, out: 'Коммитить нечего — рабочее дерево чистое' });
+      await gitRun(dir, ['add', '-A']);
+      const out = await gitRun(dir, ['commit', '-m', msg]);
+      if (out && /fatal|error/i.test(out)) return res.json({ success: false, error: out });
+      return res.json({ success: true, out: out || ('коммит: ' + msg), committed: true, branch: (await gitRun(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim() || 'main' });
+    }
+    if (action === 'push') {
+      if (!isRepo) return res.json({ success: false, needInit: true, error: 'это ещё не репозиторий — создай его кнопкой ниже' });
+      await gitFmEnsureIdent(dir);
+      const changed = await gitRun(dir, ['status', '--porcelain']);
+      if (changed.trim()) {
+        await gitRun(dir, ['add', '-A']);
+        const c = await gitRun(dir, ['commit', '-m', msg]);
+        if (c && /fatal|error/i.test(c)) return res.json({ success: false, error: c });
+      }
+      const cur = (await gitRun(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim() || 'main';
+      const target = (branch && String(branch).trim()) || cur;
+      const origin = (await gitRun(dir, ['remote'])).trim().split(/\s+/)[0] || '';
+      if (!origin) {
+        const url = (remote && String(remote).trim()) || '';
+        if (!url) return res.json({ success: false, needRemote: true, error: 'Нет origin — укажи URL репозитория, например https://github.com/user/repo.git' });
+        await gitRun(dir, ['remote', 'add', 'origin', url]);
+      }
+      const p = await gitFmPush(dir, target);
+      if (p.code !== 0) return res.json({ success: false, error: p.out || ('push отклонён (код ' + p.code + ')') });
+      return res.json({ success: true, committed: true, branch: target, out: p.out && !/everything up-to-date/i.test(p.out) ? p.out : ('запушено в ветку ' + target) });
+    }
+    return res.json({ success: false, error: 'неизвестное действие: ' + action });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
 });
 
 const resolveRepo = async (p) => {
