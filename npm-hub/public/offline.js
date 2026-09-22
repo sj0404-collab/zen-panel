@@ -168,44 +168,98 @@
     if (/token|secret|password|passwd|auth/i.test(url.pathname + url.search)) return null;
     return url;
   }
-  if (realFetch) {
-    window.fetch = function (input, init) {
-      var req;
-      try { req = (typeof input === 'string' || (input && input.url)) ? new Request(input, init) : input; }
-      catch (e) { return realFetch(input, init); }
-      var url = cacheable(req);
-      if (!url) return realFetch(input, init);
-      var key = url.pathname + url.search;
-      return realFetch(input, init).then(function (res) {
-        if (res && res.ok) {
-          setOffline(false);
-          var ct = res.headers.get('content-type') || 'application/json';
-          // Только текст/JSON: бинарные ответы (скачивание файла) в
-          // localStorage превратились бы в мусор.
-          if (/(json|text|javascript)/i.test(ct)) {
-            try {
-              res.clone().text().then(function (body) {
-                store({ key: key, status: res.status, ct: ct, body: body });
-              }).catch(function () {});
-            } catch (e) {}
-          }
+function serveCached(key, res) {
+  var c = load(key);
+  if (!c) return null;
+  setOffline(true);
+  renderBanner();
+  return new Response(c.body, {
+    status: c.status || 200,
+    headers: { 'content-type': c.ct || 'application/json', 'x-hub-offline': '1' }
+  });
+}
+// IndexedDB — дубль localStorage для листингов, которых не хватило в 4 МБ.
+function serveCachedIdb(key, res) {
+  return idbGet('list', key).then(function (rec) {
+    if (!rec || !rec.body) return null;
+    setOffline(true);
+    renderBanner();
+    return new Response(rec.body, {
+      status: rec.status || 200,
+      headers: { 'content-type': rec.ct || 'application/json', 'x-hub-offline': '1' }
+    });
+  });
+}
+function serveErrJson(message) {
+  setOffline(true);
+  renderBanner();
+  // Отдаём приличный JSON вместо HTML-страницы, чтобы .json() не падал.
+  return new Response(JSON.stringify({ success: false, error: message || 'офлайн', offline: true }), {
+    status: 200,
+    headers: { 'content-type': 'application/json', 'x-hub-offline': '1' }
+  });
+}
+if (realFetch) {
+  window.fetch = function (input, init) {
+    var req;
+    try { req = (typeof input === 'string' || (input && input.url)) ? new Request(input, init) : input; }
+    catch (e) { return realFetch(input, init); }
+    var url = cacheable(req);
+    if (!url) return realFetch(input, init);
+    var key = url.pathname + url.search;
+    return realFetch(input, init).then(function (res) {
+      if (!res) throw new Error('empty response');
+      var ct = res.headers.get('content-type') || '';
+      // Сервер жив и ответил JSON — это норма: кешируем.
+      if (res.ok && !/^text\/html|^text\/xml/i.test(ct)) {
+        setOffline(false);
+        // Только текст/JSON: бинарные ответы (скачивание файла) в
+        // localStorage превратились бы в мусор.
+        if (/(json|text|javascript)/i.test(ct)) {
+          try {
+            res.clone().text().then(function (body) {
+              store({ key: key, status: res.status, ct: ct, body: body });
+              // Дубль в IndexedDB — листинги больших папок не помещаются в
+              // localStorage (4 МБ). Если это /api/browse или /api/... (списки),
+              // кладём и туда; назад отдаём при недоступности сервера.
+              try { idbPut('list', { key: key, status: res.status, ct: ct, body: body, ts: Date.now() }); } catch (e) {}
+            }).catch(function () {});
+          } catch (e) {}
         }
         return res;
-      }).catch(function (err) {
-        var c = load(key);
-        if (c) {
-          setOffline(true);
-          renderBanner();
-          return new Response(c.body, {
-            status: c.status || 200,
-            headers: { 'content-type': c.ct || 'application/json', 'x-hub-offline': '1' }
-          });
+      }
+      // Иначе: 5xx во время рестарта хаба, 502/1033 из туннеля, HTML-страница
+      // ошибки вместо JSON (это и есть «html json failed»). Отдаём кеш.
+      // Реальный JSON-ответ с кодом 4xx — это нормальная ошибка API: отдаём как есть.
+      if (!/^text\/html|^text\/xml/i.test(ct) && res.status >= 400 && res.status < 500) {
+        setOffline(false);
+        if (/(json|text|javascript)/i.test(ct)) {
+          try {
+            res.clone().text().then(function (body) {
+              store({ key: key, status: res.status, ct: ct, body: body });
+            }).catch(function () {});
+          } catch (e) {}
         }
+        return res;
+      }
+      var hit = serveCached(key, res);
+      if (hit) return hit;
+      return serveCachedIdb(key, res).then(function (hit2) {
+        if (hit2) return hit2;
+        if (res.status >= 200 && res.status < 400) return serveErrJson('сервер ответил HTML вместо JSON');
+        return serveErrJson('сервер недоступен (' + res.status + ')');
+      });
+    }).catch(function (err) {
+      var hit = serveCached(key, err);
+      if (hit) return hit;
+      return serveCachedIdb(key, err).then(function (hit2) {
+        if (hit2) return hit2;
         setOffline(true);
         throw err;
       });
-    };
-  }
+    });
+  };
+}
 
   // ── Отправка очереди ──
   var flushing = false;
@@ -246,6 +300,71 @@
     });
   }
 
+// ── Большой кеш в IndexedDB: листинги папок и содержимое файлов ──
+  // localStorage (4 МБ) хватит на листинги, но не на файлы. Для файлов —
+  // отдельный кеш на устройстве: как у PWA, его не трогает смерть раннера.
+  var IDB_DB = 'hub-files-cache';
+  var IDB_VER = 1;
+  var idbDb = null;
+  function idbOpen() {
+    if (idbDb) return Promise.resolve(idbDb);
+    if (!('indexedDB' in window)) return Promise.reject(new Error('no indexedDB'));
+    return new Promise(function (resolve, reject) {
+      var rq = indexedDB.open(IDB_DB, IDB_VER);
+      rq.onupgradeneeded = function () {
+        var db = rq.result;
+        if (!db.objectStoreNames.contains('list')) db.createObjectStore('list', { keyPath: 'key' });
+        if (!db.objectStoreNames.contains('blob')) db.createObjectStore('blob', { keyPath: 'key' });
+      };
+      rq.onsuccess = function () { idbDb = rq.result; resolve(idbDb); };
+      rq.onerror = function () { reject(rq.error); };
+    });
+  }
+  function idbPut(store, obj) {
+    if (!('indexedDB' in window)) return Promise.resolve();
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(store, 'readwrite');
+        tx.objectStore(store).put(obj);
+        tx.oncomplete = resolve;
+        tx.onerror = function () { reject(tx.error); };
+        tx.onabort = function () { reject(tx.error); };
+      });
+    }).catch(function () {});
+  }
+  function idbGet(store, key) {
+    if (!('indexedDB' in window)) return Promise.resolve(null);
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var r = db.transaction(store, 'readonly').objectStore(store).get(key);
+        r.onsuccess = function () { resolve(r.result || null); };
+        r.onerror = function () { reject(r.error); };
+      });
+    }).catch(function () { return null; });
+  }
+  function idbDel(store, key) {
+    if (!('indexedDB' in window)) return Promise.resolve();
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(store, 'readwrite');
+        tx.objectStore(store).delete(key);
+        tx.oncomplete = resolve;
+        tx.onerror = function () { reject(tx.error); };
+      });
+    }).catch(function () {});
+  }
+  function idbClear(store) {
+    if (!('indexedDB' in window)) return Promise.resolve();
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(store, 'readwrite');
+        tx.objectStore(store).clear();
+        tx.oncomplete = resolve;
+        tx.onerror = function () { reject(tx.error); };
+      });
+    }).catch(function () {});
+  }
+
   window.HubOffline = {
     get isOffline() { return offline; },
     get lastSaved() { return lastSaved; },
@@ -273,6 +392,16 @@
       });
     },
     pending: function () { return qLoad(); },
-    flush: flushQueue
+    flush: flushQueue,
+    // Большой кеш на устройстве (IndexedDB, как у PWA): листинги папок и
+    // содержимое файлов. Переживает смерть раннера и очистку localStorage —
+    // данные остаются в браузере телефона/ноутбука.
+    idb: {
+      open: idbOpen,
+      put: idbPut,
+      get: idbGet,
+      del: idbDel,
+      clear: idbClear
+    }
   };
 })();

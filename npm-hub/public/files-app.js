@@ -7,6 +7,37 @@
 let fmCurrentPath = '';
 let fmSelected = null;
 let fmBackend = 'local';
+let fmCacheInfo = ''; // «(кеш)» — текущий список показан из IndexedDB (сервер недоступен)
+
+// ─── Локальный кеш в IndexedDB ───
+// Кеш на устройстве — как у PWA: листинги папок и содержимое открытых файлов
+// лежат в IndexedDB (тот же hub-files-cache, что и offline.js) и переживают
+// отключение/смерть раннера. Если хаб недоступен, вкладка «Файлы» продолжает
+// работать из кеша. Реализация — в offline.js: window.HubOffline.idb.
+const _fs = (() => { try { return (window.HubOffline && HubOffline.idb) ? HubOffline.idb : null; } catch (e) { return null; } })();
+function fsCachePutList(key, json) {
+  if (!_fs) return Promise.resolve();
+  return _fs.put('list', { key, status: 200, ct: 'application/json', body: JSON.stringify(json), ts: Date.now() });
+}
+function fsCacheGetList(key) {
+  if (!_fs) return Promise.resolve(null);
+  return _fs.get('list', key).then(r => {
+    if (!r || !r.body) return null;
+    try { return { json: JSON.parse(r.body) }; } catch (e) { return null; }
+  }).catch(() => null);
+}
+function fsCachePutBlob(key, blob) {
+  if (!_fs || !blob) return Promise.resolve();
+  return _fs.put('blob', { key, blob, ts: Date.now() });
+}
+function fsCacheGetBlob(key) {
+  if (!_fs) return Promise.resolve(null);
+  return _fs.get('blob', key).catch(() => null);
+}
+function fsCacheClear() {
+  if (!_fs) return Promise.resolve();
+  return _fs.clear('list').then(() => _fs.clear('blob'));
+}
 
 async function pageInit() {
   try {
@@ -42,8 +73,28 @@ function fmSwitchBackend(backend, startPath) {
 }
 
 async function fmBrowse(p) {
-  const r = await fetch("/api/browse?backend=" + fmBackend + "&path=" + encodeURIComponent(p)).then(r => r.json());
-  if (!r.success) return;
+  const key = fmBackend + '|' + p;
+  let r = null;
+  let fromCache = false;
+  try {
+    const res = await fetch("/api/browse?backend=" + fmBackend + "&path=" + encodeURIComponent(p));
+    if (res.headers.get('x-hub-offline') === '1') fromCache = true; // кеш из offline.js (localStorage)
+    const j = await res.json();
+    if (j && j.success) { r = j; if (!fromCache) fsCachePutList(key, j); }
+    else if (j && j.offline) { /* сервер недоступен — ниже упадём в кеш */ }
+    else r = j;
+  } catch (e) { /* network/parse error */ }
+  if (!r || !r.success) {
+    const c = await fsCacheGetList(key);
+    if (c && c.json && c.json.success) { r = c.json; fromCache = true; fmCacheInfo = 'кеш'; }
+  }
+  if (fromCache) fmCacheInfo = fromCache ? 'кеш (' + (r.path || p) + ')' : '';
+  else if (r && r.success) fmCacheInfo = '';
+  if (!r || !r.success) {
+    const list = document.getElementById("fm-list");
+    if (list) list.innerHTML = '<div style="padding:20px;color:var(--t3);text-align:center">Сервер недоступен, данных в кеше нет</div>';
+    return;
+  }
   fmCurrentPath = r.path;
   const pathEl = document.getElementById("fm-path");
   if (pathEl) pathEl.value = fmBackend === "local" ? "" : "[" + fmBackend + "] " + r.path;
@@ -67,6 +118,7 @@ async function fmBrowse(p) {
     div.dataset.path = escHtml(item.path);
     div.dataset.name = escHtml(item.name);
     div.dataset.isdir = item.isDir ? "1" : "0";
+    div.dataset.size = String(item.size || 0);
     div.onclick = function() { fmTap(this); };
     const iconSpan = document.createElement("span");
     iconSpan.className = "fm-ico";
@@ -88,7 +140,7 @@ async function fmBrowse(p) {
   // Восстановление пути в поле ввода для локального бэкенда
   const inp = document.getElementById("fm-path");
   if (inp) inp.value = fmBackend.indexOf(':') > -1 ? '[' + fmBackend + '] ' + r.path : r.path;
-  if (infoEl) infoEl.textContent = items.length + " элементов | " + fmBackend;
+  if (infoEl) infoEl.textContent = (fromCache ? '🧊 ' + fmCacheInfo + ' · ' : '') + items.length + " элементов | " + fmBackend;
 }
 
 function fmTap(el) {
@@ -135,14 +187,32 @@ function fmDownloadMulti() {
   const items = sel.length ? sel : (fmSelected ? [{ dataset: { path: fmSelected } }] : []);
   items.forEach(el => {
     const p = el.dataset.path;
-    if (p) dlNow('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p), String(p).split(/[/\\]/).pop());
+    if (!p) return;
+    const name = String(p).split(/[/\\]/).pop();
+    if (HubOffline && HubOffline.isOffline) {
+      fsCacheGetBlob(fmBackend + '|' + p).then(rec => {
+        if (rec && rec.blob) fmSaveBlob(rec.blob, name);
+        else fmInfo('Нет связи, в кеше нет: ' + name);
+      });
+    } else {
+      dlNow('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p), name);
+      fmWarm(p);
+    }
   });
 }
 
 function fmDownloadSingle() {
   if (!fmSelected) return;
   const name = String(fmSelected).split(/[/\\]/).pop();
+  if (HubOffline && HubOffline.isOffline) {
+    fsCacheGetBlob(fmBackend + '|' + fmSelected).then(rec => {
+      if (rec && rec.blob) { fmSaveBlob(rec.blob, name); fmInfo('🧊 Из кеша: ' + name); }
+      else fmInfo('Нет связи и файла в кеше');
+    });
+    return;
+  }
   dlNow('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(fmSelected), name);
+  fmWarm(fmSelected);
 }
 
 function toggleFmMenu(e) {
@@ -296,9 +366,139 @@ async function fmRename() {
   fmRefresh();
 }
 
+// ─── КЕШ НА УСТРОЙСТВЕ (IndexedDB) ───
+// Кнопка «💾 В кеш»: скачивает выбранный файл на устройство (в IndexedDB) или
+// рекурсивно — всю папку. Пока сервер жив — данные есть в кеше; если раннер
+// умер, файлы/папки продолжают работать через fmOpenView/fmDownload, которые
+// при недоступности сервера берут содержимое из кеша (как PWA).
+
+function fmCacheSelection() {
+  const sel = [...document.querySelectorAll('#fm-list .fm-item.fm-sel')];
+  if (!sel.length && fmSelected) {
+    const all = [...document.querySelectorAll('#fm-list .fm-item')];
+    const hit = all.find(e => e.dataset.path === fmSelected);
+    if (hit) sel.push(hit);
+  }
+  if (!sel.length) { fmInfo('Выберите файл или папку'); return; }
+  const real = sel.filter(Boolean);
+  const count = real.length;
+  let ok = 0;
+  (async () => {
+    for (const el of real) {
+      const p = el.dataset.path;
+      const isDir = el.dataset.isdir === '1';
+      if (!p) continue;
+      const done = isDir ? await fmCacheFolder(p) : await fmCacheOneFile(p, true);
+      if (done) ok++;
+    }
+    fmInfo('💾 В кеш сохранено: ' + ok + ' из ' + count + (HubOffline && HubOffline.isOffline ? ' (офлайн)' : ''));
+  })();
+}
+async function fmCacheOneFile(p, force) {
+  const key = fmBackend + '|' + p;
+  if (!force) {
+    const ex = await fsCacheGetBlob(key);
+    if (ex && ex.blob) return true;
+  }
+  try {
+    const res = await fetch('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p));
+    if (!res.ok) return false;
+    const blob = await res.blob();
+    if (!blob || !blob.size) return false;
+    await fsCachePutBlob(key, blob);
+    return true;
+  } catch (e) { return false; }
+}
+async function fmCacheFolder(p) {
+  // Рекурсивный обход папки с лимитом, чтобы не забить устройство.
+  const MAX = 40 * 1024 * 1024;
+  let total = 0, files = [];
+  const walk = async (dir) => {
+    if (total > MAX) return;
+    const r = await fetch('/api/browse?backend=' + fmBackend + '&path=' + encodeURIComponent(dir)).then(r => r.json()).catch(() => null);
+    if (!r || !r.success) return;
+    fsCachePutList(fmBackend + '|' + dir, r);
+    for (const it of (r.items || [])) {
+      if (total > MAX) return;
+      if (it.isDir) await walk(it.path);
+      else files.push(it.path);
+    }
+  };
+  await walk(p);
+  let saved = 0;
+  for (const f of files) {
+    if (total > MAX) break;
+    const b = await (async () => { try { const r = await fetch('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(f)); if (!r.ok) return null; const x = await r.blob(); total += x.size; return x; } catch (e) { return null; } })();
+    if (b && b.size) { await fsCachePutBlob(fmBackend + '|' + f, b); saved++; }
+  }
+  return files.length ? saved > 0 : true;
+}
+// Скачивание: если сервер жив — как обычно, идущее мимо кеша содержимое
+// параллельно сохраняем в IndexedDB. Если офлайн — берём блоб из кеша.
 function fmDownload() {
   if (!fmSelected) return;
-  window.open(`/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`);
+  const url = `/api/fs/download?backend=${fmBackend}&path=${encodeURIComponent(fmSelected)}`;
+  const name = String(fmSelected).split(/[/\\]/).pop();
+  if (HubOffline && HubOffline.isOffline) {
+    fsCacheGetBlob(fmBackend + '|' + fmSelected).then(rec => {
+      if (rec && rec.blob) { fmSaveBlob(rec.blob, name); fmInfo('🧊 Из кеша: ' + name); }
+      else fmInfo('Нет связи и файла в кеше');
+    });
+    return;
+  }
+  window.open(url);
+  fmWarm(fmSelected); // тёплая загрузка в фоне (в пределах разумного размера)
+}
+function fmSaveBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+
+// Авто-кеш при открытии/скачивании: только файлы, у которых известен размер
+// и он в разумных пределах (≤ 50 МБ). Гигабайтные видео в фоне не качаем.
+const FM_WARM_MAX = 50 * 1024 * 1024;
+function fmWarm(filePath) {
+  const item = [...document.querySelectorAll('#fm-list .fm-item')]
+    .find(e => e.dataset.path === filePath);
+  const size = item ? (parseInt(item.dataset.size, 10) || 0) : 0;
+  if (!size || size > FM_WARM_MAX) return;
+  fmCacheOneFile(filePath, false);
+}
+
+// Открыть выбранный файл в новой вкладке: браузер сам покажет любой формат
+// (картинка, PDF, видео, аудио, HTML, JSON, код) через inline-отдачу.
+function fmOpenView() {
+  if (!fmSelected) return;
+  const list = document.querySelectorAll('#fm-list .fm-item.fm-sel');
+  if (list.length > 1) { fmInfo('Выберите один файл для просмотра во вкладке.'); return; }
+  const item = [...document.querySelectorAll('#fm-list .fm-item.fm-sel')]
+    .find(el => el.dataset.path === fmSelected);
+  if (item && item.dataset.isdir === '1') { fmInfo('Это папка — для просмотра выберите файл.'); return; }
+  const url = `/api/fs/view?backend=${encodeURIComponent(fmBackend)}&path=${encodeURIComponent(fmSelected)}`;
+  if (HubOffline && HubOffline.isOffline) {
+    fsCacheGetBlob(fmBackend + '|' + fmSelected).then(rec => {
+      if (rec && rec.blob) {
+        const name = String(fmSelected).split(/[/\\]/).pop();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(rec.blob);
+        a.download = name;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+        fmInfo('🧊 Показан из кеша: ' + name);
+      } else {
+        fmInfo('Нет связи и файла в кеше — откройте вкладку при онлайн-доступе');
+      }
+    });
+    return;
+  }
+  fmWarm(fmSelected); // тёплая загрузка в кеш в фоне
+  window.open(url, '_blank', 'noopener');
 }
 
 function fmArchive() {

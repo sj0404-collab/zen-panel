@@ -36,11 +36,18 @@ const mimeForPath = (p) => {
     '.zst': 'application/zstd', '.7z': 'application/x-7z-compressed', '.rar': 'application/vnd.rar',
     '.deb': 'application/vnd.debian.binary-package', '.rpm': 'application/x-rpm',
     '.jar': 'application/java-archive', '.png': 'image/png', '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg', '.pdf': 'application/pdf', '.html': 'text/html',
+    '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.bmp': 'image/bmp', '.ico': 'image/x-icon',
+    '.pdf': 'application/pdf', '.html': 'text/html',
     '.htm': 'text/html', '.json': 'application/json', '.xml': 'application/xml',
     '.txt': 'text/plain', '.md': 'text/plain', '.log': 'text/plain', '.js': 'application/javascript',
-    '.css': 'text/css', '.csv': 'text/csv', '.mp4': 'video/mp4', '.webm': 'video/webm',
-    '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.webp': 'image/webp',
+    '.mjs': 'application/javascript', '.cjs': 'application/javascript', '.css': 'text/css', '.csv': 'text/csv',
+    '.ts': 'text/plain', '.tsx': 'text/plain', '.py': 'text/plain', '.rb': 'text/plain', '.go': 'text/plain',
+    '.rs': 'text/plain', '.java': 'text/plain', '.c': 'text/plain', '.h': 'text/plain',
+    '.cpp': 'text/plain', '.hpp': 'text/plain', '.php': 'text/plain', '.sh': 'text/plain',
+    '.bat': 'text/plain', '.yml': 'text/plain', '.yaml': 'text/plain', '.ini': 'text/plain',
+    '.cfg': 'text/plain', '.conf': 'text/plain', '.toml': 'text/plain', '.sql': 'text/plain',
+    '.mp4': 'video/mp4', '.webm': 'video/webm', '.ogg': 'video/ogg',
+    '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.webp': 'image/webp', '.m4a': 'audio/mp4',
     '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff',
     '.ttf': 'font/ttf', '.otf': 'font/otf',
   })[ext] || 'application/octet-stream';
@@ -188,8 +195,12 @@ app.use((req, res, next) => {
 });
 
 // ── tool metadata: local = offline via Ollama/llama.cpp; free = no paid API key needed; keyEnv = env var required for runtime; phone = works well on mobile/Termux ──
+// Только реальные, официальные и бесплатные CLI-агенты + локальные рантаймы
+// (sesori-bridge, ollama). Проверено по npm/pypi/GitHub: фейки, дубли,
+// несуществующие пакеты и инструменты, требующие обязательной регистрации /
+// платных ключей, убраны.
 const TOOLS = [
-  // ── free / local — работают без ключей или через локальные модели (CL38: реальные рабочие) ──
+  // ── free / local — работают без ключей или через локальные модели ──
   { id: 'opencode', name: 'OpenCode', cmd: 'opencode', pkg: 'opencode-ai', color: '#00d4aa', icon: 'OC', local: true, free: true, keyEnv: null, phone: true },
   { id: 'aider', name: 'Aider', cmd: 'aider', pkg: null, color: '#79c0ff', icon: 'AD', local: true, free: true, keyEnv: null, phone: true, hint: 'pip install aider-chat' },
   { id: 'openclaw', name: 'OpenClaw', cmd: 'openclaw', pkg: 'openclaw', color: '#f2c66d', icon: 'CW', local: true, free: true, keyEnv: null, phone: true },
@@ -203,36 +214,8 @@ const TOOLS = [
   { id: 'aish', name: 'AI Shell (offline)', cmd: 'aish', pkg: '@offline-ai/ai-shell', color: '#a5d6ff', icon: 'AH', local: true, free: true, keyEnv: null },
   { id: 'utim', name: 'UTIM', cmd: 'utim', pkg: '@emend-ai/utim', color: '#7ee787', icon: 'UT', local: true, free: true, keyEnv: null },
   { id: 'cli-agent', name: 'CLI Agent', cmd: 'agent', pkg: null, color: '#f59e0b', icon: 'CA', local: true, free: true, keyEnv: null },
-  // ── phone-first / Termux-friendly agents ──
-  { id: 'sesori', name: 'Sesori', cmd: 'sesori', pkg: 'sesori', color: '#10b981', icon: 'SR', local: true, free: true, keyEnv: null, phone: true, hint: 'npm i -g sesori' },
-  { id: 'droid', name: 'Droid', cmd: 'droid', pkg: 'droid', color: '#56d4dd', icon: 'DR', local: true, free: true, keyEnv: null, phone: true, hint: 'npm i -g droid' },
-  { id: 'koda', name: 'Koda', cmd: 'koda', pkg: null, color: '#8b5cf6', icon: 'KO', local: true, free: true, keyEnv: null, phone: true },
-  { id: 'openclaude', name: 'OpenClaude', cmd: 'openclaude', pkg: null, color: '#06b6d4', icon: 'CL', local: true, free: true, keyEnv: null, phone: true },
-  { id: 'ai-shell', name: 'AI Shell', cmd: 'ais', pkg: 'ai-shell', color: '#ffa657', icon: 'AI', local: true, free: true, keyEnv: null, phone: true },
-  { id: 'amp', name: 'Amp', cmd: 'amp', pkg: '@sourcegraph/amp', color: '#f778ba', icon: 'AM', free: true, keyEnv: null, phone: true },
-  { id: 'codebuff', name: 'Codebuff', cmd: 'codebuff', pkg: 'codebuff', color: '#ffd602', icon: 'CF', free: true, keyEnv: null, phone: true },
-  // ── роутер / бесплатные провайдеры (требуют бесплатные API-ключи) ──
-  { id: 'gemini', name: 'Gemini CLI', cmd: 'gemini', pkg: '@google/gemini-cli', color: '#58a6ff', icon: 'GE', free: true, keyEnv: 'GEMINI_API_KEY', phone: true },
-  { id: 'qwen', name: 'Qwen Code', cmd: 'qwen', pkg: '@qwen-code/qwen-code', color: '#ef4444', icon: 'QW', free: true, keyEnv: 'DASHSCOPE_API_KEY', phone: true },
-  { id: 'mistral', name: 'Mistral CLI', cmd: 'mi', pkg: 'mistral-cli', color: '#ff7b72', icon: 'MI', free: true, keyEnv: 'MISTRAL_API_KEY', phone: true },
-  { id: 'omniroute', name: 'OmniRoute', cmd: 'omniroute', pkg: 'omniroute', color: '#ff7b72', icon: 'OM', free: true, keyEnv: 'OPENROUTER_API_KEY' },
-  { id: 'openrouter', name: 'OpenRouter', cmd: 'openrouter', pkg: null, color: '#6366f1', icon: 'OP', free: true, keyEnv: 'OPENROUTER_API_KEY' },
-  // ── платные API-ключи ──
-  { id: 'claude', name: 'Claude Code', cmd: 'claude', pkg: '@anthropic-ai/claude-code', color: '#d97706', icon: 'CC', free: false, keyEnv: 'ANTHROPIC_API_KEY' },
-  { id: 'codex', name: 'Muse', cmd: 'codex', pkg: '@openai/codex', color: '#e6e6e6', icon: 'CX', free: false, keyEnv: 'OPENAI_API_KEY' },
-  { id: 'copilot', name: 'Copilot CLI', cmd: 'copilot', pkg: '@github/copilot', color: '#bc8cff', icon: 'CP', free: false, keyEnv: 'GITHUB_TOKEN' },
-  { id: 'ccb', name: 'Claude Code (Rust)', cmd: 'ccb', pkg: null, color: '#d97706', icon: 'CB', free: false, keyEnv: 'ANTHROPIC_API_KEY' },
-  { id: 'cymela', name: 'Cymela', cmd: 'cymela', pkg: 'cymela', color: '#39c5cf', icon: 'CY', free: false, keyEnv: 'OPENROUTER_API_KEY' },
-  { id: 'kode', name: 'Kode', cmd: 'kode', pkg: '@shareai-lab/kode', color: '#79c0ff', icon: 'KD', free: false, keyEnv: 'OPENAI_API_KEY' },
-  { id: 'claude-flow', name: 'Claude Flow', cmd: 'claude-flow', pkg: 'claude-flow', color: '#ff9e64', icon: 'FL', free: false, keyEnv: 'ANTHROPIC_API_KEY' },
-  { id: 'auggie', name: 'Auggie', cmd: 'auggie', pkg: '@augmentcode/auggie', color: '#79c0ff', icon: 'AU', free: false, keyEnv: 'OPENAI_API_KEY' },
-  // ── утилиты / инфраструктура ──
-  { id: 'elizaos', name: 'ElizaOS', cmd: 'elizaos', pkg: '@elizaos/cli', color: '#7ee787', icon: 'EO', free: true, keyEnv: null },
-  { id: 'how2', name: 'how2', cmd: 'how2', pkg: 'how2', color: '#a5d6ff', icon: 'H2', free: true, keyEnv: null },
-  { id: 'n8n', name: 'n8n', cmd: 'n8n', pkg: 'n8n', color: '#ea4b71', icon: 'N8', free: true, keyEnv: null },
-  { id: 'smithery', name: 'Smithery', cmd: 'smithery', pkg: 'smithery', color: '#d2a8ff', icon: 'SM', free: true, keyEnv: null },
-  { id: 'mcp-inspector', name: 'MCP Inspector', cmd: 'mcp-inspector', pkg: '@modelcontextprotocol/inspector', color: '#8b949e', icon: 'MC', free: true, keyEnv: null },
-  { id: 'http-server', name: 'HTTP Server', cmd: 'http-server', pkg: 'http-server', color: '#22c55e', icon: 'HS', free: true, keyEnv: null }
+  // ── sesori-bridge: установка через официальный скрипт (npm-пакета sesori нет) ──
+  { id: 'sesori', name: 'Sesori', cmd: 'sesori-bridge', pkg: null, color: '#10b981', icon: 'SR', local: true, free: true, keyEnv: null, phone: true, hint: 'curl -fsSL https://sesori.com/install.sh | bash' }
 ];
 
 const storage = new StorageManager();
@@ -582,6 +565,25 @@ app.get('/api/fs/download', async (req, res) => {
     if (data === null || data === undefined) { res.end(); return; }
     res.end(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Inline view — the browser renders the file in a tab itself (image, PDF, video,
+// audio, HTML, JSON, plain-text/code: any format). Same binary-safe read as
+// download, but Content-Disposition: inline so nothing forced to save.
+app.get('/api/fs/view', async (req, res) => {
+  try {
+    const backend = storage.get(req.query.backend || 'local');
+    const filename = path.basename(req.query.path).replace(/[\r\n"]/g, '_');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-cache');
+    const data = await backend.readBinary(req.query.path);
+    if (data === null || data === undefined) { res.end(); return; }
+    // Serve code/text with utf-8; everything else keeps its own MIME from the map.
+    const type = mimeForPath(filename);
+    res.setHeader('Content-Type', type.startsWith('text/') || type === 'application/json'
+      ? type + '; charset=utf-8' : type);
+    res.end(data);
+  } catch (e) { res.status(e.statusCode && 404 || 500).json({ error: e.message }); }
 });
 
 // Binary-safe upload: raw body (the file bytes) + target in ?path=. This is
