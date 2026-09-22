@@ -1715,6 +1715,46 @@ const ptySend = (session, message) => {
   }
 };
 
+// Агент (opencode и др.) может умереть сам: упёрся в лимит модели, ошибка
+// провайдера. На pty-пути (Windows / без tmux) вместе с ним падает и оболочка,
+// и сессия удаляется — клиент дальше шлёт ввод в пустоту, терминал выглядит
+// «замороженным» и «не даёт нажать». Как в tmux (там остаётся живой bash),
+// поднимаем свежую оболочку в той же сессии, чтобы экран не был мёртвым.
+const respawnToolShell = (session) => {
+  if (!session || session.tmux || !session.toolCmd || session._respawned) return;
+  session._respawned = true;
+  const isWin = process.platform === 'win32';
+  const shell = isWin ? (process.env.COMSPEC || 'cmd.exe') : (process.env.SHELL || '/bin/sh');
+  try {
+    const p = pty.spawn(shell, [], {
+      name: 'xterm-256color',
+      cols: (session.pty && session.pty.cols) || 120,
+      rows: (session.pty && session.pty.rows) || 30,
+      cwd: session.cwd,
+      env: { ...process.env, TERM: 'xterm-256color', OPENROUTER_API_KEY: modelManager.getKeyForProvider('openrouter'), MODEL: modelManager.getSelectedModel(), OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1' }
+    });
+    session.pty = p;
+    const cdCmd = isWin ? `cd /d "${session.cwd}"` : `cd "${session.cwd}"`;
+    p.write(cdCmd + '\r');
+    ptySend(session, { type: 'output', id: session.id,
+      data: '\r\n\x1b[33m[Агент завершился — оболочка запущена заново. Нажми ⟲, чтобы перезапустить агента]\x1b[0m\r\n' });
+    p.onData((data) => {
+      session.output = (session.output + data).slice(-262144);
+      ptySend(session, { type: 'output', id: session.id, data });
+    });
+    p.onExit(({ exitCode }) => {
+      ptySend(session, { type: 'exit', id: session.id, code: exitCode });
+      deleteSessionMeta(session.id);
+      sessions.delete(session.id);
+    });
+  } catch (err) {
+    ptySend(session, { type: 'error', id: session.id, error: err.message });
+    try { session.pty && session.pty.write('\r'); } catch {}
+    deleteSessionMeta(session.id);
+    sessions.delete(session.id);
+  }
+};
+
 const attachPtyClient = (session, ws) => {
   session.clients.add(ws);
   session.lastLeave = 0;
@@ -1939,6 +1979,8 @@ wss.on('connection', (ws) => {
               ptySend(session, { type: 'output', id: session.id, data });
             });
             p.onExit(({ exitCode }) => {
+              respawnToolShell(session);
+              if (session.pty !== p) return;
               ptySend(session, { type: 'exit', id: session.id, code: exitCode });
               deleteSessionMeta(session.id);
               sessions.delete(session.id);

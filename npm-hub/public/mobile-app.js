@@ -1038,6 +1038,27 @@ function attachTermScroll(id, panel) {
   upd();
   return { upd, destroy() { arrStop(); if (ro) ro.disconnect(); window.removeEventListener('resize', resizeHandler); if (bufSub && bufSub.dispose) bufSub.dispose(); } };
 }
+// ── Спасение от «застывшего» агента ──
+// opencode и другие CLI-агенты при исчерпании лимита модели (особенно у
+// бесплатных OpenCode Zen) печатают полноэкранное уведомление/модалку и
+// перестают реагировать на клавиатуру — терминал выглядит «глючным, не даёт
+// нажать что-либо». Даём всегда кликабельный ♻ прямо поверх экрана.
+let __termRecoverT = null;
+function termRecoverHide() {
+  const bar = document.getElementById('term-recover');
+  if (bar) bar.classList.remove('on');
+  clearTimeout(__termRecoverT);
+}
+function termRecoverShow(note) {
+  const bar = document.getElementById('term-recover');
+  if (!bar) return;
+  const lbl = document.getElementById('term-recover-note');
+  if (lbl) lbl.textContent = note || '⚠ Агент упёрся в лимит модели';
+  bar.classList.add('on');
+  clearTimeout(__termRecoverT);
+  __termRecoverT = setTimeout(termRecoverHide, 25000);
+}
+const TERM_QUOTA_RE = /(quota|rate\s?limit|insufficient|429|402|credits|balance|лимит|квот|баланс|закончил|недостаточно|не хвата|оплат|продл|premium)/i;
 // ===== ТЕРМИНАЛ НА ПАЛЬЦЕ =====
 // Раньше: ЛЮБОЕ удержание дольше 600 мс копировало текст (а без выделения —
 // последние 200 строк буфера, то есть «весь экран»), а тап дольше 500 мс не
@@ -1255,9 +1276,10 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
       let m;
       try { m = JSON.parse(e.data); } catch { return; }
       if (m.type === 'pong') { tab.lastPong = Date.now(); return; }
-      if (m.type === 'output' && m.id === id) term.write(m.data);
+      if (m.type === 'output' && m.id === id) { term.write(m.data); if (TERM_QUOTA_RE.test(String(m.data || ''))) termRecoverShow('⚠ Агент упёрся в лимит модели — перезапустите'); }
       if (m.type === 'exit') {
-        term.write(`\r\n\x1b[33m[Exited ${m.code}]\x1b[0m\r\n`);
+        term.write(`\r\n\x1b[33m[Exited ${m.code} — нажми ⟲, чтобы перезапустить]\x1b[0m\r\n`);
+        termRecoverShow('⚠ Сессия завершилась — перезапустите агента');
         renderSidebar();
       }
       if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`);
@@ -1480,6 +1502,7 @@ async function copySelection() {
 
 function restartTerm() {
   if (!activeTab) return;
+  termRecoverHide();
   const toolId = activeTab.toolId;
   const cwd = activeTab.cwd || homeDir;
   closeTab(activeTab.id);
