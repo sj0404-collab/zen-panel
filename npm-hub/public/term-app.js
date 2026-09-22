@@ -173,8 +173,8 @@ function attachTab(meta) {
       let m; try { m = JSON.parse(e.data); } catch { return; }
       if (m.type === 'pong') { td.lastPong = Date.now(); return; }
       if (m.type === 'opened') { if (m.resumed) showResumed(1.5); }
-      if (m.type === 'output') term.write(m.data);
-      if (m.type === 'exit') term.write(`\r\n\x1b[33m[Exited ${m.code}]\x1b[0m\r\n`);
+      if (m.type === 'output') { term.write(m.data); if (TERM_QUOTA_RE.test(String(m.data || ''))) termRecoverShow('⚠ Агент упёрся в лимит модели — перезапустите'); }
+      if (m.type === 'exit') { term.write(`\r\n\x1b[33m[Exited ${m.code} — нажми ⟲, чтобы перезапустить]\x1b[0m\r\n`); termRecoverShow('⚠ Сессия завершилась — перезапустите агента'); }
       if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`);
     };
     socket.onerror = () => {
@@ -365,6 +365,28 @@ function syncZoom() {
   tabs.forEach(t => { t.term.options.fontSize = Math.round(14 * zoomLevel / 100); setTimeout(() => t.fitAddon?.fit(), 10); });
 }
 
+// ── Спасение от «застывшего» агента ──
+// opencode и другие CLI-агенты при исчерпании лимита модели (особенно у
+// бесплатных OpenCode Zen) печатают полноэкранное уведомление/модалку и
+// перестают реагировать на клавиатуру — терминал выглядит «глючным, не даёт
+// нажать что-либо». Даём всегда кликабельный ♻ прямо поверх экрана.
+let __termRecoverT = null;
+function termRecoverHide() {
+  const bar = document.getElementById('term-recover');
+  if (bar) bar.classList.remove('on');
+  clearTimeout(__termRecoverT);
+}
+function termRecoverShow(note) {
+  const bar = document.getElementById('term-recover');
+  if (!bar) return;
+  const lbl = document.getElementById('term-recover-note');
+  if (lbl) lbl.textContent = note || '⚠ Агент упёрся в лимит модели';
+  bar.classList.add('on');
+  clearTimeout(__termRecoverT);
+  __termRecoverT = setTimeout(termRecoverHide, 25000);
+}
+const TERM_QUOTA_RE = /(quota|rate\s?limit|insufficient|429|402|credits|balance|лимит|квот|баланс|закончил|недостаточно|не хвата|оплат|продл|premium)/i;
+
 // ===== TERMINAL SCROLLBAR (виртуальный ползунок, как мышка) =====
 function attachTermScroll(id, panel){
   const termEl=document.getElementById('term-'+id);
@@ -523,6 +545,7 @@ function sendEscape() {
 }
 function restartTerm() {
   if (!activeTab) return;
+  termRecoverHide();
   activeTab.lastPong = 0;
   activeTab.ws?.close();
   if (activeTab.reconnectTimer) { clearTimeout(activeTab.reconnectTimer); activeTab.reconnectTimer = null; }
