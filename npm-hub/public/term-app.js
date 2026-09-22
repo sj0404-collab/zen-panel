@@ -28,12 +28,39 @@ function persistTabs() {
   try { localStorage.setItem(LS_KEY, JSON.stringify(tabs.map(t => ({ id: t.id, toolId: t.toolId, cwd: t.cwd, toolName: t.toolName, color: t.color, icon: t.icon, dirShort: t.dirShort })))); } catch (e) {}
 }
 
+function fmtClockMs(ms) {
+  const t = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60);
+  return h ? h + 'ч ' + m + 'м' : m + 'м';
+}
+async function sessionClock() {
+  const el = document.getElementById('sess-clock');
+  if (!el) return;
+  let j;
+  try { j = await fetch('/api/info').then(r => r.json()); } catch (e) { return; }
+  const ses = j.session;
+  if (!ses) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  if (!ses.limitMs) {
+    el.textContent = '🕒 ' + fmtClockMs(ses.elapsedMs);
+    el.className = 'sess-clock';
+    return;
+  }
+  const hours = Math.round(ses.limitMs / 3600000);
+  el.textContent = '🕒 ' + fmtClockMs(ses.elapsedMs) + ' / ' + hours + 'ч · осталось ' + fmtClockMs(ses.remainingMs);
+  const min = ses.remainingMs / 60000;
+  el.className = 'sess-clock ' + (min < 10 ? 'bad' : (min < 30 ? 'warn' : ''));
+  el.title = 'Раннер: осталось ' + fmtClockMs(ses.remainingMs) + ' (джоба убивается на 6-м часу)';
+}
+
 async function init() {
   const [toolsR, infoR, histR] = await Promise.all([
     fetch('/api/tools').then(r => r.json()).catch(() => ({ success: false })),
     fetch('/api/info').then(r => r.json()).catch(() => ({ success: false })),
     fetch('/api/path-history').then(r => r.json()).catch(() => ({ success: false }))
   ]);
+  sessionClock();
+  setInterval(sessionClock, 30000);
   if (toolsR.success) tools = toolsR.tools || [];
   if (infoR.home) homeDir = infoR.home;
   if (histR.success) recentPaths = histR.recentPaths || [];

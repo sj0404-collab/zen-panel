@@ -160,7 +160,11 @@ jobs:
           echo "HUB_LOGS=$HUB_LOGS HOME=$HOME $(ls -ld "$HUB_LOGS" 2>&1)"
           cd "$GITHUB_WORKSPACE/fork/npm-hub"
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
-          HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 nohup node src/server.js > $HUB_LOGS/hub.log 2>&1 &
+          # Persist the runner session start so the panel clock survives a hub
+          # restart (watchdog) without resetting "how much of the 6h is left".
+          SESSION_FILE="$HOME/.npm-hub/session-start"
+          [ -f "$SESSION_FILE" ] || date +%s000 > "$SESSION_FILE"
+          HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 SESSION_STARTED_MS="$(cat "$SESSION_FILE")" SESSION_LIMIT_MS=21600000 nohup node src/server.js > $HUB_LOGS/hub.log 2>&1 &
           for i in $(seq 1 60); do
             body=$(curl -s -m 15 -H "x-hub-token: ${{ inputs.token }}" "http://127.0.0.1:8090/api/tools" || true)
             echo "$body" | grep -q '"warming":false' && break
@@ -264,7 +268,8 @@ jobs:
               # suicide - measured the hard way.
               pkill -f "src/server[.]js" 2>/dev/null || true
               cd "$HUBDIR"
-              HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 nohup node src/server.js >> $HUB_LOGS/hub.log 2>&1 &
+              SESSION_STARTED_MS="$(cat "$HOME/.npm-hub/session-start" 2>/dev/null || date +%s000)"
+              HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 SESSION_STARTED_MS="$SESSION_STARTED_MS" SESSION_LIMIT_MS=21600000 nohup node src/server.js >> $HUB_LOGS/hub.log 2>&1 &
               sleep 5
             fi
             CUR=$(cat $HUB_LOGS/hub-url 2>/dev/null || echo)
@@ -452,6 +457,10 @@ jobs:
           # without them pwsh waits on the child's stdout forever.
           $env:PORT = '8090'
           $env:HUB_TOKEN = '${{ inputs.token }}'; $env:GH_TOKEN = '${{ inputs.gh_token }}'
+          $SESSION_FILE = "$env:USERPROFILE\.npm-hub\session-start.txt"
+          if (-not (Test-Path $SESSION_FILE)) { [System.IO.Directory]::CreateDirectory((Split-Path $SESSION_FILE)); [IO.File]::WriteAllText($SESSION_FILE, [string][int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())) }
+          $env:SESSION_STARTED_MS = ([IO.File]::ReadAllText($SESSION_FILE)).Trim()
+          $env:SESSION_LIMIT_MS = "21600000"
           cmd /c start "" /b node src/server.js `
             "1>$env:TEMP\hub.log" "2>$env:TEMP\hub.err"
 
@@ -563,6 +572,10 @@ jobs:
               Set-Location $hubDir
               $env:PORT = '8090'
               $env:HUB_TOKEN = '${{ inputs.token }}'; $env:GH_TOKEN = '${{ inputs.gh_token }}'
+              $SESSION_FILE = "$env:USERPROFILE\.npm-hub\session-start.txt"
+              $env:SESSION_STARTED_MS = ((Get-Content $SESSION_FILE -Raw -ErrorAction SilentlyContinue).Trim())
+              if (-not $env:SESSION_STARTED_MS) { $env:SESSION_STARTED_MS = [string][int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) }
+              $env:SESSION_LIMIT_MS = "21600000"
               cmd /c start "" /b node src/server.js "1>>$env:TEMP\hub.log" "2>>$env:TEMP\hub.err"
               Start-Sleep -Seconds 5
             }

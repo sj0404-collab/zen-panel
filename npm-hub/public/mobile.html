@@ -27,6 +27,9 @@
     .logo{font-size:16px;font-weight:800;background:linear-gradient(135deg,var(--acc),var(--pur));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
     .logo .hub-ver{font-size:9px;font-weight:600;color:var(--t3);-webkit-text-fill-color:var(--t3);background:none;margin-left:4px;vertical-align:super}
     .topbar-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+    .sess-clock{font-size:11px;color:var(--t2);font-family:monospace;padding:4px 8px;border-radius:10px;background:rgba(139,148,158,.08);white-space:nowrap}
+    .sess-clock.warn{color:var(--warn);background:rgba(210,153,34,.12)}
+    .sess-clock.bad{color:var(--err);background:rgba(248,81,73,.12);font-weight:700}
     .access-badge{font-size:11px;padding:4px 10px;border-radius:10px;font-weight:600}
     .access-local{color:var(--ok);background:rgba(63,185,80,.12)}
     .access-remote{color:var(--warn);background:rgba(210,153,34,.12)}
@@ -224,6 +227,7 @@
     <div class="logo">◆ NPM Hub <span id="hub-ver" class="hub-ver"></span></div>
     <div class="topbar-right">
       <button class="btn btn-sm" onclick="hubUpdate()" id="hub-update-btn" style="font-size:12px;padding:6px 8px" title="Проверить обновления на GitHub">🔄</button>
+      <span id="sess-clock" class="sess-clock" title="Сессия раннера: сколько уже прошло из лимита (джоба убивается на 6-м часу без предупреждения)">…</span>
       <div style="position:relative">
         <button class="btn btn-sm" onclick="toggleModelMenu(event)" id="model-btn" style="font-size:12px;padding:6px 10px">
           <span id="model-name">OWL Alpha</span> ▾
