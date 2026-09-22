@@ -117,6 +117,7 @@ function renderTopbar() {
     <div class="topbar-nav">${nav}</div>
     <div class="topbar-right">
       <button class="btn btn-sm" onclick="hubUpdate()" id="hub-update-btn" title="Проверить обновления на GitHub">🔄<span id="hub-update-badge" class="update-badge" style="display:none"></span></button>
+      <span id="sess-clock" class="sess-clock" title="Сессия раннера: сколько уже прошло из лимита (джоба убивается на 6-м часу без предупреждения)">…</span>
       <span class="access-badge" id="access-mode"></span>
       <a id="web-login-link" class="tunnel-url" href="${location.href || '/d'}" target="_blank" rel="noopener" onclick="webLoginClick(event)">Войти через веб</a>
       <span id="access-ip" style="font-size:10px;color:var(--t3)"></span>
@@ -137,6 +138,35 @@ function copyTunnelUrl() {
     const el = document.getElementById('tunnel-url');
     if (el) el.textContent = 'нет туннеля';
   }
+}
+
+// ── Runner session clock ──
+// The GitHub Actions job that hosts this hub is killed at six hours without
+// warning, so «how much has passed / how much is left» decides whether to start
+// something long or wrap up. Elapsed only when the workflow passed no limit;
+// amber under 30 minutes, red under 10.
+function fmtClockMs(ms) {
+  const t = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60);
+  return h ? h + 'ч ' + m + 'м' : m + 'м';
+}
+async function sessionClock() {
+  const el = document.getElementById('sess-clock');
+  if (!el) return;
+  let j;
+  try { j = await fetch('/api/info').then(r => r.json()); } catch (e) { return; }
+  const ses = j.session;
+  if (!ses) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  if (!ses.limitMs) {
+    el.textContent = '🕒 ' + fmtClockMs(ses.elapsedMs);
+    el.className = 'sess-clock';
+    return;
+  }
+  const hours = Math.round(ses.limitMs / 3600000);
+  el.textContent = '🕒 ' + fmtClockMs(ses.elapsedMs) + ' / ' + hours + 'ч · осталось ' + fmtClockMs(ses.remainingMs);
+  const min = ses.remainingMs / 60000;
+  el.className = 'sess-clock ' + (min < 10 ? 'bad' : (min < 30 ? 'warn' : ''));
 }
 
 function webLoginClick(e) {
@@ -290,6 +320,8 @@ async function bridgeInit() {
     }
   };
   checkUpdateBadge();
+  sessionClock();
+  setInterval(sessionClock, 30000);
   if (typeof pageInit === 'function') pageInit();
   if (typeof bootstrapPage === 'function') bootstrapPage();
 }

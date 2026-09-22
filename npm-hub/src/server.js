@@ -393,7 +393,16 @@ app.get('/api/info', (req, res) => {
   const state = loadState();
   state.defaultEmulator = getDefaultEmulator();
   state.phoneRunner = getDefaultPhoneRunner();
-  res.json({ home: HOME, workDir: WORK_DIR, platform: process.platform, ...hubBuildInfo(), ...getAccessInfo(req), state });
+  // Runner session clock. The GitHub Actions job that hosts this hub is killed
+  // at six hours without warning, so the panel has to show "how much left" —
+  // that difference decides whether to start something long or wrap up.
+  // SESSION_LIMIT_MS/SESSION_STARTED_MS come from the workflow; the defaults
+  // assume the 6-hour runner and fall back to this process's own age.
+  const limitMs = parseInt(process.env.SESSION_LIMIT_MS || '21600000', 10) || 0;
+  const startedMs = parseInt(process.env.SESSION_STARTED_MS || '0', 10) || (Date.now() - Math.round(process.uptime() * 1000));
+  const elapsedMs = Date.now() - startedMs;
+  res.json({ home: HOME, workDir: WORK_DIR, platform: process.platform, ...hubBuildInfo(), ...getAccessInfo(req), state,
+    session: { startedMs, elapsedMs, limitMs, remainingMs: limitMs ? Math.max(0, limitMs - elapsedMs) : null } });
 });
 
 // ─── NETWORKS — all IPs for phone access ───
@@ -1832,7 +1841,10 @@ const tmuxWake = (session) => { if (session.tmux && session.clients.size > 0) tm
 
 wss.on('connection', (ws) => {
   let session = null;
-  ws.isAlive = true;
+  // Liveness is activity-based (see the heartbeat below): the client sends an
+  // application-level {type:'ping'} every 15s while alive, and data frames
+  // travel through proxies/tunnels that do NOT relay WebSocket control frames.
+  ws.lastSeen = Date.now();
   // A phone/network drop can emit `error` before `close`. Without a listener
   // Node treats that event as uncaught and takes down the entire hub, which
   // disconnects every terminal tab at once. Detach only this client; the tmux
@@ -1840,9 +1852,9 @@ wss.on('connection', (ws) => {
   ws.on('error', () => {
     if (session) detachPtyClient(session, ws);
   });
-  ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (raw) => {
+    ws.lastSeen = Date.now();
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
 
@@ -1990,15 +2002,19 @@ wss.on('error', err => {
   console.log('  ⚠ terminal websocket: ' + (err.message || err));
 });
 
-// Heartbeat: protocol-level ping/pong lets the server reap clients that died
-// without a close frame (mobile radio drops, tunnel flaps). Without it, dead
-// sockets would stay attached to sessions forever and the tmux poller would
-// keep streaming to ghosts, while every reconnect appended another zombie.
+// Heartbeat: reap clients that died without a close frame (mobile radio drops,
+// tunnel flaps). Liveness is activity-based on purpose: every live client sends
+// an application-level {type:'ping'} every 15s, and data frames travel through
+// proxies and tunnels that do NOT relay WebSocket control frames. A heartbeat
+// that depended on protocol-level ping/pong therefore terminated perfectly
+// healthy sockets at random intervals — the «обрыв соединения» users saw — so
+// we instead reap only a socket that has been silent for well over two minutes.
 setInterval(() => {
+  const now = Date.now();
   for (const ws of wss.clients) {
-    if (!ws.isAlive) { try { ws.terminate(); } catch {} continue; }
-    ws.isAlive = false;
-    try { ws.ping(); } catch { try { ws.terminate(); } catch {} }
+    if (now - (ws.lastSeen || now) > 120000) {
+      try { ws.terminate(); } catch {}
+    }
   }
 }, 30000);
 

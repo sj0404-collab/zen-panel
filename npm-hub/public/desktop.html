@@ -22,6 +22,9 @@
     .tb{padding:5px 12px;border-radius:6px;border:none;background:transparent;color:var(--t2);font-size:11px;font-weight:500;cursor:pointer;transition:all .12s}
     .tb:hover{background:var(--bg4);color:var(--t1)}.tb.on{background:var(--bg4);color:var(--acc)}
     .topbar-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+    .sess-clock{font-size:10px;color:var(--t2);font-family:monospace;padding:3px 8px;border-radius:10px;background:rgba(139,148,158,.08);white-space:nowrap}
+    .sess-clock.warn{color:var(--warn);background:rgba(210,153,34,.12)}
+    .sess-clock.bad{color:var(--err);background:rgba(248,81,73,.12);font-weight:700}
     .access-badge{font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600}
     .access-local{color:var(--ok);background:rgba(63,185,80,.12)}
     .access-remote{color:var(--warn);background:rgba(210,153,34,.12)}
@@ -195,6 +198,7 @@
     </div>
     <div class="topbar-right">
       <button class="btn btn-sm" onclick="hubUpdate()" id="hub-update-btn" title="Проверить обновления на GitHub">🔄<span id="hub-update-badge" style="display:none"></span></button>
+      <span id="sess-clock" class="sess-clock" title="Сессия раннера: сколько уже прошло из лимита (джоба убивается на 6-м часу без предупреждения)">…</span>
       <div style="position:relative">
         <button class="btn" onclick="toggleModelMenu(event)" id="model-btn" style="font-size:10px">
           <span id="model-name">OWL Alpha</span> ▾

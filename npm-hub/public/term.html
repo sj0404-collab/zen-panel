@@ -27,6 +27,9 @@
     .tc-btn{width:26px;height:26px;border-radius:5px;border:1px solid var(--bdr);background:var(--bg3);color:var(--t2);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .1s;flex-shrink:0}
     .tc-btn:hover{background:var(--bdr);color:var(--t1)}
     .zoom-label{font-size:10px;color:var(--t3);min-width:36px;text-align:center;font-family:monospace}
+    .sess-clock{font-size:10px;color:var(--t2);font-family:monospace;padding:3px 8px;border-radius:10px;background:rgba(139,148,158,.08);white-space:nowrap;flex-shrink:0;margin-left:6px}
+    .sess-clock.warn{color:var(--warn);background:rgba(210,153,34,.12)}
+    .sess-clock.bad{color:var(--err);background:rgba(248,81,73,.12);font-weight:700}
     .sessions-wrap{position:relative;flex-shrink:0;border-left:1px solid var(--bdr);padding:0 6px;display:flex;align-items:center}
     .sessions-btn{width:26px;height:26px;border-radius:5px;border:1px solid var(--bdr);background:var(--bg3);color:var(--pur);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center}
     .sessions-btn:hover{background:var(--bdr)}
@@ -108,6 +111,7 @@
       <button class="tc-btn" onclick="zoomTerm(1)">+</button>
       <button class="tc-btn" onclick="toggleFullscreen()">⛶</button>
     </div>
+    <span id="sess-clock" class="sess-clock" title="Сессия раннера: сколько уже прошло из лимита (джоба убивается на 6-м часу без предупреждения)">…</span>
     <div class="sessions-wrap">
       <button class="sessions-btn" onclick="toggleSessions(event)" title="Сессии на сервере">☰</button>
       <div class="sessions-panel" id="sessions-panel">

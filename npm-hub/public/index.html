@@ -44,7 +44,7 @@
       </a>
     </div>
   </div>
-  <div class="footer">NPM Hub <span id="hub-version">…</span></div>
+  <div class="footer">NPM Hub <span id="hub-version">…</span> · <span id="sess-clock" style="display:inline-block;margin-left:4px">🕒 …</span></div>
   <script src="offline.js"></script>
   <script>
     // Open in a real (system) browser tab instead of staying inside the app WebView.
@@ -56,13 +56,27 @@
       }
       return true;
     }
-    (async () => {
+    function fmtMs(ms) {
+      const t = Math.max(0, Math.round(ms / 1000));
+      const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60);
+      return h ? h + 'ч ' + m + 'м' : m + 'м';
+    }
+    async function hubInfo() {
       try {
         const r = await fetch('/api/info');
         const j = await r.json();
         document.getElementById('hub-version').textContent = j.version || '';
+        const ses = j.session;
+        const el = document.getElementById('sess-clock');
+        if (el && ses) {
+          el.textContent = ses.limitMs
+            ? '🕒 ' + fmtMs(ses.elapsedMs) + ' / ' + Math.round(ses.limitMs / 3600000) + 'ч · осталось ' + fmtMs(ses.remainingMs)
+            : '🕒 ' + fmtMs(ses.elapsedMs);
+        }
       } catch (e) {}
-    })();
+    }
+    hubInfo();
+    setInterval(hubInfo, 30000);
   </script>
 </body>
 </html>
