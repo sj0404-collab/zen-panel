@@ -135,6 +135,7 @@ async function init() {
   await restoreServerSessions();
   renderDashboard(); renderSidebar();
   setTimeout(() => { initFM(); fmBrowse(workDir || homeDir); }, 300);
+  chromeProfileStatus();
 }
 
 function updateModelButton() {
@@ -1572,6 +1573,17 @@ function fmUploadFolder() {
   input.click();
 }
 
+async function fmOpenScreen() {
+  if (!fmSelected) return;
+  const isDir = document.querySelector('#fm-list .fm-item.fm-sel[data-isdir="1"]') != null;
+  const url = location.origin + (isDir
+    ? '/api/fs/archive?path=' + encodeURIComponent(fmSelected)
+    : '/api/fs/download?inline=1&path=' + encodeURIComponent(fmSelected));
+  linuxRunBrowser(url);
+  showPage('linux');
+  setTimeout(() => linuxConnect(), 800);
+}
+
 function gitFmDefaultMsg() {
   const d = new Date();
   const p = n => String(n).padStart(2, '0');
@@ -2872,6 +2884,31 @@ async function pulseSetVol(val) {
 }
 
 // ===== LINUX DESKTOP: launch browser on VNC =====
+async function chromeProfileStatus() {
+  const el = document.getElementById('chrome-profile-status');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/chrome/profile/status');
+    const d = await r.json();
+    if (d.success) {
+      el.textContent = d.exists ? '🌐 Chrome: ✓ профиль есть' : '🌐 Chrome: — профиль пуст';
+      el.className = 'tag ' + (d.exists ? 'tag-on' : 'tag-off');
+    } else {
+      el.textContent = '🌐 Chrome: ?';
+      el.className = 'tag tag-off';
+    }
+  } catch { el.textContent = '🌐 Chrome: ошибка'; el.className = 'tag tag-off'; }
+}
+
+async function chromeProfileClear() {
+  if (!(await fmConfirm('Удалить профиль Chrome? Вы выйдете из аккаунта Google.', 'Удалить'))) return;
+  try {
+    const r = await fetch('/api/chrome/profile/clear', { method: 'POST' });
+    const d = await r.json();
+    if (d.success) chromeProfileStatus();
+  } catch (e) { console.warn('chromeProfileClear:', e.message); }
+}
+
 async function linuxRunBrowser(url, vertical) {
   if (!url) return;
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;

@@ -581,6 +581,7 @@ async function fullStart(repoRoot) {
 }
 
 async function fullStartInner(repoRoot) {
+  state.browserOpen = false;
   state.note = 'building the desktop…';
   if (!state.firstStartAt) state.firstStartAt = Date.now();
   // Пакеты — ДО всего: без x11vnc/idesk/feh экран не поднимется никак.
@@ -600,6 +601,7 @@ async function fullStartInner(repoRoot) {
   await ensureShortcuts(process.env.PORT || 8090);
   await ensureAutostart();
   await ensureEssentials();
+  await ensureBrowser();
   if (!scriptOk) {
     const r = await Promise.race([scriptDone, sleep(45000).then(() => ({ ok: false, out: 'скрипт всё ещё работает — экран поднят своими силами' }))]);
     scriptOk = r.ok;
@@ -795,8 +797,33 @@ async function ensureEssentials() {
   return fixes.length > 0 || (await portOpen(VNC_PORT));
 }
 
-/** Re-spawn the desktop programs + x11vnc without touching Xvfb: the client
- *  reconnects and redraws, which is what clears a stale black screen. */
+/** Auto-start browser on the desktop if not already running. */
+async function ensureBrowser() {
+  if (state.browserOpen) return;
+  const browser = (await which('google-chrome')) ? 'google-chrome'
+    : (await which('chromium')) ? 'chromium'
+      : (await which('chromium-browser')) ? 'chromium-browser'
+        : (await which('firefox')) ? 'firefox' : null;
+  if (!browser) return;
+  const running = await pgrep(browser);
+  if (running) { state.browserOpen = true; return; }
+  const url = 'https://www.youtube.com';
+  const chromeFlags = '--no-sandbox --disable-dev-shm-usage --no-first-run --start-maximized';
+  await sh(`DISPLAY=${DISPLAY} nohup ${browser} ${chromeFlags} ${JSON.stringify(url)} >/dev/null 2>&1 &`, 8000);
+  state.browserOpen = true;
+  state.log('автозапуск браузера: ' + browser);
+}
+
+/** Ensure PulseAudio is running for audio continuity. */
+async function ensurePulseAudio() {
+  const chk = await sh('pulseaudio --check 2>&1; echo $?', 3000);
+  if (!chk.out || !chk.out.trim().endsWith('0')) {
+    await sh('pulseaudio --start --disallow-exit --exit-idle-time=-1 2>&1', 5000);
+    await sh('pactl set-sink-volume @DEFAULT_SINK@ 90% 2>/dev/null || true', 3000);
+    state.log('PulseAudio автостарт');
+  }
+}
+
 async function repair(repoRoot, why) {
   // Один запуск за раз: пока идёт старт/починка, новые не наслаиваются —
   // иначе два start_desktop.sh убивают Xvfb друг у друга (проверено).
@@ -939,6 +966,7 @@ async function tick() {
     tickCount++;
     if (x && icons && tickCount % 2 === 0) await lowerDesktopIcons();
     if (x && tickCount % 2 === 1) await dismissStrayDialogs();
+    if (x && tickCount % 3 === 0) await ensurePulseAudio();
     if (!x || !vnc || !ui || !wm || !icons || !bar) {
       const why = [!x && 'нет X', !wm && 'нет openbox', !icons && 'нет idesk (иконки)',
         !bar && 'нет tint2 (панель)', !vnc && `нет x11vnc:${VNC_PORT}`, !ui && 'нет noVNC-UI']
