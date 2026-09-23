@@ -1,0 +1,62 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "kilo": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Kilo Code Gateway",
+      "options": {
+        "baseURL": "https://api.kilo.ai/api/gateway/v1"
+      },
+      "models": {
+        "stepfun/step-3.7-flash:free": {
+          "name": "Step 3.7 Flash Free (vision)",
+          "attachment": true
+        },
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": {
+          "name": "Nemotron 3 Nano Omni 30B (vision+audio)",
+          "attachment": true
+        },
+        "dots-studio/dots-3-note-preview:free": {
+          "name": "Dots 3 Note Preview (vision)",
+          "attachment": true
+        },
+        "inclusionai/ling-3.0-flash-vl:free": {
+          "name": "Ling 3.0 Flash VL (vision)",
+          "attachment": true
+        },
+        "nex-agi/nex-n2.5-pro:free": {
+          "name": "Nex N2.5 Pro (vision)",
+          "attachment": true
+        },
+        "inclusionai/ling-3.0-flash-sante:free": {
+          "name": "Ling 3.0 Flash Sante (vision)",
+          "attachment": true
+        }
+      }
+    },
+    "ovh": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OVHcloud AI Endpoints",
+      "options": {
+        "baseURL": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1"
+      },
+      "models": {
+        "Qwen2.5-VL-72B-Instruct": {
+          "name": "Qwen2.5-VL 72B (vision)",
+          "attachment": true
+        }
+      }
+    }
+  },
+  "agent": {
+    "vision": {
+      "description": "Анализирует изображения через бесплатные вижн-модели без ключа (Kilo шаблон / OVH Qwen VL). Делегируй сюда любые вопросы «что на картинке». Поддерживает локальные файлы и URL.",
+      "mode": "subagent",
+      "model": "kilo/stepfun/step-3.7-flash:free",
+      "temperature": 0.2,
+      "permission": {
+        "edit": "deny"
+      }
+    }
+  }
+}
