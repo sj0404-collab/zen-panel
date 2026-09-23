@@ -2,7 +2,7 @@
  * Своя область видимости (/external-memory.html), чтобы страница-зеркало
  * открывалась даже когда хаб/раннер лежит: оболочка кешируется сеть-в-первую,
  * /api/... не перехватываем — зеркало живёт в IndexedDB и не зависит от сети. */
-var CACHE = 'vault-shell-v1';
+var CACHE = 'vault-shell-v2';
 
 var SHELL = [
   '/external-memory.html',
@@ -46,6 +46,9 @@ self.addEventListener('fetch', function (e) {
   if (req.mode === 'navigate' || /external-memory\.html|vault\.js|external-memory\.webmanifest|favicon\.svg/.test(url.pathname)) {
     e.respondWith(
       fetch(req).then(function (res) {
+        // Туннель жив, а хаб умер: приходит HTML 502/503. Это не успех —
+        // отдаём сохранённую копию и не кешируем страницу ошибки.
+        if (!res.ok) throw new Error('vault-shell ' + res.status);
         var copy = res.clone();
         caches.open(CACHE).then(function (c) { c.put(req, copy); });
         return res;
