@@ -13,6 +13,7 @@ function kickReconnect() {
     const s = t.ws;
     if (s && (s.readyState === WebSocket.OPEN || s.readyState === WebSocket.CONNECTING)) return;
     if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
+    hideCountdown(t.id);
     t.lastPong = 0;
     t.retry = 1000;
     try { if (t.connect) t.connect(); } catch (e) {}
@@ -56,6 +57,36 @@ function fmtClockMs(ms) {
   const t = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60);
   return h ? h + 'ч ' + m + 'м' : m + 'м';
+}
+
+// Обратный отсчёт до следующей попытки переподключения. Раньше в терминал
+// писалась строка «[Disconnected — reconnecting...]» — она копилась в буфере
+// при каждом обрыве и засоряла вывод. Теперь это компактный бейдж с
+// оставшимися секундами, который исчезает при восстановлении связи.
+function showCountdown(id, ms) {
+  const el = document.getElementById('cd-' + id);
+  const tab = tabs.find(t => t.id === id);
+  if (!el || !tab) return;
+  if (tab.cdTimer) { clearInterval(tab.cdTimer); tab.cdTimer = null; }
+  const end = Date.now() + ms;
+  const tick = () => {
+    const s = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+    if (s <= 0) {
+      clearInterval(tab.cdTimer); tab.cdTimer = null;
+      el.classList.remove('on');
+      return;
+    }
+    el.textContent = '⟳ ' + s + 'с';
+    el.classList.add('on');
+  };
+  tick();
+  tab.cdTimer = setInterval(tick, 500);
+}
+function hideCountdown(id) {
+  const tab = tabs.find(t => t.id === id);
+  if (tab && tab.cdTimer) { clearInterval(tab.cdTimer); tab.cdTimer = null; }
+  const el = document.getElementById('cd-' + id);
+  if (el) el.classList.remove('on');
 }
 async function sessionClock() {
   const el = document.getElementById('sess-clock');
@@ -159,14 +190,14 @@ function attachTab(meta) {
   const panel = document.createElement('div');
   panel.className = 'term-panel';
   panel.id = 'panel-' + id;
-  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span></div><div class="term-info">${dirShort}</div><button class="btn" style="padding:2px 8px;font-size:10px" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll"><button class="term-scroll-arr up">▲</button><div class="term-scroll-track"><div class="term-scroll-thumb"></div></div><button class="term-scroll-arr down">▼</button></div></div><div class="term-resumed" id="resumed-${id}">✓ Восстановлено</div>`;
+  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span></div><div class="term-info">${dirShort}</div><button class="btn" style="padding:2px 8px;font-size:10px" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll"><button class="term-scroll-arr up">▲</button><div class="term-scroll-track"><div class="term-scroll-thumb"></div></div><button class="term-scroll-arr down">▼</button></div></div><div class="term-cd" id="cd-${id}"></div><div class="term-resumed" id="resumed-${id}">✓ Восстановлено</div>`;
   document.getElementById('term-container').appendChild(panel);
   term.open(document.getElementById('term-' + id));
   setTimeout(() => fitAddon.fit(), 30);
 
   const td = {
     id, toolId: toolId === '_terminal' ? null : toolId, toolName: displayName, color, icon, dirShort, cwd,
-    term, fitAddon, el: panel, ws: null, manualClose: false, lastPong: 0, reconnectTimer: null, keepAlive: null, resizeObs: null, connect: () => {}
+    term, fitAddon, el: panel, ws: null, manualClose: false, lastPong: 0, reconnectTimer: null, keepAlive: null, resizeObs: null, cdTimer: null, connect: () => {}
   };
   tabs.push(td);
 
@@ -186,11 +217,13 @@ function attachTab(meta) {
   };
 
   const connect = () => {
+    hideCountdown(id);
     const socket = new WebSocket(`${protocol}//${location.host}/ws`);
     td.ws = socket;
     socket.onopen = () => {
       td.lastPong = Date.now();
       td.retry = 1000;
+      hideCountdown(id);
       opened();
       if (!isTouch) term.focus();
     };
@@ -205,12 +238,12 @@ function attachTab(meta) {
     socket.onclose = () => {
       if (td.manualClose) return;
       if (td.reconnectTimer) { clearTimeout(td.reconnectTimer); td.reconnectTimer = null; }
-      term.write('\r\n\x1b[33m[Disconnected — reconnecting...]\x1b[0m\r\n');
       // Backoff: хаб рестартует при обновлении — соединение должно выживать, а
       // не зацикливаться. Начало — 1с, каждая неудача ×1.5, потолок 20с.
       td.retry = td.retry || 1000;
       const delay = Math.min(td.retry, 20000);
       td.retry = Math.round(td.retry * 1.5);
+      showCountdown(id, delay);
       td.reconnectTimer = setTimeout(connect, delay);
     };
     socket.onerror = () => {
@@ -278,6 +311,7 @@ function closeTab(id) {
   const tab = tabs[idx];
   tab.manualClose = true;
   if (tab.keepAlive) clearInterval(tab.keepAlive);
+  if (tab.cdTimer) clearInterval(tab.cdTimer);
   if (tab.resizeObs) tab.resizeObs.disconnect();
   if (tab.scroll?.destroy) tab.scroll.destroy();
   if (tab.touchHandler?.destroy) tab.touchHandler.destroy();
