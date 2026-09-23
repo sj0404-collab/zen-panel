@@ -16,6 +16,7 @@
     :root{--bg0:#0a0e14;--bg1:#0d1117;--bg2:#161b22;--bg3:#1c2128;--bg4:#21262d;--bdr:#30363d;--t1:#e6edf3;--t2:#8b949e;--t3:#484f58;--acc:#58a6ff;--ok:#3fb950;--err:#f85149;--warn:#d29922;--pur:#bc8cff}
     html{overscroll-behavior:none}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg0);color:var(--t1);height:100dvh;overflow:hidden;display:flex;flex-direction:column;overscroll-behavior:none;touch-action:manipulation}
+    .page,.fm-list,.fm-sidebar,.drawer-body,.modal-list{overscroll-behavior:contain}
 
     /* ===== TOPBAR ===== */
     .topbar{height:48px;background:var(--bg2);display:flex;align-items:center;padding:0 12px;gap:8px;border-bottom:1px solid var(--bdr);flex-shrink:0;padding-top:max(0px,env(safe-area-inset-top))}
@@ -121,7 +122,7 @@
     /* ===== TERMINAL ===== */
     .term-page{display:none;flex:1;flex-direction:column;overflow:hidden}.term-page.on{display:flex}
     .term-topbar{display:flex;align-items:center;background:var(--bg1);border-bottom:1px solid var(--bdr);flex-shrink:0}
-    .tabs-row{display:flex;overflow-x:auto;flex:1;-webkit-overflow-scrolling:touch}
+    .tabs-row{display:flex;overflow-x:auto;flex:1;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y;overscroll-behavior:contain}
     .tab{display:flex;align-items:center;gap:6px;padding:10px 14px;font-size:13px;color:var(--t2);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;flex-shrink:0;-webkit-tap-highlight-color:transparent}
     .tab:active{background:var(--bg3)}.tab.on{color:var(--acc);border-bottom-color:var(--acc);background:var(--bg2)}
     .tab-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
@@ -162,7 +163,7 @@
     .term-scroll-thumb:active{background:var(--acc)}
 
     /* ===== FILE MANAGER ===== */
-    .fm-header{display:flex;gap:6px;padding:8px 0;margin-bottom:8px;flex-shrink:0;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none}.fm-header::-webkit-scrollbar{display:none}
+    .fm-header{display:flex;gap:6px;padding:8px 0;margin-bottom:8px;flex-shrink:0;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none;touch-action:pan-x pan-y;overscroll-behavior:contain}.fm-header::-webkit-scrollbar{display:none}
     .fm-header .btn{padding:8px 12px;font-size:13px}
     .fm-path-row{display:flex;gap:6px;margin-bottom:8px;flex-shrink:0}
     .fm-path-row input{flex:1;padding:8px 12px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;outline:none}
