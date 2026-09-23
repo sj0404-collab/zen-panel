@@ -21,7 +21,11 @@ if [ -z "${HUB_TOKEN:-}" ]; then
   echo "tip: HUB_TOKEN=... $0  to gate the hub with a token (?zt=)"
 fi
 echo "== starting npm-hub on :$PORT =="
-PORT="$PORT" nohup node "$ROOT/npm-hub/src/server.js" > "$HUB_LOGS/zen-hub.log" 2>&1 &
+if [ -n "${HOST_ALIAS:-}" ]; then
+  echo "== HOST_ALIAS=$HOST_ALIAS : hub will be reachable as http://$HOST_ALIAS:$PORT/ on this LAN =="
+  echo "   (the hub appends the alias to /etc/hosts itself; needs sudo once)"
+fi
+PORT="$PORT" HOST_ALIAS="${HOST_ALIAS:-}" nohup node "$ROOT/npm-hub/src/server.js" > "$HUB_LOGS/zen-hub.log" 2>&1 &
 echo "$!" > "$HUB_LOGS/zen-hub.pid"
 echo "hub pid $! (log $HUB_LOGS/zen-hub.log, stop with pc-local/stop.sh)"
 
@@ -37,5 +41,6 @@ else
   echo "no display - the desktop shell is skipped (headless machine)."
 fi
 echo "  hub:     http://localhost:$PORT/"
+if [ -n "${HOST_ALIAS:-}" ]; then echo "  lan:     http://$HOST_ALIAS:$PORT/  (local DNS, no tunnel)"; fi
 echo "  desktop: http://localhost:$PORT/d"
 echo "  mobile:  http://localhost:$PORT/m   (phone in the same LAN: http://<this-pc-ip>:$PORT/m)"

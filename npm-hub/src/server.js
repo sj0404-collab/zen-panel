@@ -79,6 +79,50 @@ try {
 } catch {}
 const PORT = process.env.PORT || 8090;
 const HOST = '0.0.0.0';
+// Local DNS alias, e.g. HOST_ALIAS=nmp.local → the hub is reachable as
+// http://nmp.local:PORT from every device on the LAN, DNS resolution done by
+// /etc/hosts alone - no external tunnel/DDNS service involved. Best-effort:
+// appending to /etc/hosts needs root, so it tries a plain write first (owner
+// or writable file), then `sudo -n tee` (password-less sudo), and degrades
+// silently: the alias field is simply not advertised when it cannot be
+// guaranteed. Both work and are reported through /api/networks + info.
+const HOST_ALIAS = String(process.env.HOST_ALIAS || '').trim().toLowerCase().replace(/^https?:\/\//, '');
+const HOSTS_FILE = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'drivers', 'etc', 'hosts') : '/etc/hosts';
+function lanIP() {
+  try {
+    for (const [name, iface] of Object.entries(os.networkInterfaces())) {
+      for (const cfg of iface) if (cfg.family === 'IPv4' && !cfg.internal) return cfg.address;
+    }
+  } catch {}
+  return '127.0.0.1';
+}
+const HOST_ALIAS_IP = lanIP();
+let hostAliasInstalled = false;
+async function ensureHostAlias() {
+  if (!HOST_ALIAS) return;
+  const line = `${HOST_ALIAS_IP}\t${HOST_ALIAS} # npm-hub\n`;
+  try {
+    const cur = fs.readFileSync(HOSTS_FILE, 'utf8');
+    const hit = cur.split('\n').some(l => l.trim() === `${HOST_ALIAS_IP}\t${HOST_ALIAS}` || l.includes(` ${HOST_ALIAS}`));
+    if (hit) { hostAliasInstalled = true; return; }
+    if (cur.includes(HOST_ALIAS)) {
+      // alias mapped elsewhere - leave it; a resolvable alias is better than none.
+      hostAliasInstalled = true; return;
+    }
+  } catch {}
+  for (const attempt of [
+    () => fs.appendFileSync(HOSTS_FILE, line),
+    () => require('child_process').execSync(`echo '${line}' | sudo -n tee -a '${HOSTS_FILE}'`, { timeout: 5000 }),
+  ]) {
+    try { attempt(); hostAliasInstalled = true; break; } catch {}
+  }
+}
+// How much terminal scrollback the hub keeps in memory for the reconnect
+// replay. 256KB hid almost everything once a build flooded a session:
+// reconnecting rolled back to "just the tail", so sessions looked reset.
+// 4MB (~a real terminal's worth) is configurable for low-memory runners.
+const SESSION_OUTPUT_CAP = parseInt(process.env.SESSION_OUTPUT_CAP || String(4 * 1024 * 1024), 10) || (4 * 1024 * 1024);
+const SESSION_OUTPUT_CHUNK = 64 * 1024; // replay frames this size so a phone stays responsive
 const STATE_FILE = path.join(HOME, '.npm-hub-state.json');
 
 app.use(express.json({ limit: '50mb' }));
@@ -395,9 +439,21 @@ app.get('/api/info', (req, res) => {
   // keeps "elapsed" only and never fabricates a 6h deadline + «осталось 0»
   // for a process that outlived that window (e.g. a self-hosted runner).
   const limitMs = parseInt(process.env.SESSION_LIMIT_MS || '0', 10) || 0;
-  const startedMs = parseInt(process.env.SESSION_STARTED_MS || '0', 10) || (Date.now() - Math.round(process.uptime() * 1000));
-  const elapsedMs = Date.now() - startedMs;
+  let startedMs = parseInt(process.env.SESSION_STARTED_MS || '0', 10);
+  const uptimeStart = Date.now() - Math.round(process.uptime() * 1000);
+  if (!startedMs || startedMs > Date.now() + 60000) {
+    // No env, or a timestamp from the future — keep the uptime fallback.
+    startedMs = uptimeStart;
+  } else if (limitMs && Date.now() - startedMs > limitMs + 3600000) {
+    // The workflow always writes a fresh session-start per run, but a
+    // self-hosted runner may resume with leftovers from days ago. An elapsed
+    // far beyond a limit that dies at ~6h can only be a stale timestamp:
+    // reset to this process's own start instead of showing «осталось 0».
+    startedMs = uptimeStart;
+  }
+  const elapsedMs = Math.max(0, Date.now() - startedMs);
   res.json({ home: HOME, workDir: WORK_DIR, platform: process.platform, ...hubBuildInfo(), ...getAccessInfo(req), state,
+    alias: (HOST_ALIAS && hostAliasInstalled) ? { name: HOST_ALIAS, ip: HOST_ALIAS_IP, url: `http://${HOST_ALIAS}:${+process.env.PORT || PORT}` } : null,
     session: { startedMs, elapsedMs, limitMs, remainingMs: limitMs ? Math.max(0, limitMs - elapsedMs) : null } });
 });
 
@@ -412,7 +468,10 @@ app.get('/api/networks', (req, res) => {
       }
     }
   }
-  res.json({ success: true, ips, port: +process.env.PORT || PORT, hostname: os.hostname() });
+  res.json({
+    success: true, ips, port: +process.env.PORT || PORT, hostname: os.hostname(),
+    alias: (HOST_ALIAS && hostAliasInstalled) ? { name: HOST_ALIAS, ip: HOST_ALIAS_IP, url: `http://${HOST_ALIAS}:${+process.env.PORT || PORT}` } : null
+  });
 });
 
 // ─── STORAGE ───
@@ -1769,7 +1828,7 @@ const tmuxReadLog = (session) => {
       fs.closeSync(fd);
       session.offset = size;
       const data = buf.toString('utf8');
-      session.output = (session.output + data).slice(-262144);
+      session.output = (session.output + data).slice(-SESSION_OUTPUT_CAP);
       ptySend(session, { type: 'output', id: session.id, data });
     }
     return true;
@@ -1837,7 +1896,7 @@ const respawnToolShell = (session) => {
     ptySend(session, { type: 'output', id: session.id,
       data: '\r\n\x1b[33m[Агент завершился — оболочка запущена заново. Нажми ⟲, чтобы перезапустить агента]\x1b[0m\r\n' });
     p.onData((data) => {
-      session.output = (session.output + data).slice(-262144);
+      session.output = (session.output + data).slice(-SESSION_OUTPUT_CAP);
       ptySend(session, { type: 'output', id: session.id, data });
     });
     p.onExit(({ exitCode }) => {
@@ -1857,7 +1916,22 @@ const attachPtyClient = (session, ws) => {
   session.clients.add(ws);
   session.lastLeave = 0;
   ws.send(JSON.stringify({ type: 'opened', id: session.id, resumed: session.resumed }));
-  if (session.output) ws.send(JSON.stringify({ type: 'output', id: session.id, data: session.output, replay: true }));
+  // Replay the scrollback in chunks, not one multi-MB WS frame: a single
+  // huge frame is buffered by mobile browsers / tunnels and the terminal
+  // appears to load only a fragment before it freezes. 64KB per message with
+  // a micro-break lets the client render progressively and stay responsive.
+  if (session.output) {
+    const out = session.output;
+    let pos = 0;
+    const step = () => {
+      if (ws.readyState !== 1 || pos >= out.length) return;
+      const part = out.slice(pos, pos + SESSION_OUTPUT_CHUNK);
+      pos += part.length;
+      ws.send(JSON.stringify({ type: 'output', id: session.id, data: part, replay: true }));
+      if (pos < out.length) setTimeout(step, 25);
+    };
+    step();
+  }
 };
 
 const detachPtyClient = (session, ws) => {
@@ -1889,7 +1963,7 @@ const reviveTmuxSession = (id) => {
   if (offset > 0) { // replay everything tmux already had
     try {
       const got = fs.readFileSync(logPath, 'utf8');
-      session.output = got.slice(-262144);
+      session.output = got.slice(-SESSION_OUTPUT_CAP);
       session.offset = offset;
     } catch {}
   }
@@ -1901,7 +1975,16 @@ const createTmuxSession = (id, opts, ws) => {
   const logPath = sessionLogPath(id);
   try { fs.unlinkSync(logPath); } catch {}
   const r = tmuxRun(['new-session', '-d', '-s', name, '-x', String(opts.cols || 120), '-y', String(opts.rows || 30), '-c', opts.cwd], 8000);
-  if (r.status !== 0) { ws.send(JSON.stringify({ type: 'error', error: (r.stderr || 'tmux failed').trim() })); return null; }
+  // A reused id must never silently spawn a SECOND tmux session under the same
+  // name: the watchdog restart wiped our in-memory record, the clone in tmux
+  // survived, and only the revive step missed it. Re-checking here collapses
+  // the copy instead of stacking tabs that all claim one id.
+  if (r.status !== 0) {
+    const alive = tmuxHas() && tmuxSessionAlive(id);
+    const revived = alive ? reviveTmuxSession(id) : null;
+    if (revived) return revived;
+    ws.send(JSON.stringify({ type: 'error', error: (r.stderr || 'tmux failed').trim() })); return null;
+  }
   const session = { id, tmux: true, cwd: opts.cwd, repo: repoContext(opts.cwd),
     emulator: cleanEmulatorName(opts.emulator) || getDefaultEmulator(),
     phoneRunner: cleanEmulatorName(opts.phoneRunner) || getDefaultPhoneRunner(),
@@ -2086,7 +2169,7 @@ wss.on('connection', (ws) => {
             }
 
             p.onData((data) => {
-              session.output = (session.output + data).slice(-262144);
+              session.output = (session.output + data).slice(-SESSION_OUTPUT_CAP);
               ptySend(session, { type: 'output', id: session.id, data });
             });
             p.onExit(({ exitCode }) => {
@@ -3632,6 +3715,7 @@ function onReady(actualPort) {
   }
   console.log(`\n  ◆ NPM Hub running on port ${actualPort}:`);
   console.log(`    Local:   http://localhost:${actualPort}`);
+  if (HOST_ALIAS && hostAliasInstalled) console.log(`    Alias:   http://${HOST_ALIAS}:${actualPort}  (via /etc/hosts, LAN only)`);
   if (allIPs.length > 0) {
     console.log(`    Network:`);
     for (const { name, ip } of allIPs) {
@@ -3689,7 +3773,10 @@ try {
   console.log('  🖥 vnc-keepalive не запустился: ' + e.message);
 }
 
-tryListen(PORT, onReady);
+// Best-effort local DNS alias (HOST_ALIAS): must be in place before the first
+// /api/info|networks probes and before onReady decides what to advertise.
+if (HOST_ALIAS) ensureHostAlias().then(() => tryListen(PORT, onReady));
+else tryListen(PORT, onReady);
 
 // ─── TUNNEL API ───
 app.get('/api/tunnel', (req, res) => {

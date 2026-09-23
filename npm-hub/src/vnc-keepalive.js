@@ -834,7 +834,14 @@ async function repair(repoRoot, why) {
   state.log('починка экрана (' + why + ')');
   await ensurePackages(false);
   await ensureWallpaper(false);
-  const r = await runStartScript(repoRoot, true);
+  // НЕДЕСТРУКТИВНАЯ починка: restart=false оставляет рабочие программы как
+  // есть (openbox/idesk/tint2/xterm и т.п.) и перезапускает только x11vnc +
+  // websockify, чтобы перерисовать экран. Старый вариант гнал сюда
+  // runStartScript(restart=true), а тот делает `pkill -x xterm` — и любой
+  // запущенный из панели процесс (игра, агент в xterm) умирал вместе с
+  // починкой чужого «чёрного экрана». Полный перезапуск десктопа остался
+  // только в fullStart (Xvfb по-настоящему упал — тогда десктоп и так всё).
+  const r = await runStartScript(repoRoot, false);
   await ensureShortcuts(process.env.PORT || 8090);
   await ensureAutostart();
   await ensureEssentials();

@@ -166,8 +166,11 @@ jobs:
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
           # Persist the runner session start so the panel clock survives a hub
           # restart (watchdog) without resetting "how much of the 6h is left".
+          # Always overwrite: on a self-hosted runner ~/.npm-hub survives between
+          # runs and a leftover timestamp would show "24ч / 6ч · осталось 0"
+          # instead of a fresh clock. The watchdog re-reads this same file.
           SESSION_FILE="$HOME/.npm-hub/session-start"
-          [ -f "$SESSION_FILE" ] || date +%s000 > "$SESSION_FILE"
+          date +%s000 > "$SESSION_FILE"
           HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 SESSION_STARTED_MS="$(cat "$SESSION_FILE")" SESSION_LIMIT_MS=21600000 nohup node src/server.js > $HUB_LOGS/hub.log 2>&1 &
           for i in $(seq 1 60); do
             body=$(curl -s -m 15 -H "x-hub-token: ${{ inputs.token }}" "http://127.0.0.1:8090/api/tools" || true)
@@ -266,10 +269,24 @@ jobs:
           # -> the tunnel was declared dead every ~90s and reconnected
           # endlessly).
           PIDFILE="$HUB_LOGS/cloudflared-8090.pid"
+          RESTARTING=0
+          FAILS=0
+          HUB_PID=""
           for i in $(seq 1 1400); do
             sleep 15
-            if ! curl -sf -o /dev/null -m 10 -H "x-hub-token: ${{ inputs.token }}" http://127.0.0.1:8090/api/tools; then
-              echo "::warning::hub stopped answering; restarting it."
+            # One missed probe is NOT a dead hub: the box saturates its CPU
+            # launching a game / a build and a 10s curl can legitimately bleed
+            # over. Only restart after several consecutive misses, so a single
+            # spike doesn't kill the hub and drop every attached tab.
+            if curl -sf -o /dev/null -m 20 -H "x-hub-token: ${{ inputs.token }}" http://127.0.0.1:8090/api/tools; then
+              FAILS=0
+            else
+              FAILS=$((FAILS + 1))
+              echo "::warning::hub probe missed ($FAILS consecutive)."
+            fi
+            if [ "$FAILS" -ge 3 ] && [ "$RESTARTING" = "0" ]; then
+              echo "::warning::hub stopped answering ($FAILS misses); restarting it."
+              RESTARTING=1
               # Brackets, not a plain string: pkill -f matches its own
               # parent shell's command line too, and a plain pattern is
               # suicide - measured the hard way.
@@ -277,7 +294,25 @@ jobs:
               cd "$HUBDIR"
               SESSION_STARTED_MS="$(cat "$HOME/.npm-hub/session-start" 2>/dev/null || date +%s000)"
               HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 SESSION_STARTED_MS="$SESSION_STARTED_MS" SESSION_LIMIT_MS=21600000 nohup node src/server.js >> $HUB_LOGS/hub.log 2>&1 &
-              sleep 5
+              HUB_PID=$!
+              # Wait for the new hub to serve again before probing it for
+              # "dead": otherwise the first check hits it mid-boot and the
+              # watchdog loops on itself forever.
+              for boot in $(seq 1 12); do
+                if curl -sf -o /dev/null -m 20 -H "x-hub-token: ${{ inputs.token }}" http://127.0.0.1:8090/api/tools; then
+                  FAILS=0; RESTARTING=0
+                  echo "::warning::hub is back."
+                  break
+                fi
+                sleep 5
+              done
+              # Boot wait exhausted: release the restart lock so a hub that
+              # really died at boot is tried again (otherwise the watchdog
+              # locks itself out and never recovers).
+              if [ "$RESTARTING" = "1" ]; then
+                echo "::warning::hub did not come back; a later restart will retry."
+                RESTARTING=0; FAILS=0
+              fi
             fi
             CUR=$(cat $HUB_LOGS/hub-url 2>/dev/null || echo)
             PID=$(cat "$PIDFILE" 2>/dev/null || echo)
@@ -469,7 +504,8 @@ jobs:
           $env:PORT = '8090'
           $env:HUB_TOKEN = '${{ inputs.token }}'; $env:GH_TOKEN = '${{ inputs.gh_token }}'
           $SESSION_FILE = "$env:USERPROFILE\.npm-hub\session-start.txt"
-          if (-not (Test-Path $SESSION_FILE)) { [System.IO.Directory]::CreateDirectory((Split-Path $SESSION_FILE)); [IO.File]::WriteAllText($SESSION_FILE, [string][int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())) }
+          [System.IO.Directory]::CreateDirectory((Split-Path $SESSION_FILE))
+          [IO.File]::WriteAllText($SESSION_FILE, [string][int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()))
           $env:SESSION_STARTED_MS = ([IO.File]::ReadAllText($SESSION_FILE)).Trim()
           $env:SESSION_LIMIT_MS = "21600000"
           cmd /c start "" /b node src/server.js `
@@ -570,16 +606,34 @@ jobs:
           # points at a corpse.
           $hubDir = "$env:GITHUB_WORKSPACE\fork\npm-hub"
           $cf = "$env:TEMP\cloudflared.exe"
+          # One missed probe is NOT a dead hub (a game build saturates the
+          # CPU), and `Stop-Process -Name node` would kill the user's own
+          # node-based app together with the hub. Only restart after several
+          # consecutive misses, and kill ONLY the hub's own process.
+          $hubUp = $false
+          $fails = 0
+          $restartingHub = $false
           for ($i = 1; $i -le 700; $i++) {
             Start-Sleep -Seconds 30
             $hubUp = $false
             try {
-              Invoke-WebRequest -Uri 'http://127.0.0.1:8090/api/tools' -TimeoutSec 8 -UseBasicParsing -Headers @{'x-hub-token'='${{ inputs.token }}'} | Out-Null
+              Invoke-WebRequest -Uri 'http://127.0.0.1:8090/api/tools' -TimeoutSec 20 -UseBasicParsing -Headers @{'x-hub-token'='${{ inputs.token }}'} | Out-Null
               $hubUp = $true
             } catch { }
-            if (-not $hubUp) {
+            if ($hubUp) {
+              $fails = 0; $restartingHub = $false; $hubUp = $false
+            } else {
+              $fails++
+              Write-Host "::warning::hub probe missed ($fails consecutive)."
+            }
+            if ($fails -ge 3 -and -not $restartingHub) {
               Write-Host '::warning::hub stopped answering; restarting it.'
-              Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+              $restartingHub = $true
+              # Kill only this hub (src/server.js), leaving the user's own
+              # node processes (an app, a game launcher) untouched.
+              Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -like '*src/server.js*' } |
+                ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
               Set-Location $hubDir
               $env:PORT = '8090'
               $env:HUB_TOKEN = '${{ inputs.token }}'; $env:GH_TOKEN = '${{ inputs.gh_token }}'
@@ -588,7 +642,23 @@ jobs:
               if (-not $env:SESSION_STARTED_MS) { $env:SESSION_STARTED_MS = [string][int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) }
               $env:SESSION_LIMIT_MS = "21600000"
               cmd /c start "" /b node src/server.js "1>>$env:TEMP\hub.log" "2>>$env:TEMP\hub.err"
-              Start-Sleep -Seconds 5
+              # Wait for the new hub to serve before probing it again, so the
+              # freshly booting process isn't counted as a missed probe.
+              foreach ($boot in 1..12) {
+                Start-Sleep -Seconds 5
+                try {
+                  Invoke-WebRequest -Uri 'http://127.0.0.1:8090/api/tools' -TimeoutSec 20 -UseBasicParsing -Headers @{'x-hub-token'='${{ inputs.token }}'} | Out-Null
+                  $fails = 0; $restartingHub = $false
+                  Write-Host '::warning::hub is back.'
+                  break
+                } catch { }
+              }
+              # Boot wait exhausted: release the restart lock so a hub that
+              # really died at boot is tried again.
+              if ($restartingHub) {
+                Write-Host '::warning::hub did not come back; a later restart will retry.'
+                $restartingHub = $false; $fails = 0
+              }
             }
             $cur = ''
             try { $cur = (Get-Content "$env:TEMP\hub-url.txt" -Raw -ErrorAction Stop).Trim() } catch { }
@@ -750,13 +820,38 @@ jobs:
       - name: Keep the VNC session alive
         run: |
           PIDFILE="$HUB_LOGS/cloudflared-6081.pid"
+          VFAILS=0
+          VRESTARTING=0
           for i in $(seq 1 1400); do
             sleep 15
-            if ! curl -sf -o /dev/null -m 10 "http://127.0.0.1:6081/vnc.html"; then
+            # Same rule as the hub watchdog: a busy CPU (a game or a build in
+            # the desktop) can make one probe bleed over its timeout. Restart
+            # the desktop only after several consecutive misses, and only if a
+            # restart is not already in progress.
+            if curl -sf -o /dev/null -m 20 "http://127.0.0.1:6081/vnc.html"; then
+              VFAILS=0
+            else
+              VFAILS=$((VFAILS + 1))
+              echo "::warning::VNC probe missed ($VFAILS consecutive)."
+            fi
+            if [ "$VFAILS" -ge 3 ] && [ "$VRESTARTING" = "0" ]; then
               echo "::warning::desktop VNC stopped answering; restarting it."
+              VRESTARTING=1
               pkill -f "websockify.*6081" 2>/dev/null || true
               export VNC_PORT=5901 NOVNC_PORT=6081
               bash "$GITHUB_WORKSPACE/fork/tools/start_desktop.sh" || true
+              for boot in $(seq 1 12); do
+                if curl -sf -o /dev/null -m 20 "http://127.0.0.1:6081/vnc.html"; then
+                  VFAILS=0; VRESTARTING=0
+                  echo "::warning::VNC is back."
+                  break
+                fi
+                sleep 5
+              done
+              if [ "$VRESTARTING" = "1" ]; then
+                echo "::warning::VNC did not come back; a later restart will retry."
+                VRESTARTING=0; VFAILS=0
+              fi
             fi
             CUR=$(cat "$HUB_LOGS/vnc-url" 2>/dev/null || echo)
             PID=$(cat "$PIDFILE" 2>/dev/null || echo)
