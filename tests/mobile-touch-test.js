@@ -196,6 +196,22 @@ check('q33 keepalive', mob.includes("type: 'ping'") && desk.includes("type: 'pin
 check('q34 binary upload client', mob.includes("/api/fs/upload?path='") && desk.includes("/api/fs/upload?path='") &&
   !mob.includes("const content = await file.text()") && !desk.includes("const content = await file.text()"));
 
+// q34a: a browser omits Content-Type when File.type is empty (Android SAF pick,
+// drag&drop from some apps, unknown extension), and body-parser's type-is then
+// refuses to match '*/*' — the raw body stayed unparsed and the old
+// String(req.body) fallback wrote the 15-byte text "[object Object]" while still
+// answering success:true. Parse any body and refuse to stringify a non-Buffer.
+check('q34a upload parses body without Content-Type',
+  server.includes("express.raw({ type: () => true") &&
+  !server.includes("Buffer.from(String(req.body") &&
+  server.includes('if (!Buffer.isBuffer(req.body)) return res.json({ success: false'));
+
+// q34f: clients name the MIME type explicitly so the request is never headless.
+check('q34f upload sends explicit content type',
+  filesApp.includes("'Content-Type': f.type || 'application/octet-stream'") &&
+  desk.includes("'Content-Type': f.type || 'application/octet-stream'") &&
+  mob.includes("xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')"));
+
 // q34b: folder upload (webkitdirectory) on desktop, mobile note "not in APK".
 check('q34b folder upload', mob.includes('function fmUploadFolder(') && desk.includes('function fmUploadFolder(') &&
   desk.includes('webkitdirectory') && mob.includes('webkitdirectory'));
