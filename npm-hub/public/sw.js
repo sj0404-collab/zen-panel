@@ -7,7 +7,7 @@
  *   /api/...                          — НЕ перехватываем: ответ кеширует
  *                                        offline.js, чтобы работал офлайн-баннер.
  * ========================================================================= */
-var CACHE = 'hub-shell-v3';
+var CACHE = 'hub-shell-v4';
 
 var SHELL = [
   '/', '/d', '/m', '/term', '/files', '/git', '/linux',
@@ -78,6 +78,10 @@ self.addEventListener('fetch', function (e) {
   if (req.mode === 'navigate') {
     e.respondWith(
       fetch(req).then(function (res) {
+        // Туннель жив, а хаб умер: вместо панели Cloudflare отдаёт HTML 502/503.
+        // Это не успех — считаем навигацию проваленной, отдаём офлайн-копию и
+        // НЕ кешируем страницу ошибки (иначе она бы вечно показывалась).
+        if (!res.ok) throw new Error('nav ' + res.status);
         var copy = res.clone();
         caches.open(CACHE).then(function (c) { c.put(req, copy); });
         return res;
