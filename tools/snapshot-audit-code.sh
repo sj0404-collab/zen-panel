@@ -19,6 +19,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { echo "[snapshot $SLOT] $*" | tee -a "$HUB_LOGS/snapshot-$SLOT.log"; }
 
+# Daemon cycle counter for the throttled per-repo chat export below.
+CHATCYCLE=0
+
+# Publish chats/<name>.json for EVERY git repo under $HOME (the hub clone plus
+# everything cloned from the Files tab), so the next runner re-imports each
+# repo's opencode sessions by name instead of starting from an empty db.
+export_all_chats() {
+  [ "${SNAPSHOT_EXPORT_ALL_CHATS:-0}" = "1" ] || return 0
+  [ -f "$SCRIPT_DIR/export-chats.sh" ] || return 0
+  [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ] || return 0
+  GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" PUBLISH=1 \
+    bash "$SCRIPT_DIR/export-chats.sh" --all >> "$HUB_LOGS/snapshot-$SLOT.log" 2>&1 || true
+}
+
 do_snapshot() {
   local stamp
   stamp="$(date -u '+%Y%m%dT%H%M%S')"
@@ -90,6 +104,14 @@ PY
   if [ -f "$SCRIPT_DIR/backup-chat-history.sh" ] && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
     GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" PUBLISH=1 bash "$SCRIPT_DIR/backup-chat-history.sh" >> "$HUB_LOGS/snapshot-$SLOT.log" 2>&1 || true
   fi
+  # Per-repo chat bundles: on the 120s daemon only every 10th cycle (~20 min,
+  # export is heavier than the light audit/code snapshot), always on the final
+  # --once. The final run covers cross-run continuity; the periodic one guards
+  # against a runner that is killed before the graceful final step.
+  CHATCYCLE=$((CHATCYCLE + 1))
+  if [ $((CHATCYCLE % 10)) -eq 1 ] || [ "${SNAPSHOT_ONCE:-}" = "1" ]; then
+    export_all_chats
+  fi
 
   python3 - "$WORK" "$tmpdir" <<'PY'
 import json, os, sys, subprocess, glob
@@ -147,9 +169,9 @@ if [ "${1:-}" = "--once" ] || [ "${SNAPSHOT_ONCE:-}" = "1" ]; then
   WORK="${3:-$WORK}"
   if [ ! -d "$WORK" ]; then WORK="$(pwd)"; fi
   if [ ! -d "$WORK/.git" ] && [ -d "$WORK/../fork/.git" ]; then WORK="$WORK/../fork"; fi
-  # Full chat transcripts (chats/<repo>.json) are exported only here, at
-  # shutdown: the payload is large and the 120s daemon path must stay light.
-  # Needs a token so the bundle can reach the session-state branch.
+  # Full chat transcripts (chats/<repo>.json): this repo's bundle is always
+  # exported at shutdown; with SNAPSHOT_EXPORT_ALL_CHATS=1 every repo under
+  # $HOME is exported too (see export_all_chats inside do_snapshot).
   if [ "${EXPORT_CHATS:-1}" != "0" ] && [ -f "$SCRIPT_DIR/export-chats.sh" ] \
     && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
     CHAT_REPO_DIR="$WORK" PUBLISH="${PUBLISH:-1}" \

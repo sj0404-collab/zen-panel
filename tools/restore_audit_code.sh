@@ -88,6 +88,13 @@ fi
 # export of every session for this repo. Import them back into the repo (the
 # CWD determines the session directory). opencode import is idempotent, so a
 # re-run just reports the session again. Disable with RESTORE_CHATS=0.
-if [ "${RESTORE_CHATS:-1}" != "0" ] && [ -f "$SCRIPT_DIR/restore-chats.sh" ]; then
+#
+# RESTORE_CHATS_ALL=1 imports EVERY chats/<name>.json bundle into whatever
+# local repo matches (the hub clone + everything the Files tab cloned into
+# hub-work/), so sessions come back for all repos, not just this $WORK.
+if [ "${RESTORE_CHATS_ALL:-0}" = "1" ] && [ -f "$SCRIPT_DIR/restore-chats.sh" ]; then
+  CHAT_ALL_ROOT="${RESTORE_CHATS_ROOT:-$HOME}" \
+    bash "$SCRIPT_DIR/restore-chats.sh" --all --state "$TMP/state" 2>&1 | sed 's/^/  /' || true
+elif [ "${RESTORE_CHATS:-1}" != "0" ] && [ -f "$SCRIPT_DIR/restore-chats.sh" ]; then
   CHAT_REPO_DIR="$WORK" bash "$SCRIPT_DIR/restore-chats.sh" --state "$TMP/state" 2>&1 | sed 's/^/  /' || true
 fi

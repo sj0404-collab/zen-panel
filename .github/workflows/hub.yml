@@ -151,8 +151,12 @@ jobs:
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
             WORK_BACKUP_RESTORE_EXISTING=1 bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" \
             2>&1 | tee -a "$HUB_LOGS/restore-work.log" || true
+          # Restore-chats imports the zen-panel fork only by default; the
+          # hub-work call gets RESTORE_CHATS_ALL=1 so every repo the Files tab
+          # cloned (and the fork itself) gets its opencode sessions back.
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || true
-          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" 2>&1 | tee -a "$HUB_LOGS/restore-hubwork.log" || true
+          RESTORE_CHATS_ALL=1 RESTORE_CHATS_ROOT="$HOME" \
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" 2>&1 | tee -a "$HUB_LOGS/restore-hubwork.log" || true
 
       - name: Start the hub and open the tunnel
         run: |
@@ -177,8 +181,11 @@ jobs:
             exit 1
           fi
           echo "hub is up on 8090"
-          # Start audit/code snapshot daemon (audit.json = chat, code.json = diff + sessions)
+          # Start audit/code snapshot daemon (audit.json = chat, code.json = diff + sessions), plus chats for every repo
           export SNAPSHOT_INTERVAL=120
+          # Also keep chats/<name>.json for every repo fresh every ~20 min,
+          # so an interrupted runner still hands sessions to the next one.
+          export SNAPSHOT_EXPORT_ALL_CHATS=1
           nohup bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" hub "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-hub.log" 2>&1 &
           echo "snapshot daemon: audit.json + code.json every 120s -> session-state"
           # Durable work backup: every repo under HOME becomes a git bundle plus
@@ -316,7 +323,10 @@ jobs:
         if: always()
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
-          bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once hub "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-hub.log" || true
+          # --once always exports this repo's chats; SNAPSHOT_EXPORT_ALL_CHATS=1
+          # additionally exports chats/<name>.json for every repo under $HOME.
+          SNAPSHOT_EXPORT_ALL_CHATS=1 \
+            bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once hub "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-hub.log" || true
 
       - name: Save the models snapshot
         run: |
@@ -444,7 +454,8 @@ jobs:
           WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_RESTORE_EXISTING=1 \
             bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" || true
           bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" || true
-          bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" || true
+          RESTORE_CHATS_ALL=1 RESTORE_CHATS_ROOT="$HOME" \
+            bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" || true
 
       - name: Start the hub and open the tunnel
         shell: pwsh
@@ -648,6 +659,17 @@ jobs:
             'slot=hub-windows' 'file=models-hub-windows.json' `
             'kind=NPM-Hub' 'os=windows' `
             "json=$env:TEMP\hub-models.json"
+
+      - name: Export OpenCode chats for all repositories
+        # Runs even on a cancelled/expired job so the NEXT windows run can
+        # restore every repo's sessions (chats/<name>.json -> session-state).
+        if: always()
+        shell: bash
+        run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" CHAT_ALL_ROOT="$HOME" PUBLISH=1 \
+            bash "$GITHUB_WORKSPACE/fork/tools/export-chats.sh" --all \
+            2>&1 | tee -a "$HUB_LOGS/export-chats.log" || true
 
   # ── Linux Desktop VNC (parallel runner) ────────────────────────────────
   # A second, independent job next to `hub`. It stands up a headless Linux
