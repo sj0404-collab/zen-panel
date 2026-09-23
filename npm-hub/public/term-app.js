@@ -376,12 +376,23 @@ function syncZoom() {
 // opencode и другие CLI-агенты при исчерпании лимита модели (особенно у
 // бесплатных OpenCode Zen) печатают полноэкранное уведомление/модалку и
 // перестают реагировать на клавиатуру — терминал выглядит «глючным, не даёт
-// нажать что-либо». Даём всегда кликабельный ♻ прямо поверх экрана.
+// нажать что-либо». Даём всегда кликабельный ♻ прямо поверх экрана и, когда
+// сработало НАСТОЯЩЕЕ сообщение о лимите, сами закрываем модалку агента
+// (Esc+Enter), чтобы он снова начал отвечать на клавиатуру.
 let __termRecoverT = null;
+let __termDismissedAt = 0; // throttle: не слать закрытие чаще раза в 10с
 function termRecoverHide() {
   const bar = document.getElementById('term-recover');
   if (bar) bar.classList.remove('on');
   clearTimeout(__termRecoverT);
+}
+function termDismissModal() {
+  const t = activeTab;
+  if (!t || !t.ws || t.ws.readyState !== 1) return;
+  if (Date.now() - __termDismissedAt < 10000) return;
+  __termDismissedAt = Date.now();
+  // Esc закрывает полноэкранную модалку opencode, Enter гасит промах/промпт.
+  for (const k of ['\x1b', '\r']) t.ws.send(JSON.stringify({ type: 'input', data: k }));
 }
 function termRecoverShow(note) {
   const bar = document.getElementById('term-recover');
@@ -390,9 +401,28 @@ function termRecoverShow(note) {
   if (lbl) lbl.textContent = note || '⚠ Агент упёрся в лимит модели';
   bar.classList.add('on');
   clearTimeout(__termRecoverT);
-  __termRecoverT = setTimeout(termRecoverHide, 25000);
+  // Через секунду закрываем саму модалку агента, затем прячем панель — иначе
+  // она висит поверх живого терминала.
+  setTimeout(termDismissModal, 1200);
+  __termRecoverT = setTimeout(termRecoverHide, 8000);
 }
-const TERM_QUOTA_RE = /(quota|rate\s?limit|insufficient|429|402|credits|balance|лимит|квот|баланс|закончил|недостаточно|не хвата|оплат|продл|premium)/i;
+// Строгая проверка: НЕ голые слова, а настоящие фразы «лимит/квота/баланс
+// исчерпан» или «out of credits» и т.п. Обычный вывод агента («balance»,
+// «закончил задачу», «лимит» как термин) не должен поднимать панель.
+const TERM_QUOTA_RE = new RegExp([
+  '(rate\\s?limit\\s?(reached|exceeded|hit|resolved|used\\s?up))',
+  '(out\\s?of\\s+(credits|requests|tokens|quota|balance))',
+  '(insufficient\\s+(credits|balance|requests|quota|funds))',
+  '(reached|exceeded|hit)\\s+(your\\s+)?((daily|hourly|monthly|model)\\s+)?(limit|quota|credit)',
+  '(limit|quota|credits?)\\s+(was|has\\s+been|have\\s+been|is|are|were)\\s+(reached|exceeded|used\\s?up)',
+  '(limit|quota|credits?)\\s+(reached|exceeded|used\\s?up)\\b',
+  '(лимит|квота|баланс)\\s+(исчерпан|исчерпана|закончился|закончились|кончился|кончились|не\\s+хватает)',
+  '(превышен|превышена)\\s+(лимит|квота|баланс)',
+  '(лимит|лимиты|квота|квоты|баланс|кредиты|средства)\\s+(закончились|закончился|закончилась|закончилось|кончились|кончился|кончилась|исчерпаны|исчерпана)',
+  '(закончились|закончился|кончились|кончился|исчерпан|исчерпана|исчерпаны)\\s+(лимит|кредиты|средства)',
+  '(не\\s+хватает|недостаточно)\\s+(лимита|баланса|кредитов|средств|квоты)',
+  '\\b(402|429)\\b(?!\\s*(?:[kmgi]b|bytes?)\\b)'
+].join('|'), 'i');
 
 // ===== TERMINAL SCROLLBAR (виртуальный ползунок, как мышка) =====
 function attachTermScroll(id, panel){

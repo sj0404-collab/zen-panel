@@ -380,9 +380,11 @@ app.get('/api/info', (req, res) => {
   // Runner session clock. The GitHub Actions job that hosts this hub is killed
   // at six hours without warning, so the panel has to show "how much left" —
   // that difference decides whether to start something long or wrap up.
-  // SESSION_LIMIT_MS/SESSION_STARTED_MS come from the workflow; the defaults
-  // assume the 6-hour runner and fall back to this process's own age.
-  const limitMs = parseInt(process.env.SESSION_LIMIT_MS || '21600000', 10) || 0;
+  // SESSION_LIMIT_MS/SESSION_STARTED_MS come from the workflow. A manual run
+  // (no env vars) has NO limit: only the workflow may set one, so the clock
+  // keeps "elapsed" only and never fabricates a 6h deadline + «осталось 0»
+  // for a process that outlived that window (e.g. a self-hosted runner).
+  const limitMs = parseInt(process.env.SESSION_LIMIT_MS || '0', 10) || 0;
   const startedMs = parseInt(process.env.SESSION_STARTED_MS || '0', 10) || (Date.now() - Math.round(process.uptime() * 1000));
   const elapsedMs = Date.now() - startedMs;
   res.json({ home: HOME, workDir: WORK_DIR, platform: process.platform, ...hubBuildInfo(), ...getAccessInfo(req), state,

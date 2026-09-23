@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Restore opencode chat sessions for THIS repository from
+# Restore opencode chat sessions for a repository from
 #   chats/<repoName>.json
 # on the session-state branch (or from a local bundle via CHAT_BUNDLE).
 #
@@ -10,64 +10,58 @@
 #
 # Usage:
 #   restore-chats.sh [--state <cloned session-state dir>]
+#   restore-chats.sh --all [--state <dir>]      import every chats/*.json into
+#                                               a matching local repo
 # Env:
 #   CHAT_REPO_DIR  repo working tree (default GITHUB_WORKSPACE or cwd)
 #   CHAT_REPO      owner/name (default GITHUB_REPOSITORY or git origin)
 #   CHAT_BUNDLE    path to a local bundle (skips cloning)
+#   CHAT_ALL_ROOT  root to look up local repos in --all mode (default $HOME)
 #   CHAT_ONLY      import only this session id
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE=""
+STATE_GIVEN=""
+ALL=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --state)   STATE="${2:-}"; shift 2 ;;
-    --state=*) STATE="${1#--state=}"; shift ;;
+    --all)     ALL=1; shift ;;
+    --state)   STATE="${2:-}"; STATE_GIVEN=1; shift 2 ;;
+    --state=*) STATE="${1#--state=}"; STATE_GIVEN=1; shift ;;
     *)         shift ;;
   esac
 done
 
-REPO_DIR="${CHAT_REPO_DIR:-${GITHUB_WORKSPACE:-$(pwd)}}"
-REPO_FULL="${CHAT_REPO:-${GITHUB_REPOSITORY:-}}"
-if [ -z "$REPO_FULL" ] && command -v git >/dev/null 2>&1; then
-  REPO_FULL="$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)"
-fi
-REPO_NAME="${REPO_FULL##*/}"; REPO_NAME="${REPO_NAME%.git}"
-REPO_NAME="$(printf '%s' "${REPO_NAME:-repo}" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-80)"
-
-TMP=""
-cleanup(){ [ -n "$TMP" ] && rm -rf "$TMP"; }
+TMP_STATE=""
+cleanup() { [ -n "$TMP_STATE" ] && rm -rf "$TMP_STATE"; }
 trap cleanup EXIT
 
-if [ -n "${CHAT_BUNDLE:-}" ]; then
-  BUNDLE="$CHAT_BUNDLE"
-elif [ -n "$STATE" ] && [ -f "$STATE/chats/$REPO_NAME.json" ]; then
-  BUNDLE="$STATE/chats/$REPO_NAME.json"
-else
-  if [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
-    echo "restore-chats: no token and no --state bundle, skip" >&2
-    exit 0
+# Make sure $STATE points at a cloned session-state branch: the caller's dir
+# (--state), or a fresh shallow clone (removed on exit).
+ensure_state() {
+  if [ -n "$STATE" ]; then
+    [ -d "$STATE" ] && return 0
+    return 1
   fi
+  if [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then return 1; fi
   export GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
   REMOTE="${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY:-}.git}"
-  TMP="$(mktemp -d)"
-  if ! git clone -q --depth 1 --branch session-state "$REMOTE" "$TMP/state" 2>/dev/null; then
-    echo "restore-chats: no session-state branch yet"
-    exit 0
+  TMP_STATE="$(mktemp -d)"
+  if git clone -q --depth 1 --branch session-state "$REMOTE" "$TMP_STATE/state" 2>/dev/null; then
+    STATE="$TMP_STATE/state"
+    return 0
   fi
-  BUNDLE="$TMP/state/chats/$REPO_NAME.json"
-fi
+  rm -rf "$TMP_STATE"; TMP_STATE=""
+  return 1
+}
 
-if [ ! -s "$BUNDLE" ]; then
-  echo "restore-chats: no chats bundle for $REPO_NAME"
-  exit 0
-fi
-if ! command -v opencode >/dev/null 2>&1; then
-  echo "restore-chats: opencode CLI not on PATH" >&2
-  exit 0
-fi
-
-CHAT_ONLY="${CHAT_ONLY:-}" CHAT_REPO_DIR="$REPO_DIR" BUNDLE="$BUNDLE" python3 - <<'PY'
+# Import every session of one bundle into one repository (CWD = the repo).
+import_bundle() {
+  local repo_dir="$1" bundle="$2"
+  [ -d "$repo_dir" ] || { echo "restore-chats: missing repo dir $repo_dir, skip" >&2; return 0; }
+  [ -s "$bundle" ] || { echo "restore-chats: empty bundle $bundle, skip" >&2; return 0; }
+  CHAT_ONLY="${CHAT_ONLY:-}" CHAT_REPO_DIR="$repo_dir" BUNDLE="$bundle" python3 - <<'PY'
 import json, os, subprocess, sys, tempfile
 
 bundle_path = os.environ["BUNDLE"]
@@ -114,3 +108,97 @@ for s in sessions:
 
 print("restore-chats: %d/%d sessions imported from %s" % (ok, len(sessions), bundle_path))
 PY
+}
+
+# Find the local repo that matches a chats/<name>.json bundle: same basename,
+# or same remote owner/name. First exact basename hit wins; otherwise an origin
+# whose path ends with /<name> or /<name>.git.
+find_repo_for() {
+  local root="$1" name="$2"
+  python3 - "$root" "$name" <<'PY'
+import os, subprocess, sys
+root, name = sys.argv[1:]
+SKIP_DIRS = {'node_modules', '.cache', '.npm', '.gradle', '.m2', '.cargo',
+             '.rustup', '.venv', 'venv', '__pycache__', '.tox', '.git', '.local'}
+first = None
+for base, dirs, files in os.walk(root):
+    dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.endswith('.git')]
+    is_repo = '.git' in dirs or os.path.exists(os.path.join(base, '.git'))
+    if not is_repo:
+        continue
+    if os.path.basename(base.rstrip('/')) == name:
+        print(base)
+        raise SystemExit(0)
+    try:
+        remote = subprocess.check_output(
+            ['git', '-C', base, 'remote', 'get-url', 'origin'],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        remote = ''
+    if remote:
+        tail = remote.rstrip('/')
+        if tail.endswith('/' + name) or tail.endswith('/' + name + '.git'):
+            if first is None:
+                first = base
+if first:
+    print(first)
+PY
+}
+
+if [ "$ALL" = 1 ]; then
+  if ! ensure_state; then
+    echo "restore-chats: no session-state branch or --state, skip" >&2
+    exit 0
+  fi
+  roots="${CHAT_ALL_ROOT:-$HOME}"
+  if ! command -v opencode >/dev/null 2>&1; then
+    echo "restore-chats: opencode CLI not on PATH" >&2
+    exit 0
+  fi
+  processed=0
+  shopt -s nullglob
+  for bundle in "$STATE"/chats/*.json; do
+    [ -s "$bundle" ] || continue
+    name="$(basename "$bundle" .json)"
+    match=""
+    for root in $roots; do
+      match="$(find_repo_for "$root" "$name")"
+      [ -n "$match" ] && break
+    done
+    if [ -z "$match" ]; then
+      echo "restore-chats: no local repo for $name; skipped"
+      continue
+    fi
+    echo "restore-chats: --- import $name -> $match"
+    import_bundle "$match" "$bundle"
+    processed=$((processed + 1))
+  done
+  echo "restore-chats: done, $processed bundle(s) processed"
+  exit 0
+fi
+
+REPO_DIR="${CHAT_REPO_DIR:-${GITHUB_WORKSPACE:-$(pwd)}}"
+REPO_FULL="${CHAT_REPO:-${GITHUB_REPOSITORY:-}}"
+if [ -z "$REPO_FULL" ] && command -v git >/dev/null 2>&1; then
+  REPO_FULL="$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)"
+fi
+REPO_NAME="${REPO_FULL##*/}"; REPO_NAME="${REPO_NAME%.git}"
+REPO_NAME="$(printf '%s' "${REPO_NAME:-repo}" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-80)"
+
+BUNDLE=""
+if [ -n "${CHAT_BUNDLE:-}" ]; then
+  BUNDLE="$CHAT_BUNDLE"
+elif ensure_state && [ -f "$STATE/chats/$REPO_NAME.json" ]; then
+  BUNDLE="$STATE/chats/$REPO_NAME.json"
+else
+  echo "restore-chats: no chats bundle for $REPO_NAME"
+  exit 0
+fi
+
+[ -s "$BUNDLE" ] || { echo "restore-chats: no chats bundle for $REPO_NAME"; exit 0; }
+if ! command -v opencode >/dev/null 2>&1; then
+  echo "restore-chats: opencode CLI not on PATH" >&2
+  exit 0
+fi
+
+import_bundle "$REPO_DIR" "$BUNDLE"
