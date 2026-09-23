@@ -46,13 +46,26 @@
           "attachment": true
         }
       }
+    },
+    "opencode": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OpenCode Zen",
+      "options": {
+        "baseURL": "https://opencode.ai/zen/v1"
+      },
+      "models": {
+        "mimo-v2-omni-free": {
+          "name": "MiMo V2 Omni Free (vision+audio)",
+          "attachment": true
+        }
+      }
     }
   },
   "agent": {
     "vision": {
       "description": "Анализирует изображения через бесплатные вижн-модели без ключа (Kilo шаблон / OVH Qwen VL). Делегируй сюда любые вопросы «что на картинке». Поддерживает локальные файлы и URL.",
       "mode": "subagent",
-      "model": "kilo/stepfun/step-3.7-flash:free",
+      "model": "opencode/mimo-v2-omni-free",
       "temperature": 0.2,
       "permission": {
         "edit": "deny"

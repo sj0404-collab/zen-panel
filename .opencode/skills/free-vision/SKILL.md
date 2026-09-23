@@ -1,6 +1,6 @@
 ---
 name: free-vision
-description: Use when the user asks to describe/analyze/read an image, screenshot, photo, or a picture in code without providing an API key. Covers free no-key vision models (Kilo 200 req/h, OVH 2 req/min, plus fallbacks). Use when asked "what's on the image", OCR of screens, UI mockups, diagram reading.
+description: Use when the user asks to describe/analyze/read an image, screenshot, photo, or a picture in code without providing an API key. Covers free no-key vision models (OpenCode Zen mimo-v2-omni-free, Kilo 200 req/h, OVH 2 req/min, plus fallbacks). Use when asked "what's on the image", OCR of screens, UI mockups, diagram reading.
 ---
 
 # Free vision models (no API key)
@@ -8,11 +8,17 @@ description: Use when the user asks to describe/analyze/read an image, screensho
 Бесплатные вижн-модели **без ключа и регистрации**. Проверено 22.09.2026 (живой запрос с изображением). Источник: `free-multimodal-models.txt` в корне репозитория.
 
 ## Правила
-- Эндпоинты анонимные: **НЕ добавляй заголовок `Authorization`** (иначе 401).
+- Эндпоинты Kilo/OVH анонимные: **НЕ добавляй заголовок `Authorization`** (иначе 401).
 - Изображение передаётся как data URL: `data:image/png;base64,....` (jpg → `data:image/jpeg;base64,...`).
 - Парс ответа: `choices[0].message.content`. У Kilo может прийти `reasoning` — бери итоговый `content`.
 
-## 1. Kilo Code Gateway (основной, 200 req/ч)
+## 0. OpenCode Zen (основной, внутри opencode)
+Модель: `opencode/mimo-v2-omni-free` (текст + изображения + аудио).
+- Бесплатно, без ключа, **только внутри opencode** (мы внутри — работает нативно).
+- Базовый URL: `https://opencode.ai/zen/v1` (OpenAI-compatible).
+- Используй нативно: `model: opencode/mimo-v2-omni-free`.
+
+## 1. Kilo Code Gateway (внешний фоллбэк, 200 req/ч)
 `POST https://api.kilo.ai/api/gateway/v1/chat/completions`
 
 ```bash
@@ -45,7 +51,6 @@ curl -s https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions \
 ## 3. Резерв
 - **VisionSter** (сторонняя обёртка, модель не раскрыта): `POST https://ahm7xmakki.com/api/imgchat` с JSON `{"userPrompt":"...","image":"data:image/jpeg;base64,...","messages":[...]}`. Агрессивный rate-limit.
 
-## Не путать
-В этих провайдерах есть и **текстовые** (без вижн) модели — им нельзя слать картинки:
-- Kilo текст: `nemotron-3-super-120b-a12b:free`, `nemotron-3-ultra-550b-a55b:free`, `z-ai/glm-5.2:free` (на картинку отвечает 404), `qwen/qwen3.8-27b:free`, `thinkingmachines/inkling-small:free`, etc.
-- OpenCode Zen free: `deepseek-v4-flash-free`, `mimo-v2.5-free`, `kimi-k2.5-free`, `nemotron-3-ultra-free` — строго текст (вижн только `mimo-v2-omni-free`).
+## Не путать — текстовые (без вижн) в этих провайдерах
+- Kilo текст: `nemotron-3-super-120b-a12b:free`, `nemotron-3-ultra-550b-a55b:free`, `z-ai/glm-5.2:free` (на картинку 404), `qwen/qwen3.8-27b:free`, `thinkingmachines/inkling-small:free`, etc.
+- OpenCode Zen free текст: `deepseek-v4-flash-free`, `mimo-v2.5-free`, `kimi-k2.5-free`, `nemotron-3-ultra-free` — строго текст (вижн только `mimo-v2-omni-free`).
