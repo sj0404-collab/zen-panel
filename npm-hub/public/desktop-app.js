@@ -1360,33 +1360,139 @@ function fmCacheSelection() {
     fmInfo('💾 В кеш сохранено: ' + ok + ' из ' + count + (HubOffline && HubOffline.isOffline ? ' (офлайн)' : ''));
   })();
 }
+// ─── Встроенный просмотр/редактор файла ───
+// Вместо открытия во вкладке браузера: текст — как блокнот (с сохранением на
+// сервер), картинки/видео/аудио/PDF — просмотр внутри панели. Работает и
+// офлайн: если сервер недоступен, берём блоб из кеша (IndexedDB).
+const FST_TEXT_MAX = 4 * 1024 * 1024;
+function fmViewKind(name) {
+  const n = String(name || '').toLowerCase();
+  if (!n) return 'bin';
+  if (/\.png$|\.jpe?g$|\.gif$|\.webp$|\.svg$|\.bmp$|\.ico$|\.avif$|\.heic$/.test(n)) return 'image';
+  if (/\.mp4$|\.webm$|\.mov$|\.m4v$|\.mkv$|\.avi$|\.ogv$/.test(n)) return 'video';
+  if (/\.mp3$|\.wav$|\.ogg$|\.oga$|\.flac$|\.m4a$|\.aac$|\.opus$/.test(n)) return 'audio';
+  if (/\.pdf$/.test(n)) return 'pdf';
+  if (/^(makefile|dockerfile|gemfile|rakefile|vagrantfile|license|readme|copying)$/.test(n)) return 'text';
+  if (/\.(txt|md|markdown|json|jsonc|ya?ml|toml|xml|js|jsx|mjs|cjs|mts|cts|ts|tsx|css|scss|less|sass|html?|vue|php|py|sh|bash|zsh|fish|rb|pl|lua|go|rs|java|kt|kts|swift|c|cc|cpp|h|hh|hpp|cs|sql|graphql|conf|ini|cfg|log|env|gitignore|dockerfile|makefile|cmake|gradle|properties|csv|tsv|bat|cmd|ps1|vim|editorconfig)$/.test(n)) return 'text';
+  return 'bin';
+}
+let fmViewEl = null, fmViewUrl = null;
+function fmViewClose() {
+  if (fmViewUrl) { try { URL.revokeObjectURL(fmViewUrl); } catch (e) {} fmViewUrl = null; }
+  if (fmViewEl) { fmViewEl.remove(); fmViewEl = null; }
+}
+function fmViewBody(kind) {
+  if (kind === 'image') return '<div style="flex:1;overflow:auto;display:flex"><img src="' + fmViewUrl + '" alt="" style="margin:auto;max-width:100%;max-height:100%"></div>';
+  if (kind === 'video') return '<div style="flex:1;overflow:auto;display:flex;background:#000"><video src="' + fmViewUrl + '" controls autoplay style="margin:auto;max-width:100%;max-height:100%"></video></div>';
+  if (kind === 'audio') return '<div style="padding:44px 16px"><audio src="' + fmViewUrl + '" controls autoplay style="width:100%"></audio></div>';
+  if (kind === 'pdf') return '<iframe src="' + fmViewUrl + '" style="flex:1;width:100%;border:0;background:#fff"></iframe>';
+  return '<textarea id="fm-view-text" spellcheck="false" style="flex:1;resize:none;background:var(--bg0);border:0;color:var(--t1);font:13px/1.5 monospace;padding:12px;outline:none"></textarea>';
+}
+async function fmViewSave(p) {
+  const ta = document.getElementById('fm-view-text');
+  const btn = document.getElementById('fm-view-save');
+  if (!ta) return;
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const r = await fetch('/api/fs/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backend: fmBackend, path: p, content: ta.value }) });
+    const j = await r.json().catch(() => null);
+    if (j && j.success) {
+      try { fsCachePutBlob(fmBackend + '|' + p, new Blob([ta.value], { type: 'text/plain' })); } catch (e) {}
+      if (btn) { btn.textContent = '✓ Сохранено'; setTimeout(() => { btn.textContent = '💾 Сохранить'; btn.disabled = false; }, 1400); }
+      fmInfo('Сохранено: ' + String(p).split(/[/\\]/).pop());
+    } else {
+      if (btn) { btn.textContent = '💾 Сохранить'; btn.disabled = false; }
+      fmInfo('Ошибка сохранения: ' + ((j && j.error) || 'сервер отказал'));
+    }
+  } catch (e) {
+    if (btn) { btn.textContent = '💾 Сохранить'; btn.disabled = false; }
+    fmInfo('Нет связи — сохранить не удалось');
+  }
+}
+async function fmViewOpen(p, name, kind) {
+  let blob = null, fromCache = false;
+  try {
+    const r = await fetch('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p));
+    if (r.ok) blob = await r.blob();
+  } catch (e) {}
+  if (!blob) {
+    const rec = await fsCacheGetBlob(fmBackend + '|' + p);
+    if (rec && rec.blob) { blob = rec.blob; fromCache = true; }
+  }
+  if (!blob) { fmInfo('Нет связи и файла в кеше — нечего показать'); return; }
+  if (!fromCache && blob.size > 0 && blob.size <= FST_WARM_MAX) {
+    try { fsCachePutBlob(fmBackend + '|' + p, blob); } catch (e) {}
+  }
+  fmViewClose();
+  const ov = document.createElement('div');
+  ov.id = 'fm-view-ov';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.82);display:flex;flex-direction:column;font:14px/1.4 system-ui,Roboto,sans-serif';
+  ov.onclick = (e) => { if (e.target === ov) fmViewClose(); };
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;background:#0a0a0f;border-bottom:1px solid var(--bdr)';
+  const title = document.createElement('div');
+  title.style.cssText = 'flex:1;font-size:13px;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  title.textContent = name + (fromCache ? '  🧊 из кеша' : '');
+  head.appendChild(title);
+  const addBtn = (label, cls, id, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.className = 'btn' + (cls ? ' ' + cls : '');
+    if (id) b.id = id;
+    b.onclick = fn;
+    head.appendChild(b);
+    return b;
+  };
+  if (kind === 'text' && blob.size <= FST_TEXT_MAX) addBtn('💾 Сохранить', 'btn-p', 'fm-view-save', () => fmViewSave(p));
+  addBtn('⬇ Скачать', '', '', () => { dSaveBlob(blob, name); });
+  addBtn('🪟 В браузере', '', '', () => { window.open('/api/fs/view?backend=' + encodeURIComponent(fmBackend) + '&path=' + encodeURIComponent(p), '_blank', 'noopener'); });
+  addBtn('✖', '', '', fmViewClose);
+  ov.appendChild(head);
+  const body = document.createElement('div');
+  body.style.cssText = 'flex:1;overflow:hidden;display:flex;flex-direction:column';
+  if (kind === 'image' || kind === 'video' || kind === 'audio' || kind === 'pdf') {
+    fmViewUrl = URL.createObjectURL(blob);
+    body.innerHTML = fmViewBody(kind);
+  } else {
+    let text = '';
+    try { text = await blob.text(); } catch (e) { text = ''; }
+    const ta = document.createElement('textarea');
+    ta.id = 'fm-view-text';
+    ta.spellcheck = false;
+    const tooBig = blob.size > FST_TEXT_MAX;
+    ta.readOnly = tooBig;
+    if (tooBig) text = 'Файл слишком большой для редактора (' + Math.round(blob.size / 1048576) + ' МБ). Используйте «⬇ Скачать».';
+    ta.value = text;
+    ta.style.cssText = 'flex:1;resize:none;background:var(--bg0);border:0;color:var(--t1);font:13px/1.5 monospace;padding:12px;outline:none';
+    body.appendChild(ta);
+  }
+  ov.appendChild(body);
+  document.body.appendChild(ov);
+  fmViewEl = ov;
+}
+
+// Открыть выбранный файл: текст/картинки/видео/аудио/PDF — встроенным
+// просмотрщиком-редактором, остальное — как обычно (вкладка/скачивание).
 function fmOpenView() {
   if (!fmSelected) return;
   const list = document.querySelectorAll('#fm-list .fm-item.fm-sel');
-  if (list.length > 1) { fmInfo('Выберите один файл для просмотра во вкладке.'); return; }
+  if (list.length > 1) { fmInfo('Выберите один файл для просмотра.'); return; }
   const item = [...document.querySelectorAll('#fm-list .fm-item.fm-sel')]
     .find(el => el.dataset.path === fmSelected);
   if (item && item.dataset.isdir === '1') { fmInfo('Это папка — для просмотра выберите файл.'); return; }
-  const url = `/api/fs/view?backend=${encodeURIComponent(fmBackend)}&path=${encodeURIComponent(fmSelected)}`;
+  const p = fmSelected;
+  const name = String(p).split(/[/\\]/).pop();
+  const kind = fmViewKind(name);
+  if (kind !== 'bin') { fmViewOpen(p, name, kind); return; }
+  const url = `/api/fs/view?backend=${encodeURIComponent(fmBackend)}&path=${encodeURIComponent(p)}`;
   if (HubOffline && HubOffline.isOffline) {
-    fsCacheGetBlob(fmBackend + '|' + fmSelected).then(rec => {
-      if (rec && rec.blob) {
-        const name = String(fmSelected).split(/[/\\]/).pop();
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(rec.blob);
-        a.download = name;
-        a.target = '_blank';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
-        fmInfo('🧊 Показан из кеша: ' + name);
-      } else {
-        fmInfo('Нет связи и файла в кеше — откройте вкладку при онлайн-доступе');
-      }
+    fsCacheGetBlob(fmBackend + '|' + p).then(rec => {
+      if (rec && rec.blob) dSaveBlob(rec.blob, name);
+      else fmInfo('Нет связи и файла в кеше — откройте вкладку при онлайн-доступе');
     });
     return;
   }
-  fsWarm(fmSelected);
+  fsWarm(p);
   window.open(url, '_blank', 'noopener');
 }
 
