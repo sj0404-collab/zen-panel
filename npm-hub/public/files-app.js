@@ -767,7 +767,7 @@ async function uploadFiles(files, relPaths) {
     const target = fmCurrentPath + '/' + String(rel).replace(/^\/+/, '');
     try {
       const r = await fetch('/api/fs/upload?path=' + encodeURIComponent(target), {
-        method: 'POST', body: f
+        method: 'POST', body: f, headers: { 'Content-Type': f.type || 'application/octet-stream' }
       });
       const j = await r.json().catch(() => ({}));
       if (j && j.success) ok++;

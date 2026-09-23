@@ -2447,6 +2447,7 @@ async function uploadFiles(files, mode) {
     const uploaded = await new Promise(resolve => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/api/fs/upload?path=' + encodeURIComponent(target));
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
       xhr.upload.onprogress = e => {
         if (!e.lengthComputable) return;
         st.doneBytes = st.doneBytes - fileDone + e.loaded;

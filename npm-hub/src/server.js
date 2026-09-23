@@ -660,11 +660,20 @@ app.get('/api/fs/view', async (req, res) => {
 // what the phone's SAF file picker and fmUpload() post to. It writes through
 // the filesystem, so an APK keeps its bytes (the generic StorageBase backends
 // deal in utf-8 text and would mangle a binary).
-app.post('/api/fs/upload', express.raw({ type: '*/*', limit: '200mb' }), async (req, res) => {
+//
+// `type: () => true` instead of `'*/*'`: a browser only sets Content-Type from
+// File.type, and files with an unknown MIME type (Android SAF picks, drag&drop
+// from some apps, unknown extensions) are POSTed with NO Content-Type at all.
+// type-is then refuses to match, the raw parser skips the body, req.body stays
+// an empty object and the old String()-based fallback wrote the 15-byte literal
+// text "[object Object]" while still answering {success:true} — every such
+// image landed on disk broken.
+app.post('/api/fs/upload', express.raw({ type: () => true, limit: '200mb' }), async (req, res) => {
   try {
     const filePath = (req.query && req.query.path) || '';
     if (!filePath) return res.json({ success: false, error: 'укажи ?path=...' });
-    const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''));
+    if (!Buffer.isBuffer(req.body)) return res.json({ success: false, error: 'пустое тело запроса' });
+    const buf = req.body;
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, buf);
     res.json({ success: true, size: buf.length });
