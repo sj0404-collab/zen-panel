@@ -1940,7 +1940,7 @@ const killServerSession = (id) => {
 // event loop (and with it every other client + the audio/video bridges) would
 // stutter — the "keyboard lag" the phone users see. Coalesce a ~30ms burst
 // into ONE tmux write.
-const tmuxInputBuf = new Map(); // id -> { pending, timer }
+const tmuxInputBuf = new Map(); // id -> { pending, timer, tries }
 const tmuxInputFlush = (id) => {
   const item = tmuxInputBuf.get(id);
   if (!item) return;
@@ -1949,8 +1949,21 @@ const tmuxInputFlush = (id) => {
   if (!pending) return;
   const name = safeSessionName(id);
   const bufName = 'npmhub_io_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
-  const r = tmuxRun(['load-buffer', '-b', bufName, '-'], 3000, pending);
-  if (r.status === 0) tmuxRun(['paste-buffer', '-b', bufName, '-t', name, '-d'], 3000);
+  // load-buffer/paste-buffer из stdin: большой вставленный текст (десятки КБ)
+  // прогоняется через spawnSync. Таймаут должен пережить такую запись, а при
+  // сбое ввод нельзя терять молча — откладываем и повторим чуть позже.
+  let r;
+  try { r = tmuxRun(['load-buffer', '-b', bufName, '-'], 10000, pending); } catch (e) { r = { status: null }; }
+  if (r && r.status === 0) {
+    try { tmuxRun(['paste-buffer', '-b', bufName, '-t', name, '-d'], 10000); } catch {}
+  } else {
+    item.pending = pending;
+    item.tries = (item.tries || 0) + 1;
+    if (item.tries < 3) {
+      item.timer = setTimeout(() => tmuxInputFlush(id), 500);
+      tmuxInputBuf.set(id, item);
+    }
+  }
 };
 const tmuxInput = (id, data) => {
   if (typeof data !== 'string' || !data) return;
@@ -2081,7 +2094,11 @@ wss.on('connection', (ws) => {
       case 'input': {
         if (!session) return;
         if (session.tmux) { tmuxInput(session.id, msg.data); return; }
-        session.pty.write(msg.data);
+        // Большой вставленный текст: пишем в PTY кусками — node-pty/OS-buffer
+        // спокойнее воспринимают серию умеренных write, чем один мегабайт.
+        const d = String(msg.data || '');
+        if (d.length <= 16384) { session.pty.write(d); return; }
+        for (let i = 0; i < d.length; i += 16384) session.pty.write(d.slice(i, i + 16384));
         return;
       }
       case 'resize': {

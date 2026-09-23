@@ -46,6 +46,29 @@ window.addEventListener('online', kickReconnect);
 function persistOpenTabs() {
   try { localStorage.setItem(OPEN_TABS_LS, JSON.stringify(tabs.filter(t => !t.manualClose).map(t => t.id))); } catch {}
 }
+
+// Отправка ввода в терминал. Большой вставленный текст шлём частями
+// (≤8 КБ, с паузой ~6 мс), иначе: (1) один гигантский WS-фрейм могут
+// отрезать прокси/туннель — вставка просто «не отправляется», (2) сервер
+// прогоняет ввод через tmux load-buffer одним spawnSync-вызовом и при
+// сбое/таймауте теряет весь кусок. Мелкие нажатия идут как раньше —
+// одним сообщением без задержки.
+function termSendInput(ws, data) {
+  if (!ws || ws.readyState !== 1 || !data) return;
+  const MAX = 8192;
+  if (data.length <= MAX) {
+    ws.send(JSON.stringify({ type: 'input', data: data }));
+    return;
+  }
+  let i = 0;
+  const step = () => {
+    if (ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: 'input', data: data.slice(i, i + MAX) }));
+    i += MAX;
+    if (i < data.length) setTimeout(step, 6);
+  };
+  step();
+}
 function loadOpenTabs() {
   try { const a = JSON.parse(localStorage.getItem(OPEN_TABS_LS) || '[]'); return Array.isArray(a) ? a.map(String) : []; } catch { return []; }
 }
@@ -1053,7 +1076,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
     }
   }, 15000);
 
-  term.onData((d) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'input', data: d })); });
+  term.onData((d) => { termSendInput(td.ws, d); });
   term.onResize(({ cols, rows }) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'resize', cols, rows })); });
   // The socket was opened above; do not open a second connection for one tab.
   td.resizeObs = new ResizeObserver(() => { if (activeTab?.id === id) fitAddon.fit(); });
@@ -1142,19 +1165,15 @@ async function pasteClipboard() {
     if (navigator.clipboard && navigator.clipboard.readText) {
       const text = await navigator.clipboard.readText();
       if (text) {
-        if (activeTab.ws.readyState === WebSocket.OPEN) {
-          activeTab.ws.send(JSON.stringify({ type: 'input', data: text }));
-          activeTab.term?.focus();
-        }
+        termSendInput(activeTab.ws, text);
+        activeTab.term?.focus();
         return;
       }
     }
   } catch {}
-  const text = await clipBox('Вставь текст (Ctrl+V), затем «Вставить»:', '', 'Вставить');
-  if (text && activeTab.ws.readyState === WebSocket.OPEN) {
-    activeTab.ws.send(JSON.stringify({ type: 'input', data: text }));
-    activeTab.term?.focus();
-  }
+  const txt = await clipBox('Вставь текст (Ctrl+V), затем «Вставить»:', '', 'Вставить');
+  termSendInput(activeTab.ws, txt);
+  activeTab.term?.focus();
 }
 
 let clipResolve = null;

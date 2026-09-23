@@ -309,17 +309,34 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
     function jsQuote(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, '\\\''); }
 
+    var syncing = false;
     async function doSync() {
+      if (syncing) return;
+      syncing = true;
       var btn = $('vault-sync'); if (btn) btn.disabled = true;
       var rootV = ($('vault-root') && $('vault-root').value.trim()) || '';
       setStatus('Синхронизация…');
-      var r = await Vault.sync(rootV, { fetch: window.fetch.bind(window) }, function (d, t) {
-        setStatus('Синхронизация… ' + d + '/' + t + ' файлов');
-      });
-      if (r.ok) setStatus('Готово: добавлено ' + r.state.added + ', обновлено ' + r.state.updated + (r.state.failed ? ', ошибок ' + r.state.failed : '') + (r.state.skipped ? ', пропущено >50 МБ: ' + r.state.skipped : ''), 'ok');
-      else setStatus('Ошибка: нет связи с хабом — показаны сохранённые копии.', 'err');
-      if (btn) btn.disabled = false;
-      render();
+      try {
+        var r = await Vault.sync(rootV, { fetch: window.fetch.bind(window) }, function (d, t) {
+          setStatus('Синхронизация… ' + d + '/' + t + ' файлов');
+        });
+        if (r.ok) setStatus('Готово: добавлено ' + r.state.added + ', обновлено ' + r.state.updated + (r.state.failed ? ', ошибок ' + r.state.failed : '') + (r.state.skipped ? ', пропущено >50 МБ: ' + r.state.skipped : ''), 'ok');
+        else setStatus('Ошибка: нет связи с хабом — показаны сохранённые копии.', 'err');
+      } finally {
+        syncing = false;
+        if (btn) btn.disabled = false;
+        render();
+      }
+    }
+
+    // Фоновая дозеркализация: зеркало должно накапливать репо и файлы, пока
+    // хаб жив, — не только один раз при первом открытии и не по кнопке.
+    // Синхронизируемся по возврату на вкладку и каждые 5 минут (только онлайн).
+    function maybeSync() {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      Vault.getState().then(function (st) {
+        if (!st || !st.serverSyncAt || Date.now() - st.serverSyncAt > 60 * 1000) doSync();
+      }).catch(function () {});
     }
 
     var UI = {
@@ -351,9 +368,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       render();
       setStatus('Загружаю зеркало…');
       if (typeof navigator !== 'undefined' && navigator.onLine !== false) doSync();
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) maybeSync(); });
+      setInterval(function () { if (!document.hidden) maybeSync(); }, 5 * 60 * 1000);
       window.addEventListener('online', function () {
         Vault.getState().then(function (st) {
-          if (!st || !st.serverSyncAt || Date.now() - st.serverSyncAt > 5 * 60 * 1000) doSync();
+          if (!st || !st.serverSyncAt || Date.now() - st.serverSyncAt > 60 * 1000) doSync();
           else { setStatus('Связь вернулась — зеркало актуально.', 'ok'); render(); }
         });
       });
