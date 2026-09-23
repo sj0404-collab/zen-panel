@@ -6,12 +6,16 @@
 // unmodified. ZEN_DESKTOP additionally tells the page it runs on a PC, which
 // the update lookup uses to offer desktop releases instead of the APK.
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, shell } = require('electron');
 
 contextBridge.exposeInMainWorld('ZenBridge', {
   notifyReady: (title, body, slot, url) =>
     ipcRenderer.invoke('zen:notify-ready', { title, body, slot, url }),
   requestNotifications: () => ipcRenderer.invoke('zen:request-notifications'),
+  openExternal: (url) => {
+    if (url) shell.openExternal(url);
+    return Promise.resolve();
+  },
 });
 
 contextBridge.exposeInMainWorld('ZEN_DESKTOP', {

@@ -315,6 +315,26 @@ class MainActivity : ComponentActivity() {
         requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 41)
     }
 
+    // Открыть адрес в СИСТЕМНОМ браузере телефона. Нужен для кнопки «Браузер»
+    // в панели: внутри WebView.window.open() просто navigates сам WebView
+    // (shouldOverrideUrlLoading с host панели считает внутренним), а
+    // ACTION_VIEW уводит страницу в отдельное приложение, которое переживает
+    // перезапуск нашего APK вместе с открытой вкладкой.
+    fun openInSystemBrowser(url: String?) {
+        val target = url?.trim().orEmpty()
+        if (target.isEmpty()) return
+        val uri = runCatching { Uri.parse(target) }.getOrNull()
+        if (uri == null || uri.scheme.isNullOrBlank()) {
+            Toast.makeText(this, "Некорректный адрес: $target", Toast.LENGTH_SHORT).show()
+            return
+        }
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+        }.onFailure {
+            Toast.makeText(this, "Нечем открыть: $target", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun ensureNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NotificationManager::class.java) ?: return
