@@ -9,6 +9,7 @@ if not exist "%ROOT%\npm-hub\node_modules" (
 )
 if "%PORT%"=="" set PORT=8090
 if "%HUB_TOKEN%"=="" echo tip: set HUB_TOKEN=... to gate the hub with a token ^(?zt=^)
+if not "%HOST_ALIAS%"=="" echo == HOST_ALIAS=%HOST_ALIAS% : hub will be reachable on this LAN as http://%HOST_ALIAS%:%PORT%/ ==
 echo == starting npm-hub on :%PORT% ==
 cd /d "%ROOT%\npm-hub"
 start "zen-hub" /min node src\server.js
@@ -20,6 +21,7 @@ if exist "%ROOT%\desktop\node_modules" (
   echo install it later: cd desktop ^&^& npm install ^&^& npm start
 )
 echo   hub:      http://localhost:%PORT%/
+if not "%HOST_ALIAS%"=="" echo   lan:      http://%HOST_ALIAS%:%PORT%/  ^(local DNS, no tunnel^)
 echo   desktop:  http://localhost:%PORT%/d
 echo   mobile:   http://localhost:%PORT%/m
 echo stop the hub with pc-local\stop.bat

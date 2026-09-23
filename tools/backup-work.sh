@@ -56,7 +56,27 @@ EXCLUDES=(
   '*/.docker/*' '*/.oh-my-zsh/*' '*/.opencode/*' '*/work/*'
   '*/hub-work/*/node_modules/*' '*/.git/lfs/*' '*/.local/share/Code/*'
   '*/.vscode-server/*' '*/.java/*' '*/.sonar/*'
+  # Gradle/Android build outputs: regenerable and routinely >500MB per build.
+  # They were filling the snapshots (one gradle build alone was ~700MB) and
+  # restoring them only re-triggered a rebuild anyway. `gradle/wrapper` stays
+  # in the untracked pack (skip_regenerable keeps it) — it is needed to
+  # rebuild and is tiny.
+  '*/build/*' '*/.kotlin/*' '*/.idea/*' '*/gradle/*'
+  '*/.gradle/*' '*/target/*' '*.apk' '*.aab' '*.hprof'
 )
+
+# Paths that never go into a snapshot: regenerable build/cache output. Used by
+# the untracked-file packer where git ls-files would otherwise include them.
+skip_regenerable() {
+  case "$1" in
+    *.apk|*.aab|*.hprof) return 0 ;;
+    */build/*|build/*|*/target/*|target/*) return 0 ;;
+    */.gradle/*|.gradle/*|*/.kotlin/*|.kotlin/*) return 0 ;;
+    */.idea/*|.idea/*) return 0 ;;
+    */build/|build/|*/target/|target/|*/.gradle/|.gradle/|*/.kotlin/|.kotlin/|*/.idea/|.idea/) return 0 ;;
+  esac
+  return 1
+}
 
 find_repos() {
   local args=()
@@ -127,7 +147,8 @@ collect() {
     git -C "$dir" diff --binary HEAD >"$out/wip.patch" 2>/dev/null || : >"$out/wip.patch"
     [ -s "$out/wip.patch" ] || rm -f "$out/wip.patch"
     ( cd "$dir" && git ls-files --others --exclude-standard -z 2>/dev/null \
-        | tar --null -T - --exclude='.git' -czf "$out/untracked.tar.gz" 2>/dev/null ) || true
+        | while IFS= read -r -d '' f; do skip_regenerable "$f" || printf '%s\0' "$f"; done \
+        | tar --null -T - -czf "$out/untracked.tar.gz" 2>/dev/null ) || true
     [ -s "$out/untracked.tar.gz" ] || rm -f "$out/untracked.tar.gz"
     python3 - "$dir" "$rel" "$out/meta.json" <<'PY' 2>/dev/null || true
 import json, os, subprocess, sys

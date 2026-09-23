@@ -300,6 +300,11 @@ async function bridgeInit() {
     }
     window.__networkIPs = netR.ips;
   }
+  // Local DNS alias (HOST_ALIAS): when the admin set one on /etc/hosts, offer
+  // it as the address to use — the phone/copy link below prefers it over the
+  // per-interface LAN IPs, and it stays valid even if the DHCP lease changes.
+  if (netR.alias && netR.alias.url) window.__hubAlias = netR.alias.url;
+  else if (infoR.alias && infoR.alias.url) window.__hubAlias = infoR.alias.url;
   if (tunnelR.success && tunnelR.url) {
     const tLink = document.getElementById('tunnel-link');
     const tUrl = document.getElementById('tunnel-url');
