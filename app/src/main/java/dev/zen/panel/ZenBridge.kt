@@ -20,4 +20,9 @@ class ZenBridge(private val activity: MainActivity) {
     fun requestNotifications() {
         activity.runOnUiThread { activity.ensureNotificationPermission() }
     }
+
+    @JavascriptInterface
+    fun openExternal(url: String) {
+        activity.runOnUiThread { activity.openInSystemBrowser(url) }
+    }
 }

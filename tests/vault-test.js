@@ -136,9 +136,15 @@ const fetchImpl = {
   const desktop = fs.readFileSync(path.join(PUB, 'desktop.html'), 'utf8');
   check('v desktop tab added',
     desktop.includes("showPage('vault')") && desktop.includes('id="p-vault"') && desktop.includes('/external-memory.html'));
+  // The mobile bottom nav no longer carries the vault tab — that slot is the
+  // «Браузер» button that hands the hub to the system browser, which survives
+  // an app restart. The vault itself stays reachable standalone (/vault,
+  // /external-memory.html) and from the desktop toolbar.
   const mobile = fs.readFileSync(path.join(PUB, 'mobile.html'), 'utf8');
-  check('v mobile nav added',
-    mobile.includes('id="nav-vault"') && desktop.includes('id="p-vault"') && mobile.includes('/external-memory.html'));
+  check('v mobile nav replaced by browser button',
+    !mobile.includes('id="nav-vault"') && !mobile.includes('id="p-vault"') &&
+    mobile.includes('id="nav-browser"') && mobile.includes('openHubExternal()') &&
+    server.includes("'/vault'") && server.includes("'external-memory.html'"));
 
   console.log('\nVAULT: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

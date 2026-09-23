@@ -296,6 +296,27 @@ function showPage(p) {
   document.body.classList.toggle('pg-linux', p === 'linux');
 }
 
+// Открыть панель NPM Hub в СИСТЕМНОМ браузере телефона, а не внутри WebView
+// приложения. Приложение Android при старте пересоздаёт WebView и теряет
+// открытые вкладки/состояние, а системный браузер живёт своей жизнью —
+// поэтому рабочая сессия остаётся на экране и после перезапуска APK.
+//
+// Внутри WebView window.open() уводит страницу обратно в себя же, поэтому
+// сначала пробуем нативный мост (ZenBridge.openExternal → Intent.ACTION_VIEW),
+// и только в обычном браузере падаем на window.open с новой вкладкой.
+function openHubExternal() {
+  const url = (location.origin || '') + '/';
+  if (!/^https?:\s*\/\//i.test(url)) { if (typeof fmInfo === 'function') fmInfo('Не удалось определить адрес панели'); return; }
+  try {
+    if (window.ZenBridge && typeof window.ZenBridge.openExternal === 'function') {
+      window.ZenBridge.openExternal(url);
+      return;
+    }
+  } catch (e) {}
+  const w = window.open(url, '_blank', 'noopener');
+  if (!w && typeof fmInfo === 'function') fmInfo('Браузер заблокировал новое окно — откройте адрес вручную: ' + url);
+}
+
 showPage('files');
 
 // ===== GIT VIEW =====
