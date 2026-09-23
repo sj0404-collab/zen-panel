@@ -1381,12 +1381,76 @@ function fmViewClose() {
   if (fmViewUrl) { try { URL.revokeObjectURL(fmViewUrl); } catch (e) {} fmViewUrl = null; }
   if (fmViewEl) { fmViewEl.remove(); fmViewEl = null; }
 }
+const FST_SNIFF_MAX = 64 * 1024;
+function fmSniffKind(u8) {
+  if (!u8 || u8.length < 12) return null;
+  if (u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4E && u8[3] === 0x47) return 'image';
+  if (u8[0] === 0xFF && u8[1] === 0xD8 && u8[2] === 0xFF) return 'image';
+  if (u8[0] === 0x47 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x38) return 'image';
+  if (u8[0] === 0x42 && u8[1] === 0x4D) return 'image';
+  if (u8[0] === 0x25 && u8[1] === 0x50 && u8[2] === 0x44 && u8[3] === 0x46) return 'pdf';
+  if (u8[4] === 0x66 && u8[5] === 0x74 && u8[6] === 0x79 && u8[7] === 0x70) return 'video';
+  if (u8[0] === 0x49 && u8[1] === 0x44 && u8[2] === 0x33) return 'audio';
+  if (u8[0] === 0x50 && u8[1] === 0x4B && (u8[2] === 0x03 || u8[2] === 0x05 || u8[2] === 0x07)) return 'zip';
+  return null;
+}
+function fmHexDump(u8) {
+  const lim = Math.min(u8.byteLength, FST_SNIFF_MAX);
+  const out = [];
+  for (let i = 0; i < lim; i += 16) {
+    const row = [String(i).padStart(8, '0') + '  '];
+    const asc = [];
+    for (let j = i; j < i + 16 && j < lim; j++) {
+      row.push((u8[j] < 16 ? '0' : '') + u8[j].toString(16));
+      asc.push(u8[j] >= 32 && u8[j] <= 126 ? String.fromCharCode(u8[j]) : '.');
+    }
+    out.push(row.join(' ').padEnd(61) + ' |' + asc.join('') + '|');
+  }
+  if (lim < u8.byteLength) out.push('… показаны первые ' + Math.round(FST_SNIFF_MAX / 1024) + ' КБ из ' + u8.byteLength + ' байт');
+  return out.join('\n');
+}
+function fmLooksBinary(text) {
+  return /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(String(text || '').slice(0, 4096));
+}
+async function fmViewSniff(blob) {
+  try { return fmSniffKind(new Uint8Array(await blob.slice(0, 256).arrayBuffer())); } catch (e) { return null; }
+}
 function fmViewBody(kind) {
   if (kind === 'image') return '<div style="flex:1;overflow:auto;display:flex"><img src="' + fmViewUrl + '" alt="" style="margin:auto;max-width:100%;max-height:100%"></div>';
   if (kind === 'video') return '<div style="flex:1;overflow:auto;display:flex;background:#000"><video src="' + fmViewUrl + '" controls autoplay style="margin:auto;max-width:100%;max-height:100%"></video></div>';
   if (kind === 'audio') return '<div style="padding:44px 16px"><audio src="' + fmViewUrl + '" controls autoplay style="width:100%"></audio></div>';
   if (kind === 'pdf') return '<iframe src="' + fmViewUrl + '" style="flex:1;width:100%;border:0;background:#fff"></iframe>';
-  return '<textarea id="fm-view-text" spellcheck="false" style="flex:1;resize:none;background:var(--bg0);border:0;color:var(--t1);font:13px/1.5 monospace;padding:12px;outline:none"></textarea>';
+  return '';
+}
+function fmViewBig(p, name) {
+  fmViewClose();
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.82);display:flex;flex-direction:column;font:14px/1.4 system-ui,Roboto,sans-serif';
+  ov.onclick = (e) => { if (e.target === ov) fmViewClose(); };
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;background:#0a0a0f;border-bottom:1px solid var(--bdr)';
+  const t = document.createElement('div');
+  t.style.cssText = 'flex:1;font-size:13px;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  t.textContent = name;
+  head.appendChild(t);
+  const mk = (label, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.className = 'btn';
+    b.onclick = fn;
+    head.appendChild(b);
+    return b;
+  };
+  mk('⬇ Скачать', () => { window.open('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p)); });
+  mk('🪟 В браузере', () => { window.open('/api/fs/view?backend=' + fmBackend + '&path=' + encodeURIComponent(p), '_blank', 'noopener'); });
+  mk('✖', fmViewClose);
+  ov.appendChild(head);
+  const msg = document.createElement('div');
+  msg.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;color:var(--t2)';
+  msg.textContent = 'Файл больше 150 МБ — встроенный просмотр выключен. Используйте «⬇ Скачать» или «🪟 В браузере».';
+  ov.appendChild(msg);
+  document.body.appendChild(ov);
+  fmViewEl = ov;
 }
 async function fmViewSave(p) {
   const ta = document.getElementById('fm-view-text');
@@ -1413,66 +1477,140 @@ async function fmViewOpen(p, name, kind) {
   let blob = null, fromCache = false;
   try {
     const r = await fetch('/api/fs/download?backend=' + fmBackend + '&path=' + encodeURIComponent(p));
-    if (r.ok) blob = await r.blob();
+    if (r.ok) {
+      if (kind === 'bin' && +(r.headers.get('Content-Length') || '0') > 150 * 1024 * 1024) { fmViewBig(p, name); return; }
+      blob = await r.blob();
+    }
   } catch (e) {}
   if (!blob) {
     const rec = await fsCacheGetBlob(fmBackend + '|' + p);
     if (rec && rec.blob) { blob = rec.blob; fromCache = true; }
   }
   if (!blob) { fmInfo('Нет связи и файла в кеше — нечего показать'); return; }
+  if (kind === 'bin') {
+    const sn = await fmViewSniff(blob);
+    if (sn) kind = sn;
+  }
   if (!fromCache && blob.size > 0 && blob.size <= FST_WARM_MAX) {
     try { fsCachePutBlob(fmBackend + '|' + p, blob); } catch (e) {}
   }
   fmViewClose();
+  const media = kind === 'image' || kind === 'video' || kind === 'audio' || kind === 'pdf';
+  const isText = kind === 'text' || kind === 'bin' || kind === 'zip';
+  const tooBig = isText && blob.size > FST_TEXT_MAX;
+  let text = '';
+  if (isText && !tooBig) { try { text = await blob.text(); } catch (e) { text = ''; } }
+  const looksBin = isText && fmLooksBinary(text);
+  let binNote = null;
+  if (kind === 'zip') binNote = 'Это ZIP/APK-архив — встроенного распаковщика нет, используйте «⬇ Скачать».';
+  else if (kind === 'bin' && looksBin) binNote = 'Двоичный файл — текст ниже может быть «кашей». Вкладка «Hex» показывает сырые байты.';
+  let editable = !tooBig && kind === 'text' && !looksBin;
+  let mode = media ? 'view' : (kind === 'text' ? 'editor' : 'hex');
+  const tabs = media ? [['view', 'Просмотр'], ['hex', 'Hex']]
+    : (kind === 'text' ? [['editor', '✎ Редактор'], ['hex', 'Hex']] : [['text', 'Текст'], ['hex', 'Hex']]);
+  const u8 = new Uint8Array(await blob.slice(0, FST_SNIFF_MAX).arrayBuffer());
   const ov = document.createElement('div');
   ov.id = 'fm-view-ov';
   ov.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.82);display:flex;flex-direction:column;font:14px/1.4 system-ui,Roboto,sans-serif';
   ov.onclick = (e) => { if (e.target === ov) fmViewClose(); };
   const head = document.createElement('div');
-  head.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;background:#0a0a0f;border-bottom:1px solid var(--bdr)';
+  head.style.cssText = 'flex:0 0 auto;background:#0a0a0f;border-bottom:1px solid var(--bdr)';
+  const row1 = document.createElement('div');
+  row1.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px';
   const title = document.createElement('div');
   title.style.cssText = 'flex:1;font-size:13px;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
   title.textContent = name + (fromCache ? '  🧊 из кеша' : '');
-  head.appendChild(title);
-  const addBtn = (label, cls, id, fn) => {
+  row1.appendChild(title);
+  const mk = (label, cls, id, fn) => {
     const b = document.createElement('button');
     b.textContent = label;
     b.className = 'btn' + (cls ? ' ' + cls : '');
     if (id) b.id = id;
     b.onclick = fn;
-    head.appendChild(b);
+    row1.appendChild(b);
     return b;
   };
-  if (kind === 'text' && blob.size <= FST_TEXT_MAX) addBtn('💾 Сохранить', 'btn-p', 'fm-view-save', () => fmViewSave(p));
-  addBtn('⬇ Скачать', '', '', () => { dSaveBlob(blob, name); });
-  addBtn('🪟 В браузере', '', '', () => { window.open('/api/fs/view?backend=' + encodeURIComponent(fmBackend) + '&path=' + encodeURIComponent(p), '_blank', 'noopener'); });
-  addBtn('✖', '', '', fmViewClose);
+  const saveBtn = mk('💾 Сохранить', 'btn-p', 'fm-view-save', () => fmViewSave(p));
+  saveBtn.style.display = 'none';
+  mk('⬇ Скачать', '', '', () => { dSaveBlob(blob, name); });
+  mk('🪟 В браузере', '', '', () => { window.open('/api/fs/view?backend=' + encodeURIComponent(fmBackend) + '&path=' + encodeURIComponent(p), '_blank', 'noopener'); });
+  const forceBtn = mk('✎ Редактор', '', '', () => {
+    mode = 'text';
+    editable = true;
+    if (note) note.style.display = 'none';
+    forceBtn.style.display = 'none';
+    saveBtn.style.display = '';
+    renderTabs();
+    fmInfo('Редактор включён — текст можно менять и сохранять');
+  });
+  forceBtn.style.display = (kind === 'bin' || kind === 'zip') ? '' : 'none';
+  mk('✖', '', '', fmViewClose);
+  head.appendChild(row1);
+  const tabRow = document.createElement('div');
+  tabRow.style.cssText = 'display:flex;overflow-x:auto;padding:0 4px';
+  const tabBtns = {};
+  tabs.forEach((arr) => {
+    const b = document.createElement('button');
+    b.textContent = arr[1];
+    b.style.cssText = 'border:0;background:transparent;color:var(--t2);font:12px/1 system-ui,sans-serif;padding:9px 12px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent';
+    b.onclick = () => { mode = arr[0]; renderTabs(); };
+    tabRow.appendChild(b);
+    tabBtns[arr[0]] = b;
+  });
+  const renderTabs = () => {
+    Object.keys(tabBtns).forEach(m => {
+      const on = m === mode;
+      tabBtns[m].style.color = on ? 'var(--acc)' : 'var(--t2)';
+      tabBtns[m].style.borderBottomColor = on ? 'var(--acc)' : 'transparent';
+    });
+    pView.style.display = mode === 'view' ? 'flex' : 'none';
+    pText.style.display = (mode === 'editor' || mode === 'text') ? 'flex' : 'none';
+    pHex.style.display = mode === 'hex' ? 'block' : 'none';
+    saveBtn.style.display = ((mode === 'editor' || mode === 'text') && editable) ? '' : 'none';
+  };
+  head.appendChild(tabRow);
   ov.appendChild(head);
+  const note = document.createElement('div');
+  note.style.cssText = 'flex:0 0 auto;padding:8px 14px;font-size:12px;color:#ffb020;background:rgba(255,176,32,.08);border-bottom:1px solid var(--bdr)';
+  note.style.display = binNote ? '' : 'none';
+  note.textContent = binNote || '';
+  ov.appendChild(note);
   const body = document.createElement('div');
   body.style.cssText = 'flex:1;overflow:hidden;display:flex;flex-direction:column';
-  if (kind === 'image' || kind === 'video' || kind === 'audio' || kind === 'pdf') {
-    fmViewUrl = URL.createObjectURL(blob);
-    body.innerHTML = fmViewBody(kind);
-  } else {
-    let text = '';
-    try { text = await blob.text(); } catch (e) { text = ''; }
-    const ta = document.createElement('textarea');
-    ta.id = 'fm-view-text';
-    ta.spellcheck = false;
-    const tooBig = blob.size > FST_TEXT_MAX;
-    ta.readOnly = tooBig;
-    if (tooBig) text = 'Файл слишком большой для редактора (' + Math.round(blob.size / 1048576) + ' МБ). Используйте «⬇ Скачать».';
-    ta.value = text;
-    ta.style.cssText = 'flex:1;resize:none;background:var(--bg0);border:0;color:var(--t1);font:13px/1.5 monospace;padding:12px;outline:none';
-    body.appendChild(ta);
-  }
+  const pView = document.createElement('div');
+  pView.style.cssText = 'flex:1;overflow:hidden;display:flex;flex-direction:column';
+  pView.style.display = 'none';
+  fmViewUrl = URL.createObjectURL(blob);
+  pView.innerHTML = fmViewBody(kind);
+  body.appendChild(pView);
+  const pText = document.createElement('div');
+  pText.style.cssText = 'flex:1;overflow:hidden;display:flex;flex-direction:column';
+  pText.style.display = 'none';
+  const ta = document.createElement('textarea');
+  ta.id = 'fm-view-text';
+  ta.spellcheck = false;
+  ta.readOnly = !editable;
+  ta.value = tooBig ? 'Файл слишком большой для редактора (' + Math.round(blob.size / 1048576) + ' МБ). Используйте «⬇ Скачать».' : text;
+  ta.style.cssText = 'flex:1;min-height:0;resize:none;background:var(--bg0);border:0;color:var(--t1);font:13px/1.5 monospace;padding:12px;outline:none';
+  pText.appendChild(ta);
+  body.appendChild(pText);
+  const pHex = document.createElement('div');
+  pHex.style.cssText = 'flex:1;overflow:auto;background:var(--bg0)';
+  pHex.style.display = 'none';
+  const pre = document.createElement('pre');
+  pre.style.cssText = 'margin:0;padding:12px;color:var(--t2);font:12px/1.5 monospace;white-space:pre';
+  pre.textContent = fmHexDump(u8);
+  pHex.appendChild(pre);
+  body.appendChild(pHex);
   ov.appendChild(body);
   document.body.appendChild(ov);
   fmViewEl = ov;
+  renderTabs();
 }
 
-// Открыть выбранный файл: текст/картинки/видео/аудио/PDF — встроенным
-// просмотрщиком-редактором, остальное — как обычно (вкладка/скачивание).
+// Открыть выбранный файл встроенным просмотрщиком-редактором: любые форматы
+// (текст, медиа, PDF, неизвестные и двоичные) открываются внутри панели —
+// кнопка «глаз» ничего не скачивает.
 function fmOpenView() {
   if (!fmSelected) return;
   const list = document.querySelectorAll('#fm-list .fm-item.fm-sel');
@@ -1482,18 +1620,7 @@ function fmOpenView() {
   if (item && item.dataset.isdir === '1') { fmInfo('Это папка — для просмотра выберите файл.'); return; }
   const p = fmSelected;
   const name = String(p).split(/[/\\]/).pop();
-  const kind = fmViewKind(name);
-  if (kind !== 'bin') { fmViewOpen(p, name, kind); return; }
-  const url = `/api/fs/view?backend=${encodeURIComponent(fmBackend)}&path=${encodeURIComponent(p)}`;
-  if (HubOffline && HubOffline.isOffline) {
-    fsCacheGetBlob(fmBackend + '|' + p).then(rec => {
-      if (rec && rec.blob) dSaveBlob(rec.blob, name);
-      else fmInfo('Нет связи и файла в кеше — откройте вкладку при онлайн-доступе');
-    });
-    return;
-  }
-  fsWarm(p);
-  window.open(url, '_blank', 'noopener');
+  fmViewOpen(p, name, fmViewKind(name));
 }
 
 async function fmBrowse(p) {
