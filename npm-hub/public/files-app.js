@@ -656,7 +656,7 @@ async function fmViewOpen(p, name, kind) {
   mk('✖', '', '', fmViewClose);
   head.appendChild(row1);
   const tabRow = document.createElement('div');
-  tabRow.style.cssText = 'display:flex;overflow-x:auto;padding:0 4px';
+  tabRow.style.cssText = 'display:flex;overflow-x:auto;padding:0 4px;touch-action:pan-x pan-y;overscroll-behavior:contain;-webkit-overflow-scrolling:touch';
   const tabBtns = {};
   tabs.forEach((arr) => {
     const b = document.createElement('button');
@@ -704,7 +704,7 @@ async function fmViewOpen(p, name, kind) {
   pText.appendChild(ta);
   body.appendChild(pText);
   const pHex = document.createElement('div');
-  pHex.style.cssText = 'flex:1;overflow:auto;background:var(--bg0)';
+  pHex.style.cssText = 'flex:1;overflow:auto;background:var(--bg0);overscroll-behavior:contain;touch-action:pan-y';
   pHex.style.display = 'none';
   const pre = document.createElement('pre');
   pre.style.cssText = 'margin:0;padding:12px;color:var(--t2);font:12px/1.5 monospace;white-space:pre';
