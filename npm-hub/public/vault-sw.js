@@ -24,7 +24,12 @@ self.addEventListener('install', function (e) {
 self.addEventListener('activate', function (e) {
   e.waitUntil(
     caches.keys().then(function (names) {
-      return Promise.all(names.map(function (n) { if (n !== CACHE) return caches.delete(n); }));
+      // Чистим ТОЛЬКО старые версии собственного кеша (vault-shell-*).
+      // Кеш панели (hub-shell-*) не трогаем — иначе оба service worker'а
+      // стирают друг друга и офлайн-страницы перестают открываться.
+      return Promise.all(names.map(function (n) {
+        if (n.indexOf('vault-shell-') === 0 && n !== CACHE) return caches.delete(n);
+      }));
     }).then(function () { return self.clients.claim(); })
   );
 });

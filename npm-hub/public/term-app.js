@@ -29,6 +29,29 @@ function persistTabs() {
   try { localStorage.setItem(LS_KEY, JSON.stringify(tabs.map(t => ({ id: t.id, toolId: t.toolId, cwd: t.cwd, toolName: t.toolName, color: t.color, icon: t.icon, dirShort: t.dirShort })))); } catch (e) {}
 }
 
+// Отправка ввода в терминал. Большой вставленный текст шлём частями
+// (≤8 КБ, с паузой ~6 мс), иначе: (1) один гигантский WS-фрейм могут
+// отрезать прокси/туннель — вставка просто «не отправляется», (2) сервер
+// прогоняет ввод через tmux load-buffer одним spawnSync-вызовом и при
+// сбое/таймауте теряет весь кусок. Мелкие нажатия идут как раньше —
+// одним сообщением без задержки.
+function termSendInput(ws, data) {
+  if (!ws || ws.readyState !== 1 || !data) return;
+  const MAX = 8192;
+  if (data.length <= MAX) {
+    ws.send(JSON.stringify({ type: 'input', data: data }));
+    return;
+  }
+  let i = 0;
+  const step = () => {
+    if (ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: 'input', data: data.slice(i, i + MAX) }));
+    i += MAX;
+    if (i < data.length) setTimeout(step, 6);
+  };
+  step();
+}
+
 function fmtClockMs(ms) {
   const t = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60);
@@ -208,7 +231,7 @@ function attachTab(meta) {
     }
   }, 15000);
 
-  term.onData((d) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'input', data: d })); });
+  term.onData((d) => { termSendInput(td.ws, d); });
   term.onResize(({ cols, rows }) => { if (td.ws && td.ws.readyState === 1) td.ws.send(JSON.stringify({ type: 'resize', cols, rows })); });
 
   td.resizeObs = new ResizeObserver(() => {
@@ -594,7 +617,7 @@ async function pasteClipboard() {
     if (navigator.clipboard && navigator.clipboard.readText) {
       const text = await navigator.clipboard.readText();
       if (text && activeTab.ws.readyState === WebSocket.OPEN) {
-        activeTab.ws.send(JSON.stringify({ type: 'input', data: text }));
+        termSendInput(activeTab.ws, text);
         activeTab.term?.focus();
       }
       return;

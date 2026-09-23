@@ -14,7 +14,11 @@ var SHELL = [
   '/favicon.svg', '/manifest.webmanifest', '/hub.css',
   '/bridge.js', '/offline.js', '/remote-audio.js',
   '/dashboard-app.js', '/mobile-app.js', '/desktop-app.js', '/term-app.js',
-  '/files-app.js', '/git-app.js', '/linux-app.js'
+  '/files-app.js', '/git-app.js', '/linux-app.js',
+  // Внешняя память: офлайн-зеркало рабочей папки. Страница открывается в
+  // iframe из панели, поэтому её shell кладём и в наш кеш — иначе при
+  // недоступном хабе i-frame не поднимется (соединение утеряно).
+  '/external-memory.html', '/vault.js', '/external-memory.webmanifest'
 ];
 
 self.addEventListener('install', function (e) {
@@ -30,7 +34,13 @@ self.addEventListener('install', function (e) {
 self.addEventListener('activate', function (e) {
   e.waitUntil(
     caches.keys().then(function (names) {
-      return Promise.all(names.map(function (n) { if (n !== CACHE) return caches.delete(n); }));
+      // Чистим ТОЛЬКО старые версии собственного кеша (hub-shell-*).
+      // Чужой кеш (vault-shell-* от /external-memory.html) удалять нельзя —
+      // иначе оба service worker'а стирают друг друга и офлайн-панель/зеркало
+      // перестают открываться.
+      return Promise.all(names.map(function (n) {
+        if (n.indexOf('hub-shell-') === 0 && n !== CACHE) return caches.delete(n);
+      }));
     }).then(function () { return self.clients.claim(); })
   );
 });
