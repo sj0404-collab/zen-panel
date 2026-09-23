@@ -1,0 +1,173 @@
+=====================================================================
+ПОЛНЫЙ СПРАВОЧНИК: БЕСПЛАТНЫЕ ИИ-МОДЕЛИ БЕЗ КЛЮЧА (проверено 22.09.2026)
+=====================================================================
+
+Пометки:
+  ✔  — проверено в живом запросе (текст + изображение)
+  Без ключа = анонимный доступ, без регистрации и без API-карточки.
+
+
+---------------------------------------------------------------------
+1. KILO CODE GATEWAY  (самый удобный: 200 req/ч без ключа)
+---------------------------------------------------------------------
+Base URL: https://api.kilo.ai/api/gateway/v1
+Пакет:   290 моделей, ~20 помечены :free
+Лимит:   200 запросов/час на IP (бесплатно)
+
+Модели с поддержкой изображений (vision):
+  [✔] stepfun/step-3.7-flash:free
+        текст + изображения; выводит reasoning (думает вслух).
+  [✔] nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+        мультимодальная: текст + изображения + аудио.
+  [✔] dots-studio/dots-3-note-preview:free
+        принимает изображения.
+  [✔] inclusionai/ling-3.0-flash-vl:free
+        принимает изображения (иногда 429 «server overload» — повторить).
+  [✔] nex-agi/nex-n2.5-pro:free
+        принимает изображения.
+  [✔] inclusionai/ling-3.0-flash-sante:free
+        отвечает на изображение (имеет vision; уточнено в запросе).
+
+Только текст (без vision) из :free пула:
+  nvidia/nemotron-3-super-120b-a12b:free
+  nvidia/nemotron-3-ultra-550b-a55b:free
+  nvidia/nemotron-3.5-lightning:free
+  qwen/qwen3.8-27b:free
+  z-ai/glm-5.2:free                (на изображение НЕ отвечает — 404)
+  poolside/laguna-s-2.1:free
+  cohere/north-mini-code:free
+  liquid/lfm-2.5-2.6b:free
+  thinkingmachines/inkling-small:free
+  dots-studio/dots-3-note-preview:free (см. выше — vision есть)
+
+Пример запроса (Python):
+  import requests
+  data_url = "data:image/jpeg;base64,...."
+  r = requests.post("https://api.kilo.ai/api/gateway/v1/chat/completions", json={
+      "model": "stepfun/step-3.7-flash:free",
+      "messages": [{"role":"user","content":[
+          {"type":"text","text":"Опиши фото"},
+          {"type":"image_url","image_url":{"url":data_url}}]}],
+      "max_tokens": 3000   # шаблону нужен запас: большой ход уходит в reasoning
+  })
+  print(r.json()["choices"][0]["message"]["content"])
+
+Пример (curl):
+  curl https://api.kilo.ai/api/gateway/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{"model":"stepfun/step-3.7-flash:free","messages":[{"role":"user","content":[{"type":"text","text":"Опиши фото"},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,..."}}]}],"max_tokens":3000}'
+
+
+---------------------------------------------------------------------
+2. OVHcloud AI ENDPOINTS  (анонимный, но жёсткий лимит)
+---------------------------------------------------------------------
+Base URL: https://oai.endpoints.kepler.ai.cloud.ovh.net/v1
+Лимит:   2 req/мин на IP на модель (аноним), без регистрации.
+Хранилище в ЕС.
+
+Модели с vision:
+  [✔] Qwen2.5-VL-72B-Instruct   — текст + изображения, считается лучшей
+        (72B-мультимодальная от Qwen). Отвечает по-русски.
+
+Только текст (аноним):
+  Qwen3.5-397B-A17B, gpt-oss-120b, gpt-oss-20b,
+  Meta-Llama-3_3-70B-Instruct, Qwen3.6-27B, Qwen3-32B,
+  Mistral-Small-3.2-24B-Instruct, Mistral-7B-Instruct-v0.3
+
+Особенность: жёсткий rate-limit (2/мин). При 429 — ждать 60+ сек.
+
+Пример (Python):
+  r = requests.post("https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions", json={
+      "model": "Qwen2.5-VL-72B-Instruct",
+      "messages": [{"role":"user","content":[
+          {"type":"text","text":"Опиши фото"},
+          {"type":"image_url","image_url":{"url":data_url}}]}],
+      "max_tokens": 1500
+  })
+
+
+---------------------------------------------------------------------
+3. LLM7.IO  (аноним, но ТОЛЬКО ТЕКСТ)
+---------------------------------------------------------------------
+Base URL: https://api.llm7.io/v1
+Лимит (аноним): 1 RPS, 10 RPM, 60 req/ч.
+Важно: анонимно доступны НЕ все модели каталога (48 шт), а только
+"turbo"-пул. Модели типа gemini-3-flash / grok-4.5 / gemma4:31b
+отвечают БЕЗ ключа, но:
+  "does not support vision input" — картинки НЕ принимают.
+Часть моделей (gemini-3.1-flash-lite, gpt-5.6-luna, claude-*) отвечают
+401 «Missing API key» — им нужен бесплатный токен с token.llm7.io.
+
+Доступные анонимно (текст):
+  gemini-3-flash, gemini-omni-flash (только специализ. endpoint),
+  grok-4.5, gemma4:31b  — работают без ключа.
+
+
+---------------------------------------------------------------------
+4. VISIONSTER  (сторонняя обёртка без ключа)
+---------------------------------------------------------------------
+URL: https://ahm7xmakki.com/api/imgchat  (GET — health, POST — чат)
+Формат запроса:
+  {"userPrompt": "...,"image": "data:image/jpeg;base64,...", "messages": [...]}
+Лимит: без ключа, но агрессивный rate-limit (429 «wait a moment»).
+Какая модель под капотом — не раскрывается. Подходит как резервная.
+
+
+---------------------------------------------------------------------
+5. OPENCODE ZEN  (встроенные бесплатные модели БЕЗ ключа)
+---------------------------------------------------------------------
+Base URL: https://opencode.ai/zen/v1  (полный список: /models)
+Доступ: анонимный, без регистрации (opencode auth login --provider zen).
+Пометки 23.09.2026 — по реестру opencode.ai (статично, живой запрос
+пока не делал; в большинстве семейств вижн вынесена в отдельную модель).
+
+Только текст (БЕЗ vision) из бесплатного пула Zen:
+  deepseek-v4-flash-free          (вижн — отдельная deepseek-v4-flash-vision-exp)
+  mimo-v2.5-free                  (вижн/аудио — отдельная mimo-v2-omni-free)
+  kimi-k2.5-free                  (вижн — отдельная kimi-vl)
+  nemotron-3-ultra-free           (вижн/аудио — nemotron-3-nano-omni-30b, см. Kilo)
+  nemotron-3.5-lightning-free     (то же семейство)
+  nemotron-3-super-free
+  ling-3.0-flash-fin-free         (вижн — ling-3.0-flash-vl, см. Kilo)
+  hy3-free                        (Tencent Hunyuan 3, текст)
+  muse-spark-1.2-contributor-free (Meta, текст)
+  big-pickle                      (скрытая модель opencode, текст)
+
+Только текст (без vision) из платного пула Zen/Go (те же семейства):
+  DeepSeek V4 Pro/Flash, MiniMax M2.5/M2.7/M3, Qwen3.7 Plus/Max
+  (вижн — qwen3-vl отдельно),  GLM 5.1 (вижн — glm-4.6v отдельно),
+  Kimi K2.7 Code, MiMo V2.5
+
+C vision (мультимодальные) в Zen:
+  [✔ известные] gemini-3-flash, gemini-3.5-flash, claude-sonnet-4,
+  claude-opus-4-5, gpt-5 — вижн числится, НО в Zen они ПЛАТНЫЕ.
+  Из бесплатного пула вижн даёт только: mimo-v2-omni-free
+  (текст + изображения + аудио).
+
+Вывод: для фото бесплатно в Zen взять нечего, кроме mimo-v2-omni-free;
+остальные свободные модели opencode — строго текст.
+
+
+---------------------------------------------------------------------
+ПРО ОСТАЛЬНЫЕ (НУЖЕН БЕСПЛАТНЫЙ КЛЮЧ, БЕЗ КАРТЫ)
+---------------------------------------------------------------------
+- Google Gemini 3.x Flash  — текст+изображ+аудио+видео (15 RPM).
+  Ключ без карты: https://aistudio.google.com/apikey
+- Mistral (free mode)      — Mistral Large 3 / Small 4: текст+изображ+код.
+  https://console.mistral.ai
+- Cohere (Trial)           — Command A+, Command A Vision, Aya Vision 32B.
+  https://dashboard.cohere.com
+- OpenRouter (:free)       — nemotron-nano-12b-v2-vl:free,
+                              google/gemma-4-31b-it:free (текст+изображ).
+  https://openrouter.ai (ключ даже для free-моделей)
+- Z.ai / Zhipu           — GLM-4.6V-Flash (мультимодальная), нужен номер телефона.
+- Cloudflare Workers AI  — 10 000 нейронов/день, но нужен API-токен аккаунта.
+- SiliconFlow            — бесплатные модели, но реальная верификация личности.
+
+=====================================================================
+Практический рецепт (РУС, текст+фото):
+  1) Основной:  stepfun/step-3.7-flash:free  (Kilo, 200 req/ч)
+  2) Дубль:     Qwen2.5-VL-72B-Instruct     (OVH, 2 req/мин)
+  3) Звук/аудио: nemotron-3-nano-omni-30b   (Kilo)
+  4) Резерв:    VisionSter /api/imgchat
+=====================================================================
