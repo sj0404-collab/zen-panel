@@ -21,6 +21,16 @@ try { OpusScript = require('opusscript'); } catch {}
 const app = express();
 const HOME = os.homedir();
 const safeFilename = (s) => String(s).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
+
+// Content-Disposition: HTTP header values must be ASCII. Кириллица/прочие
+// не-ASCII в имени файла заставляют Node бросить "Invalid character in header
+// content" (клиент получает 500, кнопка «глаз» не открывает файл). Даём
+// ASCII-версию имени + RFC 5987 filename* (UTF-8) — браузер сохранит файл
+// под настоящим именем.
+const cdHeader = (mode, name) => {
+  const plain = String(name).replace(/[\r\n"]/g, '_').replace(/[^\x20-\x7E]/g, '_');
+  return `${mode}; filename="${plain}"; filename*=UTF-8''${encodeURIComponent(String(name))}`;
+};
 const mimeForPath = (p) => {
   const lower = String(p || '').toLowerCase();
   if (lower.endsWith('.apk')) return 'application/vnd.android.package-archive';
@@ -560,7 +570,7 @@ app.get('/api/fs/download', async (req, res) => {
     const backend = storage.get(req.query.backend || 'local');
     const filename = path.basename(req.query.path).replace(/[\r\n"]/g, '_');
     const inline = req.query.inline === '1';
-    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${filename}"`);
+    res.setHeader('Content-Disposition', cdHeader(inline ? 'inline' : 'attachment', filename));
     res.setHeader('Content-Type', mimeForPath(filename));
     const data = await backend.readBinary(req.query.path);
     if (data === null || data === undefined) { res.end(); return; }
@@ -575,7 +585,7 @@ app.get('/api/fs/view', async (req, res) => {
   try {
     const backend = storage.get(req.query.backend || 'local');
     const filename = path.basename(req.query.path).replace(/[\r\n"]/g, '_');
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Content-Disposition', cdHeader('inline', filename));
     res.setHeader('Cache-Control', 'no-cache');
     const data = await backend.readBinary(req.query.path);
     if (data === null || data === undefined) { res.end(); return; }
@@ -761,7 +771,7 @@ app.get('/api/fs/archive', (req, res) => {
 
   const { spawn } = require('child_process');
   res.setHeader('Content-Type', 'application/x-xz');
-  res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+  res.setHeader('Content-Disposition', cdHeader('attachment', name));
   res.removeHeader('Content-Length');
 
   const dir = isDir ? path.dirname(filePath) : path.dirname(filePath);
@@ -3141,7 +3151,7 @@ app.get('/api/gh/download-repo', async (req, res) => {
       });
       if (r2.ok) {
         const ct = r2.headers.get('content-type') || 'application/zip';
-        const cd = r2.headers.get('content-disposition') || `attachment; filename="${fullName.split('/').pop()}.zip"`;
+        const cd = r2.headers.get('content-disposition') || cdHeader('attachment', fullName.split('/').pop() + '.zip');
         res.setHeader('Content-Type', ct);
         res.setHeader('Content-Disposition', cd);
         const buf = Buffer.from(await r2.arrayBuffer());
@@ -3151,7 +3161,7 @@ app.get('/api/gh/download-repo', async (req, res) => {
     }
     if (r.ok) {
       const ct = r.headers.get('content-type') || 'application/zip';
-      const cd = r.headers.get('content-disposition') || `attachment; filename="${fullName.split('/').pop()}.zip"`;
+      const cd = r.headers.get('content-disposition') || cdHeader('attachment', fullName.split('/').pop() + '.zip');
       res.setHeader('Content-Type', ct);
       res.setHeader('Content-Disposition', cd);
       const buf = Buffer.from(await r.arrayBuffer());
@@ -3189,7 +3199,7 @@ app.get('/api/gh/download-release-asset', async (req, res) => {
         const r2 = await fetch(dlR.headers.get('location'), { headers: { 'User-Agent': 'zen-panel-hub' } });
         if (r2.ok) {
           res.setHeader('Content-Type', r2.headers.get('content-type') || 'application/octet-stream');
-          res.setHeader('Content-Disposition', `attachment; filename="${asset.name}"`);
+          res.setHeader('Content-Disposition', cdHeader('attachment', asset.name));
           const buf = Buffer.from(await r2.arrayBuffer());
           res.end(buf);
           return;
@@ -3197,7 +3207,7 @@ app.get('/api/gh/download-release-asset', async (req, res) => {
       }
       if (dlR.ok) {
         res.setHeader('Content-Type', dlR.headers.get('content-type') || 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename="${asset.name}"`);
+        res.setHeader('Content-Disposition', cdHeader('attachment', asset.name));
         const buf = Buffer.from(await dlR.arrayBuffer());
         res.end(buf);
         return;
@@ -3214,7 +3224,7 @@ app.get('/api/gh/download-release-asset', async (req, res) => {
       const r2 = await fetch(r.headers.get('location'), { headers: { 'User-Agent': 'zen-panel-hub' } });
       if (r2.ok) {
         res.setHeader('Content-Type', r2.headers.get('content-type') || 'application/gzip');
-        res.setHeader('Content-Disposition', `attachment; filename="${full_name.split('/').pop()}-${tag}.tar.gz"`);
+        res.setHeader('Content-Disposition', cdHeader('attachment', full_name.split('/').pop() + '-' + tag + '.tar.gz'));
         const buf = Buffer.from(await r2.arrayBuffer());
         res.end(buf);
         return;
@@ -3222,7 +3232,7 @@ app.get('/api/gh/download-release-asset', async (req, res) => {
     }
     if (r.ok) {
       res.setHeader('Content-Type', r.headers.get('content-type') || 'application/gzip');
-      res.setHeader('Content-Disposition', `attachment; filename="${full_name.split('/').pop()}-${tag}.tar.gz"`);
+      res.setHeader('Content-Disposition', cdHeader('attachment', full_name.split('/').pop() + '-' + tag + '.tar.gz'));
       const buf = Buffer.from(await r.arrayBuffer());
       res.end(buf);
       return;
@@ -3249,7 +3259,7 @@ app.get('/api/gh/download-file', async (req, res) => {
       if (r2.ok) {
         const fname = filePath.split('/').pop();
         res.setHeader('Content-Type', r2.headers.get('content-type') || 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+        res.setHeader('Content-Disposition', cdHeader('attachment', fname));
         const buf = Buffer.from(await r2.arrayBuffer());
         res.end(buf);
         return;
@@ -3258,7 +3268,7 @@ app.get('/api/gh/download-file', async (req, res) => {
     if (r.ok) {
       const fname = filePath.split('/').pop();
       res.setHeader('Content-Type', r.headers.get('content-type') || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+      res.setHeader('Content-Disposition', cdHeader('attachment', fname));
       const buf = Buffer.from(await r.arrayBuffer());
       res.end(buf);
       return;
@@ -3442,7 +3452,7 @@ app.get('/api/gh/repos/:owner/:repo/artifacts/:id/download', async (req, res) =>
     );
     if (!r.ok) return res.status(r.status).json({ error: await r.text() });
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="artifact-${id}.zip"`);
+    res.setHeader('Content-Disposition', cdHeader('attachment', 'artifact-' + id + '.zip'));
     const buffer = await r.arrayBuffer();
     res.send(Buffer.from(buffer));
   } catch (e) { res.status(500).json({ error: e.message }); }
