@@ -180,8 +180,8 @@ function hubUpdate() {
         tries++;
         try {
           const r = await fetch('/api/info').then(r => r.json());
-          if (r.version && tries > 3) { location.reload(); return; }
-          if (r.version && r.version !== check.version) { location.reload(); return; }
+          if (r.version && tries > 3) { fmInfo("Обновление доступно:", r.version); return; }
+          if (r.version && r.version !== check.version) { fmInfo("Обновление доступно:", r.version); return; }
         } catch (e) {}
         setTimeout(poll, 1500);
       };
@@ -1362,17 +1362,38 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   connect();
 
   // Keepalive: ping/pong + forced close when the socket goes stale (>60s).
-  // Pings only fire while the page is visible: in the background Chrome
-  // throttles timers and the radio, so a ping that cannot be answered would
-  // just fabricate a "dead socket". kickReconnect() re-checks on wake-up.
+  // Pings are throttled by Chrome in background — therefore we also fire
+  // one immediately when the page becomes visible again (wake-up call).
+  let keepaliveIdle = 0;
   tab.keepAlive = setInterval(() => {
-    if (document.hidden) return;
     if (tab.manualClose || !tab.socket) return;
     if (tab.socket.readyState === WebSocket.OPEN) {
-      if (Date.now() - tab.lastPong > 60000) tab.socket.close();
-      else tab.socket.send(JSON.stringify({ type: 'ping' }));
+      if (Date.now() - tab.lastPong > 60000) {
+        // stale — force reconnect from client side
+        tab.socket.close();
+      } else if (document.hidden) {
+        // в фоне просто считаемIdle, пинг отправим при wake-up
+        keepaliveIdle++;
+        if (keepaliveIdle > 8) { // ~120s без пинга во фоне — прогоняем reconnect
+          tab.socket.close();
+        }
+      } else {
+        // на перед планке — отправляем пинг и сбрасываемIdle-счетчик
+        tab.socket.send(JSON.stringify({ type: 'ping' }));
+        keepaliveIdle = 0;
+      }
     }
   }, 15000);
+
+// Wake-up: когда пользователь возвращается в приложение — сразу шлем ping
+// и перезапускаем переподключение, если соединение умерло во фоне.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && tab.socket && tab.socket.readyState === WebSocket.OPEN) {
+    tab.socket.send(JSON.stringify({ type: 'ping' }));
+    tab.reconnectTimer = setTimeout(() => {}, 0); // чистим таймер реконнекта
+    keepaliveIdle = 0;
+  }
+});
 
   term.onData((data) => {
     termSendInput(tab.socket, data);
