@@ -34,6 +34,7 @@ function kickReconnect() {
     }
     if (s && s.readyState === WebSocket.CONNECTING) return; // connect watchdog aborts stale attempts
     if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
+    hideCountdown(t.id);
     t.lastPong = 0; t.retry = 0;
     try { t.connect(); } catch (e) { /* ignore */ }
   });
@@ -45,6 +46,35 @@ window.addEventListener('online', kickReconnect);
 
 function persistOpenTabs() {
   try { localStorage.setItem(OPEN_TABS_LS, JSON.stringify(tabs.filter(t => !t.manualClose).map(t => t.id))); } catch {}
+}
+
+// Обратный отсчёт до следующей попытки переподключения — вместо строки
+// «[Disconnected — reconnecting...]», которая копилась в буфере терминала
+// при каждом обрыве. Бейдж исчезает, как только связь восстановлена.
+function showCountdown(id, ms) {
+  const el = document.getElementById('cd-' + id);
+  const tab = tabs.find(t => t.id === id);
+  if (!el || !tab) return;
+  if (tab.cdTimer) { clearInterval(tab.cdTimer); tab.cdTimer = null; }
+  const end = Date.now() + ms;
+  const tick = () => {
+    const s = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+    if (s <= 0) {
+      clearInterval(tab.cdTimer); tab.cdTimer = null;
+      el.classList.remove('on');
+      return;
+    }
+    el.textContent = '⟳ ' + s + 'с';
+    el.classList.add('on');
+  };
+  tick();
+  tab.cdTimer = setInterval(tick, 500);
+}
+function hideCountdown(id) {
+  const tab = tabs.find(t => t.id === id);
+  if (tab && tab.cdTimer) { clearInterval(tab.cdTimer); tab.cdTimer = null; }
+  const el = document.getElementById('cd-' + id);
+  if (el) el.classList.remove('on');
 }
 
 // Отправка ввода в терминал. Большой вставленный текст шлём частями
@@ -988,7 +1018,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   const panel = document.createElement('div');
   panel.className = 'term-panel';
   panel.id = 'panel-' + id;
-  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color}"></div>${displayName}</div><div class="term-info">${dirShort}</div><button class="btn btn-sm" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll" id="tscroll-${id}"><button class="term-scroll-arr up">▲</button><div class="term-scroll-track"><div class="term-scroll-thumb" id="tthumb-${id}"></div></div><button class="term-scroll-arr down">▼</button></div></div>`;
+  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color}"></div>${displayName}</div><div class="term-info">${dirShort}</div><button class="btn btn-sm" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll" id="tscroll-${id}"><button class="term-scroll-arr up">▲</button><div class="term-scroll-track"><div class="term-scroll-thumb" id="tthumb-${id}"></div></div><button class="term-scroll-arr down">▼</button></div></div><div class="term-cd" id="cd-${id}"></div>`;
   document.getElementById('term-container').appendChild(panel);
   term.open(document.getElementById('term-' + id));
   await new Promise(r => setTimeout(r, 30));
@@ -1002,13 +1032,14 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
     repoStatus: (resume && resume.repoStatus) || '', emulator: (resume && resume.emulator) || null,
     phoneRunner: (resume && resume.phoneRunner) || null, ws: null, term, fitAddon, el: panel,
     manualClose: false, scroll: null, lastPong: 0, reconnectTimer: null, connectTimer: null,
-    retry: 0, disconnected: false, keepAlive: null, resizeObs: null, touchHandler: null, connect: () => {} };
+    retry: 0, disconnected: false, cdTimer: null, keepAlive: null, resizeObs: null, touchHandler: null, connect: () => {} };
   tabs.push(td);
   persistOpenTabs();
   td.scroll = attachTermScroll(id, panel, td.term);
   td.touchHandler = setupTermTouch(document.getElementById('term-' + id), term);
 
   const connect = () => {
+    hideCountdown(id);
     const socket = new WebSocket(`${protocol}//${location.host}/ws`);
     td.ws = socket;
     // Watchdog: a connection attempt that lingers in CONNECTING (stalled,
@@ -1026,6 +1057,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
       td.lastPong = Date.now();
       td.retry = 0;
       td.disconnected = false;
+      hideCountdown(id);
       socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : effectiveToolId, sessionId: id, cwd,
         repoPath: (resume && resume.repoPath) || null, emulator: (resume && resume.emulator) || null,
         phoneRunner: (resume && resume.phoneRunner) || null, cols: term.cols, rows: term.rows }));
@@ -1048,14 +1080,12 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
       if (td.ws !== socket) return; // superseded by a newer socket; it owns reconnection
       if (td.connectTimer) { clearTimeout(td.connectTimer); td.connectTimer = null; }
       if (td.reconnectTimer) { clearTimeout(td.reconnectTimer); td.reconnectTimer = null; }
-      if (!td.disconnected) {
-        term.write('\r\n\x1b[33m[Disconnected — reconnecting...]\x1b[0m\r\n');
-        td.disconnected = true;
-      }
+      td.disconnected = true;
       // Exponential backoff with jitter: fast while the server is flapping,
       // gentle during a long outage, and reset to instant on the next open.
       const delay = Math.min(3000 * Math.pow(2, td.retry), 30000) + Math.round(Math.random() * 400);
       td.retry = Math.min(td.retry + 1, 6);
+      showCountdown(id, delay);
       td.reconnectTimer = setTimeout(connect, delay);
     };
     return socket;
@@ -1121,6 +1151,7 @@ function closeTab(id) {
   // HTTP fallback: the tab may be mid-reconnect, when a WS frame cannot be sent.
   try { fetch('/api/sessions/' + encodeURIComponent(id) + '/kill', { method: 'POST' }).catch(() => {}); } catch {}
   if (tab.keepAlive) clearInterval(tab.keepAlive);
+  if (tab.cdTimer) clearInterval(tab.cdTimer);
   if (tab.resizeObs) tab.resizeObs.disconnect();
   if (tab.scroll?.destroy) tab.scroll.destroy();
   if (tab.touchHandler?.destroy) tab.touchHandler.destroy();
