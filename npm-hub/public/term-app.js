@@ -531,7 +531,7 @@ function attachTermScroll(id, panel){
   // касании/наведении активны; ручка ⠿ перетаскивает, тап — в центр.
   const cluster=panel.querySelector('.term-scroll');
   const handle=cluster&&cluster.querySelector('.term-scroll-handle');
-  let clusterDrag=false, clusterKeep=null;
+  let clusterDrag=false, clusterKeep=null, zoneCleanup=null;
   const clusterActivate=()=>{ if(!cluster) return; clearTimeout(clusterKeep); cluster.classList.add('chasing'); };
   const clusterArmFade=()=>{ if(!cluster) return; clearTimeout(clusterKeep); clusterKeep=setTimeout(()=>{ if(!clusterDrag) cluster.classList.remove('chasing'); },1200); };
   if(cluster){
@@ -542,6 +542,18 @@ function attachTermScroll(id, panel){
   }
   if(cluster&&handle){
     const wrap=vp.closest('.term-wrap')||vp.parentElement;
+    // Позиция сохраняется на устройстве (ключ по id терминала), чтобы после
+    // перезапуска стрелки снова лежали там, куда их перетащили.
+    const TS_LS='hub_tscroll_'+id;
+    const apply=(x,y)=>{ cluster.style.left=x+'px'; cluster.style.top=y+'px'; cluster.style.transform='none'; };
+    const resetPos=()=>{ cluster.style.left=''; cluster.style.top=''; cluster.style.transform=''; try{ localStorage.removeItem(TS_LS); }catch(_){} };
+    const clampPos=()=>{
+      const pr=wrap.getBoundingClientRect();
+      if(pr.width<=0||pr.height<=0) return;
+      const x=parseFloat(cluster.style.left), y=parseFloat(cluster.style.top);
+      if(Number.isFinite(x)&&Number.isFinite(y)) apply(Math.max(2,Math.min(pr.width-cluster.offsetWidth-2,x)),Math.max(2,Math.min(pr.height-cluster.offsetHeight-2,y)));
+    };
+    try{ const raw=localStorage.getItem(TS_LS); if(raw){ const p=JSON.parse(raw); if(typeof p.x==='number'&&typeof p.y==='number') apply(p.x,p.y); } }catch(_){}
     let d=null;
     handle.addEventListener('pointerdown',(e)=>{
       e.preventDefault(); e.stopPropagation();
@@ -553,19 +565,24 @@ function attachTermScroll(id, panel){
     handle.addEventListener('pointermove',(e)=>{
       if(!d) return;
       const pr=wrap.getBoundingClientRect();
-      const x=Math.max(2,Math.min(pr.width-cluster.offsetWidth-2,e.clientX-d.offX-pr.left));
-      const y=Math.max(2,Math.min(pr.height-cluster.offsetHeight-2,e.clientY-d.offY-pr.top));
-      cluster.style.left=x+'px'; cluster.style.top=y+'px'; cluster.style.transform='none';
+      apply(Math.max(2,Math.min(pr.width-cluster.offsetWidth-2,e.clientX-d.offX-pr.left)),Math.max(2,Math.min(pr.height-cluster.offsetHeight-2,e.clientY-d.offY-pr.top)));
     });
     const endDrag=(e)=>{
       if(!d) return;
       const moved=Math.abs(e.clientX-d.x0)+Math.abs(e.clientY-d.y0)>6;
       d=null; clusterDrag=false;
-      if(!moved){ cluster.style.left=''; cluster.style.top=''; cluster.style.transform=''; }
+      if(!moved) resetPos();
+      else{
+        clampPos();
+        const x=parseFloat(cluster.style.left), y=parseFloat(cluster.style.top);
+        try{ localStorage.setItem(TS_LS,JSON.stringify({x,y})); }catch(_){}
+      }
       clusterArmFade();
     };
     handle.addEventListener('pointerup',endDrag);
     handle.addEventListener('pointercancel',endDrag);
+    window.addEventListener('resize',clampPos);
+    zoneCleanup=()=>window.removeEventListener('resize',clampPos);
   }
   // Тап по пустой середине — листаем на шаг вверх/вниз.
   if(track) track.addEventListener('pointerdown',(e)=>{
@@ -577,7 +594,7 @@ function attachTermScroll(id, panel){
   let bufSub=null;
   if(term&&term.buffer&&term.buffer.onBufferChange){ bufSub=term.buffer.onBufferChange(syncArrows); }
   syncArrows();
-  return{upd:syncArrows,destroy(){ arrStop(); if(bufSub&&bufSub.dispose) bufSub.dispose(); vp.removeEventListener('scroll',syncArrows); }};
+  return{upd:syncArrows,destroy(){ arrStop(); if(bufSub&&bufSub.dispose) bufSub.dispose(); vp.removeEventListener('scroll',syncArrows); if(zoneCleanup) zoneCleanup(); }};
 }
 // ===== LONG-PRESS COPY =====
 function setupTermTouch(termEl, term){
