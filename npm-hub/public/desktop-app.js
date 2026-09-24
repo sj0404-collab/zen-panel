@@ -3693,7 +3693,10 @@ async function ghLoadReleases() {
           <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px">
             <span>📄 ${escHtml(a.name)}</span>
             <span style="color:var(--t3)">${formatSize(a.size)}</span>
-            <a href="${escAttr(a.browser_download_url)}" class="btn btn-sm" style="margin-left:auto;text-decoration:none;font-size:10px" download>📥 Скачать</a>
+            <div style="margin-left:auto;display:flex;gap:4px">
+              <a href="/api/gh/download-release-asset?full_name=${encodeURIComponent(ghCurrentRepo)}&tag=${encodeURIComponent(rel.tag_name)}&asset_id=${a.id}" download class="btn btn-sm" style="text-decoration:none;font-size:10px;color:var(--ok)" title="Скачать через сайт (как артефакты сборки)">📥 Через сайт</a>
+              <a href="${escAttr(a.browser_download_url)}" target="_blank" rel="noopener" class="btn btn-sm" style="text-decoration:none;font-size:10px" title="Скачать напрямую из GitHub">↗ GitHub</a>
+            </div>
           </div>
         `).join('')}
       </div>

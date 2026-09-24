@@ -735,13 +735,18 @@ async function ghLoadReleases() {
           <span style="font-size:14px">📦</span>
           <span style="font-size:14px;font-weight:600;color:var(--t1)">${escHtml(rel.name || rel.tag_name)}</span>
           <span class="tag tag-on">${escHtml(rel.tag_name)}</span>
+          ${rel.draft ? '<span class="tag tag-off">draft</span>' : ''}
+          ${rel.prerelease ? '<span class="tag" style="color:var(--warn);background:rgba(210,153,34,.12)">pre-release</span>' : ''}
         </div>
         <div style="font-size:10px;color:var(--t3);margin-bottom:6px">${rel.created_at ? new Date(rel.created_at).toLocaleString('ru') : ''}</div>
         ${(rel.assets || []).map(a => `
           <div style="display:flex;align-items:center;gap:6px;padding:6px 0;font-size:11px;flex-wrap:wrap">
             <span>📄 ${escHtml(a.name)}</span>
             <span style="color:var(--t3)">${formatSize(a.size)}</span>
-            <a href="${escAttr(a.browser_download_url)}" class="btn btn-sm" style="margin-left:auto;text-decoration:none;font-size:10px" download>📥 Скачать</a>
+            <div style="margin-left:auto;display:flex;gap:4px">
+              <a href="/api/gh/download-release-asset?full_name=${encodeURIComponent(ghCurrentRepo)}&tag=${encodeURIComponent(rel.tag_name)}&asset_id=${a.id}" download class="btn btn-sm" style="text-decoration:none;font-size:10px;color:var(--ok)" title="Скачать через сайт (как артефакты сборки)">📥 Через сайт</a>
+              <a href="${escAttr(a.browser_download_url)}" target="_blank" rel="noopener" class="btn btn-sm" style="text-decoration:none;font-size:10px" title="Скачать напрямую из GitHub">↗ GitHub</a>
+            </div>
           </div>
         `).join('')}
       </div>
