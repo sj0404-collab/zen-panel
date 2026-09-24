@@ -3567,7 +3567,7 @@ app.get('/api/gh/repos/:owner/:repo/releases', async (req, res) => {
         tag_name: rel.tag_name, name: rel.name, created_at: rel.created_at,
         html_url: rel.html_url, draft: rel.draft, prerelease: rel.prerelease,
         assets: (rel.assets || []).map(a => ({
-          name: a.name, size: a.size, browser_download_url: a.browser_download_url,
+          id: a.id, name: a.name, size: a.size, browser_download_url: a.browser_download_url,
           content_type: a.content_type
         }))
       })),
