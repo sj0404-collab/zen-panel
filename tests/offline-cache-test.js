@@ -90,10 +90,11 @@ function makeSandbox(mockFetch) {
 
   const first = await sb.fetch('https://hub.test/api/info');
   check('fetch stays transparent online', first.status === 200 && !first.headers.get('x-hub-offline'));
-  await new Promise(r => setTimeout(r, 15)); // let the async clone().text() land
+  await new Promise(r => setTimeout(r, 15));
 
   mode = 'fail';
   const cached = await sb.fetch('https://hub.test/api/info');
+  await new Promise(r => setTimeout(r, 1300));
   check('offline GET is served from cache', cached.headers.get('x-hub-offline') === '1');
   check('cached body is intact', JSON.parse(await cached.text()).ok === true);
   check('offline flag raised', sb.HubOffline.isOffline === true);
