@@ -126,7 +126,7 @@
       '<button id="hub-offline-retry" style="background:#ffe7ad;color:#4a3200;border:0;border-radius:6px;padding:3px 9px;font:600 12px system-ui;cursor:pointer">Повторить</button>';
     document.body.appendChild(banner);
     var retry = document.getElementById('hub-offline-retry');
-    if (retry) retry.onclick = function () { location.reload(); };
+    if (retry) retry.onclick = function () { retryNow(true); };
     return banner;
   }
   function renderBanner() {
@@ -153,6 +153,51 @@
     }
   }
 
+  // ── Живая проверка хаба ──
+  // Сбойный ответ (рестарт, 502 из туннеля, HTML вместо JSON) — ещё не офлайн:
+  // один сбойный запрос не должен красить панель в «последние данные», пока
+  // хаб на самом деле жив и отвечает. Поэтому офлайн подтверждаем отдельным
+  // запросом к /api/info мимо обёртки и кеша.
+  var probePending = null;
+  var failTimer = null;
+  function probe() {
+    if (!realFetch) return Promise.resolve(false);
+    if (probePending) return probePending;
+    probePending = realFetch('/api/info?hub_probe=' + now(), {
+      cache: 'no-store',
+      headers: { 'x-hub-probe': '1' }
+    }).then(function (r) {
+      return !!(r && r.status >= 200 && r.status < 500);
+    }).catch(function () {
+      return false;
+    }).then(function (ok) {
+      probePending = null;
+      return ok;
+    });
+    return probePending;
+  }
+  function markFailed() {
+    if (failTimer) return;
+    failTimer = setTimeout(function () {
+      failTimer = null;
+      probe().then(function (ok) { if (!ok) setOffline(true); });
+    }, 1200);
+  }
+  function retryNow(withReload) {
+    var btn = withReload ? document.getElementById('hub-offline-retry') : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Проверяем…'; }
+    return probe().then(function (ok) {
+      if (!ok) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Повторить'; }
+        return false;
+      }
+      setOffline(false);
+      flushQueue();
+      if (withReload) location.reload();
+      return true;
+    });
+  }
+
   // ── Обёртка fetch: прозрачный кеш GET /api/... ──
   // Всё, что не GET или не наш /api, идёт мимо. POST/PUT не кешируем: их
   // результат непредсказуем и повторять его офлайн нельзя.
@@ -171,7 +216,7 @@
 function serveCached(key, res) {
   var c = load(key);
   if (!c) return null;
-  setOffline(true);
+  markFailed();
   renderBanner();
   return new Response(c.body, {
     status: c.status || 200,
@@ -182,7 +227,7 @@ function serveCached(key, res) {
 function serveCachedIdb(key, res) {
   return idbGet('list', key).then(function (rec) {
     if (!rec || !rec.body) return null;
-    setOffline(true);
+    markFailed();
     renderBanner();
     return new Response(rec.body, {
       status: rec.status || 200,
@@ -191,7 +236,7 @@ function serveCachedIdb(key, res) {
   });
 }
 function serveErrJson(message) {
-  setOffline(true);
+  markFailed();
   renderBanner();
   // Отдаём приличный JSON вместо HTML-страницы, чтобы .json() не падал.
   return new Response(JSON.stringify({ success: false, error: message || 'офлайн', offline: true }), {
@@ -254,7 +299,7 @@ if (realFetch) {
       if (hit) return hit;
       return serveCachedIdb(key, err).then(function (hit2) {
         if (hit2) return hit2;
-        setOffline(true);
+        markFailed();
         throw err;
       });
     });
@@ -292,6 +337,7 @@ if (realFetch) {
   else { renderBanner(); flushQueue(); }
   if (!navigator.onLine) setOffline(true);
   if (typeof setInterval === 'function') setInterval(function () { if (qLoad().length) flushQueue(); }, 30000);
+  if (typeof setInterval === 'function') setInterval(function () { if (offline) retryNow(false); }, 5000);
 
   // ── Регистрация service worker (app shell) ──
   if ('serviceWorker' in navigator) {
@@ -374,6 +420,8 @@ if (realFetch) {
     clear: clearAll,
     on: function (cb) { if (typeof cb === 'function') listeners.push(cb); },
     renderBanner: renderBanner,
+    // Перепроверить связь и выйти из офлайна, не перезагружая страницу.
+    retry: function () { return retryNow(false); },
     // Изменяющее действие: уходит сразу, а если связи нет — в очередь и
     // повторится само. Возвращает { queued: true }, когда связи не было.
     post: function (url, body, label) {
@@ -387,7 +435,7 @@ if (realFetch) {
         return r.json().catch(function () { return { success: r.ok }; });
       }).catch(function () {
         qAdd(it);
-        setOffline(true);
+        markFailed();
         return { success: true, queued: true, offline: true };
       });
     },
