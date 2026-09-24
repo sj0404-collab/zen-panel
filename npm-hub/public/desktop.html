@@ -136,11 +136,14 @@
     .term .xterm-viewport::-webkit-scrollbar-thumb:hover{background:var(--t3)}
     .term-wrap{flex:1;display:flex;flex-direction:row;overflow:hidden;min-width:180px;position:relative}
     .term-wrap .term{flex:1;min-width:0}
-    .term-scroll{position:absolute;left:6px;top:50%;transform:translateY(-50%);z-index:4;display:flex;flex-direction:column;border-radius:10px;background:rgba(13,17,23,.72);border:1px solid rgba(240,246,252,.18);box-shadow:0 2px 8px rgba(0,0,0,.4);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);overflow:hidden;touch-action:none}
+    .term-scroll{position:absolute;left:6px;top:50%;transform:translateY(-50%);z-index:4;display:flex;flex-direction:column;border-radius:10px;background:rgba(13,17,23,.72);border:1px solid rgba(240,246,252,.18);box-shadow:0 2px 8px rgba(0,0,0,.4);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);overflow:hidden;touch-action:none;opacity:.42;transition:opacity .15s ease,box-shadow .15s ease}
+    .term-scroll.chasing{opacity:1;box-shadow:0 2px 12px rgba(0,0,0,.6),0 0 0 1px rgba(88,166,255,.35)}
     .term-scroll-arr{width:40px;height:38px;flex-shrink:0;border:none;background:transparent;color:#e6edf3;font-size:14px;line-height:1;cursor:pointer;touch-action:none;padding:0;flex:0 0 auto}
     .term-scroll-arr:hover{background:rgba(255,255,255,.14)}
     .term-scroll-arr:active,.term-scroll-arr.on{background:var(--acc);color:#0d1117}
     .term-scroll-arr.dim{opacity:.35}
+    .term-scroll-handle{width:40px;height:14px;flex-shrink:0;border:none;background:rgba(255,255,255,.06);color:rgba(230,237,243,.8);font-size:12px;line-height:1;cursor:grab;touch-action:none;padding:0}
+    .term-scroll-handle:active{cursor:grabbing}
     .term-scroll-track{display:none}
     .term-cd{display:none;position:absolute;right:12px;bottom:8px;background:rgba(210,153,34,.14);border:1px solid var(--warn);color:var(--warn);border-radius:8px;font-size:11px;font-weight:700;font-family:monospace;padding:3px 9px;z-index:6;pointer-events:none;white-space:nowrap}
     .term-cd.on{display:block}

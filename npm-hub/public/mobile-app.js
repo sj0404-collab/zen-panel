@@ -1085,6 +1085,48 @@ function attachTermScroll(id, panel) {
   };
   bindArr(upBtn, 'up');
   bindArr(dnBtn, 'down');
+  // ── Плавающие стрелки ──
+  // В покое кластер полупрозрачный (чтобы не перекрывать текст), при первом
+  // касании/наведении — активный и в фокусе. Ручка ⠿ таскает его куда угодно;
+  // тап по ручке возвращает в центр.
+  const cluster = panel.querySelector('.term-scroll');
+  const handle = cluster && cluster.querySelector('.term-scroll-handle');
+  let clusterDrag = false, clusterKeep = null;
+  const clusterActivate = () => { if (!cluster) return; clearTimeout(clusterKeep); cluster.classList.add('chasing'); };
+  const clusterArmFade = () => { if (!cluster) return; clearTimeout(clusterKeep); clusterKeep = setTimeout(() => { if (!clusterDrag) cluster.classList.remove('chasing'); }, 1200); };
+  if (cluster) {
+    cluster.addEventListener('mouseenter', clusterActivate);
+    cluster.addEventListener('mouseleave', () => { if (!clusterDrag) clusterArmFade(); });
+    cluster.addEventListener('pointerdown', clusterActivate);
+    ['pointerup', 'pointercancel'].forEach(ev => cluster.addEventListener(ev, () => { if (!clusterDrag) clusterArmFade(); }));
+  }
+  if (cluster && handle) {
+    const wrap = vp.closest('.term-wrap') || vp.parentElement;
+    let clusterDragData = null;
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      clusterDrag = true; clusterActivate();
+      const r = cluster.getBoundingClientRect();
+      clusterDragData = { offX: e.clientX - r.left, offY: e.clientY - r.top, x0: e.clientX, y0: e.clientY };
+      try { handle.setPointerCapture(e.pointerId); } catch {}
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!clusterDragData) return;
+      const pr = wrap.getBoundingClientRect();
+      const x = Math.max(2, Math.min(pr.width - cluster.offsetWidth - 2, e.clientX - clusterDragData.offX - pr.left));
+      const y = Math.max(2, Math.min(pr.height - cluster.offsetHeight - 2, e.clientY - clusterDragData.offY - pr.top));
+      cluster.style.left = x + 'px'; cluster.style.top = y + 'px'; cluster.style.transform = 'none';
+    });
+    const clusterEndDrag = (e) => {
+      if (!clusterDragData) return;
+      const moved = Math.abs(e.clientX - clusterDragData.x0) + Math.abs(e.clientY - clusterDragData.y0) > 6;
+      clusterDragData = null; clusterDrag = false;
+      if (!moved) { cluster.style.left = ''; cluster.style.top = ''; cluster.style.transform = ''; }
+      clusterArmFade();
+    };
+    handle.addEventListener('pointerup', clusterEndDrag);
+    handle.addEventListener('pointercancel', clusterEndDrag);
+  }
   // Тап по пустой середине — листаем на шаг вверх/вниз.
   if (track) track.addEventListener('pointerdown', (e) => {
     e.preventDefault();
@@ -1325,7 +1367,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   wrap.appendChild(termEl);
   const scrollEl = document.createElement('div');
   scrollEl.className = 'term-scroll';
-  scrollEl.innerHTML = '<button class="term-scroll-arr up">▲</button><div class="term-scroll-track"></div><button class="term-scroll-arr down">▼</button>';
+  scrollEl.innerHTML = '<button class="term-scroll-arr up">▲</button><button class="term-scroll-handle" title="Потянуть — переместить стрелки; тап — вернуть к краю">⠿</button><button class="term-scroll-arr down">▼</button>';
   wrap.appendChild(scrollEl);
   panel.appendChild(wrap);
   const cdEl = document.createElement('div');
