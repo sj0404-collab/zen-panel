@@ -37,6 +37,10 @@ on:
         type: string
         default: "windows-latest"
 
+concurrency:
+  group: zen-panel-session-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -111,15 +115,15 @@ jobs:
           # OpenCode starts in the same local repository state.
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
             WORK_BACKUP_RESTORE_EXISTING=1 bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" \
-            2>&1 | tee -a "$HUB_LOGS/restore-work.log" || true
+            2>&1 | tee -a "$HUB_LOGS/restore-work.log"
           cat > $HUB_LOGS/opencode.json <<'JSON'
           { "permission": { "*": "allow" } }
           JSON
           cp $HUB_LOGS/opencode.json "$GITHUB_WORKSPACE/fork/opencode.json" 2>/dev/null || true
-          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log"
           # Keep both committed and uncommitted local changes durable while
           # the OpenCode runner is alive.
-          nohup env WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_INTERVAL=300 \
+          nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_INTERVAL=300 \
             bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" >> "$HUB_LOGS/work-backup.log" 2>&1 &
 
           nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
@@ -141,7 +145,7 @@ jobs:
           fi
           echo "OpenCode serve is up on 4096"
           export SNAPSHOT_INTERVAL=120
-          nohup bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" opencode "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-opencode.log" 2>&1 &
+          nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" opencode "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-opencode.log" 2>&1 &
           echo "opencode audit/code snapshot every 120s"
 
           node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > $HUB_LOGS/oc-gateway.log 2>&1 &
@@ -239,18 +243,22 @@ jobs:
         if: always()
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
-          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
             bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" --once \
-            2>&1 | tee -a "$HUB_LOGS/work-backup.log" || true
-          bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once opencode "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-opencode.log" || true
+             2>&1 | tee -a "$HUB_LOGS/work-backup.log"
+
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once opencode "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-opencode.log"
 
       - name: Clear the published session
+        if: always()
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
-              "slot=opencode-linux" "state=ended" || true
+              "slot=opencode-linux" "state=ended"
 
       - name: Save the models snapshot
+        if: always()
         run: |
           # Same idea as the agent roster: whatever OpenCode learned about
           # models is copied to the session-state branch before the runner
@@ -260,15 +268,17 @@ jobs:
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
               "slot=opencode-linux" "file=models-opencode-linux.json" \
               "kind=OpenCode" "os=linux" "ui=${{ inputs.ui }}" \
-              "json=$HOME/.config/opencode/opencode.json" || true
+               "json=$HOME/.config/opencode/opencode.json"
+
 
       - name: Final save
+        if: always()
         run: |
-          cd "$GITHUB_WORKSPACE/fork" || exit 0
+          cd "$GITHUB_WORKSPACE/fork" || exit 1
           if [ -n "$(git status --porcelain)" ]; then
             git add -A
-            git commit -q -m "opencode final save $(date -u '+%Y-%m-%d %H:%M')" || true
-            git push -q origin HEAD || true
+            git commit -q -m "opencode final save $(date -u '+%Y-%m-%d %H:%M')"
+            git push -q origin HEAD
           fi
 
   opencode-windows:
@@ -492,12 +502,14 @@ jobs:
           }
 
       - name: Clear the published session
+        if: always()
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=opencode-windows" "state=ended"
 
       - name: Save the models snapshot
+        if: always()
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
@@ -506,7 +518,16 @@ jobs:
             "kind=OpenCode" "os=windows" "ui=${{ inputs.ui }}" `
             "json=$env:USERPROFILE/.config/opencode/opencode.json"
 
+      - name: Snapshot audit/code on exit
+        if: always()
+        shell: bash
+        run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once opencode "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-opencode.log"
+
       - name: Final save
+        if: always()
         shell: pwsh
         run: |
           Set-Location "$env:GITHUB_WORKSPACE\fork"

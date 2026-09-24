@@ -115,8 +115,18 @@ export JSON_MERGE="$(printf '%s\n' "${JSON_FILES[@]}")"
 # every caller on the machine, and two publishes running at once overwrote each
 # other's payload - caught by a local race test, where the Windows entry ended
 # up carrying the Linux address. Staged under ~/.npm-hub/tmp, never /tmp.
-STAGE="$(TMPDIR="$HOME/.npm-hub/tmp" mktemp -t session.XXXXXX.json)"
-trap 'rm -f "$STAGE"' EXIT
+WORK=""
+mkdir -p "$HOME/.npm-hub/tmp" || exit 1
+if ! STAGE="$(TMPDIR="$HOME/.npm-hub/tmp" mktemp -t session.XXXXXX.json)"; then
+  echo "publish_session: cannot create staging file" >&2
+  exit 1
+fi
+cleanup_publish() {
+  cd / 2>/dev/null || true
+  [ -n "$STAGE" ] && rm -f "$STAGE"
+  [ -n "$WORK" ] && rm -rf "$WORK"
+}
+trap cleanup_publish EXIT
 
 python3 - "$@" <<'PY' > "$STAGE"
 import json, os, re, sys, datetime
@@ -175,25 +185,32 @@ sys.stdout.buffer.write(b"\n")
 PY
 
 if [ ! -s "$STAGE" ]; then
-  echo "publish_session: nothing to publish" >&2
-  exit 0
+  echo "publish_session: staging file is empty" >&2
+  exit 1
 fi
 
 # SESSION_STATE_URL exists for local tests: point it at a file:// bare
 # repo and the whole publish runs without touching github.com.
-REMOTE="${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN:-}@github.com/${GITHUB_REPOSITORY:-}.git}"
+REMOTE="${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN:-${GITHUB_TOKEN:-}}@github.com/${GITHUB_REPOSITORY:-}.git}"
+if [ -z "${SESSION_STATE_URL:-}" ] && [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
+  echo "publish_session: no GitHub token" >&2
+  exit 1
+fi
 
-WORK="$(mktemp -d)"
-cd "$WORK" || exit 0
+if ! WORK="$(mktemp -d)"; then
+  echo "publish_session: cannot create work directory" >&2
+  exit 1
+fi
+cd "$WORK" || exit 1
 
 # A shallow clone of one branch, or a fresh orphan when it does not exist yet.
 if git clone -q --depth 1 --branch "$BRANCH" \
     "${REMOTE}" state 2>/dev/null; then
-  cd state || exit 0
+  cd state || exit 1
 else
   git clone -q --depth 1 \
-    "${REMOTE}" state || exit 0
-  cd state || exit 0
+    "${REMOTE}" state || exit 1
+  cd state || exit 1
   git checkout -q --orphan "$BRANCH"
   git rm -rqf . 2>/dev/null || true
 fi
@@ -244,27 +261,27 @@ git commit -q -m "session $(date -u '+%Y-%m-%d %H:%M:%S')"
 # normally, and retry if someone else got in between. Each desk only ever
 # touches its own file, so the merge is trivial and cannot conflict.
 pushed=0
-for attempt in 1 2 3 4 5; do
-  if git push -q origin "HEAD:$BRANCH" 2>/dev/null; then pushed=1; break; fi
-
-  # Rejected: someone else pushed. Take their tree, put our file back on it.
+for attempt in $(seq 1 12); do
+  if git push -q origin "HEAD:$BRANCH" 2>/dev/null; then
+    pushed=1
+    break
+  fi
+  echo "publish_session: push attempt $attempt failed; refreshing $BRANCH" >&2
   if git fetch -q origin "$BRANCH" 2>/dev/null; then
     git reset -q --hard FETCH_HEAD
-  else
-    # The branch does not exist yet and the push still failed; nothing to
-    # rebase onto, so just try again.
-    sleep $((attempt * 2))
-    continue
+    mkdir -p "$(dirname "$FILE")"
+    cp "$STAGE" "$FILE"
+    git add "$FILE"
+    git commit -q -m "session $(date -u '+%Y-%m-%d %H:%M:%S')" 2>/dev/null || true
   fi
-  mkdir -p "$(dirname "$FILE")"
-cp "$STAGE" "$FILE"
-  git add "$FILE"
-  git commit -q -m "session $(date -u '+%Y-%m-%d %H:%M:%S')" 2>/dev/null || true
-  sleep $((attempt * 2))
+  delay=$((attempt * 2))
+  [ "$delay" -gt 30 ] && delay=30
+  sleep "$delay"
 done
 
 if [ "$pushed" = 1 ]; then
   echo "publish_session: published $FILE to $BRANCH"
 else
-  echo "publish_session: push failed after retries (the desk still works)" >&2
+  echo "publish_session: push failed after retries" >&2
+  exit 1
 fi

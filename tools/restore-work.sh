@@ -22,7 +22,10 @@ set -uo pipefail
 ROOT="${WORK_BACKUP_ROOT:-$HOME}"
 BRANCH="${WORK_BACKUP_BRANCH:-work-backup}"
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
-mkdir -p "$HUB_LOGS" 2>/dev/null || true
+if ! mkdir -p "$HUB_LOGS" 2>/dev/null; then
+  printf '%s\n' "restore-work: cannot create log directory" >&2
+  exit 1
+fi
 log() { echo "[restore-work $(date -u '+%H:%M:%S')] $*" | tee -a "$HUB_LOGS/restore-work.log"; }
 
 [ "${WORK_BACKUP_RESTORE:-1}" = "0" ] && { log "disabled"; exit 0; }
@@ -31,22 +34,45 @@ log() { echo "[restore-work $(date -u '+%H:%M:%S')] $*" | tee -a "$HUB_LOGS/rest
 # checked out freshly. This is enabled explicitly for the Hub checkout: the
 # old runner's local edits must come back on top of the new checkout.
 apply_payload() {
-  local dir="$1" repodir="$2" label="$3"
+  local dir="$1" repodir="$2" label="$3" result=0
   if [ -s "$repodir/wip.patch" ]; then
-    ( cd "$dir" && git apply --3way --whitespace=nowarn "$repodir/wip.patch" 2>/dev/null \
-      || git apply --whitespace=nowarn "$repodir/wip.patch" 2>/dev/null ) \
-      && log "applied uncommitted changes to $label" \
-      || log "could not reapply uncommitted changes to $label (kept at $repodir/wip.patch)"
+    if ( cd "$dir" && git apply --3way --whitespace=nowarn "$repodir/wip.patch" 2>/dev/null \
+      || git apply --whitespace=nowarn "$repodir/wip.patch" 2>/dev/null ); then
+      log "applied uncommitted changes to $label"
+    else
+      log "could not reapply uncommitted changes to $label (kept at $repodir/wip.patch)"
+      result=1
+    fi
   fi
   if [ -s "$repodir/untracked.tar.gz" ]; then
-    ( cd "$dir" && tar --keep-old-files -xzf "$repodir/untracked.tar.gz" 2>/dev/null ) \
-      && log "restored untracked files for $label"
+    if ( cd "$dir" && tar --keep-old-files -xzf "$repodir/untracked.tar.gz" 2>/dev/null ); then
+      log "restored untracked files for $label"
+    else
+      log "could not restore untracked files for $label"
+      result=1
+    fi
   fi
+  return "$result"
+}
+copy_legacy_manifest() {
+  local dir="$1"
+  local legacy="$(dirname "$dir")/MANIFEST.md"
+  if [ -f "$legacy" ] && [ ! -f "$dir/MANIFEST.md" ]; then
+    if ! cp "$legacy" "$dir/MANIFEST.md" 2>/dev/null; then
+      log "could not migrate legacy manifest into $dir"
+      return 1
+    fi
+    log "migrated legacy manifest into $dir"
+  fi
+  return 0
 }
 
 REMOTE="${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN:-${GITHUB_TOKEN:-}}@github.com/${GITHUB_REPOSITORY:-}.git}"
 
-WORK="$(mktemp -d)"
+if ! WORK="$(mktemp -d)"; then
+  log "cannot create restore directory"
+  exit 1
+fi
 TARGET=""
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
@@ -87,6 +113,8 @@ for base, dirs, files in os.walk(root):
         continue
     repo = base
     try:
+        if subprocess.run(['git', '-C', repo, 'rev-parse', '--git-dir'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+            continue
         remote = subprocess.check_output(['git','-C',repo,'remote','get-url','origin'], text=True, stderr=subprocess.DEVNULL).strip()
     except Exception: remote = ''
     if wanted_remote and remote != wanted_remote: continue
@@ -97,6 +125,7 @@ PY
 }
 
 restored=0
+failed=0
 while IFS= read -r meta; do
   [ -f "$meta" ] || continue
   repodir="$(dirname "$meta")"
@@ -112,38 +141,56 @@ PY
   dest="$ROOT/$rel"
   existing="$(find_existing_repo "$meta")"
   if [ -n "$existing" ] && [ -e "$existing/.git" ]; then
-    apply_payload "$existing" "$repodir" "$(basename "$existing")"
+     if ! apply_payload "$existing" "$repodir" "$(basename "$existing")"; then failed=1; fi
+     if ! copy_legacy_manifest "$existing"; then failed=1; fi
+
     restored=$((restored + 1))
     log "reused existing repo $existing for backup $rel"
     continue
   fi
-  if [ -e "$dest/.git" ]; then
-    log "skip $rel: already a repo at $dest"
-    continue
+  if [ -e "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ] \
+    && ! git -C "$dest" rev-parse --git-dir >/dev/null 2>&1; then
+    partial="$dest.partial-$(date +%s)"
+     if ! mv "$dest" "$partial" 2>/dev/null; then
+       log "could not quarantine incomplete clone $dest"
+       failed=1
+       continue
+     fi
+
+    log "moved incomplete clone $dest to $partial"
   fi
-  if [ -e "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
-    log "skip $rel: $dest exists and is not empty"
+  if [ -e "$dest/.git" ] && git -C "$dest" rev-parse --git-dir >/dev/null 2>&1; then
+    log "skip $rel: already a valid repo at $dest"
     continue
   fi
   mkdir -p "$(dirname "$dest")"
   if [ -f "$repodir/repo.bundle" ]; then
-    if ! git clone -q "$repodir/repo.bundle" "$dest" 2>/dev/null; then
-      log "clone of $rel failed; skipped"
-      continue
-    fi
+     if ! git clone -q "$repodir/repo.bundle" "$dest" 2>/dev/null; then
+       log "clone of $rel failed; skipped"
+       failed=1
+       continue
+     fi
+
   else
     mkdir -p "$dest"
     ( cd "$dest" && git init -q )
   fi
-  apply_payload "$dest" "$repodir" "$rel"
+   if ! apply_payload "$dest" "$repodir" "$rel"; then failed=1; fi
+   if ! copy_legacy_manifest "$dest"; then failed=1; fi
+
   restored=$((restored + 1))
   log "restored $rel -> $dest"
 done < <(find "$SNAP/repos" -type f -name meta.json -print 2>/dev/null)
 
 if [ -s "$SNAP/files.tar.gz" ]; then
   # --keep-old-files: never overwrite whatever the fresh runner already has.
-  ( cd "$ROOT" && tar --keep-old-files -xzf "$SNAP/files.tar.gz" 2>/dev/null ) || true
-  log "restored loose home files (existing ones left untouched)"
+  if ! ( cd "$ROOT" && tar --keep-old-files -xzf "$SNAP/files.tar.gz" 2>/dev/null ); then
+    log "could not restore loose home files"
+    failed=1
+  else
+    log "restored loose home files (existing ones left untouched)"
+  fi
 fi
 
 log "done: $restored repo(s) restored"
+[ "$failed" -eq 0 ]

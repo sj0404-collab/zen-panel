@@ -42,17 +42,48 @@ MAX_TOTAL_MB="${WORK_BACKUP_MAX_TOTAL_MB:-400}"
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
 STATE_DIR="${WORK_BACKUP_STATE:-$HOME/.npm-hub/work-backup-state}"
 
-mkdir -p "$HUB_LOGS" "$STATE_DIR" 2>/dev/null || true
+if ! mkdir -p "$HUB_LOGS" "$STATE_DIR"; then
+  printf '%s\n' "work-backup: cannot create log or state directory" >&2
+  exit 1
+fi
 log() { echo "[work-backup $(date -u '+%H:%M:%S')] $*" | tee -a "$HUB_LOGS/work-backup.log"; }
+if [ -z "${SESSION_STATE_URL:-}" ] && [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
+  log "no GitHub token; backup is disabled"
+  exit 1
+fi
 
 REMOTE="${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN:-${GITHUB_TOKEN:-}}@github.com/${GITHUB_REPOSITORY:-}.git}"
+LOCK_DIR="$STATE_DIR/publish.lock"
+acquire_backup_lock() {
+  local owner now mtime
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    printf '%s\n' "$$" > "$LOCK_DIR/pid"
+    printf '%s\n' "$(date +%s)" > "$LOCK_DIR/started"
+    return 0
+  fi
+  owner=""
+  [ -f "$LOCK_DIR/pid" ] && owner="$(tr -dc '0-9' < "$LOCK_DIR/pid")"
+  now="$(date +%s)"
+  mtime="$(stat -c %Y "$LOCK_DIR" 2>/dev/null || printf '0')"
+  if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } \
+    || { [ -z "$owner" ] && [ "$mtime" -gt 0 ] && [ $((now - mtime)) -gt 120 ]; }; then
+    rm -rf "$LOCK_DIR"
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+      printf '%s\n' "$$" > "$LOCK_DIR/pid"
+      printf '%s\n' "$now" > "$LOCK_DIR/started"
+      return 0
+    fi
+  fi
+  return 1
+}
+release_backup_lock() { rm -rf "$LOCK_DIR"; }
 
 EXCLUDES=(
   '*/actions-runner/*' '*/.nvm/*' '*/.cache/*' '*/.npm/*' '*/.gradle/*'
   '*/.m2/*' '*/.cargo/*' '*/.rustup/*' '*/.local/share/opencode/*'
   '*/.local/share/Trash/*' '*/.zen-agent/*' '*/node_modules/*'
   '*/.venv/*' '*/venv/*' '*/__pycache__/*' '*/.tox/*' '*/.pytest_cache/*'
-  '*/.config/gh/*' '*/.npm-hub/tmp/*' '*/.npm-hub/logs/*' '*/.ssh/*'
+  '*/.config/gh/*' '*/.npm-hub' '*/.npm-hub/*' '*/.npm-hub/tmp/*' '*/.npm-hub/logs/*' '*/.ssh/*'
   '*/.docker/*' '*/.oh-my-zsh/*' '*/.opencode/*' '*/work/*'
   '*/hub-work/*/node_modules/*' '*/.git/lfs/*' '*/.local/share/Code/*'
   '*/.vscode-server/*' '*/.java/*' '*/.sonar/*'
@@ -131,7 +162,7 @@ compute_sig() {
 
 collect() {
   local stage="$1"
-  mkdir -p "$stage/repos"
+  mkdir -p "$stage/repos" || return 1
   local total_bytes=0 budget=$(( MAX_TOTAL_MB * 1024 * 1024 )) gitdir dir rel out sz
 
   while IFS= read -r gitdir; do
@@ -139,18 +170,31 @@ collect() {
     dir="$(dirname "$gitdir")"
     rel="${dir#"$ROOT"/}"; [ "$rel" = "$dir" ] && rel="$(basename "$dir")"
     out="$stage/repos/$rel"
-    mkdir -p "$out"
+    mkdir -p "$out" || return 1
     if git -C "$dir" rev-parse HEAD >/dev/null 2>&1; then
-      git -C "$dir" bundle create "$out/repo.bundle" --all >/dev/null 2>&1 \
-        || rm -f "$out/repo.bundle"
+      if ! git -C "$dir" bundle create "$out/repo.bundle" --all >/dev/null 2>&1; then
+        log "bundle failed for $rel"
+        return 1
+      fi
+      if ! git -C "$dir" diff --binary HEAD >"$out/wip.patch" 2>/dev/null; then
+        log "WIP diff failed for $rel"
+        return 1
+      fi
+    else
+      if ! git -C "$dir" diff --binary >"$out/wip.patch" 2>/dev/null; then
+        log "unborn-repository diff failed for $rel"
+        return 1
+      fi
     fi
-    git -C "$dir" diff --binary HEAD >"$out/wip.patch" 2>/dev/null || : >"$out/wip.patch"
     [ -s "$out/wip.patch" ] || rm -f "$out/wip.patch"
-    ( cd "$dir" && git ls-files --others --exclude-standard -z 2>/dev/null \
+    if ! ( cd "$dir" && git ls-files --others --exclude-standard -z 2>/dev/null \
         | while IFS= read -r -d '' f; do skip_regenerable "$f" || printf '%s\0' "$f"; done \
-        | tar --null -T - -czf "$out/untracked.tar.gz" 2>/dev/null ) || true
+        | tar --null -T - -czf "$out/untracked.tar.gz" 2>/dev/null ); then
+      log "untracked archive failed for $rel"
+      return 1
+    fi
     [ -s "$out/untracked.tar.gz" ] || rm -f "$out/untracked.tar.gz"
-    python3 - "$dir" "$rel" "$out/meta.json" <<'PY' 2>/dev/null || true
+    if ! python3 - "$dir" "$rel" "$out/meta.json" <<'PY' 2>/dev/null
 import json, os, subprocess, sys
 d, rel, path = sys.argv[1], sys.argv[2], sys.argv[3]
 def run(c):
@@ -164,6 +208,10 @@ json.dump({
     "dirty": bool(run("git status --porcelain")),
 }, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY
+    then
+      log "metadata failed for $rel"
+      return 1
+    fi
     sz="$(du -sb "$out" 2>/dev/null | cut -f1)"; total_bytes=$(( total_bytes + ${sz:-0} ))
     if [ "$total_bytes" -gt "$budget" ]; then
       log "budget ${MAX_TOTAL_MB}MB exceeded; remaining repos not packed this round"
@@ -171,18 +219,24 @@ PY
     fi
   done < <(find_repos)
 
-  loose_listing > "$stage/tree.txt" 2>/dev/null || true
+  loose_listing > "$stage/tree.txt" 2>/dev/null || return 1
   loose_predicates
-  ( cd "$ROOT" || exit 0
+  if ! ( cd "$ROOT" || exit 1
     find . -mindepth 1 -type f ${LOOSE_PREDICATES[@]+"${LOOSE_PREDICATES[@]}"} \
       ! -size +"${MAX_FILE_MB}"M -print0 2>/dev/null \
-      | tar --null -T - -czf "$stage/files.tar.gz" 2>/dev/null )
+      | tar --null -T - -czf "$stage/files.tar.gz" 2>/dev/null ); then
+    log "loose-file archive failed"
+    return 1
+  fi
   [ -s "$stage/files.tar.gz" ] || rm -f "$stage/files.tar.gz"
 }
 
 publish() {
   local stage="$1" stamp="$2" work
-  work="$(mktemp -d)"
+  if ! work="$(mktemp -d)"; then
+    log "cannot create publish directory"
+    return 1
+  fi
   ( cd "$work" || exit 1
     if ! git clone -q --depth 1 --branch "$BRANCH" "$REMOTE" state 2>/dev/null; then
       git clone -q "$REMOTE" state 2>/dev/null || exit 1
@@ -190,17 +244,24 @@ publish() {
     fi
   ) || { rm -rf "$work"; return 1; }
   cd "$work/state" || { rm -rf "$work"; return 1; }
-  mkdir -p snapshots
-  cp -a "$stage" "snapshots/$stamp"
-  cp "$stage/tree.txt" "snapshots/$stamp/tree.txt" 2>/dev/null || true
-  python3 - "snapshots/$stamp" "latest.json" "$stamp" <<'PY'
+  materialize_snapshot() {
+    local source="$1" name="$2" python_status
+    mkdir -p snapshots || return 1
+    rm -rf "snapshots/$name" || return 1
+    cp -a "$source" "snapshots/$name" || return 1
+    if [ -f "$source/tree.txt" ]; then
+      cp "$source/tree.txt" "snapshots/$name/tree.txt" || return 1
+    fi
+    python3 - "$source" "latest.json" "$name" <<'PY'
 import json, os, sys
 snap, latest, stamp = sys.argv[1], sys.argv[2], sys.argv[3]
 repos = []
 rroot = os.path.join(snap, "repos")
 for rel in sorted(os.listdir(rroot)) if os.path.isdir(rroot) else []:
-    try: meta = json.load(open(os.path.join(rroot, rel, "meta.json"), encoding="utf-8"))
-    except Exception: meta = {"rel": rel}
+    try:
+        meta = json.load(open(os.path.join(rroot, rel, "meta.json"), encoding="utf-8"))
+    except Exception:
+        meta = {"rel": rel}
     meta["files"] = sorted(os.listdir(os.path.join(rroot, rel)))
     repos.append(meta)
 data = {"kind": "work-backup", "stamp": stamp, "snapshot": snap, "repos": repos,
@@ -209,51 +270,89 @@ data = {"kind": "work-backup", "stamp": stamp, "snapshot": snap, "repos": repos,
 for p in (os.path.join(snap, "manifest.json"), latest):
     json.dump(data, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY
-  if [ "$KEEP" -gt 0 ]; then
-    ls -1dt snapshots/*/ 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -rf
+    python_status=$?
+    [ "$python_status" -eq 0 ] || return 1
+    if [ "$KEEP" -gt 0 ]; then
+      ls -1dt snapshots/*/ 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -rf || return 1
+    fi
+  }
+  if ! materialize_snapshot "$stage" "$stamp"; then
+    rm -rf "$work"
+    return 1
   fi
-  git config user.email "work-backup@symbiosis"
-  git config user.name  "Work backup"
-  git add -A
+  git config user.email "work-backup@symbiosis" || { rm -rf "$work"; return 1; }
+  git config user.name  "Work backup" || { rm -rf "$work"; return 1; }
+  git add -A || { rm -rf "$work"; return 1; }
   if git diff --cached --quiet; then
     log "no changes to publish"; rm -rf "$work"; return 0
   fi
-  git commit -q -m "work-backup $stamp"
-  local pushed=0
-  for attempt in 1 2 3 4 5; do
-    if git push -q origin "HEAD:$BRANCH" 2>/dev/null; then pushed=1; break; fi
-    git fetch -q origin "$BRANCH" 2>/dev/null && git reset -q --hard FETCH_HEAD
-    git add -A
-    git commit -q -m "work-backup $stamp" 2>/dev/null || true
-    sleep $((attempt * 2))
+  git commit -q -m "work-backup $stamp" || { rm -rf "$work"; return 1; }
+  local pushed=0 delay
+  for attempt in $(seq 1 12); do
+    if git push -q origin "HEAD:$BRANCH" 2>/dev/null; then
+      pushed=1
+      break
+    fi
+    echo "work-backup: push attempt $attempt failed; refreshing $BRANCH" >&2
+    if git fetch -q origin "$BRANCH" 2>/dev/null; then
+      git reset -q --hard FETCH_HEAD || { rm -rf "$work"; return 1; }
+      if ! materialize_snapshot "$stage" "$stamp"; then
+        rm -rf "$work"
+        return 1
+      fi
+      git add -A || { rm -rf "$work"; return 1; }
+      git commit -q -m "work-backup $stamp" 2>/dev/null || { rm -rf "$work"; return 1; }
+    fi
+    delay=$((attempt * 2))
+    [ "$delay" -gt 30 ] && delay=30
+    sleep "$delay"
   done
   rm -rf "$work"
   [ "$pushed" = 1 ]
 }
 
-do_backup() {
+do_backup() (
+  if ! acquire_backup_lock; then
+    log "another backup is already running"
+    exit 0
+  fi
+  trap 'release_backup_lock' EXIT
   local sig; sig="$(compute_sig)"
   if [ -f "$STATE_DIR/global.sig" ] && [ "$(cat "$STATE_DIR/global.sig" 2>/dev/null)" = "$sig" ]; then
     log "nothing changed; skipping"
     return 0
   fi
   local stamp; stamp="$(date -u '+%Y%m%dT%H%M%S')"
-  local stage; stage="$(mktemp -d)"
-  collect "$stage"
+  local stage
+  if ! stage="$(mktemp -d)"; then
+    log "cannot create snapshot directory"
+    return 1
+  fi
+  if ! collect "$stage"; then
+    log "snapshot collection failed"
+    rm -rf "$stage"
+    return 1
+  fi
   local repos; repos="$(ls -1 "$stage/repos" 2>/dev/null | wc -l | tr -d ' ')"
   if [ "$repos" = 0 ] && [ ! -s "$stage/files.tar.gz" ]; then
     log "nothing to publish"; rm -rf "$stage"; printf '%s' "$sig" > "$STATE_DIR/global.sig"; return 0
   fi
+  local result=0
   if publish "$stage" "$stamp"; then
     printf '%s' "$sig" > "$STATE_DIR/global.sig"
     log "published snapshot $stamp ($(du -sh "$stage" 2>/dev/null | cut -f1), $repos repo(s)) -> $BRANCH"
   else
     log "publish failed (will retry next cycle)"
+    result=1
   fi
   rm -rf "$stage"
-}
+  return "$result"
+)
 
-if [ "${1:-}" = "--once" ]; then do_backup; exit 0; fi
+if [ "${1:-}" = "--once" ]; then
+  do_backup || exit 1
+  exit 0
+fi
 log "daemon started root=$ROOT branch=$BRANCH interval=${INTERVAL}s"
 do_backup || true
 while true; do sleep "$INTERVAL"; do_backup || log "backup failed, retrying"; done

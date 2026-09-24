@@ -59,8 +59,8 @@ ensure_state() {
 # Import every session of one bundle into one repository (CWD = the repo).
 import_bundle() {
   local repo_dir="$1" bundle="$2"
-  [ -d "$repo_dir" ] || { echo "restore-chats: missing repo dir $repo_dir, skip" >&2; return 0; }
-  [ -s "$bundle" ] || { echo "restore-chats: empty bundle $bundle, skip" >&2; return 0; }
+  [ -d "$repo_dir" ] || { echo "restore-chats: missing repo dir $repo_dir" >&2; return 1; }
+  [ -s "$bundle" ] || { echo "restore-chats: empty bundle $bundle" >&2; return 1; }
   CHAT_ONLY="${CHAT_ONLY:-}" CHAT_REPO_DIR="$repo_dir" BUNDLE="$bundle" python3 - <<'PY'
 import json, os, subprocess, sys, tempfile
 
@@ -72,7 +72,7 @@ try:
     bundle = json.load(open(bundle_path, encoding="utf-8"))
 except Exception as e:
     print("restore-chats: bad bundle: %s" % e, file=sys.stderr)
-    sys.exit(0)
+    sys.exit(1)
 
 sessions = bundle.get("sessions") or []
 if only:
@@ -107,7 +107,11 @@ for s in sessions:
             pass
 
 print("restore-chats: %d/%d sessions imported from %s" % (ok, len(sessions), bundle_path))
+if sessions and ok < len(sessions):
+    sys.exit(1)
 PY
+  local python_status=$?
+  return "$python_status"
 }
 
 # Find the local repo that matches a chats/<name>.json bundle: same basename,
@@ -156,6 +160,7 @@ if [ "$ALL" = 1 ]; then
     exit 0
   fi
   processed=0
+  failed=0
   shopt -s nullglob
   for bundle in "$STATE"/chats/*.json; do
     [ -s "$bundle" ] || continue
@@ -165,16 +170,19 @@ if [ "$ALL" = 1 ]; then
       match="$(find_repo_for "$root" "$name")"
       [ -n "$match" ] && break
     done
-    if [ -z "$match" ]; then
-      echo "restore-chats: no local repo for $name; skipped"
-      continue
-    fi
-    echo "restore-chats: --- import $name -> $match"
-    import_bundle "$match" "$bundle"
-    processed=$((processed + 1))
-  done
-  echo "restore-chats: done, $processed bundle(s) processed"
-  exit 0
+     if [ -z "$match" ]; then
+       echo "restore-chats: no local repo for $name; skipped"
+       failed=1
+       continue
+     fi
+     echo "restore-chats: --- import $name -> $match"
+     if ! import_bundle "$match" "$bundle"; then failed=1; fi
+     processed=$((processed + 1))
+   done
+   echo "restore-chats: done, $processed bundle(s) processed"
+   [ "$failed" -eq 0 ]
+   exit $?
+
 fi
 
 REPO_DIR="${CHAT_REPO_DIR:-${GITHUB_WORKSPACE:-$(pwd)}}"

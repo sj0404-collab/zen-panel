@@ -16,8 +16,41 @@ mkdir -p "$HUB_LOGS" 2>/dev/null || true
 
 INTERVAL="${SNAPSHOT_INTERVAL:-120}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SLOT WORK
 
 log() { echo "[snapshot $SLOT] $*" | tee -a "$HUB_LOGS/snapshot-$SLOT.log"; }
+publish_snapshot() {
+  local output status
+  output="$(bash "$SCRIPT_DIR/publish_session.sh" "$@" 2>&1)"
+  status=$?
+  printf '%s\n' "$output" | tee -a "$HUB_LOGS/snapshot-$SLOT.log"
+  return "$status"
+}
+snapshot_lock_dir() { printf '%s/snapshot-%s.lock' "$HUB_LOGS" "$SLOT"; }
+acquire_snapshot_lock() {
+  local lock owner now mtime
+  lock="$(snapshot_lock_dir)"
+  if mkdir "$lock" 2>/dev/null; then
+    printf '%s\n' "$$" > "$lock/pid"
+    printf '%s\n' "$(date +%s)" > "$lock/started"
+    return 0
+  fi
+  owner=""
+  [ -f "$lock/pid" ] && owner="$(tr -dc '0-9' < "$lock/pid")"
+  now="$(date +%s)"
+  mtime="$(stat -c %Y "$lock" 2>/dev/null || printf '0')"
+  if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } \
+    || { [ -z "$owner" ] && [ "$mtime" -gt 0 ] && [ $((now - mtime)) -gt 120 ]; }; then
+    rm -rf "$lock"
+    if mkdir "$lock" 2>/dev/null; then
+      printf '%s\n' "$$" > "$lock/pid"
+      printf '%s\n' "$now" > "$lock/started"
+      return 0
+    fi
+  fi
+  return 1
+}
+release_snapshot_lock() { rm -rf "$(snapshot_lock_dir)"; }
 
 # Daemon cycle counter for the throttled per-repo chat export below.
 CHATCYCLE=0
@@ -30,15 +63,23 @@ export_all_chats() {
   [ -f "$SCRIPT_DIR/export-chats.sh" ] || return 0
   [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ] || return 0
   GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" PUBLISH=1 \
-    bash "$SCRIPT_DIR/export-chats.sh" --all >> "$HUB_LOGS/snapshot-$SLOT.log" 2>&1 || true
+    bash "$SCRIPT_DIR/export-chats.sh" --all >> "$HUB_LOGS/snapshot-$SLOT.log" 2>&1
 }
 
 do_snapshot() {
+  if ! acquire_snapshot_lock; then
+    log "another snapshot is already running"
+    return 0
+  fi
   local stamp
+  local chat_ok=1
   stamp="$(date -u '+%Y%m%dT%H%M%S')"
   local tmpdir
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' RETURN
+  if ! tmpdir="$(mktemp -d)"; then
+    log "cannot create snapshot directory"
+    release_snapshot_lock
+    return 1
+  fi
 
   local audit_src="$WORK/.zen-agent/audit.jsonl"
   local audit_json="$tmpdir/audit.json"
@@ -102,16 +143,23 @@ PY
   if [ ! -s "$audit_json" ]; then echo "{}" > "$audit_json"; fi
   # Обновляем saved/opencode-*.json каждые 120с (не раз в сутки) чтобы сессии были свежими
   if [ -f "$SCRIPT_DIR/backup-chat-history.sh" ] && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
-    GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" PUBLISH=1 bash "$SCRIPT_DIR/backup-chat-history.sh" >> "$HUB_LOGS/snapshot-$SLOT.log" 2>&1 || true
+    if ! GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" PUBLISH=1 bash "$SCRIPT_DIR/backup-chat-history.sh" >> "$HUB_LOGS/snapshot-$SLOT.log" 2>&1; then
+      log "chat history backup failed"
+      chat_ok=0
+    fi
   fi
   # Per-repo chat bundles: on the 120s daemon only every 10th cycle (~20 min,
   # export is heavier than the light audit/code snapshot), always on the final
   # --once. The final run covers cross-run continuity; the periodic one guards
   # against a runner that is killed before the graceful final step.
   CHATCYCLE=$((CHATCYCLE + 1))
-  if [ $((CHATCYCLE % 10)) -eq 1 ] || [ "${SNAPSHOT_ONCE:-}" = "1" ]; then
-    export_all_chats
-  fi
+   if [ $((CHATCYCLE % 10)) -eq 1 ] || [ "${SNAPSHOT_ONCE:-}" = "1" ]; then
+     if ! export_all_chats; then
+       log "chat export failed"
+       chat_ok=0
+     fi
+   fi
+
 
   python3 - "$WORK" "$tmpdir" <<'PY'
 import json, os, sys, subprocess, glob
@@ -148,20 +196,27 @@ with open(os.path.join(tmpdir, "code.json"), "w", encoding="utf-8") as f:
 PY
   if [ ! -s "$code_json" ]; then echo "{}" > "$code_json"; fi
 
-  local ok=0
+  local published=0
   for f in audit.json code.json; do
     local base="${f%.json}"
     local src="$tmpdir/$f"
     local dst="$f"
-    if bash "$SCRIPT_DIR/publish_session.sh" "slot=$SLOT" "file=$dst" "json=$src" "kind=snapshot-$f" 2>&1 | tee -a "$HUB_LOGS/snapshot-$SLOT.log"; then
-      ok=$((ok+1))
+    if publish_snapshot "slot=$SLOT" "file=$dst" "json=$src" "kind=snapshot-$f"; then
+      published=$((published+1))
+    else
+      log "publish failed for $dst"
     fi
     local hist="saved/${base}-${SLOT}-${stamp}.json"
-    if bash "$SCRIPT_DIR/publish_session.sh" "file=$hist" "json=$src" "kind=snapshot-$f" 2>&1 | tee -a "$HUB_LOGS/snapshot-$SLOT.log"; then
-      : # ok
+    if publish_snapshot "file=$hist" "json=$src" "kind=snapshot-$f"; then
+      published=$((published+1))
+    else
+      log "publish failed for $hist"
     fi
   done
-  log "snapshot $stamp: audit $(wc -c < "$audit_json" 2>/dev/null | tr -d ' ')B code $(wc -c < "$code_json" 2>/dev/null | tr -d ' ')B published"
+  log "snapshot $stamp: audit $(wc -c < "$audit_json" 2>/dev/null | tr -d ' ')B code $(wc -c < "$code_json" 2>/dev/null | tr -d ' ')B published=$published/4"
+  rm -rf "$tmpdir"
+  release_snapshot_lock
+  [ "$published" -eq 4 ] && [ "$chat_ok" -eq 1 ]
 }
 
 if [ "${1:-}" = "--once" ] || [ "${SNAPSHOT_ONCE:-}" = "1" ]; then
@@ -169,15 +224,21 @@ if [ "${1:-}" = "--once" ] || [ "${SNAPSHOT_ONCE:-}" = "1" ]; then
   WORK="${3:-$WORK}"
   if [ ! -d "$WORK" ]; then WORK="$(pwd)"; fi
   if [ ! -d "$WORK/.git" ] && [ -d "$WORK/../fork/.git" ]; then WORK="$WORK/../fork"; fi
+  export SLOT WORK
   # Full chat transcripts (chats/<repo>.json): this repo's bundle is always
   # exported at shutdown; with SNAPSHOT_EXPORT_ALL_CHATS=1 every repo under
   # $HOME is exported too (see export_all_chats inside do_snapshot).
   if [ "${EXPORT_CHATS:-1}" != "0" ] && [ -f "$SCRIPT_DIR/export-chats.sh" ] \
     && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
     CHAT_REPO_DIR="$WORK" PUBLISH="${PUBLISH:-1}" \
-      bash "$SCRIPT_DIR/export-chats.sh" 2>&1 | tee -a "$HUB_LOGS/snapshot-$SLOT.log" || true
+      bash "$SCRIPT_DIR/export-chats.sh" 2>&1 | tee -a "$HUB_LOGS/snapshot-$SLOT.log"
+    export_status=${PIPESTATUS[0]}
+    if [ "$export_status" -ne 0 ]; then
+      log "one-shot chat export failed"
+      exit 1
+    fi
   fi
-  do_snapshot
+  do_snapshot || exit 1
   exit 0
 fi
 
