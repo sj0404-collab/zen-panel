@@ -168,7 +168,7 @@ async function init() {
     window.__tunnelUrl = tunnelR.url;
   }
   await restoreServerSessions();
-  renderDashboard(); renderSidebar();
+  renderDashboard(); renderSidebar(); renderSiteCard();
   setTimeout(() => { initFM(); fmBrowse(workDir || homeDir); }, 300);
 }
 
@@ -304,20 +304,63 @@ function showPage(p) {
 // Внутри WebView window.open() уводит страницу обратно в себя же, поэтому
 // сначала пробуем нативный мост (ZenBridge.openExternal → Intent.ACTION_VIEW),
 // и только в обычном браузере падаем на window.open с новой вкладкой.
-function openHubExternal() {
-  const url = (location.origin || '') + '/';
-  if (!/^https?:\s*\/\//i.test(url)) { if (typeof fmInfo === 'function') fmInfo('Не удалось определить адрес панели'); return; }
+function openHubExternal(url) {
+  const base = (url && /^https?:\/\//i.test(url)) ? url.replace(/\/+$/, '') : (location.origin || '') + '/';
+  const target = base + '/';
+  if (!/^https?:\s*\/\//i.test(target)) { if (typeof fmInfo === 'function') fmInfo('Не удалось определить адрес панели'); return; }
   try {
     if (window.ZenBridge && typeof window.ZenBridge.openExternal === 'function') {
-      window.ZenBridge.openExternal(url);
+      window.ZenBridge.openExternal(target);
       return;
     }
   } catch (e) {}
-  const w = window.open(url, '_blank', 'noopener');
-  if (!w && typeof fmInfo === 'function') fmInfo('Браузер заблокировал новое окно — откройте адрес вручную: ' + url);
+  const w = window.open(target, '_blank', 'noopener');
+  if (!w && typeof fmInfo === 'function') fmInfo('Браузер заблокировал новое окно — откройте адрес вручную: ' + target);
 }
 
-showPage('files');
+// ── Сайт хаба на Dashboard: при каждом открытии хаба видно текущий адрес
+//    (публичный туннель, если есть, иначе локальный origin), плюс «Перейти»
+//    и «Скопировать». В WebView приложения clipboard бывает недоступен —
+//    страхуемся textarea + execCommand.
+function hubSiteUrl() {
+  if (window.__tunnelUrl) return window.__tunnelUrl;
+  return (location.origin || '') + '/';
+}
+function renderSiteCard() {
+  const urlEl = document.getElementById('site-card-url');
+  if (!urlEl) return;
+  const base = hubSiteUrl();
+  urlEl.textContent = base;
+  const stateEl = document.getElementById('site-card-state');
+  if (stateEl) {
+    if (window.__tunnelUrl) { stateEl.textContent = '● туннель'; stateEl.className = 'tag tag-on'; }
+    else { stateEl.textContent = '● локально'; stateEl.className = 'tag tag-on'; }
+    stateEl.title = base;
+  }
+}
+function copyHubSiteUrl() {
+  const url = hubSiteUrl();
+  const done = () => { if (typeof fmInfo === 'function') fmInfo('Адрес скопирован: ' + url); };
+  const fail = () => {
+    // WebView без clipboard-разрешения: textarea + execCommand
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      if (ok) { done(); return; }
+    } catch (e) {}
+    if (typeof fmInfo === 'function') fmInfo('Не удалось скопировать — адрес: ' + url);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(done).catch(fail);
+  } else fail();
+}
+
+showPage('dashboard');
 
 // ===== GIT VIEW =====
 let gitPathRef = '';
@@ -1018,13 +1061,11 @@ function attachTermScroll(id, panel) {
     upBtn.classList.toggle('dim', max <= 0 || vp.scrollTop <= 0);
     dnBtn.classList.toggle('dim', max <= 0 || vp.scrollTop >= max - 1);
   };
+  // Стрелки листают как настоящее колесо мыши: шлём WheelEvent прямо в
+  // терминал (xterm сам скроллит scrollback на обычном буфере и отдаёт
+  // приложению/пейджеру на alternate — меньше, vim, top — ровно как мышь).
   const scrollStep = (dir) => {
-    if (isAlt()) { fireWheel(dir === 'up' ? -140 : 140); return; }
-    const max = vp.scrollHeight - vp.clientHeight;
-    if (max <= 0) return;
-    const step = Math.max(70, Math.round(vp.clientHeight * 0.45));
-    vp.scrollTop = Math.max(0, Math.min(max, vp.scrollTop + (dir === 'up' ? -step : step)));
-    syncArrows();
+    fireWheel(dir === 'up' ? -140 : 140);
   };
   let arrTimer = null;
   const arrStop = () => { if (arrTimer) { clearInterval(arrTimer); arrTimer = null; } };
@@ -3311,17 +3352,6 @@ function linuxZoomApply() {
   try { if (fr && fr.contentDocument && fr.contentDocument.__hub) fr.contentDocument.__hub.scale(resolveZoom()); } catch {}
 }
 
-// «⋯» — адрес, звук и починка. Экран должен быть экраном.
-function linuxMoreToggle() {
-  const el = document.getElementById('linux-more');
-  if (!el) return;
-  el.hidden = !el.hidden;
-  const b = document.getElementById('linux-more-btn');
-  if (b) b.textContent = el.hidden ? '⋯' : '×';
-  if (!el.hidden) { try { pulseStatus(); } catch {} }
-}
-
-
 // ===== ВИРТУАЛЬНАЯ МЫШЬ =====
 // Раньше «мышью» служил сам палец по картинке экрана: он закрывает то место,
 // куда целишься, промах уходил в пустоту, а прокрутки не было вовсе. Теперь
@@ -3502,7 +3532,6 @@ function hubBrowserGo(url){
   const isYt = /youtube|youtu\.be/i.test(url);
   linuxRunBrowser(url, isYt);
   fmInfo('🌐 ' + url + ' → открываю на экране (звук вкл)');
-  if (typeof linuxMoreToggle === 'function') { const m=document.getElementById('linux-more'); if (m && !m.hidden) linuxMoreToggle(); }
   showPage('linux');
 }
 
@@ -3525,8 +3554,10 @@ async function pulseToggleMute(){
   }catch{}
 }
 async function pulseSetVol(v){
-  const lbl=document.getElementById('browser-vol-label');
+  const lbl=document.getElementById('pulse-vol-label');
   if(lbl) lbl.textContent=v+'%';
+  const lblD=document.getElementById('browser-vol-label');
+  if(lblD) lblD.textContent=v+'%';
   try{ await fetch('/api/pulse/volume',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume: Number(v)})}); }catch{}
 }
 // ===== TTS / OCR (читалка) =====

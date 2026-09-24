@@ -508,13 +508,11 @@ function attachTermScroll(id, panel){
     upBtn.classList.toggle('dim', max<=0 || vp.scrollTop<=0);
     dnBtn.classList.toggle('dim', max<=0 || vp.scrollTop>=max-1);
   };
+  // Стрелки листают как настоящее колесо мыши: шлём WheelEvent прямо в
+  // терминал (xterm сам скроллит scrollback на обычном буфере и отдаёт
+  // приложению/пейджеру на alternate — меньше, vim, top — ровно как мышь).
   const scrollStep=(dir)=>{
-    if(isAlt()){ fireWheel(dir==='up'?-140:140); return; }
-    const max=vp.scrollHeight-vp.clientHeight;
-    if(max<=0) return;
-    const step=Math.max(70,Math.round(vp.clientHeight*0.45));
-    vp.scrollTop=Math.max(0,Math.min(max,vp.scrollTop+(dir==='up'?-step:step)));
-    syncArrows();
+    fireWheel(dir==='up'?-140:140);
   };
   let arrTimer=null;
   const arrStop=()=>{ if(arrTimer){ clearInterval(arrTimer); arrTimer=null; } };

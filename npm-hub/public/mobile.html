@@ -155,14 +155,16 @@
     .term .xterm-viewport::-webkit-scrollbar{width:6px}
     .term .xterm-viewport::-webkit-scrollbar-track{background:transparent}
     .term .xterm-viewport::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:3px}
-    .term-wrap{flex:1;display:flex;flex-direction:row;overflow:hidden;min-width:0}
+    .term-wrap{flex:1;display:flex;flex-direction:row;overflow:hidden;min-width:0;position:relative}
     .term-wrap .term{flex:1;min-width:0}
-    .term-scroll{width:40px;flex-shrink:0;display:flex;flex-direction:column;background:rgba(255,255,255,.05);border-radius:7px;margin:2px 4px 2px 2px;touch-action:none;overflow:hidden}
-    .term-scroll-arr{width:100%;height:44px;flex-shrink:0;border:none;background:rgba(255,255,255,.07);color:#e6edf3;font-size:16px;line-height:1;cursor:pointer;touch-action:none;padding:0;flex:0 0 auto}
+    /* Стрелки ▲▼ — плавающий компактный кластер по центру слева (никакой
+       колонки на всю высоту), скроллит как настоящее колесо мыши. */
+    .term-scroll{position:absolute;left:6px;top:50%;transform:translateY(-50%);z-index:4;display:flex;flex-direction:column;border-radius:10px;background:rgba(13,17,23,.72);border:1px solid rgba(240,246,252,.18);box-shadow:0 2px 8px rgba(0,0,0,.4);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);overflow:hidden;touch-action:none}
+    .term-scroll-arr{width:40px;height:38px;flex-shrink:0;border:none;background:transparent;color:#e6edf3;font-size:14px;line-height:1;cursor:pointer;touch-action:none;padding:0;flex:0 0 auto}
     .term-scroll-arr:active,.term-scroll-arr.on{background:var(--acc);color:#0d1117}
     .term-scroll-arr.dim{opacity:.35}
-    .term-scroll-track{flex:1;position:relative;min-height:0;touch-action:none}
-    .term-cd{display:none;position:absolute;right:42px;bottom:12px;background:rgba(210,153,34,.14);border:1px solid var(--warn);color:var(--warn);border-radius:9px;font-size:12px;font-weight:700;font-family:monospace;padding:4px 10px;z-index:3;pointer-events:none;white-space:nowrap}
+    .term-scroll-track{display:none}
+    .term-cd{display:none;position:absolute;right:12px;bottom:12px;background:rgba(210,153,34,.14);border:1px solid var(--warn);color:var(--warn);border-radius:9px;font-size:12px;font-weight:700;font-family:monospace;padding:4px 10px;z-index:3;pointer-events:none;white-space:nowrap}
     .term-cd.on{display:block}
 
     /* ===== FILE MANAGER ===== */
@@ -278,6 +280,22 @@
       <!-- DASHBOARD -->
       <div class="page" id="p-dashboard">
         <div class="ph"><h1>Dashboard</h1><p>AI инструменты — выберите папку и нажмите Применить</p></div>
+
+        <!-- Сайт хаба: показывается при каждом открытии хаба — копировать адрес
+             или открыть панель в системном браузере устройства. -->
+        <div id="site-card" class="card" style="margin-bottom:12px">
+          <div class="card-h">
+            <div class="card-ico" style="background:rgba(188,140,255,.12);color:var(--pur)">🌐</div>
+            <div><div class="card-n">Сайт хаба</div><div class="card-v">Панель NPM Hub</div></div>
+            <span class="tag tag-on" id="site-card-state" style="margin-left:auto">…</span>
+          </div>
+          <div class="runner-line" id="site-card-url" style="font-family:monospace">…</div>
+          <div class="runner-btns">
+            <button class="btn btn-p" onclick="openHubExternal(hubSiteUrl())" title="Открыть панель в системном браузере устройства — он переживает перезапуск приложения">🌐 Перейти</button>
+            <button class="btn" onclick="copyHubSiteUrl()" title="Скопировать адрес сайта">📋 Скопировать</button>
+          </div>
+        </div>
+
         <div class="stats" id="stats"></div>
         <div class="grid" id="grid"></div>
         <div id="runner-card"></div>
@@ -368,8 +386,8 @@
 
 <!-- LINUX DESKTOP (VNC) — ОДИН ЭКРАН ДЛЯ ВСЕГО (RDP/VNC) -->
       <div class="page" id="p-linux" style="padding:0;flex-direction:column;height:100%">
-        <!-- Одна тонкая строка: всё остальное (адрес, звук, починка) — за «⋯».
-             Экран должен быть экраном, а не панелью управления. -->
+        <!-- Одна тонкая строка: только управление экраном. Адрес, звук, починка —
+             во вкладке «Настройки» (p-screen-settings). Экран — экран, не панель. -->
         <div class="linux-bar">
           <span id="linux-status" class="tag">…</span>
           <button class="btn btn-sm" onclick="linuxKeyboard()" title="Клавиатура телефона (в YouTube: k — пуск/пауза, f — во весь экран, m — звук)">⌨</button>
@@ -378,33 +396,6 @@
           <button class="btn btn-sm" id="linux-mouse-btn" onclick="linuxMouseToggle()" title="Виртуальная мышь: сенсор, две кнопки, колесо стрелками">🖱</button>
           <button class="btn btn-sm" onclick="linuxFullscreen()" title="На весь экран + поворот в ландшафт">⛶</button>
           <span id="linux-note"></span>
-          <button class="btn btn-sm" id="linux-more-btn" onclick="linuxMoreToggle()" style="margin-left:auto" title="Адрес, звук, починить">⋯</button>
-        </div>
-        <div id="linux-more" hidden>
-          <input type="text" id="browser-url" placeholder="https://... — откроется на этом экране" value="https://www.youtube.com" style="flex:1;min-width:140px;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')linuxRunBrowser(this.value)">
-          <button class="btn btn-p btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url').value)" title="Открыть Chromium прямо на этом экране (DISPLAY=:99)">Go · 🖥</button>
-          <span id="pulse-status" class="tag" role="button" tabindex="0" onclick="event.stopPropagation();remoteAudioToggle()" onkeydown="if(event.key==='Enter'||event.key===' ')remoteAudioToggle()" title="Включить звук видео с удалённого экрана" style="font-size:10px;cursor:pointer">🔊</span>
-          <input type="range" id="pulse-vol" min="0" max="100" value="80" style="width:80px" oninput="pulseSetVol(this.value)">
-          <span id="pulse-vol-label" style="font-size:11px;font-family:monospace;min-width:36px;text-align:right">80%</span>
-          <button class="btn btn-sm" onclick="pulseToggleMute()" title="Мьют">🔇</button>
-          <button class="btn btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url').value, true)" title="Вертикально (Shorts) — окно под экран телефона">📱 вертикально</button>
-          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--t2)" title="Сохраняется между перезапусками хаба"><span>AVD</span><input id="emulator-default" type="text" placeholder="pixel_7_api34" style="width:110px;padding:4px 6px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:11px" onkeydown="if(event.key==='Enter')saveEmulatorDefault()"></label>
-          <button class="btn btn-sm" onclick="saveEmulatorDefault()" title="Сохранить AVD по умолчанию">✓ AVD</button>
-          <button class="btn btn-sm" onclick="linuxRepair()" title="Пересобрать экран на этом раннере">🔧 починить</button>
-          <!-- Читалка (TTS/OCR): жила во вкладке Chrome, а та дублировала
-               «Экран» (два браузера на одном телефоне) — переехала сюда. -->
-          <div id="linux-read">
-            <span style="color:var(--pur);font-weight:700">🔊 TTS/OCR:</span>
-            <button class="btn btn-p btn-sm" id="tts-play-btn" onclick="ttsToggle()">▶ Читать</button>
-            <button class="btn btn-sm" onclick="ttsStop()">⏹ Стоп</button>
-            <button class="btn btn-sm" onclick="ttsPause()">⏸ Пауза</button>
-            <select id="tts-voice" style="padding:4px 6px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:11px;max-width:120px"></select>
-            <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--t2)"><input type="range" id="tts-rate" min="0.5" max="2" step="0.1" value="1" style="width:60px" oninput="ttsSetRate(this.value)"> <span id="tts-rate-label">1×</span></label>
-            <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-autoscroll" checked> Авто-скролл</label>
-            <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-bg" checked> В фоне</label>
-            <button class="btn btn-sm" onclick="ocrCapture()" title="Распознать текст с экрана (OCR)">👁️ OCR</button>
-            <span id="tts-status" style="font-size:10px;color:var(--t3);margin-left:auto">готов</span>
-          </div>
         </div>
         <style>
           /* ⛶ — экран на весь экран без потери noVNC-сессии.
@@ -497,7 +488,7 @@
           <div id="linux-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);text-align:center;padding:20px">
             <div style="font-size:48px;margin-bottom:16px">🖥</div>
             <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--t2)">Один экран</div>
-            <div style="font-size:13px;max-width:320px;line-height:1.5">Всё — браузер, терминал, файлы — на одном рабочем столе Linux (openbox).<br>Нажми <b>Go</b> выше — Chromium откроется прямо здесь, звук уже 80%.<br><span style="color:var(--t3)">Телефон теперь тоже здесь: `📱` в Chrome-вкладке открывает вертикальный ютуб.</span></div>
+            <div style="font-size:13px;max-width:320px;line-height:1.5">Всё — браузер, терминал, файлы — на одном рабочем столе Linux (openbox).<br>Вкладка <b>🎛 Настройки</b> откроет Chromium прямо здесь, звук уже 80%.<br><span style="color:var(--t3)">Телефон тоже здесь: «📱 вертикально» в настройках открывает вертикальный ютуб.</span></div>
             <button class="btn btn-p btn-sm" onclick="linuxRepair()" style="margin-top:14px">🔧 Починить экран</button>
             <div id="pulse-devices" style="margin-top:12px;font-size:11px;color:var(--t3);text-align:left"></div>
           </div>
@@ -506,7 +497,62 @@
         <iframe id="cp-frame" style="display:none" allowfullscreen></iframe>
       </div>
 
-      <!-- BROWSER — Chrome вкладка для ссылок от агента -->
+      <!-- SCREEN SETTINGS — все настройки экрана в одном месте (раньше жили
+           под «⋯» вкладки «Экран»). Экран — это экран, настройки — здесь. -->
+      <div class="page" id="p-screen-settings">
+        <div class="ph"><h1>🎛 Настройки экрана</h1><p>Вид, браузер, звук, AVD и голос на удалённом столе</p></div>
+
+        <div id="screen-settings-body">
+          <div class="card" style="margin-bottom:10px">
+            <div class="card-h">
+              <div class="card-ico" style="background:rgba(88,166,255,.12);color:var(--acc)">👁</div>
+              <div><div class="card-n">Вид экрана</div><div class="card-v">Кнопки действуют на вкладке «Экран»</div></div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-sm" onclick="linuxKeyboard()" title="Клавиатура телефона (в YouTube: k — пуск/пауза, f — во весь экран, m — звук)">⌨ Клавиатура</button>
+              <button class="btn btn-sm" onclick="linuxZoomToggle()" title="Заполнить / весь стол / 1:1">🔎 Зум</button>
+              <button class="btn btn-sm" onclick="linuxPerfToggle()" title="Плавность: плавно / баланс / чётко">⚡ Плавность</button>
+              <button class="btn btn-sm" onclick="linuxMouseToggle()" title="Виртуальная мышь: сенсор, две кнопки, колесо стрелками">🖱 Мышь</button>
+              <button class="btn btn-sm" onclick="linuxFullscreen()" title="На весь экран + поворот в ландшафт">⛶ Полный экран</button>
+              <button class="btn btn-p btn-sm" onclick="showPage('linux')" title="Открыть экран">🖥 Открыть экран</button>
+            </div>
+          </div>
+
+          <div id="linux-more">
+            <input type="text" id="browser-url" placeholder="https://... — откроется на экране" value="https://www.youtube.com" style="flex:1;min-width:140px;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:12px;outline:none" onkeydown="if(event.key==='Enter')linuxRunBrowser(this.value)">
+            <button class="btn btn-p btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url').value)" title="Открыть Chromium на экране (DISPLAY=:99)">Go · 🖥</button>
+            <button class="btn btn-sm" onclick="linuxRunBrowser(document.getElementById('browser-url').value, true)" title="Вертикально (Shorts) — окно под экран телефона">📱 вертикально</button>
+            <span id="pulse-status" class="tag" role="button" tabindex="0" onclick="event.stopPropagation();remoteAudioToggle()" onkeydown="if(event.key==='Enter'||event.key===' ')remoteAudioToggle()" title="Включить звук видео с удалённого экрана" style="font-size:10px;cursor:pointer">🔊</span>
+            <input type="range" id="pulse-vol" min="0" max="100" value="80" style="width:80px" oninput="pulseSetVol(this.value)">
+            <span id="pulse-vol-label" style="font-size:11px;font-family:monospace;min-width:36px;text-align:right">80%</span>
+            <button class="btn btn-sm" onclick="pulseToggleMute()" title="Мьют">🔇</button>
+            <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--t2)" title="Сохраняется между перезапусками хаба"><span>AVD</span><input id="emulator-default" type="text" placeholder="pixel_7_api34" style="width:110px;padding:4px 6px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:11px" onkeydown="if(event.key==='Enter')saveEmulatorDefault()"></label>
+            <button class="btn btn-sm" onclick="saveEmulatorDefault()" title="Сохранить AVD по умолчанию">✓ AVD</button>
+            <button class="btn btn-sm" onclick="linuxRepair()" title="Пересобрать экран на этом раннере">🔧 починить</button>
+            <!-- Читалка (TTS/OCR): жила во вкладке Chrome, а та дублировала
+                 «Экран» (два браузера на одном телефоне) — переехала в настройки. -->
+            <div id="linux-read">
+              <span style="color:var(--pur);font-weight:700">🔊 TTS/OCR:</span>
+              <button class="btn btn-p btn-sm" id="tts-play-btn" onclick="ttsToggle()">▶ Читать</button>
+              <button class="btn btn-sm" onclick="ttsStop()">⏹ Стоп</button>
+              <button class="btn btn-sm" onclick="ttsPause()">⏸ Пауза</button>
+              <select id="tts-voice" style="padding:4px 6px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:11px;max-width:120px"></select>
+              <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--t2)"><input type="range" id="tts-rate" min="0.5" max="2" step="0.1" value="1" style="width:60px" oninput="ttsSetRate(this.value)"> <span id="tts-rate-label">1×</span></label>
+              <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-autoscroll" checked> Авто-скролл</label>
+              <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--t2)"><input type="checkbox" id="tts-bg" checked> В фоне</label>
+              <button class="btn btn-sm" onclick="ocrCapture()" title="Распознать текст с экрана (OCR)">👁️ OCR</button>
+              <span id="tts-status" style="font-size:10px;color:var(--t3);margin-left:auto">готов</span>
+            </div>
+          </div>
+        </div>
+        <style>
+          #p-screen-settings #linux-more{display:flex;gap:6px;flex-wrap:wrap;align-items:center;background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:12px;margin-bottom:10px}
+          #p-screen-settings #linux-more[hidden]{display:none}
+          #p-screen-settings #linux-read{display:flex;gap:6px;align-items:center;flex-wrap:wrap;width:100%;border-top:1px solid var(--bdr);padding-top:10px;margin-top:4px}
+          #p-screen-settings .btn:active{opacity:.85}
+        </style>
+      </div>
+
       <!-- GIT — local + GitHub repos + builds -->
       <div class="page" id="p-git">
         <div class="ph"><h1>🐙 Git</h1><p>Локальный репозиторий + GitHub: все репозитории, ветки, коммиты, сборки</p></div>
@@ -584,9 +630,9 @@
       <span class="nav-ico">🐙</span>
       <span class="nav-label">Git</span>
     </button>
-    <button class="nav-btn" id="nav-browser" onclick="openHubExternal()" title="Открыть панель NPM Hub в системном браузере — он переживает перезапуск приложения">
-      <span class="nav-ico">🌐</span>
-      <span class="nav-label">Браузер</span>
+    <button class="nav-btn" id="nav-screen-settings" onclick="showPage('screen-settings')" title="Настройки экрана: браузер, звук, AVD, TTS/OCR">
+      <span class="nav-ico">🎛</span>
+      <span class="nav-label">Настройки</span>
     </button>
   </div>
 
