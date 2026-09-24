@@ -23,7 +23,9 @@
     .tab-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
     .tab-x{margin-left:3px;opacity:.3;font-size:13px}.tab-x:hover{opacity:1;color:var(--err)}
     .tab-add{padding:7px 10px;color:var(--t3);cursor:pointer;font-size:15px;flex-shrink:0}.tab-add:hover{color:var(--acc)}
-    .term-controls{display:flex;align-items:center;gap:4px;padding:0 6px;border-left:1px solid var(--bdr);flex-shrink:0;overflow-x:auto}
+    .term-controls{display:flex;align-items:center;gap:4px;padding:0 6px;border-left:1px solid var(--bdr);flex:0 1 auto;min-width:0;overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-width:none}
+    .term-controls::-webkit-scrollbar{display:none}
+    .term-controls>*{flex-shrink:0}
     .tc-btn{width:26px;height:26px;border-radius:5px;border:1px solid var(--bdr);background:var(--bg3);color:var(--t2);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .1s;flex-shrink:0}
     .tc-btn:hover{background:var(--bdr);color:var(--t1)}
     .zoom-label{font-size:10px;color:var(--t3);min-width:36px;text-align:center;font-family:monospace}
@@ -65,9 +67,8 @@
     .term-scroll{width:30px;flex-shrink:0;display:flex;flex-direction:column;background:rgba(255,255,255,.05);border-radius:8px;margin:2px 4px 2px 2px;touch-action:none;overflow:hidden}
     .term-scroll-arr{width:100%;height:26px;flex-shrink:0;border:none;background:rgba(255,255,255,.07);color:#e6edf3;font-size:12px;line-height:1;cursor:pointer;touch-action:none;padding:0;flex:0 0 auto}
     .term-scroll-arr:active,.term-scroll-arr.on{background:var(--acc);color:#0d1117}
+    .term-scroll-arr.dim{opacity:.35}
     .term-scroll-track{flex:1;position:relative;min-height:0;touch-action:none}
-    .term-scroll-thumb{position:absolute;left:3px;right:3px;top:0;display:none;background:var(--t3);border-radius:6px;touch-action:none;min-height:28px}
-    .term-scroll-thumb:active{background:var(--acc)}
     .term-panel.on{display:flex}
     .term-header{display:flex;align-items:center;justify-content:space-between;padding:4px 10px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;gap:8px}
     .term-header-title{font-size:10px;color:var(--t2);display:flex;align-items:center;gap:5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
