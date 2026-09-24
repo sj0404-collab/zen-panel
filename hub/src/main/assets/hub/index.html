@@ -139,7 +139,7 @@ async function waitForHub(token, sinceMs, sleepMs) {
   for (let i = 0; i < 150; i++) {
     const s = await readHubSession(token);
     const born = s && s.startedAt ? new Date(s.startedAt).getTime() : 0;
-    if (s && s.state === 'live' && born > sinceMs - 180000 && (s.hubUrl || s.url)) return s;
+    if (s && s.state === 'live' && born >= sinceMs - 15000 && (s.hubUrl || s.url)) return s;
     await sleep(sleepMs || 5000);
   }
   throw new Error('Таймаут: хаб не сообщил адрес за 12 минут.');

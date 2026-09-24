@@ -1202,7 +1202,7 @@ const liveDesktops = rs => rs.filter(r => (r.name === 'Remote session' || r.name
                                           && r.status !== 'completed');
 
 async function currentRuns() {
-  try { return (await api(`${CTL()}/actions/runs?per_page=20`)).workflow_runs || []; }
+  try { return (await api(`${CTL()}/actions/runs?per_page=100`)).workflow_runs || []; }
   catch (e) { return []; }
 }
 
@@ -1806,6 +1806,7 @@ async function launchDesks() {
   }
   btn.textContent = 'Поднимаю…';
   try {
+    const launchSince = Date.now();
     const ri = runnerInputs();
     const r = await dispatchWorkflow('desks.yml', {
       label: (acct() && acct().login) || 'desks',
@@ -1831,7 +1832,11 @@ async function launchDesks() {
         }
         if (hit) break;
       }
-      if (hit) break;
+      if (hit) {
+        const born = Date.parse(hit.startedAt || '');
+        if (Number.isFinite(born) && born >= launchSince - 15000) break;
+        hit = null;
+      }
       btn.textContent = `Поднимаю… ${Math.round(i * 5 / 60 * 10) / 10} мин`;
     }
     await refresh();
@@ -1865,11 +1870,12 @@ async function launchAgent() {
   btn.dataset.label = btn.dataset.label || btn.textContent;
   busyButtons(true, 'btn-agent');
   try {
+    const launchSince = Date.now();
     const r = await dispatchWorkflow('agent.yml', {
       os: where, branch: 'agent-work', repos: '', autosave_minutes: '2', ...runnerInputs()
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
-    await waitAndOpen('agent-' + where);
+    await waitAndOpen('agent-' + where, launchSince);
   } catch (e) {
     alert('Не вышло: ' + e.message);
   } finally {
@@ -1898,11 +1904,12 @@ async function launchOpencode() {
   btn.dataset.label = btn.dataset.label || btn.textContent;
   busyButtons(true, 'btn-opencode');
   try {
+    const launchSince = Date.now();
     const r = await dispatchWorkflow('opencode.yml', {
       os: where, prompt: PENDING_Q, branch: 'opencode-work', ...runnerInputs()
     });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
-    await waitAndOpen('opencode-' + where);
+    await waitAndOpen('opencode-' + where, launchSince);
   } catch (e) {
     alert('Не вышло: ' + e.message);
   } finally {
@@ -1911,7 +1918,14 @@ async function launchOpencode() {
   }
 }
 
+let hubLaunchInFlight = false;
 async function launchHub(preferOs) {
+  if (hubLaunchInFlight) return;
+  hubLaunchInFlight = true;
+  try { return await launchHubInternal(preferOs); }
+  finally { hubLaunchInFlight = false; }
+}
+async function launchHubInternal(preferOs) {
   if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
   try { if (window.ZenBridge && ZenBridge.requestNotifications) ZenBridge.requestNotifications(); } catch (e) {}
   const where = preferOs || (confirm('Где поднять NPM-Hub?\n\nОК — Linux\nОтмена — Windows') ? 'linux' : 'windows');
@@ -1930,6 +1944,7 @@ async function launchHub(preferOs) {
   btn.dataset.label = btn.dataset.label || btn.textContent;
   busyButtons(true, 'btn-hub');
   try {
+    const launchSince = Date.now();
     // Reuse the slot's token when there is one: a relaunch while the old run
     // is still dying would otherwise 401 against it with a fresh token, and
     // the panel keeps opening the same address across relaunches.
@@ -1938,7 +1953,7 @@ async function launchHub(preferOs) {
     saveHubTokens();
     const r = await dispatchWorkflow('hub.yml', { os: where, label: 'hub', token: hubToken, ...runnerInputs() });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
-    await waitAndOpen('hub-' + where);
+    await waitAndOpen('hub-' + where, launchSince);
   } catch (e) {
     alert('Не вышло: ' + e.message);
   } finally {
@@ -2001,7 +2016,7 @@ window.zenOpenFromNotify = function (slot, url) {
   else openLive();
 };
 
-async function waitAndOpen(kind) {
+async function waitAndOpen(kind, sinceMs = Date.now()) {
   BOOT_SEEN = new Set();
   if ($('boot-log')) $('boot-log').innerHTML = '';
   bootLog('отправка workflow…');
@@ -2042,6 +2057,8 @@ async function waitAndOpen(kind) {
         return;
       }
     }
+    const born = s && Date.parse(s.startedAt || '');
+    if (s && (!Number.isFinite(born) || born < sinceMs - 15000)) s = null;
     const ready = s && (s.agentUrl || s.deskUrl || s.rdpHost ||
       (fam !== 'agent' && fam !== 'opencode' && s.url));
     if (ready) {
@@ -2593,7 +2610,7 @@ const kb = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' МБ'
 
 async function refresh() {
   let runs = [];
-  try { runs = (await api(`${CTL()}/actions/runs?per_page=20`)).workflow_runs || []; }
+  try { runs = (await api(`${CTL()}/actions/runs?per_page=100`)).workflow_runs || []; }
   catch (e) {
     $('live').innerHTML = `<div class="danger">${esc(e.message)}</div>`;
     if (e && e.is403) sessPausedUntil = Date.now() + (e.unbanMs || 600000);
