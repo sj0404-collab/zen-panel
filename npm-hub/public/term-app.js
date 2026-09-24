@@ -190,7 +190,7 @@ function attachTab(meta) {
   const panel = document.createElement('div');
   panel.className = 'term-panel';
   panel.id = 'panel-' + id;
-  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span></div><div class="term-info">${dirShort}</div><button class="btn" style="padding:2px 8px;font-size:10px" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll"><button class="term-scroll-arr up">▲</button><div class="term-scroll-track"></div><button class="term-scroll-arr down">▼</button></div></div><div class="term-cd" id="cd-${id}"></div><div class="term-resumed" id="resumed-${id}">✓ Восстановлено</div>`;
+  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span></div><div class="term-info">${dirShort}</div><button class="btn" style="padding:2px 8px;font-size:10px" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll"><button class="term-scroll-arr up">▲</button><button class="term-scroll-handle" title="Потянуть — переместить стрелки; тап — вернуть к краю">⠿</button><button class="term-scroll-arr down">▼</button></div></div><div class="term-cd" id="cd-${id}"></div><div class="term-resumed" id="resumed-${id}">✓ Восстановлено</div>`;
   document.getElementById('term-container').appendChild(panel);
   term.open(document.getElementById('term-' + id));
   setTimeout(() => fitAddon.fit(), 30);
@@ -527,6 +527,46 @@ function attachTermScroll(id, panel){
   };
   bindArr(upBtn,'up');
   bindArr(dnBtn,'down');
+  // Плавающие стрелки: в покое полупрозрачны (не перекрывают текст), при
+  // касании/наведении активны; ручка ⠿ перетаскивает, тап — в центр.
+  const cluster=panel.querySelector('.term-scroll');
+  const handle=cluster&&cluster.querySelector('.term-scroll-handle');
+  let clusterDrag=false, clusterKeep=null;
+  const clusterActivate=()=>{ if(!cluster) return; clearTimeout(clusterKeep); cluster.classList.add('chasing'); };
+  const clusterArmFade=()=>{ if(!cluster) return; clearTimeout(clusterKeep); clusterKeep=setTimeout(()=>{ if(!clusterDrag) cluster.classList.remove('chasing'); },1200); };
+  if(cluster){
+    cluster.addEventListener('mouseenter',clusterActivate);
+    cluster.addEventListener('mouseleave',()=>{ if(!clusterDrag) clusterArmFade(); });
+    cluster.addEventListener('pointerdown',clusterActivate);
+    ['pointerup','pointercancel'].forEach(ev=>cluster.addEventListener(ev,()=>{ if(!clusterDrag) clusterArmFade(); }));
+  }
+  if(cluster&&handle){
+    const wrap=vp.closest('.term-wrap')||vp.parentElement;
+    let d=null;
+    handle.addEventListener('pointerdown',(e)=>{
+      e.preventDefault(); e.stopPropagation();
+      clusterDrag=true; clusterActivate();
+      const r=cluster.getBoundingClientRect();
+      d={offX:e.clientX-r.left,offY:e.clientY-r.top,x0:e.clientX,y0:e.clientY};
+      try{ handle.setPointerCapture(e.pointerId); }catch(_){}
+    });
+    handle.addEventListener('pointermove',(e)=>{
+      if(!d) return;
+      const pr=wrap.getBoundingClientRect();
+      const x=Math.max(2,Math.min(pr.width-cluster.offsetWidth-2,e.clientX-d.offX-pr.left));
+      const y=Math.max(2,Math.min(pr.height-cluster.offsetHeight-2,e.clientY-d.offY-pr.top));
+      cluster.style.left=x+'px'; cluster.style.top=y+'px'; cluster.style.transform='none';
+    });
+    const endDrag=(e)=>{
+      if(!d) return;
+      const moved=Math.abs(e.clientX-d.x0)+Math.abs(e.clientY-d.y0)>6;
+      d=null; clusterDrag=false;
+      if(!moved){ cluster.style.left=''; cluster.style.top=''; cluster.style.transform=''; }
+      clusterArmFade();
+    };
+    handle.addEventListener('pointerup',endDrag);
+    handle.addEventListener('pointercancel',endDrag);
+  }
   // Тап по пустой середине — листаем на шаг вверх/вниз.
   if(track) track.addEventListener('pointerdown',(e)=>{
     e.preventDefault();
