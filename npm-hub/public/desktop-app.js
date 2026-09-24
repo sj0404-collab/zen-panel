@@ -696,30 +696,40 @@ document.querySelectorAll('.modal-bg').forEach(bg => {
   bg.addEventListener('click', (e) => { if (e.target === bg) bg.classList.remove('on'); });
 });
 
-// ===== TERMINAL SCROLLBAR (слайдер) =====
+// ===== TERMINAL SCROLLBAR (стрелки ▲▼ вместо ползунка) =====
+// Раньше здесь был перетаскиваемый ползунок-слайдер — он не всегда крутил
+// терминал (особенно в alternate screen). Теперь полоса целиком отдана
+// стрелкам ▲▼: по нажатию (и удержанию) они листают терминал в любом режиме —
+// обычном (viewport) и alternate (событиями колеса, как в vim/htop/OpenCode).
 function attachTermScroll(id, panel) {
   const termEl = document.getElementById('term-' + id);
   const vp = termEl.querySelector('.xterm-viewport');
-  const track = panel.querySelector('.term-scroll-track');
-  const thumb = panel.querySelector('.term-scroll-thumb');
-  if (!vp || !track || !thumb) return null;
+  if (!vp) return null;
   const term = (tabs.find(t => t.id === id) || {}).term;
-  // В alternate screen (vim/htop/OpenCode) нет scrollback-буфера: программе нужно
-  // слать события колеса, а не крутить viewport. Обычный ползунок крутит xterm.
   const isAlt = () => { const b = term && term.buffer && term.buffer.active; return !!(b && b.type === 'alternate'); };
   const fireWheel = (dy) => {
     if (!term) return;
     const scr = termEl.querySelector('.xterm-screen') || termEl;
     try { scr.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, deltaMode: 0, bubbles: true, cancelable: true, composed: true })); } catch (_) {}
   };
-  // Стрелки ▲▼ в полосе прокрутки терминала: крутят его по нажатию/удержанию
-  // (на телефоне прокрутка пальцем по тексту часто не работает).
+  const upBtn = panel.querySelector('.term-scroll-arr.up');
+  const dnBtn = panel.querySelector('.term-scroll-arr.down');
+  const track = panel.querySelector('.term-scroll-track');
+  // Тусклим стрелку, если в её сторону крутить уже некуда.
+  const syncArrows = () => {
+    if (!upBtn || !dnBtn) return;
+    if (isAlt()) { upBtn.classList.remove('dim'); dnBtn.classList.remove('dim'); return; }
+    const max = vp.scrollHeight - vp.clientHeight;
+    upBtn.classList.toggle('dim', max <= 0 || vp.scrollTop <= 0);
+    dnBtn.classList.toggle('dim', max <= 0 || vp.scrollTop >= max - 1);
+  };
   const scrollStep = (dir) => {
     if (isAlt()) { fireWheel(dir === 'up' ? -140 : 140); return; }
     const max = vp.scrollHeight - vp.clientHeight;
     if (max <= 0) return;
     const step = Math.max(70, Math.round(vp.clientHeight * 0.45));
     vp.scrollTop = Math.max(0, Math.min(max, vp.scrollTop + (dir === 'up' ? -step : step)));
+    syncArrows();
   };
   let arrTimer = null;
   const arrStop = () => { if (arrTimer) { clearInterval(arrTimer); arrTimer = null; } };
@@ -732,90 +742,19 @@ function attachTermScroll(id, panel) {
     });
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => btn.addEventListener(ev, () => { btn.classList.remove('on'); arrStop(); }));
   };
-  bindArr(panel.querySelector('.term-scroll-arr.up'), 'up');
-  bindArr(panel.querySelector('.term-scroll-arr.down'), 'down');
-  let altDrag = 0;
-  const updAlt = () => {
-    thumb.style.display = 'block';
-    const trackH = track.clientHeight;
-    const th = Math.max(24, Math.min(110, trackH * 0.25));
-    altDrag = Math.max(0, Math.min(Math.max(1, trackH - th), altDrag));
-    thumb.style.height = th + 'px';
-    thumb.style.transform = 'translateY(' + altDrag + 'px)';
-  };
-
-  const upd = () => {
-    if (isAlt()) { updAlt(); return; }
-    const max = vp.scrollHeight - vp.clientHeight;
-    if (max <= 2) { thumb.style.display = 'none'; return; }
-    thumb.style.display = 'block';
-    const trackH = track.clientHeight;
-    const th = Math.max(24, trackH * (vp.clientHeight / vp.scrollHeight));
-    const pos = trackH <= th ? 0 : (vp.scrollTop / max) * (trackH - th);
-    thumb.style.height = th + 'px';
-    thumb.style.transform = 'translateY(' + pos + 'px)';
-  };
-  vp.addEventListener('scroll', upd);
-  let ro = null;
-  if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(upd); ro.observe(track); }
-  const resizeHandler = upd;
-  window.addEventListener('resize', resizeHandler);
-  let bufSub = null;
-  if (term && term.buffer && term.buffer.onBufferChange) { bufSub = term.buffer.onBufferChange(upd); }
-
-  let dragging = false, startY = 0, startTop = 0;
-  const toTop = (e) => {
-    if (isAlt()) {
-      const dy = e.clientY - startY;
-      startY = e.clientY;
-      const trackH = track.clientHeight;
-      altDrag = Math.max(0, Math.min(Math.max(1, trackH - thumb.clientHeight), altDrag + dy));
-      thumb.style.transform = 'translateY(' + altDrag + 'px)';
-      fireWheel(dy * 8);
-      e.preventDefault();
-      return;
-    }
-    const max = vp.scrollHeight - vp.clientHeight;
-    if (max <= 0) return;
-    const trackH = track.clientHeight;
-    const th = Math.max(24, trackH * (vp.clientHeight / vp.scrollHeight));
-    const ratio = trackH - th;
-    const dy = e.clientY - startY;
-    const ratioPos = ratio > 0 ? (startTop / max) * ratio + dy : 0;
-    vp.scrollTop = ratio > 0 ? Math.max(0, Math.min(1, ratioPos / ratio)) * max : 0;
+  bindArr(upBtn, 'up');
+  bindArr(dnBtn, 'down');
+  // Тап по пустой середине — листаем на шаг вверх/вниз.
+  if (track) track.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-  };
-  thumb.addEventListener('pointerdown', (e) => {
-    dragging = true; startY = e.clientY; startTop = vp.scrollTop;
-    try { thumb.setPointerCapture(e.pointerId); } catch {}
-    e.preventDefault();
-  });
-  thumb.addEventListener('pointermove', (e) => { if (dragging) toTop(e); });
-  const endDrag = () => { dragging = false; };
-  thumb.addEventListener('pointerup', endDrag);
-  thumb.addEventListener('pointercancel', endDrag);
-  track.addEventListener('pointerdown', (e) => {
-    if (e.target === thumb) return;
-    if (isAlt()) {
-      const rect = track.getBoundingClientRect();
-      const down = e.clientY > rect.top + rect.height / 2;
-      fireWheel(down ? 120 : -120);
-      const trackH = track.clientHeight;
-      altDrag = Math.max(0, Math.min(Math.max(1, trackH - thumb.clientHeight), altDrag + (down ? 60 : -60)));
-      thumb.style.transform = 'translateY(' + altDrag + 'px)';
-      e.preventDefault();
-      return;
-    }
-    const max = vp.scrollHeight - vp.clientHeight;
-    if (max <= 0) return;
     const rect = track.getBoundingClientRect();
-    const ratio = (e.clientY - rect.top - 14) / rect.height;
-    vp.scrollTop = max * Math.max(0, Math.min(1, ratio));
-    e.preventDefault();
+    scrollStep(e.clientY > rect.top + rect.height / 2 ? 'down' : 'up');
   });
-
-  upd();
-  return { upd, destroy() { arrStop(); if (ro) ro.disconnect(); window.removeEventListener('resize', resizeHandler); if (bufSub && bufSub.dispose) bufSub.dispose(); } };
+  vp.addEventListener('scroll', syncArrows);
+  let bufSub = null;
+  if (term && term.buffer && term.buffer.onBufferChange) { bufSub = term.buffer.onBufferChange(syncArrows); }
+  syncArrows();
+  return { upd: syncArrows, destroy() { arrStop(); if (bufSub && bufSub.dispose) bufSub.dispose(); vp.removeEventListener('scroll', syncArrows); } };
 }
 // ── Спасение от «застывшего» агента ──
 // opencode и другие CLI-агенты при исчерпании лимита модели (особенно у
@@ -932,9 +871,8 @@ function setupTermTouch(termEl, term) {
       selecting = true;
       anchorRow = cell.row;
       try { if (navigator.vibrate) navigator.vibrate(20); } catch {}
-      if (termSelectWordAt(term, startX, startY)) {
-        fmInfo('выделено — тяни, чтобы расширить, затем ⧉ чтобы скопировать');
-      }
+      // Без модалки: просто выделяем слово, как обычный текст на сайте.
+      termSelectWordAt(term, startX, startY);
     }, 550);
   };
   const onMove = (e) => {
@@ -959,8 +897,7 @@ function setupTermTouch(termEl, term) {
     clearTimeout(holdTimer);
     if (selecting) {
       selecting = false;
-      const sel = (term.getSelection() || '').trim();
-      fmInfo(sel ? ('выделено ' + sel.length + ' симв. — ⧉ чтобы скопировать') : 'ничего не выделено');
+      // Оставляем выделение видимым — копировать можно кнопкой ⧉.
       return;
     }
     if (!scrolled && Date.now() - startT < 550) {
@@ -1018,7 +955,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   const panel = document.createElement('div');
   panel.className = 'term-panel';
   panel.id = 'panel-' + id;
-  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color}"></div>${displayName}</div><div class="term-info">${dirShort}</div><button class="btn btn-sm" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll" id="tscroll-${id}"><button class="term-scroll-arr up">▲</button><div class="term-scroll-track"><div class="term-scroll-thumb" id="tthumb-${id}"></div></div><button class="term-scroll-arr down">▼</button></div></div><div class="term-cd" id="cd-${id}"></div>`;
+  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color}"></div>${displayName}</div><div class="term-info">${dirShort}</div><button class="btn btn-sm" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll" id="tscroll-${id}"><button class="term-scroll-arr up">▲</button><div class="term-scroll-track"></div><button class="term-scroll-arr down">▼</button></div></div><div class="term-cd" id="cd-${id}"></div>`;
   document.getElementById('term-container').appendChild(panel);
   term.open(document.getElementById('term-' + id));
   await new Promise(r => setTimeout(r, 30));
@@ -1163,7 +1100,7 @@ function closeTab(id) {
 }
 
 function zoomTerm(dir) {
-  if (dir === 0) zoomLevel = 100; else zoomLevel = Math.max(50, Math.min(300, zoomLevel + dir * 10));
+  if (dir === 0) zoomLevel = 100; else zoomLevel = Math.max(20, Math.min(300, zoomLevel + dir * 10));
   document.getElementById('zoom-label').textContent = zoomLevel + '%';
   if (activeTab) { activeTab.term.options.fontSize = Math.round(14 * zoomLevel / 100); setTimeout(() => activeTab.fitAddon?.fit(), 10); }
 }
@@ -1252,7 +1189,6 @@ async function copySelection() {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(txt);
-      fmInfo('Скопировано');
       return;
     }
   } catch {}
