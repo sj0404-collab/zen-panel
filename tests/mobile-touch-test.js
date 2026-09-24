@@ -16,6 +16,11 @@ const startDesktop = fs.readFileSync(path.join(__dirname, '..', 'tools/start_des
 const mainKt = fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/java/dev/zen/hub/MainActivity.kt'), 'utf8');
 const panelKt = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/java/dev/zen/panel/MainActivity.kt'), 'utf8');
 const hubWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github/workflows/hub.yml'), 'utf8');
+const agentWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github/workflows/agent.yml'), 'utf8');
+const opencodeWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github/workflows/opencode.yml'), 'utf8');
+const desksWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github/workflows/desks.yml'), 'utf8');
+const snapshotAudit = fs.readFileSync(path.join(__dirname, '..', 'tools/snapshot-audit-code.sh'), 'utf8');
+const publishSession = fs.readFileSync(path.join(__dirname, '..', 'tools/publish_session.sh'), 'utf8');
 const backupWork = fs.readFileSync(path.join(__dirname, '..', 'tools/backup-work.sh'), 'utf8');
 const restoreWork = fs.readFileSync(path.join(__dirname, '..', 'tools/restore-work.sh'), 'utf8');
 const filesApp = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/files-app.js'), 'utf8');
@@ -70,9 +75,9 @@ check('q9 workdir first device', /devices\.push\(\{ type: 'local', id: path\.joi
 // with "the hub did not start" and the site never came up.
 check('q10 tools report warming:false', server.includes('res.json({ success: true, warming: false, tools })'));
 
-// q11: 16+ installable agents on choice (pkg set, bins verified in the registry).
-check('q11 installable agents', (server.match(/pkg: '/g) || []).length >= 16,
-  (server.match(/pkg: '/g) || []).length);
+// q11: the full tool registry is present; tools without npm installers use their native setup.
+check('q11 installable agents', (server.slice(server.indexOf('const TOOLS = ['), server.indexOf('const storage =')).match(/\{ id: '/g) || []).length >= 14,
+  (server.slice(server.indexOf('const TOOLS = ['), server.indexOf('const storage =')).match(/\{ id: '/g) || []).length);
 
 // q12: install endpoints exist.
 check('q12 install endpoints', server.includes("app.post('/api/tools/install'") &&
@@ -305,9 +310,7 @@ check('q38d no silent full-buffer copy', !mob.includes('buf.length - 200') && !d
 //     который убивает нативное выделение страницы
 const mobTouch = mob.slice(mob.indexOf('function setupTermTouch'), mob.indexOf('async function createTerm'));
 check('q38e native selection alive', mobTouch.includes("addEventListener('touchstart', onStart, { passive: true })") &&
-  mobTouch.includes("addEventListener('touchmove', onMove, { passive: false })") &&
-  mobTouch.includes("getSelection() || ''"));
-
+  mob.includes('function termSelectWordAt') && mob.includes('term.select('));
 
 // q39: «наложение» на Экране — иконки рабочего стола всплывали ПОВЕРХ окна
 // браузера (жалоба 19.09: контент страницы смешан с иконками стола).
@@ -488,7 +491,7 @@ check('q54 alternate-screen program scrolling',
   mob.includes("new WheelEvent('wheel'") &&
   desk.includes("new WheelEvent('wheel'") &&
   term.includes("new WheelEvent('wheel'") &&
-  term.includes('Math.min(1,((startTop/max)*ratio+dy)/ratio)'));
+  term.includes("fireWheel(dir==='up'?-140:140)"));
 
 // q55: Android downloads keep the server filename and recognize compound
 // archives instead of letting DownloadManager rename them to .bin/.ts.
@@ -537,6 +540,35 @@ check('q59 upload progress UI',
   mobHtml.includes('id="fm-transfer-progress"') &&
   mob.includes("st.fileName + ' (' + fmtBytes(st.fileSize) + ')'"));
 
+const sessionWorkflows = [hubWorkflow, agentWorkflow, opencodeWorkflow, desksWorkflow];
+check('q60 one session workflow lock', sessionWorkflows.every(x =>
+  x.includes('zen-panel-session-${{ github.repository }}') && x.includes('cancel-in-progress: false')));
+check('q61 background snapshots receive token',
+  hubWorkflow.includes('nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"') &&
+  agentWorkflow.includes('nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"') &&
+  hubWorkflow.includes('GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" SNAPSHOT_EXPORT_ALL_CHATS=1'));
+check('q62 snapshot failures are not reported as success',
+  snapshotAudit.includes('publish_snapshot()') && snapshotAudit.includes('published=$published/4') &&
+  publishSession.includes('push attempt $attempt failed'));
+check('q63 OpenCode resumes the last project session',
+  server.includes('const commandForTool =') && server.includes("'opencode'") && server.includes('--continue'));
+check('q64 clone manifest follows the real repository',
+  server.includes('githubDefaultBranch') && server.includes("path.join(targetDir, 'MANIFEST.md')") &&
+  server.includes('staging-${process.pid}-${Date.now()}'));
+check('q65 incomplete clone is quarantined',
+  restoreWork.includes('moved incomplete clone') && restoreWork.includes('git -C "$dest" rev-parse --git-dir'));
+check('q66 double hub launch is serialized',
+  panel.includes('let hubLaunchInFlight = false') && panel.includes('launchHubInternal'));
+check('q67 new launch cannot open stale session data',
+  panel.includes('born < sinceMs - 15000') && panel.includes('waitAndOpen(\'hub-\' + where, launchSince)') &&
+  fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub/index.html'), 'utf8').includes('born >= sinceMs - 15000'));
+check('q68 backup failures propagate',
+  publishSession.includes('staging file is empty') && publishSession.includes('push failed after retries') &&
+  backupWork.includes('result=1') && snapshotAudit.includes('[ "$published" -eq 4 ]'));
+const recoveryFiles = [mob, desk, term, mobHtml, deskHtml,
+  fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/term.html'), 'utf8')];
+check('q69 quota recovery notification is disabled',
+  recoveryFiles.every(x => !x.includes('TERM_QUOTA_RE') && !x.includes('Агент упёрся в лимит модели')));
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

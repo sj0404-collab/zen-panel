@@ -124,6 +124,7 @@ bundle = {
 }
 
 total = 0
+failed = 0
 for r in picked:
     sid = r["id"]
     # Capture stdout through a real file, not a pipe: the opencode CLI is a
@@ -138,6 +139,7 @@ for r in picked:
             raw = f.read().strip()
     except Exception as e:
         print("export-chats: %s export failed: %s" % (sid, e), file=sys.stderr)
+        failed += 1
         continue
     finally:
         try:
@@ -151,6 +153,7 @@ for r in picked:
         data = json.loads(raw)
     except Exception as e:
         print("export-chats: %s is not JSON: %s" % (sid, e), file=sys.stderr)
+        failed += 1
         continue
     entry = {
         "id": sid,
@@ -171,7 +174,14 @@ bundle["count"] = len(bundle["sessions"])
 with open(out, "w", encoding="utf-8") as f:
     json.dump(bundle, f, ensure_ascii=False)
 print("export-chats: %d sessions, %.1f MiB -> %s" % (bundle["count"], total / 1048576.0, out))
+if failed:
+    sys.exit(1)
 PY
+  python_status=$?
+  if [ "$python_status" -ne 0 ]; then
+    rm -f "$out"
+    return 1
+  fi
 
   [ -s "$out" ] || { echo "export-chats: bundle empty" >&2; return 0; }
   # Skip empty bundles: no sessions in this repo, nothing worth publishing.
@@ -183,24 +193,30 @@ PY
 
   if [ "${PUBLISH:-1}" = "1" ] && [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
     export GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
-    bash "$SCRIPT_DIR/publish_session.sh" \
+    local publish_output publish_status
+    publish_output="$(bash "$SCRIPT_DIR/publish_session.sh" \
       file="chats/$repo_name.json" \
       json="$out" \
       kind=opencode-chats \
       state=updated \
-      stamp="$stamp" 2>&1 | sed 's/^/  /'
+      stamp="$stamp" 2>&1)"
+    publish_status=$?
+    printf '%s\n' "$publish_output"
+    return "$publish_status"
   fi
 }
 
 if [ "$ALL" = 1 ]; then
   root="${CHAT_ALL_ROOT:-$HOME}"
   mkdir -p "$HOME/.local/share/opencode/history" 2>/dev/null || true
+  failed=0
   while IFS= read -r gitdir; do
     [ -n "$gitdir" ] || continue
     dir="$(dirname "$gitdir")"
     echo "export-chats: --- $dir"
-    export_one "$dir"
+    if ! export_one "$dir"; then failed=1; fi
   done < <(find_repos "$root")
+  [ "$failed" -eq 0 ]
 else
   export_one "${CHAT_REPO_DIR:-${GITHUB_WORKSPACE:-$(pwd)}}"
 fi

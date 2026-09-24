@@ -7,7 +7,10 @@ if [ ! -d "$WORK" ]; then WORK="$(pwd)"; fi
 if [ -d "$WORK/.git" ]; then :; elif [ -d "$WORK/../fork/.git" ]; then WORK="$WORK/../fork"; fi
 BRANCH="session-state"
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
-mkdir -p "$HUB_LOGS" 2>/dev/null || true
+if ! mkdir -p "$HUB_LOGS" 2>/dev/null; then
+  echo "restore_audit_code: cannot create log directory" >&2
+  exit 1
+fi
 
 if [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; then
   echo "restore_audit_code: no GH_TOKEN, skip" >&2
@@ -15,19 +18,27 @@ if [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; then
 fi
 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 REMOTE="${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY:-}.git}"
-TMP="$(mktemp -d)"
+if ! TMP="$(mktemp -d)"; then
+  echo "restore_audit_code: cannot create restore directory" >&2
+  exit 1
+fi
 cleanup(){ rm -rf "$TMP"; }
 trap cleanup EXIT
 if ! git clone -q --depth 1 --branch "$BRANCH" "$REMOTE" "$TMP/state" 2>/dev/null; then
   echo "restore_audit_code: no $BRANCH branch yet"
   exit 0
 fi
+status=0
 for f in audit.json code.json; do
   if [ -f "$TMP/state/$f" ]; then
-    cp -f "$TMP/state/$f" "$WORK/$f" 2>/dev/null || true
+    if ! cp -f "$TMP/state/$f" "$WORK/$f" 2>/dev/null; then
+      echo "restore_audit_code: could not restore $f" >&2
+      status=1
+      continue
+    fi
     if [ "$f" = "audit.json" ] && [ ! -s "$WORK/.zen-agent/audit.jsonl" ]; then
-      mkdir -p "$WORK/.zen-agent"
-      python3 - "$TMP/state/$f" "$WORK/.zen-agent/audit.jsonl" <<'PY'
+      mkdir -p "$WORK/.zen-agent" || status=1
+      if ! python3 - "$TMP/state/$f" "$WORK/.zen-agent/audit.jsonl" <<'PY'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 try:
@@ -39,31 +50,35 @@ try:
     print(f"restored {len(audit)} audit events to {dst}")
 except Exception as e:
     print(f"restore audit failed: {e}", file=sys.stderr)
+    sys.exit(1)
 PY
+      then
+        status=1
+      fi
     fi
     echo "restore_audit_code: restored $f ($(wc -c < "$TMP/state/$f" | tr -d ' ')B) -> $WORK/$f"
   fi
 done
-mkdir -p "$WORK/.zen-agent/restored" 2>/dev/null || true
+mkdir -p "$WORK/.zen-agent/restored" 2>/dev/null || status=1
 if ls "$TMP/state/saved"/audit-*.json >/dev/null 2>&1; then
-  cp -f "$TMP/state"/saved/audit-*.json "$WORK/.zen-agent/restored/" 2>/dev/null || true
+  if ! cp -f "$TMP/state"/saved/audit-*.json "$WORK/.zen-agent/restored/" 2>/dev/null; then status=1; fi
   echo "restore_audit_code: saved audit snapshots copied"
 fi
 if ls "$TMP/state"/saved/code-*.json >/dev/null 2>&1; then
-  cp -f "$TMP/state"/saved/code-*.json "$WORK/.zen-agent/restored/" 2>/dev/null || true
+  if ! cp -f "$TMP/state"/saved/code-*.json "$WORK/.zen-agent/restored/" 2>/dev/null; then status=1; fi
   echo "restore_audit_code: saved code snapshots copied"
 fi
-mkdir -p "$HOME/.local/share/opencode/history" 2>/dev/null || true
+mkdir -p "$HOME/.local/share/opencode/history" 2>/dev/null || status=1
 if ls "$TMP/state/saved"/opencode-*.json >/dev/null 2>&1; then
   for f in "$TMP/state"/saved/opencode-*.json; do
     STAMP="$(basename "$f" .json | sed 's/^opencode-//')"
     DEST="$HOME/.local/share/opencode/history/$STAMP"
-    mkdir -p "$DEST" 2>/dev/null || true
-    cp -f "$f" "$DEST/bundle.json" 2>/dev/null || true
+    mkdir -p "$DEST" 2>/dev/null || status=1
+    if ! cp -f "$f" "$DEST/bundle.json" 2>/dev/null; then status=1; fi
     echo "restore_audit_code: opencode bundle $STAMP restored"
   done
   if [ -f "$TMP/state/audit.json" ]; then
-    python3 - "$TMP/state/audit.json" "$HOME/.local/share/opencode/history" <<'PY2'
+    if ! python3 - "$TMP/state/audit.json" "$HOME/.local/share/opencode/history" <<'PY2'
 import json, os, sys, glob
 audit_path, hist_root = sys.argv[1], sys.argv[2]
 try:
@@ -80,7 +95,11 @@ try:
         print(f"restored {len(msgs)} opencode messages to {dest}/messages_restored.jsonl")
 except Exception as e:
     print(f"opencode restore failed: {e}", file=sys.stderr)
+    sys.exit(1)
 PY2
+    then
+      status=1
+    fi
   fi
 fi
 
@@ -94,7 +113,12 @@ fi
 # hub-work/), so sessions come back for all repos, not just this $WORK.
 if [ "${RESTORE_CHATS_ALL:-0}" = "1" ] && [ -f "$SCRIPT_DIR/restore-chats.sh" ]; then
   CHAT_ALL_ROOT="${RESTORE_CHATS_ROOT:-$HOME}" \
-    bash "$SCRIPT_DIR/restore-chats.sh" --all --state "$TMP/state" 2>&1 | sed 's/^/  /' || true
+    bash "$SCRIPT_DIR/restore-chats.sh" --all --state "$TMP/state" 2>&1 | sed 's/^/  /'
+  chat_status=${PIPESTATUS[0]}
+  [ "$chat_status" -eq 0 ] || status=1
 elif [ "${RESTORE_CHATS:-1}" != "0" ] && [ -f "$SCRIPT_DIR/restore-chats.sh" ]; then
-  CHAT_REPO_DIR="$WORK" bash "$SCRIPT_DIR/restore-chats.sh" --state "$TMP/state" 2>&1 | sed 's/^/  /' || true
+  CHAT_REPO_DIR="$WORK" bash "$SCRIPT_DIR/restore-chats.sh" --state "$TMP/state" 2>&1 | sed 's/^/  /'
+  chat_status=${PIPESTATUS[0]}
+  [ "$chat_status" -eq 0 ] || status=1
 fi
+[ "$status" -eq 0 ]

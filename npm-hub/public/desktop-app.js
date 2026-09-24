@@ -857,7 +857,7 @@ function termRecoverShow(note) {
   const bar = document.getElementById('term-recover');
   if (!bar) return;
   const lbl = document.getElementById('term-recover-note');
-  if (lbl) lbl.textContent = note || '⚠ Агент упёрся в лимит модели';
+  if (lbl) lbl.textContent = note || '♻ Перезапустить сессию';
   bar.classList.add('on');
   clearTimeout(__termRecoverT);
   // Через секунду закрываем саму модалку агента, затем прячем панель — иначе
@@ -865,23 +865,6 @@ function termRecoverShow(note) {
   setTimeout(termDismissModal, 1200);
   __termRecoverT = setTimeout(termRecoverHide, 8000);
 }
-// Строгая проверка: НЕ голые слова, а настоящие фразы «лимит/квота/баланс
-// исчерпан» или «out of credits» и т.п. Обычный вывод агента («balance»,
-// «закончил задачу», «лимит» как термин) не должен поднимать панель.
-const TERM_QUOTA_RE = new RegExp([
-  '(rate\\s?limit\\s?(reached|exceeded|hit|resolved|used\\s?up))',
-  '(out\\s?of\\s+(credits|requests|tokens|quota|balance))',
-  '(insufficient\\s+(credits|balance|requests|quota|funds))',
-  '(reached|exceeded|hit)\\s+(your\\s+)?((daily|hourly|monthly|model)\\s+)?(limit|quota|credit)',
-  '(limit|quota|credits?)\\s+(was|has\\s+been|have\\s+been|is|are|were)\\s+(reached|exceeded|used\\s?up)',
-  '(limit|quota|credits?)\\s+(reached|exceeded|used\\s?up)\\b',
-  '(лимит|квота|баланс)\\s+(исчерпан|исчерпана|закончился|закончились|кончился|кончились|не\\s+хватает)',
-  '(превышен|превышена)\\s+(лимит|квота|баланс)',
-  '(лимит|лимиты|квота|квоты|баланс|кредиты|средства)\\s+(закончились|закончился|закончилась|закончилось|кончились|кончился|кончилась|исчерпаны|исчерпана)',
-  '(закончились|закончился|кончились|кончился|исчерпан|исчерпана|исчерпаны)\\s+(лимит|кредиты|средства)',
-  '(не\\s+хватает|недостаточно)\\s+(лимита|баланса|кредитов|средств|квоты)',
-  '\\b(402|429)\\b(?!\\s*(?:[kmgi]b|bytes?)\\b)'
-].join('|'), 'i');
 // ===== ТЕРМИНАЛ НА ПАЛЬЦЕ =====
 // Раньше: ЛЮБОЕ удержание дольше 600 мс копировало текст (а без выделения —
 // последние 200 строк буфера, то есть «весь экран»), а тап дольше 500 мс не
@@ -1078,7 +1061,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
     socket.onmessage = (e) => {
       let m; try { m = JSON.parse(e.data); } catch { return; }
       if (m.type === 'pong') { td.lastPong = Date.now(); return; }
-      if (m.type === 'output') { term.write(m.data); if (TERM_QUOTA_RE.test(String(m.data || ''))) termRecoverShow('⚠ Агент упёрся в лимит модели — перезапустите'); }
+      if (m.type === 'output') { term.write(m.data); }
       if (m.type === 'exit') { term.write(`\r\n\x1b[33m[Exited ${m.code} — нажми ⟲, чтобы перезапустить]\x1b[0m\r\n`); termRecoverShow('⚠ Сессия завершилась — перезапустите агента'); }
       if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`);
     };

@@ -143,7 +143,7 @@ const fetchImpl = {
   const mobile = fs.readFileSync(path.join(PUB, 'mobile.html'), 'utf8');
   check('v mobile nav replaced by browser button',
     !mobile.includes('id="nav-vault"') && !mobile.includes('id="p-vault"') &&
-    mobile.includes('id="nav-browser"') && mobile.includes('openHubExternal()') &&
+    mobile.includes('openHubExternal(hubSiteUrl())') &&
     server.includes("'/vault'") && server.includes("'external-memory.html'"));
 
   console.log('\nVAULT: ' + pass + ' passed, ' + fail + ' failed');

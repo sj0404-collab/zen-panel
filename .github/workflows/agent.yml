@@ -52,6 +52,10 @@ on:
         type: string
         default: "windows-latest"
 
+concurrency:
+  group: zen-panel-session-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -111,7 +115,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || true
+          bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log"
 
       - name: Clone the repositories to work on
         env:
@@ -161,7 +165,7 @@ jobs:
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
           export SNAPSHOT_INTERVAL=120
-          nohup bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" agent "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-agent.log" 2>&1 &
+          nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" agent "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-agent.log" 2>&1 &
           echo "audit/code snapshot every 120s (audit.json + code.json) -> session-state"
 
       - name: Start the agent and open the tunnel
@@ -322,17 +326,20 @@ jobs:
           done
 
       - name: Clear the published session
+        if: always()
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent-linux" "state=ended" || true
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent-linux" "state=ended"
 
       - name: Snapshot audit/code on exit
         if: always()
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
-          bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once agent "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-agent.log" || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once agent "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-agent.log"
 
       - name: Save the models roster
+        if: always()
         run: |
           # The learned roster (~/.zen_free_models.json) dies with the runner;
           # this copy on the session-state branch outlives it. Secrets cannot
@@ -341,15 +348,17 @@ jobs:
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
               "slot=agent-linux" "file=models-agent-linux.json" \
               "kind=CLI-агент" "os=linux" \
-              "json=$HOME/.zen_free_models.json" || true
+              "json=$HOME/.zen_free_models.json"
 
       - name: Final save
+
+        if: always()
         run: |
-          cd "$GITHUB_WORKSPACE/fork" || exit 0
+          cd "$GITHUB_WORKSPACE/fork" || exit 1
           if [ -n "$(git status --porcelain)" ]; then
             git add -A
-            git commit -q -m "agent final save $(date -u '+%Y-%m-%d %H:%M')" || true
-            git push -q origin HEAD || true
+            git commit -q -m "agent final save $(date -u '+%Y-%m-%d %H:%M')"
+            git push -q origin HEAD
             echo "Pushed the last changes to ${WORK_BRANCH:-the working branch}."
           else
             echo "Nothing left to save."
@@ -424,6 +433,18 @@ jobs:
             if ($LASTEXITCODE -eq 0) { Write-Host "cloned $repo" }
             else { Write-Host "::warning::could not clone $repo" }
           }
+
+      - name: Restore repositories and OpenCode sessions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$HOME/hub-work" "$HOME/.npm-hub/logs"
+          WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_RESTORE_EXISTING=1 \
+            bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh"
+          bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork"
+          RESTORE_CHATS_ALL=1 RESTORE_CHATS_ROOT="$HOME" \
+            bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work"
 
       - name: Start autosave
         shell: pwsh
@@ -650,12 +671,14 @@ jobs:
           }
 
       - name: Clear the published session
+        if: always()
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent-windows" "state=ended"
 
       - name: Save the models roster
+        if: always()
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
@@ -664,7 +687,26 @@ jobs:
             "kind=CLI-агент" "os=windows" `
             "json=$env:USERPROFILE/.zen_free_models.json"
 
+      - name: Final durable repository backup
+        if: always()
+        shell: bash
+        run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
+            bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" --once \
+            2>&1 | tee -a "$HUB_LOGS/work-backup.log"
+
+      - name: Snapshot audit/code on exit
+        if: always()
+        shell: bash
+        run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" SNAPSHOT_EXPORT_ALL_CHATS=1 \
+            bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once agent "$GITHUB_WORKSPACE/fork" \
+            2>&1 | tee -a "$HUB_LOGS/snapshot-agent.log"
+
       - name: Final save
+        if: always()
         shell: pwsh
         run: |
           Set-Location "$env:GITHUB_WORKSPACE\fork"

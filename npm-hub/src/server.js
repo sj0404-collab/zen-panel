@@ -1824,6 +1824,10 @@ const tmuxSessionEmulator = (id) => {
   const match = String(r.stdout || '').match(/^ANDROID_AVD=(.+)$/m);
   return cleanEmulatorName(match && match[1]);
 };
+const commandForTool = (tool, savedMeta) => {
+  if (tool && tool.id === 'opencode') return `${tool.cmd} --continue`;
+  return (savedMeta && savedMeta.toolCmd) || (tool && tool.cmd !== '_terminal' ? tool.cmd : null);
+};
 
 const tmuxSessionAlive = id => tmuxRun(['has-session', '-t', safeSessionName(id)], 2000).status === 0;
 
@@ -2142,14 +2146,16 @@ wss.on('connection', (ws) => {
         const metaColor = tool ? tool.color : '#58a6ff';
         const metaIcon = tool ? tool.icon : '>_';
         const metaName = tool ? tool.name : 'Terminal';
+        const toolCmd = commandForTool(tool, savedMeta);
 
         try {
           if (tmuxHas() && !isWin) {
+
             // ❗ tmux requires a login shell name (argv[0]) to start bash as an
             // interactive shell; new-session already does that. Nothing more needed.
             session = createTmuxSession(id, { cwd, cols: msg.cols, rows: msg.rows, toolId: tool ? tool.id : null, toolName: metaName, color: metaColor, icon: metaIcon,
               emulator: msg.emulator || (savedMeta && savedMeta.emulator), phoneRunner: msg.phoneRunner || (savedMeta && savedMeta.phoneRunner),
-              toolCmd: (savedMeta && savedMeta.toolCmd) || (tool && tool.cmd !== '_terminal' ? tool.cmd : null),
+              toolCmd,
               autoRestore: savedMeta ? savedMeta.autoRestore !== false : tool?.id === 'opencode' }, ws);
           } else {
             const p = pty.spawn(shell, [], {
@@ -2161,7 +2167,7 @@ wss.on('connection', (ws) => {
             });
             session = { id, pty: p, cwd, emulator: cleanEmulatorName(msg.emulator) || getDefaultEmulator(),
               phoneRunner: cleanEmulatorName(msg.phoneRunner) || getDefaultPhoneRunner(), toolId: tool ? tool.id : null,
-              toolCmd: (savedMeta && savedMeta.toolCmd) || (tool && tool.cmd !== '_terminal' ? tool.cmd : null),
+              toolCmd,
               autoRestore: savedMeta ? savedMeta.autoRestore !== false : tool?.id === 'opencode',
               toolName: metaName, color: metaColor, icon: metaIcon, created: Date.now(), clients: new Set(), output: '', resumed: false, lastLeave: 0 };
             sessions.set(id, session);
@@ -2169,10 +2175,10 @@ wss.on('connection', (ws) => {
 
             const cdCmd = isWin ? `cd /d "${cwd}"` : `cd "${cwd}"`;
             p.write(cdCmd + '\r');
-            if (tool && tool.cmd && tool.cmd !== '_terminal') {
-              setTimeout(() => { p.write(tool.cmd + '\r'); }, 200);
+            if (toolCmd && toolCmd !== '_terminal') {
+              setTimeout(() => { p.write(toolCmd + '\r'); }, 200);
               // Auto-approve: if the setting is on, send /autoon after the agent is ready.
-              if (AGENT_SUPPORTS_SLASH.has(tool.id)) {
+              if (tool && AGENT_SUPPORTS_SLASH.has(tool.id)) {
                 try { if (loadState().autoApprove) setTimeout(() => { p.write('/autoon\r'); }, 1000); } catch {}
               }
             }
@@ -3063,7 +3069,7 @@ const manifestFor = (fullName, repoDir, targetDir, tmpDir, ref) => `# Репоз
 - **Клон (работай здесь):** ${targetDir}
 - **Ветка:** ${ref || 'main'}
 - **Только твои временные файлы (сборки, кеши, артефакты):** ${tmpDir}
-- **Манифест:** ${path.join(repoDir, 'MANIFEST.md')}
+- **Манифест:** ${path.join(targetDir, 'MANIFEST.md')}
 
 ## Правила для CLI-агентов
 1. НИКОГДА не создавай файлы в /tmp или os.tmpdir() — это не твоя папка.
@@ -3073,104 +3079,120 @@ const manifestFor = (fullName, repoDir, targetDir, tmpDir, ref) => `# Репоз
    и не логируй его значение.
 5. Готовые сборки/артефакты клади в ${tmpDir} — их видно вкладкой «Файлы».
 `;
-const writeRepoManifest = (fullName, repoDir, targetDir, tmpDir, ref) => {
-  try {
-    fs.mkdirSync(tmpDir, { recursive: true });
-    fs.writeFileSync(path.join(repoDir, 'MANIFEST.md'), manifestFor(fullName, repoDir, targetDir, tmpDir, ref));
-  } catch {}
+const writeRepoManifest = (fullName, repoDir, targetDir, tmpDir, ref, manifestDir = targetDir) => {
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const manifestPath = path.join(manifestDir, 'MANIFEST.md');
+  let current = '';
+  try { current = fs.readFileSync(manifestPath, 'utf8'); } catch {}
+  if (!current || current.includes('Рабочая папка этого репозитория на раннере')) {
+    fs.writeFileSync(manifestPath, manifestFor(fullName, repoDir, targetDir, tmpDir, ref));
+  }
 };
+const githubDefaultBranch = async (fullName) => {
+  try {
+    const r = await fetch(`https://api.github.com/repos/${fullName}`, { headers: ghHeaders() });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return typeof d.default_branch === 'string' && d.default_branch ? d.default_branch : null;
+  } catch { return null; }
+};
+const gitBranch = (dir) => {
+  try { return require('child_process').execFileSync('git', ['-C', dir, 'branch', '--show-current'], { encoding: 'utf8', timeout: 2500 }).trim() || null; }
+  catch { return null; }
+};
+const gitRemote = (dir) => {
+  try { return require('child_process').execFileSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], { encoding: 'utf8', timeout: 2500 }).trim() || null; }
+  catch { return null; }
+};
+const configureCloneCredentials = (dir, token) => new Promise((resolve) => {
+  const child = spawn('git', ['config', 'credential.helper', '!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'], {
+    cwd: dir, env: { ...process.env, GH_TOKEN: token }
+  });
+  child.on('close', code => resolve(code === 0));
+  child.on('error', () => resolve(false));
+});
 
 // POST /api/gh/clone — clone a repo into hub-work using the linked GH_TOKEN
 app.post('/api/gh/clone', express.json(), async (req, res) => {
   const token = runnerToken();
   if (!token) return res.json({ success: false, error: 'нет GH_TOKEN — привяжи токен в настройках' });
   const { full_name, branch } = req.body;
-  if (!full_name || !full_name.includes('/')) return res.json({ success: false, error: 'укажи full_name (user/repo)' });
-  const repoName = full_name.split('/')[1];
+  if (!full_name || !/^[^/]+\/[^/]+$/.test(full_name)) {
+    return res.json({ success: false, error: 'укажи full_name (user/repo)' });
+  }
+  const repoName = path.basename(full_name.split('/').pop());
+  if (!repoName || repoName === '.' || repoName === '..') {
+    return res.json({ success: false, error: 'некорректное имя репозитория' });
+  }
   const repoDir = path.join(WORK_DIR, repoName);
   const targetDir = path.join(repoDir, 'code');
   const tmpDir = path.join(repoDir, 'tmp');
-  writeRepoManifest(full_name, repoDir, targetDir, tmpDir, branch || 'main');
+  const requestedRef = typeof branch === 'string' ? branch.trim() : '';
+  const ref = requestedRef || await githubDefaultBranch(full_name) || 'main';
   const cleanUrl = `https://github.com/${full_name}.git`;
-  // Auth via credential helper that reads GH_TOKEN from env at call time —
-  // the token value is NEVER written to .git/config, only the clean URL is.
+  const gitEnv = { ...process.env, GH_TOKEN: token };
   const gitAuth = ['-c', 'credential.username=x-access-token',
     '-c', 'credential.helper=!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'];
-  // Already cloned?
-  if (fs.existsSync(path.join(targetDir, '.git'))) {
-    // Pull latest (the helper was saved by the first clone, runs with env GH_TOKEN)
+  const runGit = (args, cwd) => new Promise((resolve, reject) => {
+    const child = spawn('git', args, { cwd, env: gitEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', d => { out += String(d); });
+    child.stderr.on('data', d => { out += String(d); });
+    child.on('close', code => code === 0 ? resolve(out.trim()) : reject(new Error(out)));
+    child.on('error', reject);
+  });
+  const writeManifest = () => writeRepoManifest(full_name, repoDir, targetDir, tmpDir, gitBranch(targetDir) || ref);
+  const isRepo = () => {
+    try { return fs.existsSync(path.join(targetDir, '.git')) && require('child_process').execFileSync('git', ['-C', targetDir, 'rev-parse', '--git-dir'], { stdio: 'ignore', timeout: 2500 }); }
+    catch { return false; }
+  };
+  if (isRepo()) {
+    const remote = gitRemote(targetDir);
+    const match = remote && remote.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/i);
+    if (match && match[1].toLowerCase() !== full_name.toLowerCase()) {
+      return res.json({ success: false, error: 'путь уже содержит другой репозиторий: ' + targetDir });
+    }
     try {
-      await new Promise((resolve, reject) => {
-        const child = spawn('git', ['pull'], { cwd: targetDir, stdio: ['ignore', 'pipe', 'pipe'] });
-        let out = '';
-        child.stdout.on('data', d => { out += String(d); });
-        child.stderr.on('data', d => { out += String(d); });
-        child.on('close', code => code === 0 ? resolve(out.trim()) : reject(new Error(out)));
-        child.on('error', reject);
-      });
+      await runGit(['pull'], targetDir);
+      writeManifest();
       return res.json({ success: true, path: targetDir, pulled: true });
     } catch (e) {
+      writeManifest();
       return res.json({ success: true, path: targetDir, pulled: false, pullError: e.message });
     }
   }
-  const ref = branch || 'main';
-  try {
-    await new Promise((resolve, reject) => {
-      const child = spawn('git', [...gitAuth, 'clone', '--depth', '1', '-b', ref, cleanUrl, targetDir], {
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-      let out = '';
-      child.stdout.on('data', d => { out += String(d); });
-      child.stderr.on('data', d => { out += String(d); });
-      child.on('close', code => code === 0 ? resolve(out.trim()) : reject(new Error(out)));
-      child.on('error', reject);
-    });
-    // Verify .git exists
-    const gitDir = path.join(targetDir, '.git');
-    if (!fs.existsSync(gitDir)) {
-      return res.json({ success: false, error: 'clone прошёл, но .git не найден — возможно shallow clone не удался' });
+  if (fs.existsSync(targetDir)) {
+    let entries;
+    try { entries = fs.readdirSync(targetDir); }
+    catch { return res.json({ success: false, error: 'путь клона занят файлом: ' + targetDir }); }
+    if (entries.length) return res.json({ success: false, error: 'папка клона уже занята: ' + targetDir });
+    fs.rmdirSync(targetDir);
+  }
+  fs.mkdirSync(repoDir, { recursive: true });
+  const clone = async (args) => {
+    const staging = `${targetDir}.staging-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    try {
+      await runGit([...gitAuth, 'clone', ...args, cleanUrl, staging], WORK_DIR);
+      if (!fs.existsSync(path.join(staging, '.git'))) throw new Error('clone прошёл, но .git не найден');
+      if (!await configureCloneCredentials(staging, token)) throw new Error('не удалось настроить git-аутентификацию');
+      writeRepoManifest(full_name, repoDir, targetDir, tmpDir, gitBranch(staging) || ref, staging);
+      fs.renameSync(staging, targetDir);
+    } catch (e) {
+      try { fs.rmSync(staging, { recursive: true, force: true }); } catch {}
+      throw e;
     }
-    // Sanity: make sure the token isn't in the remote URL (it never should be)
-    try {
-      const cfg = fs.readFileSync(path.join(targetDir, '.git', 'config'), 'utf8');
-      const originUrl = (cfg.match(/\[remote "origin"\][\s\S]*?url = (.*)/) || [])[1];
-      if (originUrl && originUrl.includes('@github.com')) {
-        await new Promise((resolve) => {
-          const child = spawn('git', ['remote', 'set-url', 'origin', cleanUrl], { cwd: targetDir });
-          child.on('close', () => resolve());
-        });
-      }
-    } catch {}
-    // Persist the credential helper in the repo config so every later git call
-    // (opencode's pull/push included) authenticates from $GH_TOKEN in the env —
-    // the helper string references the env var, never the token value.
-    await new Promise((resolve) => {
-      const child = spawn('git', ['config', 'credential.helper', '!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'], { cwd: targetDir });
-      child.on('close', () => resolve());
-    });
-    res.json({ success: true, path: targetDir });
+  };
+  try {
+    await clone(['--depth', '1', '-b', ref]);
   } catch (e) {
-    // Fallback: try without --depth and -b (maybe default branch isn't 'main')
     try {
-      await new Promise((resolve, reject) => {
-        const child = spawn('git', [...gitAuth, 'clone', cleanUrl, targetDir], {
-          stdio: ['ignore', 'pipe', 'pipe']
-        });
-        let out = '';
-        child.stdout.on('data', d => { out += String(d); });
-        child.stderr.on('data', d => { out += String(d); });
-        child.on('close', code => code === 0 ? resolve(out.trim()) : reject(new Error(out)));
-        child.on('error', reject);
-      });
-      const gitDir = path.join(targetDir, '.git');
-      if (!fs.existsSync(gitDir)) {
-        return res.json({ success: false, error: 'clone прошёл, но .git не найден' });
-      }
-      res.json({ success: true, path: targetDir });
+      await clone(['--depth', '1']);
     } catch (e2) {
-      res.json({ success: false, error: 'clone не удался: ' + (e2.message || e.message) });
+      return res.json({ success: false, error: 'clone не удался: ' + (e2.message || e.message) });
     }
   }
+  writeManifest();
+  res.json({ success: true, path: targetDir });
 });
 
 // GET /api/gh/token-status — check if a GitHub token is available

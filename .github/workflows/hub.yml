@@ -53,6 +53,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: zen-panel-session-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -150,13 +154,13 @@ jobs:
           # needs the real repository CWD, not an empty placeholder folder.
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
             WORK_BACKUP_RESTORE_EXISTING=1 bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" \
-            2>&1 | tee -a "$HUB_LOGS/restore-work.log" || true
+            2>&1 | tee -a "$HUB_LOGS/restore-work.log"
           # Restore-chats imports the zen-panel fork only by default; the
           # hub-work call gets RESTORE_CHATS_ALL=1 so every repo the Files tab
           # cloned (and the fork itself) gets its opencode sessions back.
-          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log"
           RESTORE_CHATS_ALL=1 RESTORE_CHATS_ROOT="$HOME" \
-            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" 2>&1 | tee -a "$HUB_LOGS/restore-hubwork.log" || true
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" 2>&1 | tee -a "$HUB_LOGS/restore-hubwork.log"
 
       - name: Start the hub and open the tunnel
         run: |
@@ -189,12 +193,12 @@ jobs:
           # Also keep chats/<name>.json for every repo fresh every ~20 min,
           # so an interrupted runner still hands sessions to the next one.
           export SNAPSHOT_EXPORT_ALL_CHATS=1
-          nohup bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" hub "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-hub.log" 2>&1 &
+          nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" hub "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-hub.log" 2>&1 &
           echo "snapshot daemon: audit.json + code.json every 120s -> session-state"
           # Durable work backup: every repo under HOME becomes a git bundle plus
           # its WIP diff and untracked files on the work-backup branch, so a
           # runner that dies with unpushed work loses nothing.
-          nohup env WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_INTERVAL=300 bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" >> "$HUB_LOGS/work-backup.log" 2>&1 &
+          nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_INTERVAL=300 bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" >> "$HUB_LOGS/work-backup.log" 2>&1 &
           echo "work-backup daemon: HOME snapshot every 300s -> work-backup branch"
 
           URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 $HUB_LOGS/tunnel.log)
@@ -347,12 +351,13 @@ jobs:
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
             bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" --once \
-            2>&1 | tee -a "$HUB_LOGS/work-backup.log" || true
+            2>&1 | tee -a "$HUB_LOGS/work-backup.log"
 
       - name: Clear the published session
+        if: always()
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=hub-linux" "state=ended" || true
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=hub-linux" "state=ended"
 
       - name: Snapshot audit/code on exit
         if: always()
@@ -360,10 +365,11 @@ jobs:
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
           # --once always exports this repo's chats; SNAPSHOT_EXPORT_ALL_CHATS=1
           # additionally exports chats/<name>.json for every repo under $HOME.
-          SNAPSHOT_EXPORT_ALL_CHATS=1 \
-            bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once hub "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-hub.log" || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" SNAPSHOT_EXPORT_ALL_CHATS=1 \
+            bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once hub "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/snapshot-hub.log"
 
       - name: Save the models snapshot
+        if: always()
         run: |
           # Whatever the live registry learned before shutdown, in one small
           # object the panel renders as a line. The hub may already be dead
@@ -387,8 +393,8 @@ jobs:
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
               "slot=hub-linux" "file=models-hub-linux.json" \
-              "kind=NPM-Hub" "os=linux" \
-              "json=$HUB_LOGS/hub-models.json" || true
+               "kind=NPM-Hub" "os=linux" \
+              "json=$HUB_LOGS/hub-models.json"
 
   # ── Hub on Windows ─────────────────────────────────────────────────
   hub-windows:
@@ -487,10 +493,10 @@ jobs:
         run: |
           mkdir -p "$HOME/hub-work" "$HOME/.npm-hub/logs"
           WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_RESTORE_EXISTING=1 \
-            bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" || true
-          bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" || true
+            bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh"
+          bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork"
           RESTORE_CHATS_ALL=1 RESTORE_CHATS_ROOT="$HOME" \
-            bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" || true
+            bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work"
 
       - name: Start the hub and open the tunnel
         shell: pwsh
@@ -702,13 +708,33 @@ jobs:
               'auth=без пароля' 'label=${{ inputs.label }}'
           }
 
+      - name: Final durable repository backup
+        if: always()
+        shell: bash
+        run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
+            bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" --once \
+            2>&1 | tee -a "$HUB_LOGS/work-backup.log"
+
+      - name: Snapshot audit/code on exit
+        if: always()
+        shell: bash
+        run: |
+          export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" SNAPSHOT_EXPORT_ALL_CHATS=1 \
+            bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" --once hub "$GITHUB_WORKSPACE/fork" \
+            2>&1 | tee -a "$HUB_LOGS/snapshot-hub.log"
+
       - name: Clear the published session
+        if: always()
         shell: pwsh
         run: |
           $env:GH_TOKEN = '${{ secrets.GITHUB_TOKEN }}'
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" 'slot=hub-windows' 'state=ended'
 
       - name: Save the models snapshot
+        if: always()
         shell: pwsh
         run: |
           try {
@@ -739,7 +765,7 @@ jobs:
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" CHAT_ALL_ROOT="$HOME" PUBLISH=1 \
             bash "$GITHUB_WORKSPACE/fork/tools/export-chats.sh" --all \
-            2>&1 | tee -a "$HUB_LOGS/export-chats.log" || true
+            2>&1 | tee -a "$HUB_LOGS/export-chats.log"
 
   # ── Linux Desktop VNC (parallel runner) ────────────────────────────────
   # A second, independent job next to `hub`. It stands up a headless Linux
@@ -805,10 +831,6 @@ jobs:
 
           echo "=================================================="
           echo " Linux Desktop VNC: $URL/vnc.html"
-          # VNC audit/code (hub-work) snapshot
-          export SNAPSHOT_INTERVAL=180
-          nohup bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" vnc "$HOME/hub-work" > "$HUB_LOGS/snapshot-vnc.log" 2>&1 &
-          echo "vnc snapshot daemon started"
           echo "=================================================="
 
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
@@ -877,6 +899,7 @@ jobs:
           done
 
       - name: Clear the published VNC session
+        if: always()
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=vnc" "state=ended" || true
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=vnc" "state=ended"

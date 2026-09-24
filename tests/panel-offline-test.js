@@ -63,7 +63,7 @@ function makeSandbox(mockFetch) {
 
   const live = await sb.fetch('https://api.github.com/user/repos');
   check('panel fetch transparent online', live.status === 200 && !live.headers.get('x-panel-offline'));
-  await new Promise(r => setTimeout(r, 15));
+  await new Promise(r => setTimeout(r, 1300));
 
   mode = 'fail';
   const c = await sb.fetch('https://api.github.com/user/repos');
