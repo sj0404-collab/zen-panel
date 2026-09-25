@@ -89,9 +89,16 @@ META
 )
     [ -z "$META_REMOTE" ] || git -C "$dest" remote add origin "$META_REMOTE" 2>/dev/null || true
   fi
-  ( cd "$dest" && git add -A >/dev/null 2>&1 && \
-      git -c user.email "restore@zen-panel" -c user.name "Restore" \
-          commit -q -m "state restored from the previous runner" >/dev/null 2>&1 ) || true
+  # `git -c key=value`, with the equals sign: written as `-c user.email value`
+  # git reads the value as the subcommand, the commit silently never happens and
+  # the restored repository is left with no commits at all.
+  if ! ( cd "$dest" && git add -A && \
+      GIT_AUTHOR_NAME="Restore" GIT_AUTHOR_EMAIL="restore@zen-panel" \
+      GIT_COMMITTER_NAME="Restore" GIT_COMMITTER_EMAIL="restore@zen-panel" \
+          git commit -q -m "state restored from the previous runner" ) >/dev/null 2>&1; then
+    log "could not commit the restored tree of $rel (the files are there, but it is not a repository yet)"
+    return 1
+  fi
   return 0
 }
 

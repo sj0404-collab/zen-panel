@@ -729,6 +729,7 @@ check('q95 shallow repositories are archived', backupWork.includes('--is-shallow
   backupWork.includes(':(exclude)*.apk') && backupWork.includes('"shallow": shallow') &&
   restoreWork.includes('rebuild_from_archive()') &&
   restoreWork.includes('if python3 - "$snap" <<') &&
+  restoreWork.includes('GIT_AUTHOR_NAME="Restore"') &&
   restoreWork.includes('if rebuild_from_archive "$repodir" "$dest" "$rel"'));
 // q96: builds and re-downloadable payloads stay out, and the log says so.
 check('q96 build products are left out by design', backupWork.includes("'*.apk' '*.aab' '*.apks'") &&
