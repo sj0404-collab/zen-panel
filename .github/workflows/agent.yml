@@ -364,6 +364,26 @@ jobs:
             echo "Nothing left to save."
           fi
 
+      - name: Record the run in the history
+        if: always()
+        run: |
+          # One small file per run, filed under the day and the weekday it
+          # belongs to: history/<YYYY-MM-DD>/<Wd>/run-<runNumber>.json - the
+          # diary the panel groups by day, and unlike the Actions UI it does not
+          # disappear when GitHub prunes old runs.
+          STARTED=""
+          if [ -f "$HOME/.npm-hub/session-start" ]; then
+            STARTED="$(date -u -d "@$(( $(cat "$HOME/.npm-hub/session-start" 2>/dev/null || date +%s) / 1000 ))" '+%Y-%m-%d' 2>/dev/null || true)"
+          fi
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" journal=1 \
+              "slot=agent-linux" "kind=CLI-агент" "os=linux" \
+              "conclusion=${{ job.status }}" "endedAt=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+              ${STARTED:+journal_date="$STARTED"} \
+              "handoff=${{ inputs.handoff }}" \
+              "runUrl=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              2>&1 | tail -5 || echo "::warning::run history record failed"
+
   # ── Windows ────────────────────────────────────────────────────────
   #
   #  The same agent on a windows-latest runner. Node and pwsh are on the image
@@ -718,3 +738,15 @@ jobs:
           } else {
             Write-Host "Nothing left to save."
           }
+
+      - name: Record the run in the history
+        if: always()
+        shell: pwsh
+        run: |
+          # history/<YYYY-MM-DD>/<Wd>/run-<runNumber>.json - see the Linux step.
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" journal=1 `
+            "slot=agent-windows" "kind=CLI-агент" "os=windows" `
+            "conclusion=${{ job.status }}" "endedAt=$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))" `
+            "handoff=${{ inputs.handoff }}" `
+            "runUrl=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"

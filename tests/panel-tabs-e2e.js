@@ -67,8 +67,18 @@ function stubFetch(url, opts) {
   if (url.includes('/cancel') && opts && opts.method === 'POST') {
     return Promise.resolve({ status: 202, ok: true, json: async () => ({}) });
   }
+  // The branch was reorganised into folders; the panel reads live/ and
+  // models/ first and falls back to the old flat root. Serve both so this test
+  // covers the new layout AND the fallback.
   const m = url.match(/contents\/(.+?)\?/);
-  const obj = m && (sessions[decodeURIComponent(m[1])] || models[decodeURIComponent(m[1])]);
+  let obj = null;
+  if (m) {
+    const name = decodeURIComponent(m[1]);
+    obj = sessions[name] || models[name]
+      || sessions[name.replace(/^(live|models)\//, '')]
+      || models[name.replace(/^(live|models)\//, '')]
+      || null;
+  }
   if (obj) return Promise.resolve({ status: 200, ok: true, json: async () => ({ content: b64(obj), sha: 'shatest' }) });
   return Promise.resolve({ status: 404, ok: false, json: async () => ({ message: 'nf' }) });
 }
@@ -127,17 +137,19 @@ function stubFetch(url, opts) {
   eq('p11 repoll keeps frames', !!fa() && fa().src === srcBefore && !!document.getElementById('desk-overlay'), true);
 
   await dom.window.saveSession('agent');
-  eq('p12 save PUT path', puts.length === 1 && /contents\/saved\/agent-\d{8}T\d{6}\.json/.test(puts[0].url), true);
+  // The save is filed under history/<date>/<weekday>/, not into a flat saved/.
+  eq('p12 save PUT path', puts.length === 1 &&
+    /contents\/history\/\d{4}-\d{2}-\d{2}\/(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\/saved-agent-\d{8}T\d{6}\.json/.test(puts[0].url), true, puts[0] && puts[0].url);
   const bundle = puts.length && JSON.parse(Buffer.from(puts[0].body.content, 'base64').toString('utf8'));
   eq('p13 save bundle', puts.length === 1 && puts[0].body.branch === 'session-state' &&
     bundle.session.runId === 222 && !!bundle.models.models['mimo-v2.5-free'] && !!bundle.savedAt, true);
-  eq('p14 save alert', alerts.some(a => a.startsWith('Сохранено: saved/agent-')), true);
+  eq('p14 save alert', alerts.some(a => /^Сохранено: history\/\d{4}-\d{2}-\d{2}\/(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\/saved-agent-/.test(a)), true, alerts);
 
   dom.window.expandDesk('hub');
   await waitFor(() => document.getElementById('desk-frame-hub')?.style.display === 'block');
   eq('p16c hub tab opens', document.getElementById('desk-frame-hub')?.dataset.url, /hub\.example/);
   await dom.window.saveSession('hub');
-  eq('p16d hub save PUT', puts.length === 2 && /contents\/saved\/hub-\d{8}T\d{6}\.json/.test(puts[1].url) &&
+  eq('p16d hub save PUT', puts.length === 2 && /contents\/history\/\d{4}-\d{2}-\d{2}\/(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\/saved-hub-\d{8}T\d{6}\.json/.test(puts[1].url) &&
     JSON.parse(Buffer.from(puts[1].body.content, 'base64').toString('utf8')).models.hubCount === 627, true);
 
   sessions['session-agent.json'].runId = 555; // file re-owned by a newer run
@@ -145,7 +157,8 @@ function stubFetch(url, opts) {
   eq('p16e ownership respected', puts.length, 2);
   sessions['session-agent.json'].runId = 222;
   await dom.window.stopRun(222);
-  eq('p16f stop PUT', puts.length === 3 && /contents\/session-agent\.json$/.test(puts[2].url) &&
+  // The end marker is written to live/session-<slot>.json (the new layout).
+  eq('p16f stop PUT', puts.length === 3 && /contents\/live\/session-agent\.json$/.test(puts[2].url) &&
     puts[2].body.branch === 'session-state' && puts[2].body.sha === 'shatest' &&
     JSON.parse(Buffer.from(puts[2].body.content, 'base64').toString('utf8')).state === 'ended', true);
   await dom.window.stopRun(999); // unknown runId: nothing to mark
@@ -198,6 +211,25 @@ function stubFetch(url, opts) {
   catch (e) { eq('p28 unbanMs', e.unbanMs > 0 && e.unbanMs <= 300000, true); }
   force403 = false;
 
+  // The run journal: grouped by day, then by weekday, with the outcome spelled
+  // out. Built from the runs the page already polls, so it costs nothing.
+  const day = (iso) => iso;
+  dom.window.renderRunJournal([
+    { name: 'NPM Hub', run_number: 41, status: 'completed', conclusion: 'success', created_at: day('2026-01-02T10:00:00Z'), html_url: 'u41' },
+    { name: 'Zen agent', run_number: 40, status: 'completed', conclusion: 'failure', created_at: day('2026-01-02T09:00:00Z'), html_url: 'u40' },
+    { name: 'OpenCode', run_number: 39, status: 'completed', conclusion: 'success', created_at: day('2026-01-01T08:00:00Z'), html_url: 'u39' },
+    { name: 'NPM Hub', run_number: 42, status: 'in_progress', conclusion: null, created_at: day('2026-01-02T11:00:00Z'), html_url: 'u42' },
+    { name: 'Build APK', run_number: 38, status: 'completed', conclusion: 'success', created_at: day('2026-01-01T07:00:00Z'), html_url: 'u38' },
+  ]);
+  const jhtml = document.getElementById('journal').innerHTML;
+  const dayHeaders = (jhtml.match(/font-weight:700/g) || []).length;
+  eq('p28a journal groups by day', dayHeaders === 2, true, jhtml.slice(0, 200));
+  eq('p28b journal counts successes and failures', /1 успех/.test(jhtml) && /1 неудач/.test(jhtml), true);
+  // 2026-01-02 was a Friday, 2026-01-01 a Thursday.
+  eq('p28c journal names the weekday', /пт/.test(jhtml) && /чт/.test(jhtml), true, jhtml);
+  eq('p28d journal skips other workflows', !/Build APK/.test(jhtml) && !/в очереди/.test(jhtml), true);
+  eq('p28e journal has a durable-path hint', /history/.test(document.getElementById('journal-card').innerHTML), true);
+
   eq('p29 token shape', /^[0-9a-f]{32}$/.test(dom.window.genHubToken()), true);
   dom.window.eval('HUB_TOKENS["hub-windows"]="ZTTEST"');
   eq('p30 zt in url', dom.window.deskSlotUrl('hub-windows'), /hubwin\.example\/\?zt=ZTTEST#gh=TEST/);
@@ -217,7 +249,10 @@ function stubFetch(url, opts) {
 
   contentsGets = 0;
   const lc = await dom.window.loadCreds();
-  eq('p33 creds reuse desks', contentsGets <= 1 && lc && lc._slot === 'agent-linux', true);
+  // One GET per slot: the live/ path is served by the stub, so no extra round
+  // trip to the legacy name is needed. (An unmigrated branch costs one 404 per
+  // slot - that is what the fallback is for.)
+  eq('p33 creds reuse desks', contentsGets <= 6 && lc && lc._slot === 'agent-linux', true, contentsGets);
 
   dom.window.eval('HUB_TOKENS["hub-windows"]="ZTTEST"');
   await dom.window.expandDesk('hub-windows');
@@ -299,7 +334,7 @@ function stubFetch(url, opts) {
   dom.window.close();
   await new Promise(r => setTimeout(r, 500));
   eq('p16 no unhandled rejections', unhandled.length, 0);
-  if (unhandled.length) console.log('unhandled:', unhandled.slice(0, 3));
+  if (unhandled.length) console.log('unhandled:', JSON.stringify(unhandled.slice(0, 3), null, 1));
   console.log(`PANEL-TABS: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('PANEL-TABS ERROR:', e); process.exit(1); });

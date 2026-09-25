@@ -26,6 +26,7 @@ const restoreWork = fs.readFileSync(path.join(__dirname, '..', 'tools/restore-wo
 const exportChats = fs.readFileSync(path.join(__dirname, '..', 'tools/export-chats.sh'), 'utf8');
 const restoreChats = fs.readFileSync(path.join(__dirname, '..', 'tools/restore-chats.sh'), 'utf8');
 const filesApp = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/files-app.js'), 'utf8');
+const restoreAudit = fs.readFileSync(path.join(__dirname, '..', 'tools', 'restore_audit_code.sh'), 'utf8');
 
 let pass = 0, fail = 0;
 function check(name, cond, extra) {
@@ -267,7 +268,7 @@ check('q37 vnc endpoint', server.includes("app.get('/api/vnc/status'") &&
   server.includes('vncRemoteStatus('));
 check('q37b vnc server route', server.includes("app.get('/desktop-vnc'"));
 check('q37c vnc publish slot', fs.readFileSync(path.join(__dirname, '..', 'tools/publish_session.sh'), 'utf8')
-  .includes('slot=vnc)      FILE="session-vnc.json"'));
+  .includes('slot=vnc)      FILE="live/session-vnc.json"'));
 // Контракт изменился (требование владельца: «всё время включённым, а не
 // подключаться каждый раз»): кнопки «подключиться» в разметке НЕТ, экран
 // поднимает сам хаб и кадр подключается автоподключением. Поэтому проверяем
@@ -659,6 +660,42 @@ check('q86 big files travel as chunks', backupWork.includes('collect_big_files()
   backupWork.includes('WORK_BACKUP_MAX_BIG_MB:-200') && backupWork.includes('WORK_BACKUP_CHUNK_MB:-20') &&
   backupWork.includes('"big": os.path.isdir') && restoreWork.includes('chunked big files') &&
   restoreWork.includes('sha256'));
+
+// q87: the branch is sorted into folders instead of one pile in the root.
+// publish_session.sh is the single place that decides where a file lands, so the
+// whole layout is asserted there.
+const migrateState = fs.readFileSync(path.join(__dirname, '..', 'tools', 'migrate_session_state.sh'), 'utf8');
+check('q87 session-state is split into folders', publishSession.includes('FILE="live/session.json"') &&
+  publishSession.includes('slot=hub-linux)      FILE="live/session-hub-linux.json"') &&
+  publishSession.includes("printf 'models/%s'") && publishSession.includes("printf 'snapshots/%s'") &&
+  publishSession.includes("printf 'live/%s'") && publishSession.includes("printf 'history/%s/saved-%s'") &&
+  publishSession.includes('FILE="history/$bucket/run-$_num.json"'));
+check('q88 history is filed by day and weekday', publishSession.includes('history_bucket()') &&
+  publishSession.includes("date -u -d \"$d\" '+%a'") && publishSession.includes('Mon|Tue|Wed|Thu|Fri|Sat|Sun'));
+// q89: every reader looks in the new folder first and falls back to the old
+// root, so a branch that was never migrated keeps working.
+check('q89 readers fall back to the old layout', panel.includes('async function liveStatePath(') &&
+  panel.includes('`live/${name}`, name') &&
+  fs.readFileSync(path.join(__dirname, '..', 'app/src/main/assets/panel/desks.html'), 'utf8')
+    .includes('`live/session-${slot}.json`') &&
+  fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub/index.html'), 'utf8')
+    .includes("'live/session-hub-linux.json'") &&
+  server.includes("HANDOFF_FILE = 'live/handoff.json'") &&
+  server.includes('HANDOFF_FILE_LEGACY') &&
+  handoffSh.includes('live/session-$SLOT.json') &&
+  restoreAudit.includes('pick_state_file()') && restoreAudit.includes('history_files()'));
+// q90: every session workflow ends by recording the run - when it started, how it
+// ended - so the history survives GitHub pruning the run list.
+const journalSteps = sessionWorkflows.every(x => x.includes('Record the run in the history') &&
+  x.includes('journal=1') && x.includes('conclusion=${{ job.status }}'));
+check('q90 every session run is recorded', journalSteps && hubWorkflow.includes('journal_date=') &&
+  panel.includes('function renderRunJournal(') && panel.includes('SESSION_RUN_NAMES') &&
+  panel.includes("history/&lt;дата&gt;/&lt;день&gt;/run-N.json"));
+// q91: the one-time migration moves the old flat files and is safe to re-run.
+check('q91 migration tool', migrateState.includes('move "$f" "live/$f"') &&
+  migrateState.includes('move "$f" "models/$f"') && migrateState.includes('move "$f" "snapshots/$f"') &&
+  migrateState.includes('history/$day/$wd/saved-$base') &&
+  migrateState.includes('nothing to migrate'));
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

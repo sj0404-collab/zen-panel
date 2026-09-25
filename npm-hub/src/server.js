@@ -1238,7 +1238,12 @@ app.post('/api/runner/restart', async (req, res) => {
 //   runner at all. Locally (pc-local) the same file is kept under ~/.npm-hub.
 const { createHandoff, normalizePolicy } = require('./handoff');
 const HANDOFF_SH = path.join(__dirname, '..', '..', 'tools', 'handoff.sh');
-const HANDOFF_FILE = 'handoff.json';
+// The branch is organised in folders now: live/ holds what is alive (session
+// descriptors + the relay's own state), models/ the roster, snapshots/ the
+// audit+code pair, history/<date>/<weekday>/ everything historical. The old
+// flat name is still read, so a branch that was never migrated works.
+const HANDOFF_FILE = 'live/handoff.json';
+const HANDOFF_FILE_LEGACY = 'handoff.json';
 const HANDOFF_LOCAL = path.join(DATA_DIR, HANDOFF_FILE);
 const HANDOFF_TICK_MS = 15000;
 const HANDOFF_SLOT = process.env.HUB_SLOT || 'hub-linux';
@@ -1246,6 +1251,7 @@ const HANDOFF_SLOT = process.env.HUB_SLOT || 'hub-linux';
 let handoff = null;          // created below, once sessionClock() is available
 let handoffPolicy = normalizePolicy({});
 let handoffDocSha = '';
+let handoffDocPath = '';
 let handoffSavedIn = 'local';
 let handoffBusy = false;
 let handoffStatusAt = 0;
@@ -1269,10 +1275,13 @@ const handoffCapability = () => {
 const handoffReadDoc = async () => {
   const token = runnerToken();
   if (token && process.env.GITHUB_REPOSITORY) {
-    const r = await ghApi('GET', `${GITHUB_BASE(process.env.GITHUB_REPOSITORY)}/contents/${HANDOFF_FILE}?ref=session-state&t=${Date.now()}`, token);
-    if (r.status === 200 && r.j && r.j.content) {
-      handoffDocSha = r.j.sha || '';
-      try { return { doc: JSON.parse(Buffer.from(String(r.j.content).replace(/\n/g, ''), 'base64').toString('utf8')), where: 'repo' }; } catch {}
+    for (const name of [HANDOFF_FILE, HANDOFF_FILE_LEGACY]) {
+      const r = await ghApi('GET', `${GITHUB_BASE(process.env.GITHUB_REPOSITORY)}/contents/${name}?ref=session-state&t=${Date.now()}`, token);
+      if (r.status === 200 && r.j && r.j.content) {
+        handoffDocSha = r.j.sha || '';
+        handoffDocPath = name;
+        try { return { doc: JSON.parse(Buffer.from(String(r.j.content).replace(/\n/g, ''), 'base64').toString('utf8')), where: 'repo' }; } catch {}
+      }
     }
   }
   try { return { doc: JSON.parse(fs.readFileSync(HANDOFF_LOCAL, 'utf8')), where: 'local' }; } catch {}
@@ -1291,7 +1300,7 @@ const handoffWriteDoc = async (patch) => {
     if (token && process.env.GITHUB_REPOSITORY) {
       const body = { message: `handoff ${patch.policy ? 'policy' : 'status'} ${nowIso}`, content: Buffer.from(JSON.stringify(doc, null, 2), 'utf8').toString('base64'), branch: 'session-state' };
       if (handoffDocSha) body.sha = handoffDocSha;
-      const put = await ghApi('PUT', `${GITHUB_BASE(process.env.GITHUB_REPOSITORY)}/contents/${HANDOFF_FILE}`, token, body);
+      const put = await ghApi('PUT', `${GITHUB_BASE(process.env.GITHUB_REPOSITORY)}/contents/${handoffDocPath || HANDOFF_FILE}`, token, body);
       if (put.status >= 200 && put.status < 300) { handoffSavedIn = 'repo'; return { ok: true, where: 'repo' }; }
       if (put.status === 409 || put.status === 422) { handoffDocSha = ''; continue; }
       handoffLog(`could not write ${HANDOFF_FILE} to GitHub: ${put.status}`);
@@ -1396,10 +1405,14 @@ const thisRunId = () => String(process.env.GITHUB_RUN_ID || '');
 const handoffSuccessor = async () => {
   const token = runnerToken();
   if (!token || !process.env.GITHUB_REPOSITORY) return null;
-  const r = await ghApi('GET', `${GITHUB_BASE(process.env.GITHUB_REPOSITORY)}/contents/session-${HANDOFF_SLOT}.json?ref=session-state&t=${Date.now()}`, token);
-  if (r.status !== 200 || !r.j || !r.j.content) return null;
-  let d;
-  try { d = JSON.parse(Buffer.from(String(r.j.content).replace(/\n/g, ''), 'base64').toString('utf8')); } catch { return null; }
+  let d = null;
+  for (const name of [`live/session-${HANDOFF_SLOT}.json`, `session-${HANDOFF_SLOT}.json`]) {
+    const r = await ghApi('GET', `${GITHUB_BASE(process.env.GITHUB_REPOSITORY)}/contents/${name}?ref=session-state&t=${Date.now()}`, token);
+    if (r.status !== 200 || !r.j || !r.j.content) continue;
+    try { d = JSON.parse(Buffer.from(String(r.j.content).replace(/\n/g, ''), 'base64').toString('utf8')); } catch { d = null; }
+    if (d) break;
+  }
+  if (!d) return null;
   if (!d || d.state === 'ended') return null;
   if (String(d.runId || '') === thisRunId() || !d.runId) return null;
   if (!d.startedAt || Date.parse(d.startedAt) <= sessionClock().startedMs) return null;

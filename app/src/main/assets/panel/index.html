@@ -301,6 +301,17 @@
     </div>
   </div>
 
+  <div class="card" id="journal-card">
+    <h2>Журнал запусков</h2>
+    <div class="note" style="margin-top:0">
+      Сгруппирован по дням и дням недели: сколько запусков прошло успешно, сколько
+      с ошибкой. Та же запись лежит на ветке <code>session-state</code> в
+      <code>history/&lt;дата&gt;/&lt;день&gt;/run-N.json</code> — она не исчезает,
+      когда GitHub удаляет старые запуски.
+    </div>
+    <div id="journal"><span class="spin">читаю…</span></div>
+  </div>
+
   <div class="card" id="desks-card" style="display:none">
     <h2>Столы</h2>
     <div id="desks"></div>
@@ -1378,9 +1389,13 @@ async function loadDesks() {
   // dropped), because rebuilding tears down the iframes and a chat loses what
   // was typed. The reads below still run: sync needs fresh DESKS.
   const readFile = async (name, checkAge) => {
+    // The branch was reorganised into folders (live/, models/, snapshots/,
+    // history/<date>/<weekday>/). New path first, old root second: a branch
+    // that has not been migrated yet keeps working unchanged.
+    for (const path of [`live/${name}`, name]) {
     try {
       const f = await api(
-        `${CTL()}/contents/${name}?ref=session-state&t=${Date.now()}`);
+        `${CTL()}/contents/${path}?ref=session-state&t=${Date.now()}`);
       const s = JSON.parse(decodeURIComponent(escape(
         atob((f.content || '').replace(/\n/g, '')))));
       if (checkAge) {
@@ -1392,7 +1407,9 @@ async function loadDesks() {
         s._age = Math.round(age);
       }
       return s;
-    } catch (e) { return null; }
+    } catch (e) { /* 404 = try the legacy name, a rate limit = show no desks here */ }
+    }
+    return null;
   };
   const read = async slot => readFile(`session-${slot}.json`, true);
   const readModels = async slot => readFile(`models-${slot}.json`, false);
@@ -1767,13 +1784,18 @@ async function saveSession(slot) {
     `T${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}${p2(d.getUTCSeconds())}`;
   const bundle = { savedAt: d.toISOString(), slot, session: s, models: MODELS[slot] || null };
   const content = btoa(unescape(encodeURIComponent(JSON.stringify(bundle, null, 2))));
+  // The history is filed by day and weekday, so "what was running last Friday"
+  // is one directory listing away.
+  const day = `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())}`;
+  const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
+  const path = `history/${day}/${weekday}/saved-${slot}-${ts}.json`;
   try {
-    await api(`${CTL()}/contents/saved/${slot}-${ts}.json`, {
+    await api(`${CTL()}/contents/${path}`, {
       method: 'PUT',
       headers: Object.assign(hdr(), { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ message: `save ${slot} ${ts}`, content, branch: 'session-state' })
     });
-    alert('Сохранено: saved/' + slot + '-' + ts + '.json');
+    alert('Сохранено: ' + path);
   } catch (e) {
     alert('Не вышло: ' + e.message);
   }
@@ -2307,6 +2329,19 @@ async function rerunRun(id, repo) {
 // ── Раннер: файлы / перезапуск / выключение (через живой хаб) ────────────
 // npm-hub CORS открыт, поэтому панель ходит прямо на URL живого хаба.
 let PRUN = null; // last answer of <hub>/api/runner
+// New folder layout first, the old flat root second. Returns null when the
+// file is nowhere (the branch has never published it).
+async function liveStatePath(name) {
+  for (const p of [`live/${name}`, name]) {
+    try { await api(`${CTL()}/contents/${p}?ref=session-state&t=${Date.now()}`); return p; }
+    catch (e) {
+      // A rate limit is not "the file is somewhere else": let the caller show
+      // the pause, exactly as before the branch was split into folders.
+      if (e && e.is403) throw e;
+    }
+  }
+  return null;
+}
 function runnerBase() {
   const s = DESKS['hub'] || DESKS['hub-linux'] || DESKS['hub-windows'];
   const raw = (s && (s.url || s.deskUrl || s.hubUrl)) || '';
@@ -2453,24 +2488,32 @@ function hoMmss(sec) {
   return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
 }
 async function readHandoffDoc() {
-  try {
-    const f = await api(`${CTL()}/contents/handoff.json?ref=session-state&t=${Date.now()}`);
-    if (!f || !f.content) return null;
-    return JSON.parse(decodeURIComponent(escape(atob(String(f.content).replace(/\n/g, '')))));
-  } catch (e) { return null; }
+  for (const p of ['live/handoff.json', 'handoff.json']) {
+    try {
+      const f = await api(`${CTL()}/contents/${p}?ref=session-state&t=${Date.now()}`);
+      if (!f || !f.content) continue;
+      return JSON.parse(decodeURIComponent(escape(atob(String(f.content).replace(/\n/g, '')))));
+    } catch (e) { if (e && e.is403) throw e; /* try the legacy path */ }
+  }
+  return null;
 }
 async function writeHandoffDoc(patch) {
   let sha = '';
   let cur = {};
-  try {
-    const f = await api(`${CTL()}/contents/handoff.json?ref=session-state&t=${Date.now()}`);
-    if (f && f.content) {
-      sha = f.sha || '';
-      cur = JSON.parse(decodeURIComponent(escape(atob(String(f.content).replace(/\n/g, '')))));
-    }
-  } catch (e) { /* the file may not exist yet */ }
+  let path = 'live/handoff.json';
+  for (const p of ['live/handoff.json', 'handoff.json']) {
+    try {
+      const f = await api(`${CTL()}/contents/${p}?ref=session-state&t=${Date.now()}`);
+      if (f && f.content) {
+        path = p;
+        sha = f.sha || '';
+        cur = JSON.parse(decodeURIComponent(escape(atob(String(f.content).replace(/\n/g, '')))));
+        break;
+      }
+    } catch (e) { /* the file may not exist yet */ }
+  }
   const doc = Object.assign({}, cur, patch, { updatedAt: new Date().toISOString() });
-  await api(`${CTL()}/contents/handoff.json`, {
+  await api(`${CTL()}/contents/${path}`, {
     method: 'PUT',
     headers: Object.assign(hdr(), { 'Content-Type': 'application/json' }),
     body: JSON.stringify({
@@ -2512,7 +2555,8 @@ function handoffPanelRender(doc) {
 }
 async function handoffPanelPoll() {
   if (page !== 'sess') return;
-  handoffPanelRender(await readHandoffDoc());
+  try { handoffPanelRender(await readHandoffDoc()); }
+  catch (e) { if (e && e.is403) sessPausedUntil = Date.now() + (e.unbanMs || 600000); }
 }
 async function handoffPanelSave() {
   const num = (id, def) => { const v = parseInt(($(id) || {}).value, 10); return Number.isFinite(v) ? v : def; };
@@ -2559,7 +2603,8 @@ async function markSessionEnded(id) {
     const slot = DESK_SLOTS
       .find(s => DESKS[s] && String(DESKS[s].runId) === String(id));
     if (!slot) return;
-    const path = `session-${slot}.json`;
+    const path = await liveStatePath(`session-${slot}.json`);
+    if (!path) return;
     const f = await api(`${CTL()}/contents/${path}?ref=session-state`);
     const cur = JSON.parse(decodeURIComponent(escape(
       atob((f.content || '').replace(/\n/g, '')))));
@@ -2582,7 +2627,8 @@ async function markSessionEnded(id) {
 // on a phone it is several taps away; this puts the address, user and password
 // on the screen that starts the session.
 async function readSessionSlot(slot) {
-  const file = slot ? `session-${slot}.json` : 'session.json';
+  const file = await liveStatePath(slot ? `session-${slot}.json` : 'session.json');
+  if (!file) { if ($('creds')) $('creds').innerHTML = '<span class="note">активных сессий нет</span>'; LIVE = null; renderPreview(); return null; }
   try {
     const f = await api(
       `${CTL()}/contents/${file}?ref=session-state&t=${Date.now()}`);
@@ -2834,6 +2880,64 @@ function ago(iso) {
 const kb = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' МБ'
              : n >= 1024 ? Math.round(n / 1024) + ' КБ' : n + ' Б';
 
+// ── ЖУРНАЛ ЗАПУСКОВ: по дням, по дням недели, удачно или нет ──────────
+// Runs used to be a flat list on the Actions tab and nothing else. Here they
+// are what they actually are: a diary of sessions, grouped by the day they
+// started and by the weekday, with the outcome spelled out. Built from the
+// runs the page already polls, so it costs no extra requests.
+const SESSION_RUN_NAMES = new Set(['NPM Hub', 'Zen agent', 'OpenCode', 'Desks']);
+// Indexed by Date#getDay(), so Sunday is 0 - the same shape as history/<Wd>/.
+const WD_SHORT = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+const MONTHS = ['января','февраля','марта','апреля','мая','июня','июля','августа',
+                'сентября','октября','ноября','декабря'];
+const runKind = r => (r.name === 'Zen agent' ? 'CLI-агент'
+  : (r.name === 'OpenCode' || r.name === 'opencode') ? 'OpenCode'
+  : r.name === 'Desks' ? 'Столы' : r.name === 'NPM Hub' ? 'NPM-Hub' : r.name);
+function runOutcome(r) {
+  if (r.conclusion === 'success')   return { cls: 'ok', text: 'успех' };
+  if (r.conclusion === 'cancelled') return { cls: 'idle', text: 'отменён' };
+  if (r.conclusion === 'skipped')   return { cls: 'idle', text: 'пропущен' };
+  return { cls: 'bad', text: 'ошибка' };
+}
+function renderRunJournal(runs) {
+  const box = $('journal');
+  if (!box) return;
+  const done = runs
+    .filter(r => SESSION_RUN_NAMES.has(r.name) && r.status === 'completed')
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 80);
+  if (!done.length) { box.innerHTML = '<span class="note">журнал пуст</span>'; return; }
+  const byDay = new Map();
+  for (const r of done) {
+    const d = new Date(r.created_at);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push({ r, d });
+  }
+  const today = new Date();
+  const parts = [];
+  for (const [day, items] of byDay) {
+    const ok = items.filter(x => x.r.conclusion === 'success').length;
+    const bad = items.length - ok;
+    const isToday = day === `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const wd = WD_SHORT[items[0].d.getDay()] || '';
+    const title = isToday ? 'сегодня' : `${items[0].d.getDate()} ${MONTHS[items[0].d.getMonth()]}`;
+    parts.push(`<div style="margin:10px 0 4px;font-weight:700;font-size:12px">${esc(title)} · ${esc(wd)}`
+      + ` <span class="note">${items.length} запуск(ов)`
+      + (ok ? ` · <span class="ok">${ok} успех</span>` : '')
+      + (bad ? ` · <span class="danger">${bad} неудач</span>` : '')
+      + `</span></div>`);
+    parts.push('<table>' + items.map(({ r, d }) => {
+      const o = runOutcome(r);
+      const t = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      return `<tr><td>${t}</td><td>#${r.run_number}</td>
+        <td>${esc(runKind(r))} <span class="pill ${o.cls}">${o.text}</span></td>
+        <td><a href="#" onclick="openExternal('${esc(r.html_url)}');return false">журнал</a></td></tr>`;
+    }).join('') + '</table>');
+  }
+  box.innerHTML = parts.join('');
+}
+
 async function refresh() {
   let runs = [];
   try { runs = (await api(`${CTL()}/actions/runs?per_page=100`)).workflow_runs || []; }
@@ -2874,6 +2978,8 @@ async function refresh() {
           </tr>`;
       }).join('') + '</table>'
     : '<span class="note">сессия не запущена</span>';
+
+  renderRunJournal(runs);
 
   // Awaited: the credentials decide what the screen and access cards show, and
   // firing this off unawaited left refresh() reporting a live session above two

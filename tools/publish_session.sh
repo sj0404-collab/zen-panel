@@ -38,19 +38,32 @@
 #
 #     publish_session.sh slot=agent file=models-agent.json \
 #       kind=CLI-агент json=$HOME/.zen_free_models.json
+#   file= overrides the target on the branch (validated: only the known
+#   mailboxes are accepted, so a typo cannot spray files across the branch).
+#   json= merges a local JSON file into the payload - with secrets scrubbed:
+#   any key looking like a key/token/secret/password is dropped, because
+#   opencode.json holds API keys and this branch may be public. Pass scrub=0
+#   to disable.
 #
-#   file= overrides the target on the branch (validated: only
-#   models-<slot>.json and saved/<slot>-<timestamp>.json are accepted, so a
-#   typo cannot spray files across the branch). json= merges a local JSON
-#   file into the payload - with secrets scrubbed: any key looking like a
-#   key/token/secret/password is dropped, because opencode.json holds API
-#   keys and this branch may be public. Pass scrub=0 to disable.
+# LAYOUT OF THE BRANCH (it used to be one pile in the root)
+#   live/session-<slot>.json      the live descriptor, one per slot
+#   live/handoff.json             the relay limits + the relay's live status
+#   models/models-<slot>.json     the model roster of that session
+#   snapshots/audit.json          the audit trail (was audit.json)
+#   snapshots/code.json           the code snapshot (was code.json)
+#   chats/<repo>.json             OpenCode chat bundles (unchanged)
+#   history/<YYYY-MM-DD>/<Wd>/    everything historical, by day and weekday:
+#       run-<runNumber>.json         one record per run: success or failure
+#       saved-<slot>-<stamp>.json    the «Сохранить» snapshots
+#       audit-<slot>-<stamp>.json
+#       opencode-<stamp>.json
+#   artifacts/<file>              files the user pushed from the hub
+#   Every reader tries the new path first and falls back to the old root name,
+#   so a branch that was never migrated keeps working.
 #
-#   saved/<slot>-<UTC timestamp>.json bundles one { session, models } pair as
-#   history. The panel's «Сохранить» button writes those straight through the
-#   Contents API; the workflows write them at shutdown. Either way the whole
-#   transfer is this repo plus its API - no cloud trial, no third party, and
-#   the same script runs under bash on Linux and under Git Bash on Windows.
+#   publish_session.sh journal=1 writes the run record:
+#     publish_session.sh journal=1 slot=hub-linux conclusion=success \
+#       startedAt=... endedAt=...
 #
 # Usage: publish_session.sh key=value ...
 #   Recognised keys are passed straight through to JSON, so a new session type
@@ -59,7 +72,11 @@
 set -uo pipefail
 
 BRANCH="session-state"
-FILE="session.json"
+FILE="live/session.json"
+JOURNAL=0
+# journal_date can come as an argument or from the environment; without it the
+# record is filed under today (UTC).
+JOURNAL_DATE="${JOURNAL_DATE:-}"
 
 # A slot is a routing instruction, not data: pull it out of the arguments
 # before they become JSON.
@@ -71,21 +88,23 @@ EXPLICIT_STARTED_AT=0
 for arg in "$@"; do
   case "$arg" in
     startedAt=*)   EXPLICIT_STARTED_AT=1; ARGS+=("$arg") ;;
-    slot=linux)    FILE="session-linux.json" ;;
-    slot=windows)  FILE="session-windows.json" ;;
-    slot=agent)    FILE="session-agent.json" ;;
-    slot=agent-linux)    FILE="session-agent-linux.json" ;;
-    slot=agent-windows)  FILE="session-agent-windows.json" ;;
-    slot=opencode) FILE="session-opencode.json" ;;
-    slot=opencode-linux) FILE="session-opencode-linux.json" ;;
-    slot=opencode-windows) FILE="session-opencode-windows.json" ;;
-    slot=hub)      FILE="session-hub.json" ;;
-    slot=hub-linux)      FILE="session-hub-linux.json" ;;
-    slot=hub-windows)    FILE="session-hub-windows.json" ;;
-    slot=phone)    FILE="session-phone.json" ;;
-    slot=vnc)      FILE="session-vnc.json" ;;
+    journal_date=*) JOURNAL_DATE="${arg#journal_date=}" ;;
+    slot=linux)    FILE="live/session-linux.json" ;;
+    slot=windows)  FILE="live/session-windows.json" ;;
+    slot=agent)    FILE="live/session-agent.json" ;;
+    slot=agent-linux)    FILE="live/session-agent-linux.json" ;;
+    slot=agent-windows)  FILE="live/session-agent-windows.json" ;;
+    slot=opencode) FILE="live/session-opencode.json" ;;
+    slot=opencode-linux) FILE="live/session-opencode-linux.json" ;;
+    slot=opencode-windows) FILE="live/session-opencode-windows.json" ;;
+    slot=hub)      FILE="live/session-hub.json" ;;
+    slot=hub-linux)      FILE="live/session-hub-linux.json" ;;
+    slot=hub-windows)    FILE="live/session-hub-windows.json" ;;
+    slot=phone)    FILE="live/session-phone.json" ;;
+    slot=vnc)      FILE="live/session-vnc.json" ;;
     slot=*)        ;;   # unknown slot: ignore rather than write a stray file
     file=*)        FILE_OVERRIDE="$arg" ;;
+    journal=1)     JOURNAL=1 ;;
     scrub=0)       SCRUB=0 ;;
     json=*)        # A Windows path (C:\Users\..) breaks mingw python; slashes
                    # work for both Windows and mingw python, so normalise.
@@ -96,20 +115,84 @@ done
 set -- ${ARGS+"${ARGS[@]}"}
 
 # A file= override that is not one of the known names is refused outright -
-# the branch is a fixed set of mailboxes, not a scratch disk.
+# the branch is a fixed set of mailboxes, not a scratch disk. The caller keeps
+# using the old flat names; the layout below turns them into the new folders.
 if [ -n "$FILE_OVERRIDE" ]; then
   _f="${FILE_OVERRIDE#file=}"
   if [[ "$_f" =~ ^models-(linux|windows|agent(-linux|-windows)?|opencode(-linux|-windows)?|hub(-linux|-windows)?)\.json$ ]] || \
      [[ "$_f" =~ ^(audit|code)\.json$ ]] || \
      [[ "$_f" =~ ^chats/[A-Za-z0-9._-]{1,80}\.json$ ]] || \
      [[ "$_f" =~ ^saved/(audit|code)(-[a-z0-9-]+)?-[0-9]{8}T[0-9]{6}\.json$ ]] || \
-     [[ "$_f" =~ ^saved/(linux|windows|agent(-linux|-windows)?|opencode(-linux|-windows)?|hub(-linux|-windows)?)-[0-9]{8}T[0-9]{6}\.json$ ]]; then
+     [[ "$_f" =~ ^saved/opencode-[0-9]{8}T[0-9]{6}\.json$ ]] || \
+     [[ "$_f" =~ ^saved/(linux|windows|agent(-linux|-windows)?|opencode(-linux|-windows)?|hub(-linux|-windows)?)-[0-9]{8}T[0-9]{6}\.json$ ]] || \
+     [[ "$_f" =~ ^history/[0-9]{4}-[0-9]{2}-[0-9]{2}/(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/[A-Za-z0-9._-]{1,90}\.json$ ]]; then
     FILE="$_f"
   else
     echo "publish_session: rejected file override: $_f" >&2
     exit 1
   fi
 fi
+
+# ── the layout: one flat pile sorted into folders ─────────────────────────
+# Everything used to sit in the branch root, which made "what is this file and
+# when is it from" a guessing game. Now: live/ for what is alive right now,
+# models/ for the roster, snapshots/ for the audit/code pair, and history/ for
+# everything historical, filed under the day and the weekday it belongs to.
+#
+# date_of_day <YYYYMMDD or YYYY-MM-DD> -> "YYYY-MM-DD/Tue"
+history_bucket() {
+  local raw="$1" d=""
+  if [[ "$raw" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})$ ]]; then
+    d="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
+  elif [[ "$raw" =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2})$ ]]; then
+    d="$raw"
+  else
+    d="$(date -u '+%Y-%m-%d')"
+  fi
+  local wd
+  wd="$(date -u -d "$d" '+%a' 2>/dev/null || true)"
+  case "$wd" in
+    Mon|Tue|Wed|Thu|Fri|Sat|Sun) : ;;
+    *) wd="$(python3 -c "import datetime,sys;print(datetime.date.fromisoformat(sys.argv[1]).strftime('%a'))" "$d" 2>/dev/null || echo "")" ;;
+  esac
+  [ -n "$wd" ] || wd="---"
+  printf '%s/%s' "$d" "$wd"
+}
+
+# A date out of a <name>-YYYYMMDDTHHMMSS.json stamp; today when there is none.
+stamp_bucket() {
+  local name="$1" raw=""
+  if [[ "$name" =~ ([0-9]{8})T[0-9]{6} ]]; then raw="${BASH_REMATCH[1]}"; fi
+  history_bucket "$raw"
+}
+
+layout_file() {
+  local f="$1" bucket
+  case "$f" in
+    live/*|chats/*|history/*|artifacts/*) printf '%s' "$f"; return 0 ;;
+  esac
+  case "$f" in
+    session*.json) printf 'live/%s' "$f"; return 0 ;;
+    models-*.json) printf 'models/%s' "$f"; return 0 ;;
+    audit.json|code.json) printf 'snapshots/%s' "$f"; return 0 ;;
+    handoff.json) printf 'live/handoff.json'; return 0 ;;
+  esac
+  if [[ "$f" == saved/* ]]; then
+    # saved/audit-hub-20260102T030405.json -> history/2026-01-02/Fri/saved-audit-hub-...
+    bucket="$(stamp_bucket "${f#saved/}")"
+    printf 'history/%s/saved-%s' "$bucket" "${f#saved/}"
+    return 0
+  fi
+  printf '%s' "$f"
+}
+
+if [ "$JOURNAL" = "1" ]; then
+  _num="${GITHUB_RUN_NUMBER:-0}"
+  [ -n "$_num" ] || _num=0
+  bucket="$(history_bucket "$JOURNAL_DATE")"
+  FILE="history/$bucket/run-$_num.json"
+fi
+FILE="$(layout_file "$FILE")"
 export SCRUB
 export JSON_MERGE="$(printf '%s\n' "${JSON_FILES[@]}")" 
 
@@ -219,7 +302,7 @@ fi
 
 IS_SESSION_FILE=0
 case "$FILE" in
-  session.json|session-*.json) IS_SESSION_FILE=1 ;;
+  live/session.json|live/session-*.json) IS_SESSION_FILE=1 ;;
 esac
 
 session_publish_blocked() {
