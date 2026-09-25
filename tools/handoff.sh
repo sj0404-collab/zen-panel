@@ -47,6 +47,13 @@ fail() {
   exit 1
 }
 
+# 0. What was in flight right now? The resume report is informational: it ends
+#    up in this log, so the record of the handover says which sessions were open
+#    and what they were doing, not just that files were pushed.
+if [ -x "$SCRIPT_DIR/session_resume_report.sh" ] || [ -f "$SCRIPT_DIR/session_resume_report.sh" ]; then
+  RESUME_LIMIT=5 bash "$SCRIPT_DIR/session_resume_report.sh" 2>&1 | tee -a "$HUB_LOGS/handoff.log" || true
+fi
+
 # 1. OpenCode sessions. Missing CLI or database is NOT fatal (the user may run
 #    no agent at all), but a real error while exporting a repo is.
 log "exporting chats"

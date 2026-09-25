@@ -697,5 +697,13 @@ check('q91 migration tool', migrateState.includes('move "$f" "live/$f"') &&
   migrateState.includes('history/$day/$wd/saved-$base') &&
   migrateState.includes('nothing to migrate'));
 
+// q92: the handover log says WHAT was in flight, not only that a push happened,
+// and the resume report is the thing that can say it (read-only on a live db).
+const resumeReport = fs.readFileSync(path.join(__dirname, '..', 'tools', 'session_resume_report.sh'), 'utf8');
+check('q92 handover log carries the resume report', handoffSh.includes('session_resume_report.sh') &&
+  handoffSh.includes('2>&1 | tee -a "$HUB_LOGS/handoff.log" || true') &&
+  resumeReport.includes('mode=ro') && resumeReport.includes('parent_id IS NULL') &&
+  resumeReport.includes('AGENT_SESSION.md') && resumeReport.includes('--json'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
