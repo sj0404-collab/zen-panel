@@ -7,7 +7,7 @@ const { JSDOM } = require('jsdom');
 const html = fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub/index.html'), 'utf8');
 
 const now = new Date().toISOString();
-const liveSession = { state: 'live', kind: 'NPM-Hub', hubUrl: 'https://hub.local/', url: 'https://hub.local/', startedAt: now };
+const liveSession = { state: 'live', kind: 'NPM-Hub', runId: '999', hubUrl: 'https://hub.local/', url: 'https://hub.local/', startedAt: now };
 function b64(o) { return Buffer.from(JSON.stringify(o)).toString('base64'); }
 
 const dispatches = [];
@@ -38,7 +38,7 @@ async function stubFetch(url, opts) {
   }
   if (u.includes('/api/tools')) {
     return u.includes('zt=good')
-      ? { ok: true, status: 200, json: async () => ({ success: true, tools: [] }) }
+      ? { ok: true, status: 200, json: async () => ({ success: true, runId: '999', tools: [] }) }
       : { ok: false, status: 401, json: async () => ({ success: false, error: 'hub token?' }) };
   }
   if (u.includes('session-hub-linux.json')) {
@@ -116,6 +116,9 @@ function check(name, cond, extra) {
   let msg9 = '';
   try { await window.preflightHub('https://hub.local', 'bad'); } catch (e) { msg9 = e.message; }
   check('c9 preflight rejects bad zt', /не принял токен/.test(msg9), msg9);
+  let msg10 = '';
+  try { await window.preflightHub('https://hub.local', 'good', '1000'); } catch (e) { msg10 = e.message; }
+  check('c10 preflight rejects another run', /другим запуском/.test(msg10), msg10);
 
   console.log(`HUB-CONNECT: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

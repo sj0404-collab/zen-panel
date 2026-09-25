@@ -36,8 +36,7 @@ log() { echo "[restore-work $(date -u '+%H:%M:%S')] $*" | tee -a "$HUB_LOGS/rest
 apply_payload() {
   local dir="$1" repodir="$2" label="$3" result=0
   if [ -s "$repodir/wip.patch" ]; then
-    if ( cd "$dir" && git apply --3way --whitespace=nowarn "$repodir/wip.patch" 2>/dev/null \
-      || git apply --whitespace=nowarn "$repodir/wip.patch" 2>/dev/null ); then
+    if ( cd "$dir" && git apply --whitespace=nowarn "$repodir/wip.patch" 2>/dev/null ); then
       log "applied uncommitted changes to $label"
     else
       log "could not reapply uncommitted changes to $label (kept at $repodir/wip.patch)"
@@ -45,7 +44,7 @@ apply_payload() {
     fi
   fi
   if [ -s "$repodir/untracked.tar.gz" ]; then
-    if ( cd "$dir" && tar --keep-old-files -xzf "$repodir/untracked.tar.gz" 2>/dev/null ); then
+    if extract_keep_old "$dir" "$repodir/untracked.tar.gz"; then
       log "restored untracked files for $label"
     else
       log "could not restore untracked files for $label"
@@ -54,6 +53,17 @@ apply_payload() {
   fi
   return "$result"
 }
+extract_keep_old() {
+  local dir="$1" archive="$2" output rc=0
+  output="$(cd "$dir" && tar --keep-old-files -xzf "$archive" 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ]; then return 0; fi
+  case "$output" in
+    *"Cannot open: File exists"*) return 0 ;;
+  esac
+  [ -n "$output" ] && log "tar: ${output:0:200}"
+  return 1
+}
+
 copy_legacy_manifest() {
   local dir="$1"
   local legacy="$(dirname "$dir")/MANIFEST.md"
@@ -86,8 +96,21 @@ fi
 
 if [ -n "${WORK_BACKUP_SNAPSHOT:-}" ]; then
   SNAP="$TARGET/$WORK_BACKUP_SNAPSHOT"
-else
-  SNAP="$(ls -1dt "$TARGET"/snapshots/*/ 2>/dev/null | head -n1)"
+elif [ -f "$TARGET/latest.json" ]; then
+  LATEST_STAMP=$(python3 - "$TARGET/latest.json" <<'PY'
+import json, sys
+try:
+    print(json.load(open(sys.argv[1], encoding='utf-8')).get('stamp', ''))
+except Exception:
+    print('')
+PY
+)
+  if [ -n "$LATEST_STAMP" ] && [ -d "$TARGET/snapshots/$LATEST_STAMP" ]; then
+    SNAP="$TARGET/snapshots/$LATEST_STAMP"
+  fi
+fi
+if [ -z "${SNAP:-}" ]; then
+  SNAP="$(ls -1d "$TARGET"/snapshots/*/ 2>/dev/null | LC_ALL=C sort -r | head -n1)"
 fi
 if [ -z "${SNAP:-}" ] || [ ! -d "$SNAP" ]; then
   log "no snapshot found in $BRANCH"
@@ -103,24 +126,54 @@ import json, os, subprocess, sys
 root, meta_path = sys.argv[1:]
 try: meta = json.load(open(meta_path, encoding='utf-8'))
 except Exception: raise SystemExit(0)
-wanted_remote = meta.get('remote') or ''
-wanted_name = meta.get('name') or os.path.basename(str(meta.get('path') or '').rstrip('/'))
-found = []
-for base, dirs, files in os.walk(root):
-    if '.git' not in dirs: continue
-    if any(x in base.split(os.sep) for x in ('node_modules', '.cache', '.npm', '.gradle')):
-        dirs[:] = []
-        continue
-    repo = base
+rel = str(meta.get('rel') or '').strip('/')
+wanted_remote = str(meta.get('remote') or '').strip()
+
+def is_repo(path):
     try:
-        if subprocess.run(['git', '-C', repo, 'rev-parse', '--git-dir'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
-            continue
-        remote = subprocess.check_output(['git','-C',repo,'remote','get-url','origin'], text=True, stderr=subprocess.DEVNULL).strip()
-    except Exception: remote = ''
-    if wanted_remote and remote != wanted_remote: continue
-    if os.path.basename(repo) == wanted_name: print(repo); raise SystemExit(0)
-    found.append(repo)
-if found: print(found[0])
+        return os.path.isdir(os.path.join(path, '.git')) or subprocess.run(
+            ['git', '-C', path, 'rev-parse', '--git-dir'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    except Exception:
+        return False
+
+def norm(url):
+    value = str(url or '').strip().rstrip('/')
+    if value.endswith('.git'): value = value[:-4]
+    if value.startswith('git@github.com:'): value = 'https://github.com/' + value.split(':', 1)[1]
+    if value.startswith('ssh://git@github.com/'):
+        value = 'https://github.com/' + value.split('github.com/', 1)[1]
+    return value
+
+wanted = norm(wanted_remote)
+def remote_of(path):
+    try:
+        return subprocess.check_output(
+            ['git', '-C', path, 'remote', 'get-url', 'origin'],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        return ''
+
+if rel:
+    exact = os.path.join(root, rel)
+    if is_repo(exact) and (not wanted or norm(remote_of(exact)) == wanted):
+        print(exact)
+        raise SystemExit(0)
+if not wanted:
+    raise SystemExit(0)
+for base, dirs, files in os.walk(root):
+    dirs[:] = [d for d in dirs if d not in ('node_modules', '.cache', '.npm', '.gradle', '.git')]
+    if not is_repo(base):
+        continue
+    try:
+        remote = subprocess.check_output(
+            ['git', '-C', base, 'remote', 'get-url', 'origin'],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        continue
+    if norm(remote) == wanted:
+        print(base)
+        raise SystemExit(0)
 PY
 }
 
@@ -170,6 +223,17 @@ PY
        failed=1
        continue
      fi
+     if [ -f "$repodir/meta.json" ]; then
+       META_REMOTE=$(python3 - "$repodir/meta.json" <<'PY'
+import json, sys
+try:
+    print(json.load(open(sys.argv[1], encoding='utf-8')).get('remote', ''))
+except Exception:
+    print('')
+PY
+)
+       [ -z "$META_REMOTE" ] || git -C "$dest" remote set-url origin "$META_REMOTE" 2>/dev/null || true
+     fi
 
   else
     mkdir -p "$dest"
@@ -184,11 +248,21 @@ done < <(find "$SNAP/repos" -type f -name meta.json -print 2>/dev/null)
 
 if [ -s "$SNAP/files.tar.gz" ]; then
   # --keep-old-files: never overwrite whatever the fresh runner already has.
-  if ! ( cd "$ROOT" && tar --keep-old-files -xzf "$SNAP/files.tar.gz" 2>/dev/null ); then
+  if extract_keep_old "$ROOT" "$SNAP/files.tar.gz"; then
+    log "restored loose home files (existing ones left untouched)"
+  else
     log "could not restore loose home files"
     failed=1
+  fi
+fi
+
+if [ -d "$SNAP/descriptors" ]; then
+  mkdir -p "$ROOT/.npm-hub/sessions" 2>/dev/null || failed=1
+  if ! cp -a -n "$SNAP/descriptors/." "$ROOT/.npm-hub/sessions/" 2>/dev/null; then
+    log "could not restore durable session descriptors"
+    failed=1
   else
-    log "restored loose home files (existing ones left untouched)"
+    log "restored durable session descriptors"
   fi
 fi
 

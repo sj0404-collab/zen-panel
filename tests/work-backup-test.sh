@@ -23,19 +23,53 @@ mkdir -p "$TMP/home/proj/sub" "$TMP/home/loose"
 
 echo "hello loose" > "$TMP/home/loose/note.txt"
 
+REPO_COUNT=$(find "$TMP/home" -type d -name .git | wc -l | tr -d ' ')
+CHAT_REPOS=$(CHAT_ALL_ROOT="$TMP/home" OPENCODE_DB="$TMP/missing.db" PUBLISH=0 bash "$TOOLS/export-chats.sh" --all 2>&1 | grep -c '^export-chats: --- ' || true)
+check "chat export finds every repo" "$([ "$REPO_COUNT" = "$CHAT_REPOS" ] && echo 1 || echo 0)"
+
 export SESSION_STATE_URL="$TMP/remote.git" WORK_BACKUP_ROOT="$TMP/home"
 export WORK_BACKUP_STATE="$TMP/home/.npm-hub/work-backup-state" HUB_LOGS="$TMP/logs"
 bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
 check "snapshot published" "$([ -n "$(git -C "$TMP/remote.git" ls-tree -r --name-only work-backup)" ] && echo 1 || echo 0)"
 check "manifest lists proj" "$(git -C "$TMP/remote.git" show work-backup:latest.json | grep -q '"rel": "proj"' && echo 1 || echo 0)"
-# Idle run must not create another snapshot.
 before="$(git -C "$TMP/remote.git" rev-parse work-backup)"
+sleep 1
 bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
-check "idle run is a no-op" "$([ "$before" = "$(git -C "$TMP/remote.git" rev-parse work-backup)" ] && echo 1 || echo 0)"
+check "final once always publishes" "$([ "$before" != "$(git -C "$TMP/remote.git" rev-parse work-backup)" ] && echo 1 || echo 0)"
+
+echo "second distinct edit" >> "$TMP/home/proj/committed.txt"
+mkdir -p "$TMP/home/.npm-hub/sessions"
+printf '%s\n' '{"id":"term_1","toolId":"opencode"}' > "$TMP/home/.npm-hub/sessions/npmhub-term_1.meta.json"
+sleep 1
+bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
+
+export WORK_BACKUP_KEEP=2
+for i in 1 2 3; do
+  sleep 1
+  bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
+done
+check "prune keeps newest snapshots" "$([ "$(git -C "$TMP/remote.git" ls-tree -d --name-only work-backup snapshots/ | wc -l | tr -d ' ')" = 2 ] && echo 1 || echo 0)"
+LATEST_STAMP=$(git -C "$TMP/remote.git" show work-backup:latest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"])')
+check "latest manifest points at a live snapshot" "$(git -C "$TMP/remote.git" cat-file -e "work-backup:snapshots/$LATEST_STAMP" 2>/dev/null && echo 1 || echo 0)"
+
+echo "newer-run-marker" >> "$TMP/home/proj/committed.txt"
+sleep 1
+GITHUB_RUN_ID=300000 GITHUB_RUN_NUMBER=300000 bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
+echo "older-run-marker" >> "$TMP/home/proj/committed.txt"
+sleep 1
+GITHUB_RUN_ID=100 GITHUB_RUN_NUMBER=10 bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
 
 rm -rf "$TMP/home/.npm-hub"
-bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub.example >/dev/null 2>&1
+GITHUB_RUN_ID=200 GITHUB_RUN_NUMBER=20 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub.example startedAt=2026-01-01T00:00:00Z >/dev/null 2>&1
 check "session publish bootstraps staging" "$(git --git-dir="$TMP/remote.git" show session-state:session-hub-linux.json >/dev/null 2>&1 && echo 1 || echo 0)"
+GITHUB_RUN_ID=200 GITHUB_RUN_NUMBER=20 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub-new.example >/dev/null 2>&1
+check "same run republish keeps startedAt" "$(git --git-dir="$TMP/remote.git" show session-state:session-hub-linux.json | grep -q '2026-01-01T00:00:00Z' && echo 1 || echo 0)"
+GITHUB_RUN_ID=100 GITHUB_RUN_NUMBER=10 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub-old.example >/dev/null 2>&1
+check "older run cannot reclaim live session" "$(git --git-dir="$TMP/remote.git" show session-state:session-hub-linux.json | grep -q 'https://hub-new.example' && echo 1 || echo 0)"
+GITHUB_RUN_ID=100 GITHUB_RUN_NUMBER=10 bash "$TOOLS/publish_session.sh" slot=hub-linux state=ended >/dev/null 2>&1
+check "older run cannot end newer session" "$(git --git-dir="$TMP/remote.git" show session-state:session-hub-linux.json | grep -q '"state": "live"' && echo 1 || echo 0)"
+GITHUB_RUN_ID=300 GITHUB_RUN_NUMBER=30 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub-third.example >/dev/null 2>&1
+check "newer run replaces live session" "$(git --git-dir="$TMP/remote.git" show session-state:session-hub-linux.json | grep -q 'https://hub-third.example' && echo 1 || echo 0)"
 
 # Wipe and rebuild.
 cd /
@@ -45,6 +79,10 @@ check "committed content restored" "$(grep -q '^base$' "$TMP/home/proj/committed
 check "uncommitted change restored" "$(grep -q 'wip change' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
 check "untracked file restored" "$([ -f "$TMP/home/proj/sub/scratch.txt" ] && echo 1 || echo 0)"
 check "manifest restored" "$([ -f "$TMP/home/proj/MANIFEST.md" ] && echo 1 || echo 0)"
+check "latest content edit restored" "$(grep -q 'second distinct edit' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
+check "newer run backup survives old runner" "$(grep -q 'newer-run-marker' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
+check "older run cannot overwrite backup" "$(! grep -q 'older-run-marker' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
+check "session descriptor restored" "$([ -f "$TMP/home/.npm-hub/sessions/npmhub-term_1.meta.json" ] && echo 1 || echo 0)"
 check "ignored file not restored" "$([ ! -f "$TMP/home/proj/build/out.o" ] && echo 1 || echo 0)"
 check "loose file restored" "$([ -f "$TMP/home/loose/note.txt" ] && echo 1 || echo 0)"
 

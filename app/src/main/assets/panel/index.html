@@ -1203,12 +1203,19 @@ function runnerInputs() {
 }
 
 // ── sessions ────────────────────────────────────────────────────────
-const liveAgents   = rs => rs.filter(r => r.name === 'Zen agent' && r.status !== 'completed');
-const liveOpencode = rs => rs.filter(r => (r.name === 'OpenCode' || r.name === 'opencode')
-                                          && r.status !== 'completed');
-const liveHub      = rs => rs.filter(r => r.name === 'NPM Hub' && r.status !== 'completed');
-const liveDesktops = rs => rs.filter(r => (r.name === 'Remote session' || r.name === 'Desks')
-                                          && r.status !== 'completed');
+const QUEUED_RUN_STATUSES = ['queued', 'requested', 'waiting', 'pending'];
+const runIsQueued = r => !!r && QUEUED_RUN_STATUSES.includes(r.status);
+const runningFirst = rs => rs.slice().sort((a, b) => {
+  const ai = a.status === 'in_progress' ? 0 : 1;
+  const bi = b.status === 'in_progress' ? 0 : 1;
+  return ai - bi || new Date(a.created_at || 0) - new Date(b.created_at || 0);
+});
+const liveAgents   = rs => runningFirst(rs.filter(r => r.name === 'Zen agent' && r.status !== 'completed'));
+const liveOpencode = rs => runningFirst(rs.filter(r => (r.name === 'OpenCode' || r.name === 'opencode')
+                                          && r.status !== 'completed'));
+const liveHub      = rs => runningFirst(rs.filter(r => r.name === 'NPM Hub' && r.status !== 'completed'));
+const liveDesktops = rs => runningFirst(rs.filter(r => (r.name === 'Remote session' || r.name === 'Desks')
+                                          && r.status !== 'completed'));
 
 async function currentRuns() {
   try { return (await api(`${CTL()}/actions/runs?per_page=100`)).workflow_runs || []; }
@@ -1353,8 +1360,9 @@ async function loadDesks() {
       if (checkAge) {
         // A runner killed hard never clears its file, so an old entry lingers
         // and would advertise a desk that stopped answering hours ago.
-        const age = (Date.now() - new Date(s.startedAt).getTime()) / 60000;
-        if (s.state === 'ended' || age > 361) return null;
+        const born = Date.parse(s.startedAt || '');
+        const age = (Date.now() - born) / 60000;
+        if (s.state === 'ended' || !Number.isFinite(born) || age > 361) return null;
         s._age = Math.round(age);
       }
       return s;
@@ -1504,7 +1512,21 @@ async function ensureHubAccess(slot) {
         return false;
       }
     }
-    if (r.status !== 401) { try { bootLog('проба ' + slot + ': ' + r.status); } catch (e2) {} LAST_PROBE_NETFAIL = false; return true; }
+    if (r.status !== 401) {
+      if (r.ok) {
+        const identity = await r.json().catch(() => null);
+        if (identity && s.runId && identity.runId && String(identity.runId) !== String(s.runId)) {
+          bootLog('проба ' + slot + ': адрес отвечает другим run ' + identity.runId + ', ожидался ' + s.runId);
+          if (confirm('Этот адрес обслуживает другой запуск раннера.\n\nОК — запустить правильный хаб\nОтмена — не открывать')) {
+            await launchHub(slot === 'hub-windows' ? 'windows' : slot === 'hub-linux' ? 'linux' : undefined);
+          }
+          return false;
+        }
+      }
+      try { bootLog('проба ' + slot + ': ' + r.status); } catch (e2) {}
+      LAST_PROBE_NETFAIL = false;
+      return true;
+    }
   } catch (e) { try { bootLog('проба ' + slot + ': сеть недоступна — туннель/VPN?'); } catch (e2) {} LAST_PROBE_NETFAIL = true; return true; }
   finally { if (to) clearTimeout(to); }
   if (confirm('Хаб закрыт токеном, которого у панели нет (запуск с другого устройства, переустановка или ручной dispatch).\n\nОК — перезапустить хаб (панель получит новый токен)\nОтмена — ввести токен вручную')) {
@@ -2428,8 +2450,9 @@ async function readSessionSlot(slot) {
       `${CTL()}/contents/${file}?ref=session-state&t=${Date.now()}`);
     const raw = decodeURIComponent(escape(atob((f.content || '').replace(/\n/g, ''))));
     const s = JSON.parse(raw);
-    const age = (Date.now() - new Date(s.startedAt).getTime()) / 60000;
-    if (s.state === 'ended' || age > 361) return null;
+    const born = Date.parse(s.startedAt || '');
+    const age = (Date.now() - born) / 60000;
+    if (s.state === 'ended' || !Number.isFinite(born) || age > 361) return null;
     s._age = Math.round(age);
     s._slot = slot || 'legacy';
     return s;
@@ -2657,6 +2680,7 @@ async function checkUpdateBanner() {
 
 // ── shared bits ─────────────────────────────────────────────────────
 function pill(r) {
+  if (runIsQueued(r))              return '<span class="pill idle">в очереди</span>';
   if (r.status !== 'completed')     return '<span class="pill run">идёт</span>';
   if (r.conclusion === 'success')   return '<span class="pill ok">успех</span>';
   if (r.conclusion === 'cancelled') return '<span class="pill idle">отменён</span>';
@@ -2701,9 +2725,10 @@ async function refresh() {
           : r.name === 'Desks' ? 'Столы'
           : 'Рабочий стол';
         const started = new Date(r.created_at).getTime();
+        const ageText = runIsQueued(r) ? `в очереди · создана ${used} мин назад` : `идёт ${used} мин · осталось ~${left} мин`;
         return `<tr><td>#${r.run_number}</td>
           <td><b>${esc(kind)}</b> ${pill(r)}
-            <div class="note"><span class="live-age" data-started="${started}">идёт ${used} мин · осталось ~${left} мин</span> ·
+            <div class="note"><span class="live-age" data-started="${started}" data-queued="${runIsQueued(r) ? '1' : '0'}">${ageText}</span> ·
               <a href="#" onclick="openExternal(\'${esc(r.html_url)}\');return false">журнал</a></div>
             <button class="small" onclick="${kind === 'CLI-агент' ? "openDeskInPanel(liveSlotOf('agent'))" : kind === 'OpenCode' ? "openDeskInPanel(liveSlotOf('opencode'))" : 'openLive()'}">Открыть чат</button>
             <button class="ghost small" onclick="stopRun(${r.id})">Выключить</button></td>
@@ -2742,7 +2767,9 @@ function tickAges() {
   if (!any) return;
   document.querySelectorAll('.live-age[data-started]').forEach(el => {
     const used = Math.max(0, Math.round((Date.now() - Number(el.dataset.started)) / 60000));
-    el.textContent = 'идёт ' + used + ' мин · осталось ~' + Math.max(0, 360 - used) + ' мин';
+    el.textContent = el.dataset.queued === '1'
+      ? 'в очереди · создана ' + used + ' мин назад'
+      : 'идёт ' + used + ' мин · осталось ~' + Math.max(0, 360 - used) + ' мин';
   });
 }
 

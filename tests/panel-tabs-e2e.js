@@ -35,6 +35,7 @@ let promptAnswer = null;
 const fetchUrls = [];
 const promptCalls = [];
 let hubNetFail = false;
+let hubProbeRunId = '';
 function stub403() {
   return { status: 403, ok: false,
     headers: { get: (h) => h === 'x-ratelimit-reset' ? String(Math.floor(Date.now() / 1000) + 300) : null },
@@ -57,7 +58,7 @@ function stubFetch(url, opts) {
   if (/^https:\/\/hub[^/]*\//.test(url)) {
     if (hubNetFail) return Promise.reject(new Error('net down'));
     if (hubGate401) return Promise.resolve({ status: 401, ok: false, json: async () => ({ success: false, error: 'hub token?' }) });
-    return Promise.resolve({ status: 200, ok: true, json: async () => ({ success: true }) });
+    return Promise.resolve({ status: 200, ok: true, json: async () => ({ success: true, runId: hubProbeRunId }) });
   }
   if (url.includes('/dispatches') && opts && opts.method === 'POST') {
     dispatches.push(JSON.parse(opts.body));
@@ -222,6 +223,14 @@ function stubFetch(url, opts) {
   await dom.window.expandDesk('hub-windows');
   await waitFor(() => document.getElementById('desk-frame-hub-windows')?.style.display === 'block');
   eq('p34 probe opens gated frame', document.getElementById('desk-frame-hub-windows')?.src || '', /zt=ZTTEST/);
+
+  hubProbeRunId = '999';
+  confirmSeq.push(false);
+  const openBeforeMismatch = dom.window.eval('deskOpen');
+  await dom.window.expandDesk('hub-windows');
+  eq('p34b wrong runner identity blocked', dom.window.eval('deskOpen') === openBeforeMismatch &&
+    (document.getElementById('boot-log')?.textContent || '').includes('другим run 999'), true);
+  hubProbeRunId = '';
 
   hubGate401 = true;
   const openBefore = dom.window.eval('deskOpen');

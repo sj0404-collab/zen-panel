@@ -356,7 +356,7 @@ function getAccessInfo(req) {
 app.get('/api/tools', (req, res) => {
   const tools = TOOLS.map(t => ({ ...t, installed: isInstalled(t.cmd), version: null }));
   for (const t of tools) if (t.installed) t.version = getVersion(t.cmd);
-  res.json({ success: true, warming: false, tools });
+  res.json({ success: true, warming: false, runId: process.env.GITHUB_RUN_ID || '', runNumber: process.env.GITHUB_RUN_NUMBER || '', tools });
 });
 
 // ─── TOOL INSTALL — one at a time, live log via polling ───
@@ -452,7 +452,7 @@ app.get('/api/info', (req, res) => {
     startedMs = uptimeStart;
   }
   const elapsedMs = Math.max(0, Date.now() - startedMs);
-  res.json({ home: HOME, workDir: WORK_DIR, platform: process.platform, ...hubBuildInfo(), ...getAccessInfo(req), state,
+  res.json({ home: HOME, workDir: WORK_DIR, platform: process.platform, runId: process.env.GITHUB_RUN_ID || '', runNumber: process.env.GITHUB_RUN_NUMBER || '', ...hubBuildInfo(), ...getAccessInfo(req), state,
     alias: (HOST_ALIAS && hostAliasInstalled) ? { name: HOST_ALIAS, ip: HOST_ALIAS_IP, url: `http://${HOST_ALIAS}:${+process.env.PORT || PORT}` } : null,
     session: { startedMs, elapsedMs, limitMs, remainingMs: limitMs ? Math.max(0, limitMs - elapsedMs) : null } });
 });
@@ -1183,7 +1183,13 @@ app.post('/api/runner/restart', async (req, res) => {
   // cancelled in the background — GitHub can take minutes to actually kill it.
   const dispatch = await ghApi(
     'POST', `${GITHUB_BASE(env.repo)}/actions/workflows/${env.workflowFile}/dispatches`, token,
-    { ref: env.ref, inputs: { os: process.platform === 'win32' ? 'windows' : 'linux', gh_token: token, replace: true } });
+    { ref: env.ref, inputs: {
+      os: process.platform === 'win32' ? 'windows' : 'linux',
+      label: process.env.HUB_LABEL || 'hub',
+      token: process.env.HUB_TOKEN || '',
+      gh_token: token,
+      replace: true
+    } });
   let cancelOld = false;
   if (dispatch.status >= 200 && dispatch.status < 300) {
     const c = await ghApi('POST', `${GITHUB_BASE(env.repo)}/actions/runs/${env.runId}/cancel`, token);
@@ -1797,10 +1803,16 @@ const readSessionMeta = (id) => {
 // workspace path. Prefer the old cwd when it still exists, otherwise resolve
 // the saved repository identity against the durable hub-work directory.
 const resolveRestoredCwd = (meta) => {
-  const candidates = [meta && meta.cwd, meta && meta.repoPath,
-    WORK_DIR, meta && meta.repoName && path.join(WORK_DIR, meta.repoName),
-    meta && meta.repoName && path.join(HOME, meta.repoName), HOME].filter(Boolean);
   const wantedRemote = meta && meta.repoRemote;
+  let hubRepos = [];
+  try {
+    hubRepos = fs.readdirSync(WORK_DIR, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .map(e => path.join(WORK_DIR, e.name, 'code'));
+  } catch {}
+  const candidates = [...hubRepos, meta && meta.repoPath, meta && meta.cwd,
+    WORK_DIR, meta && meta.repoName && path.join(WORK_DIR, meta.repoName, 'code'),
+    meta && meta.repoName && path.join(HOME, meta.repoName), HOME].filter(Boolean);
   let first = null;
   for (const candidate of candidates) {
     try {
@@ -1812,7 +1824,7 @@ const resolveRestoredCwd = (meta) => {
       if (repo && repo.remote === wantedRemote) return resolved;
     } catch {}
   }
-  return first;
+  return wantedRemote ? null : first;
 };
 
 const tmuxRun = (args, timeout, input) => {
@@ -3716,6 +3728,10 @@ function tryListen(port, onReady) {
   const ready = () => onReady(port, server);
   const onError = (err) => {
     if (err.code === 'EADDRINUSE') {
+      if (process.env.HUB_PORT_STRICT === '1') {
+        console.error(`  ❌ Port ${port} is already in use; refusing to start a second hub.`);
+        process.exit(1);
+      }
       const next = Number(port) + 1;
       console.log(`  ⚠ Port ${port} is busy, trying ${next}...`);
       server.removeListener('listening', ready);

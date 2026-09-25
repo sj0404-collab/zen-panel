@@ -41,6 +41,11 @@ MAX_FILE_MB="${WORK_BACKUP_MAX_FILE_MB:-25}"
 MAX_TOTAL_MB="${WORK_BACKUP_MAX_TOTAL_MB:-400}"
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
 STATE_DIR="${WORK_BACKUP_STATE:-$HOME/.npm-hub/work-backup-state}"
+ONCE=0
+[ "${1:-}" = "--once" ] && ONCE=1
+case "$MAX_TOTAL_MB" in
+  ''|*[!0-9]*) MAX_TOTAL_MB=400 ;;
+esac
 
 if ! mkdir -p "$HUB_LOGS" "$STATE_DIR"; then
   printf '%s\n' "work-backup: cannot create log or state directory" >&2
@@ -62,11 +67,14 @@ acquire_backup_lock() {
     return 0
   fi
   owner=""
+  started=""
   [ -f "$LOCK_DIR/pid" ] && owner="$(tr -dc '0-9' < "$LOCK_DIR/pid")"
+  [ -f "$LOCK_DIR/started" ] && started="$(tr -dc '0-9' < "$LOCK_DIR/started")"
   now="$(date +%s)"
   mtime="$(stat -c %Y "$LOCK_DIR" 2>/dev/null || printf '0')"
   if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } \
-    || { [ -z "$owner" ] && [ "$mtime" -gt 0 ] && [ $((now - mtime)) -gt 120 ]; }; then
+    || { [ -z "$owner" ] && [ "$mtime" -gt 0 ] && [ $((now - mtime)) -gt 120 ]; } \
+    || { [ -n "$started" ] && [ $((now - started)) -gt 900 ]; }; then
     rm -rf "$LOCK_DIR"
     if mkdir "$LOCK_DIR" 2>/dev/null; then
       printf '%s\n' "$$" > "$LOCK_DIR/pid"
@@ -112,14 +120,23 @@ skip_regenerable() {
 find_repos() {
   local args=()
   for e in "${EXCLUDES[@]}"; do args+=( -path "$e" -prune -o ); done
-  find "$ROOT" -maxdepth 6 "${args[@]}" -type d -name .git -print 2>/dev/null
+  find "$ROOT" -maxdepth 8 "${args[@]}" -type d -name .git -print 2>/dev/null
 }
 
 # HEAD + a digest of the porcelain status (which already lists untracked files).
 repo_sig() {
   local dir="$1" head status
   head="$(git -C "$dir" rev-parse HEAD 2>/dev/null || echo none)"
-  status="$(git -C "$dir" status --porcelain=v1 2>/dev/null | sha1sum | cut -d' ' -f1)"
+  status="$(
+    {
+      git -C "$dir" diff --binary HEAD 2>/dev/null || true
+      git -C "$dir" ls-files --others --exclude-standard -z 2>/dev/null \
+        | while IFS= read -r -d '' f; do
+            printf 'U %s ' "$f"
+            sha1sum "$dir/$f" 2>/dev/null | cut -d' ' -f1
+          done
+    } | sha1sum | cut -d' ' -f1
+  )"
   printf '%s %s' "$head" "$status"
 }
 
@@ -155,6 +172,11 @@ compute_sig() {
       [ "$rel" = "$dir" ] && rel="$(basename "$dir")"
       printf 'REPO\t%s\t%s\n' "$rel" "$(repo_sig "$dir")"
     done < <(find_repos)
+    printf 'DESCRIPTORS\n'
+    if [ -d "$ROOT/.npm-hub/sessions" ]; then
+      find "$ROOT/.npm-hub/sessions" -type f -print0 2>/dev/null \
+        | LC_ALL=C sort -z | xargs -0 -r sha1sum
+    fi
     printf 'LOOSE\n'
     loose_listing | sha1sum
   } | sha1sum | cut -d' ' -f1
@@ -229,6 +251,23 @@ PY
     return 1
   fi
   [ -s "$stage/files.tar.gz" ] || rm -f "$stage/files.tar.gz"
+  if [ -d "$ROOT/.npm-hub/sessions" ]; then
+    mkdir -p "$stage/descriptors" || return 1
+    cp -a "$ROOT/.npm-hub/sessions/." "$stage/descriptors/" || return 1
+  fi
+}
+
+backup_run_is_stale() {
+  [ -f latest.json ] || return 1
+  python3 - <<'PY'
+import json, os
+try:
+    current = int(os.environ.get("GITHUB_RUN_NUMBER") or 0)
+    latest = int(json.load(open("latest.json", encoding="utf-8")).get("runNumber") or 0)
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if current and latest and current < latest else 1)
+PY
 }
 
 publish() {
@@ -244,11 +283,17 @@ publish() {
     fi
   ) || { rm -rf "$work"; return 1; }
   cd "$work/state" || { rm -rf "$work"; return 1; }
+  if backup_run_is_stale; then
+    log "newer work-backup run already owns $BRANCH; left alone"
+    rm -rf "$work"
+    return 2
+  fi
   materialize_snapshot() {
     local source="$1" name="$2" python_status
     mkdir -p snapshots || return 1
     rm -rf "snapshots/$name" || return 1
     cp -a "$source" "snapshots/$name" || return 1
+    touch "snapshots/$name" || return 1
     if [ -f "$source/tree.txt" ]; then
       cp "$source/tree.txt" "snapshots/$name/tree.txt" || return 1
     fi
@@ -257,23 +302,32 @@ import json, os, sys
 snap, latest, stamp = sys.argv[1], sys.argv[2], sys.argv[3]
 repos = []
 rroot = os.path.join(snap, "repos")
-for rel in sorted(os.listdir(rroot)) if os.path.isdir(rroot) else []:
-    try:
-        meta = json.load(open(os.path.join(rroot, rel, "meta.json"), encoding="utf-8"))
-    except Exception:
-        meta = {"rel": rel}
-    meta["files"] = sorted(os.listdir(os.path.join(rroot, rel)))
-    repos.append(meta)
+if os.path.isdir(rroot):
+    for base, dirs, files in os.walk(rroot):
+        dirs.sort()
+        if "meta.json" not in files:
+            continue
+        rel = os.path.relpath(base, rroot).replace(os.sep, "/")
+        try:
+            meta = json.load(open(os.path.join(base, "meta.json"), encoding="utf-8"))
+        except Exception:
+            meta = {"rel": rel}
+        meta["files"] = sorted(os.listdir(base))
+        repos.append(meta)
+repos.sort(key=lambda x: str(x.get("rel", "")))
 data = {"kind": "work-backup", "stamp": stamp, "snapshot": snap, "repos": repos,
+        "runId": os.environ.get("GITHUB_RUN_ID", ""),
+        "runNumber": int(os.environ.get("GITHUB_RUN_NUMBER") or 0),
         "tree": os.path.exists(os.path.join(snap, "tree.txt")),
-        "files": os.path.exists(os.path.join(snap, "files.tar.gz"))}
+        "files": os.path.exists(os.path.join(snap, "files.tar.gz")),
+        "descriptors": os.path.isdir(os.path.join(snap, "descriptors"))}
 for p in (os.path.join(snap, "manifest.json"), latest):
     json.dump(data, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY
     python_status=$?
     [ "$python_status" -eq 0 ] || return 1
     if [ "$KEEP" -gt 0 ]; then
-      ls -1dt snapshots/*/ 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -rf || return 1
+      ls -1d snapshots/*/ 2>/dev/null | LC_ALL=C sort -r | tail -n +$((KEEP + 1)) | xargs -r rm -rf || return 1
     fi
   }
   if ! materialize_snapshot "$stage" "$stamp"; then
@@ -296,6 +350,11 @@ PY
     echo "work-backup: push attempt $attempt failed; refreshing $BRANCH" >&2
     if git fetch -q origin "$BRANCH" 2>/dev/null; then
       git reset -q --hard FETCH_HEAD || { rm -rf "$work"; return 1; }
+      if backup_run_is_stale; then
+        log "newer work-backup run already owns $BRANCH; left alone"
+        rm -rf "$work"
+        return 2
+      fi
       if ! materialize_snapshot "$stage" "$stamp"; then
         rm -rf "$work"
         return 1
@@ -312,13 +371,27 @@ PY
 }
 
 do_backup() (
-  if ! acquire_backup_lock; then
+  local locked=0
+  if acquire_backup_lock; then
+    locked=1
+  elif [ "$ONCE" -eq 1 ]; then
+    local waited=0
+    while [ "$waited" -lt 300 ]; do
+      sleep 10
+      waited=$((waited + 10))
+      if acquire_backup_lock; then locked=1; break; fi
+    done
+    if [ "$locked" -ne 1 ]; then
+      log "backup lock stayed busy; final snapshot was not published"
+      exit 1
+    fi
+  else
     log "another backup is already running"
     exit 0
   fi
   trap 'release_backup_lock' EXIT
   local sig; sig="$(compute_sig)"
-  if [ -f "$STATE_DIR/global.sig" ] && [ "$(cat "$STATE_DIR/global.sig" 2>/dev/null)" = "$sig" ]; then
+  if [ "$ONCE" -eq 0 ] && [ -f "$STATE_DIR/global.sig" ] && [ "$(cat "$STATE_DIR/global.sig" 2>/dev/null)" = "$sig" ]; then
     log "nothing changed; skipping"
     return 0
   fi
@@ -333,7 +406,7 @@ do_backup() (
     rm -rf "$stage"
     return 1
   fi
-  local repos; repos="$(ls -1 "$stage/repos" 2>/dev/null | wc -l | tr -d ' ')"
+  local repos; repos="$(find "$stage/repos" -type f -name meta.json 2>/dev/null | wc -l | tr -d ' ')"
   if [ "$repos" = 0 ] && [ ! -s "$stage/files.tar.gz" ]; then
     log "nothing to publish"; rm -rf "$stage"; printf '%s' "$sig" > "$STATE_DIR/global.sig"; return 0
   fi
@@ -342,8 +415,13 @@ do_backup() (
     printf '%s' "$sig" > "$STATE_DIR/global.sig"
     log "published snapshot $stamp ($(du -sh "$stage" 2>/dev/null | cut -f1), $repos repo(s)) -> $BRANCH"
   else
-    log "publish failed (will retry next cycle)"
-    result=1
+    local publish_status=$?
+    if [ "$publish_status" -eq 2 ]; then
+      log "snapshot skipped because a newer run owns $BRANCH"
+    else
+      log "publish failed (will retry next cycle)"
+      result=1
+    fi
   fi
   rm -rf "$stage"
   return "$result"

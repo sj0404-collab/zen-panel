@@ -23,6 +23,8 @@ const snapshotAudit = fs.readFileSync(path.join(__dirname, '..', 'tools/snapshot
 const publishSession = fs.readFileSync(path.join(__dirname, '..', 'tools/publish_session.sh'), 'utf8');
 const backupWork = fs.readFileSync(path.join(__dirname, '..', 'tools/backup-work.sh'), 'utf8');
 const restoreWork = fs.readFileSync(path.join(__dirname, '..', 'tools/restore-work.sh'), 'utf8');
+const exportChats = fs.readFileSync(path.join(__dirname, '..', 'tools/export-chats.sh'), 'utf8');
+const restoreChats = fs.readFileSync(path.join(__dirname, '..', 'tools/restore-chats.sh'), 'utf8');
 const filesApp = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/files-app.js'), 'utf8');
 
 let pass = 0, fail = 0;
@@ -73,7 +75,8 @@ check('q9 workdir first device', /devices\.push\(\{ type: 'local', id: path\.joi
 // q10: the runner's start step waits for `"warming":false` in /api/tools
 // (hub.yml, linux+windows). The original response lacked it: the run failed
 // with "the hub did not start" and the site never came up.
-check('q10 tools report warming:false', server.includes('res.json({ success: true, warming: false, tools })'));
+check('q10 tools report warming:false', server.includes('warming: false') &&
+  server.includes("runId: process.env.GITHUB_RUN_ID"));
 
 // q11: the full tool registry is present; tools without npm installers use their native setup.
 check('q11 installable agents', (server.slice(server.indexOf('const TOOLS = ['), server.indexOf('const storage =')).match(/\{ id: '/g) || []).length >= 14,
@@ -548,7 +551,7 @@ check('q60 one session workflow lock', sessionWorkflows.every(x =>
   opencodeWorkflow.includes('cancel-in-progress: false') &&
   desksWorkflow.includes('cancel-in-progress: false'));
 check('q60a replacement launch is serialized', panel.includes('await cancelRunsAndWait(running)') &&
-  panel.includes('foreignSession(runs, running)') && hubWorkflow.includes("trap 'exit 143' TERM INT"));
+  panel.includes('foreignSession(runs, running)') && hubWorkflow.includes("trap 'cleanup_watchdog 143' TERM INT"));
 check('q61 background snapshots receive token',
   hubWorkflow.includes('nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"') &&
   agentWorkflow.includes('nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"') &&
@@ -575,6 +578,33 @@ const recoveryFiles = [mob, desk, term, mobHtml, deskHtml,
   fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/term.html'), 'utf8')];
 check('q69 quota recovery notification is disabled',
   recoveryFiles.every(x => !x.includes('TERM_QUOTA_RE') && !x.includes('Агент упёрся в лимит модели')));
+check('q70 hub start verifies its own run id',
+  hubWorkflow.includes('str(d.get("runId", "")) == sys.argv[1]') &&
+  hubWorkflow.includes('HUB_PORT_STRICT=1') && server.includes("runId: process.env.GITHUB_RUN_ID"));
+check('q71 watchdog removes its own hub and tunnel',
+  hubWorkflow.includes('cleanup_watchdog') && hubWorkflow.includes('trap \'cleanup_watchdog 143\' TERM INT'));
+check('q72 opencode path survives later steps',
+  hubWorkflow.includes('echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"') &&
+  hubWorkflow.includes('Add-Content $env:GITHUB_PATH $bin'));
+check('q73 session publication keeps identity and clock',
+  publishSession.includes('session_publish_blocked') &&
+  publishSession.includes('EXISTING_STARTED_AT') &&
+  publishSession.includes('int(new_number) > int(old_number)'));
+check('q74 backup keeps the newest snapshot and descriptors',
+  backupWork.includes('LC_ALL=C sort -r') && backupWork.includes('backup_run_is_stale') &&
+  backupWork.includes('stage/descriptors') && restoreWork.includes('SNAP/descriptors'));
+check('q75 chat export finds repositories and exact paths',
+  exportChats.includes('args+=( -path "*/$e/*" -prune -o )') &&
+  exportChats.includes('repo_name in rp.split(os.sep)'));
+check('q76 chat restore matches remotes before basenames',
+  restoreChats.includes('remote_match') && restoreChats.includes('basename_match'));
+check('q77 panel distinguishes queued runs',
+  panel.includes('const runningFirst =') && panel.includes('в очереди') &&
+  panel.includes('!Number.isFinite(born)'));
+check('q78 panel refuses a hub from another run',
+  panel.includes('identity.runId') && panel.includes('другой запуск раннера') &&
+  fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub/index.html'), 'utf8')
+    .includes('preflightHub(base, zt, s.runId)'));
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
