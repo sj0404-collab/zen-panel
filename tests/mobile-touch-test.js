@@ -606,5 +606,25 @@ check('q78 panel refuses a hub from another run',
   fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub/index.html'), 'utf8')
     .includes('preflightHub(base, zt, s.runId)'));
 
+const termHtmlPath = path.join(__dirname, '..', 'npm-hub/public/term.html');
+// q79: the APK file picker really allows multiple files — the chooser intent
+// asks SAF for EXTRA_ALLOW_MULTIPLE and the result reads every ClipData item
+// (the old parseResult path dropped all but one photo/screenshot).
+check('q79 apk multi-file picker', [mainKt, panelKt].every(k =>
+  k.includes('FileChooserParams.MODE_OPEN_MULTIPLE') &&
+  k.includes('Intent.EXTRA_ALLOW_MULTIPLE') &&
+  k.includes('res.data?.clipData') &&
+  k.includes('clip.getItemAt(i).uri') &&
+  !k.includes('FileChooserParams.parseResult')));
+// q80: the terminal uses the same virtual mouse as the Screen tab — a drag pad
+// that acts as the wheel, floating at the TOP, still movable by the ⠿ handle.
+check('q80 terminal virtual mouse', [mob, desk, term].every(x =>
+  x.includes('term-mouse-pad') && x.includes('term-mouse-wheel') &&
+  /fireWheel\(dy\s*\*\s*7\)/.test(x) &&
+  /scrollStep\(tapUp\s*\?\s*'up'\s*:\s*'down'\)/.test(x)) &&
+  [mobHtml, deskHtml, fs.readFileSync(termHtmlPath, 'utf8')].every(x =>
+    x.includes('.term-mouse-pad{') && x.includes('left:8px;top:8px') &&
+    !x.includes('left:6px;top:50%')));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

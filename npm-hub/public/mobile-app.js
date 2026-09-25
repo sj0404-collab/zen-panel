@@ -1163,6 +1163,38 @@ function attachTermScroll(id, panel) {
     window.addEventListener('resize', clusterClamp);
     zoneCleanup = () => window.removeEventListener('resize', clusterClamp);
   }
+  // ── Подушечка виртуальной мыши (как на вкладке «Экран») ──
+  // Тянуть по подушечке = крутить колесо (палец вниз → терминал вниз), тап по
+  // верхней/нижней половине = шаг. Работает и в alternate (vim/top/OpenCode).
+  const pad = cluster && cluster.querySelector('.term-mouse-pad');
+  if (pad) {
+    let pd = null;
+    pad.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      clusterDrag = true; clusterActivate();
+      const r = pad.getBoundingClientRect();
+      pd = { y: e.clientY, y0: e.clientY, mid: r.top + r.height / 2, moved: 0 };
+      try { pad.setPointerCapture(e.pointerId); } catch {}
+    });
+    pad.addEventListener('pointermove', (e) => {
+      if (!pd) return;
+      const dy = e.clientY - pd.y;
+      pd.moved += Math.abs(dy);
+      pd.y = e.clientY;
+      if (Math.abs(dy) >= 3) fireWheel(dy * 7);
+      e.preventDefault();
+    });
+    const padEnd = () => {
+      if (!pd) return;
+      const wasTap = pd.moved < 6;
+      const tapUp = pd.y0 < pd.mid;
+      pd = null; clusterDrag = false;
+      if (wasTap) scrollStep(tapUp ? 'up' : 'down');
+      clusterArmFade();
+    };
+    pad.addEventListener('pointerup', padEnd);
+    pad.addEventListener('pointercancel', padEnd);
+  }
   // Тап по пустой середине — листаем на шаг вверх/вниз.
   if (track) track.addEventListener('pointerdown', (e) => {
     e.preventDefault();
@@ -1386,7 +1418,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   wrap.appendChild(termEl);
   const scrollEl = document.createElement('div');
   scrollEl.className = 'term-scroll';
-  scrollEl.innerHTML = '<button class="term-scroll-arr up">▲</button><button class="term-scroll-handle" title="Потянуть — переместить стрелки; тап — вернуть к краю">⠿</button><button class="term-scroll-arr down">▼</button>';
+  scrollEl.innerHTML = '<div class="term-mouse-pad" title="Виртуальная мышь: тянуть — прокрутка, тап сверху/снизу — шаг">🖱</div><div class="term-mouse-wheel"><button class="term-scroll-arr up">▲</button><button class="term-scroll-arr down">▼</button></div><button class="term-scroll-handle" title="Потянуть — переместить мышь; тап — вернуть наверх">⠿</button>';
   wrap.appendChild(scrollEl);
   panel.appendChild(wrap);
   const cdEl = document.createElement('div');
