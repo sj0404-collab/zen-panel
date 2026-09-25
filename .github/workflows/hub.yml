@@ -56,10 +56,21 @@ on:
         description: "Replace an active session run"
         type: boolean
         default: false
+      handoff:
+        description: "This run takes over a session that another runner handed over"
+        type: boolean
+        default: false
+      handoff_from:
+        description: "runId of the runner that handed the session over"
+        type: string
+        default: ""
 
 concurrency:
   group: zen-panel-session-${{ github.repository }}
-  cancel-in-progress: ${{ inputs.replace }}
+  # A handoff run must NOT cancel the runner it takes over from: that runner
+  # saves, waits until this one has published itself, and only then steps aside.
+  # A manual «заменить» from the panel still cancels the old run.
+  cancel-in-progress: ${{ inputs.replace && !inputs.handoff }}
 
 permissions:
   contents: write
@@ -157,6 +168,9 @@ jobs:
           set -o pipefail
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p ~/hub-work "$HUB_LOGS" 2>/dev/null || true; mkdir -p ~/.npm-hub/logs
           echo "logs dir ready $(ls -ld ~/.npm-hub/logs 2>&1 || ls -ld "$HUB_LOGS" 2>&1)"
+          if [ "${{ inputs.handoff }}" = "true" ]; then
+            echo "::notice::session relay: taking the session over from run ${{ inputs.handoff_from }}. Everything below is a restore of what that runner saved; its watchdog is waiting for this run to publish before it steps aside."
+          fi
           # Restore repos before importing OpenCode sessions: opencode import
           # needs the real repository CWD, not an empty placeholder folder.
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
@@ -197,7 +211,7 @@ jobs:
           }
           SESSION_FILE="$HOME/.npm-hub/session-start"
           date +%s000 > "$SESSION_FILE"
-          HUB_PORT_STRICT=1 HUB_TOKEN="$HUB_TOKEN_VALUE" GH_TOKEN='${{ inputs.gh_token }}' PORT="$HUB_PORT" SESSION_STARTED_MS="$(cat "$SESSION_FILE")" SESSION_LIMIT_MS=21600000 nohup node src/server.js > "$HUB_LOGS/hub.log" 2>&1 &
+          HUB_PORT_STRICT=1 HUB_TOKEN="$HUB_TOKEN_VALUE" HUB_LABEL='${{ inputs.label }}' GH_TOKEN='${{ inputs.gh_token }}' PORT="$HUB_PORT" SESSION_STARTED_MS="$(cat "$SESSION_FILE")" SESSION_LIMIT_MS=21600000 nohup node src/server.js > "$HUB_LOGS/hub.log" 2>&1 &
           HUB_PID=$!
           echo "$HUB_PID" > "$HUB_PID_FILE"
           for i in $(seq 1 60); do
@@ -320,6 +334,14 @@ jobs:
           HUB_PID="$(tr -dc '0-9' < "$HUB_PID_FILE" 2>/dev/null || true)"
           for i in $(seq 1 1400); do
             sleep 15
+            # The session relay wrote this marker right before it exited: the
+            # work is saved and the next runner has published itself. Restarting
+            # the hub now would resurrect the runner we just handed over, so the
+            # watchdog ends the job cleanly instead.
+            if [ -f "$HUB_LOGS/handoff-done" ]; then
+              echo "handoff complete - the session lives on the next runner now."
+              cleanup_watchdog 0
+            fi
             # One missed probe is NOT a dead hub: the box saturates its CPU
             # launching a game / a build and a 10s curl can legitimately bleed
             # over. Only restart after several consecutive misses, so a single
@@ -339,7 +361,7 @@ jobs:
               if [ -n "${HUB_PID:-}" ]; then kill "$HUB_PID" 2>/dev/null || true; fi
               cd "$HUBDIR"
               SESSION_STARTED_MS="$(cat "$HOME/.npm-hub/session-start" 2>/dev/null || date +%s000)"
-              HUB_PORT_STRICT=1 HUB_TOKEN="$HUB_TOKEN_VALUE" GH_TOKEN='${{ inputs.gh_token }}' PORT="$HUB_PORT" SESSION_STARTED_MS="$SESSION_STARTED_MS" SESSION_LIMIT_MS=21600000 nohup node src/server.js >> "$HUB_LOGS/hub.log" 2>&1 &
+              HUB_PORT_STRICT=1 HUB_TOKEN="$HUB_TOKEN_VALUE" HUB_LABEL='${{ inputs.label }}' GH_TOKEN='${{ inputs.gh_token }}' PORT="$HUB_PORT" SESSION_STARTED_MS="$SESSION_STARTED_MS" SESSION_LIMIT_MS=21600000 nohup node src/server.js >> "$HUB_LOGS/hub.log" 2>&1 &
               HUB_PID=$!
               echo "$HUB_PID" > "$HUB_PID_FILE"
               # Wait for the new hub to serve again before probing it for
@@ -669,6 +691,18 @@ jobs:
           $restartingHub = $false
           for ($i = 1; $i -le 700; $i++) {
             Start-Sleep -Seconds 30
+            # The session relay wrote this marker right before it exited: the
+            # work is saved and the next runner has published itself. Bringing
+            # the hub back would resurrect the runner we just handed over, so
+            # tear this one down and let the job finish.
+            if (Test-Path "$env:USERPROFILE\.npm-hub\logs\handoff-done") {
+              Write-Host 'handoff complete - the session lives on the next runner now.'
+              Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -like '*src/server.js*' } |
+                ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+              Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+              break
+            }
             $hubUp = $false
             try {
               Invoke-WebRequest -Uri 'http://127.0.0.1:8090/api/tools' -TimeoutSec 20 -UseBasicParsing -Headers @{'x-hub-token'='${{ inputs.token }}'} | Out-Null
@@ -692,6 +726,7 @@ jobs:
               $env:PORT = '8090'
               $env:HUB_PORT_STRICT = '1'
               $env:HUB_TOKEN = '${{ inputs.token }}'; $env:GH_TOKEN = '${{ inputs.gh_token }}'
+              $env:HUB_LABEL = '${{ inputs.label }}'
               $SESSION_FILE = "$env:USERPROFILE\.npm-hub\session-start.txt"
               $env:SESSION_STARTED_MS = ((Get-Content $SESSION_FILE -Raw -ErrorAction SilentlyContinue).Trim())
               if (-not $env:SESSION_STARTED_MS) { $env:SESSION_STARTED_MS = [string][int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) }

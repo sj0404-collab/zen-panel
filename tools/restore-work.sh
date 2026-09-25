@@ -256,6 +256,69 @@ if [ -s "$SNAP/files.tar.gz" ]; then
   fi
 fi
 
+if [ -d "$SNAP/big" ]; then
+  # Files that were too big for files.tar.gz arrived as chunks (see
+  # collect_big_files in backup-work.sh): glue them back, check the sha256 the
+  # backup recorded, and only then delete the chunks. A missing or corrupt
+  # part is reported instead of leaving a half file behind.
+  if python3 - "$ROOT" "$SNAP/big" <<'PY'
+import hashlib, json, os, sys
+root, bigdir = sys.argv[1], sys.argv[2]
+ok = True
+for name in sorted(os.listdir(bigdir)):
+    meta_path = os.path.join(bigdir, name, 'meta.json')
+    if not os.path.isfile(meta_path):
+        continue
+    try:
+        meta = json.load(open(meta_path, encoding='utf-8'))
+    except Exception as exc:
+        print('unreadable meta %s: %s' % (name, exc))
+        ok = False
+        continue
+    rel = str(meta.get('rel') or '').strip('/')
+    parts = [p for p in (meta.get('parts') or [])]
+    if not rel or not parts:
+        continue
+    dest = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(dest) or root, exist_ok=True)
+    digest = hashlib.sha256()
+    tmp = dest + '.handoff-part'
+    try:
+        with open(tmp, 'wb') as out:
+            for part in parts:
+                src = os.path.join(bigdir, name, part)
+                if not os.path.isfile(src):
+                    raise IOError('missing chunk %s' % part)
+                with open(src, 'rb') as fh:
+                    while True:
+                        block = fh.read(1 << 20)
+                        if not block:
+                            break
+                        digest.update(block)
+                        out.write(block)
+        want = str(meta.get('sha256') or '')
+        if want and digest.hexdigest() != want:
+            raise IOError('sha256 mismatch (expected %s)' % want)
+        os.replace(tmp, dest)
+        print('restored %s (%d bytes)' % (rel, os.path.getsize(dest)))
+    except Exception as exc:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        print('could not rebuild %s: %s' % (rel, exc))
+        ok = False
+raise SystemExit(0 if ok else 1)
+PY
+  then
+    log "rebuilt chunked big files"
+  else
+    log "some chunked big files could not be rebuilt"
+    failed=1
+  fi
+fi
+
 if [ -d "$SNAP/descriptors" ]; then
   mkdir -p "$ROOT/.npm-hub/sessions" 2>/dev/null || failed=1
   if ! cp -a -n "$SNAP/descriptors/." "$ROOT/.npm-hub/sessions/" 2>/dev/null; then

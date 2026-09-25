@@ -214,6 +214,25 @@ app.use((req, res, next) => {
   next();
 });
 
+// ─── Activity for the session relay (handoff) ───────────────────────────
+// "Nothing is happening" has to mean the USER is doing nothing, not that the
+// dashboard is idle: the hub and the panel poll /api/handoff, /api/sessions and
+// /api/info every few seconds, and counting those would keep a dead session
+// alive forever. So only real work counts - anything that changes state, plus
+// terminal input (counted at the websocket) and file downloads.
+const HANDOFF_QUIET = /^\/(api\/(handoff|info|sessions|sessions\.|storages|networks|tools|runner|fs\/(list|ls|browse|stat|dirs|search)|gh\/(artifacts|browse|repos|search|file|tree)|models|stats|logs|system|health|phone|metrics|cache|proxy))/;
+app.use((req, res, next) => {
+  if (typeof handoff !== 'undefined' && handoff) {
+    const p = String(req.path || '');
+    if (!HANDOFF_QUIET.test(p)) {
+      const work = (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS')
+        || /^\/api\/fs\/(download|view|open|save)/.test(p);
+      if (work) handoff.noteActivity();
+    }
+  }
+  next();
+});
+
 // ─── Idempotency for replayed offline actions ───
 // The panel queues a mutation that failed offline and replays it when the
 // network returns. If the original actually reached us and only the response
@@ -427,17 +446,15 @@ app.post('/api/tools/test', (req, res) => {
 });
 
 // ─── INFO ───
-app.get('/api/info', (req, res) => {
-  const state = loadState();
-  state.defaultEmulator = getDefaultEmulator();
-  state.phoneRunner = getDefaultPhoneRunner();
-  // Runner session clock. The GitHub Actions job that hosts this hub is killed
-  // at six hours without warning, so the panel has to show "how much left" —
-  // that difference decides whether to start something long or wrap up.
-  // SESSION_LIMIT_MS/SESSION_STARTED_MS come from the workflow. A manual run
-  // (no env vars) has NO limit: only the workflow may set one, so the clock
-  // keeps "elapsed" only and never fabricates a 6h deadline + «осталось 0»
-  // for a process that outlived that window (e.g. a self-hosted runner).
+// The runner session clock, shared with the session relay (handoff): the
+// GitHub Actions job that hosts this hub is killed at six hours without
+// warning, so the panel has to show "how much left" - and the relay has to
+// hand the work over before that happens. SESSION_LIMIT_MS/SESSION_STARTED_MS
+// come from the workflow. A manual run (no env vars) has NO limit: only the
+// workflow may set one, so the clock keeps "elapsed" only and never fabricates
+// a 6h deadline + «осталось 0» for a process that outlived that window (e.g. a
+// self-hosted runner).
+const sessionClock = () => {
   const limitMs = parseInt(process.env.SESSION_LIMIT_MS || '0', 10) || 0;
   let startedMs = parseInt(process.env.SESSION_STARTED_MS || '0', 10);
   const uptimeStart = Date.now() - Math.round(process.uptime() * 1000);
@@ -452,9 +469,17 @@ app.get('/api/info', (req, res) => {
     startedMs = uptimeStart;
   }
   const elapsedMs = Math.max(0, Date.now() - startedMs);
+  return { startedMs, limitMs, elapsedMs, remainingMs: limitMs ? Math.max(0, limitMs - elapsedMs) : null };
+};
+
+app.get('/api/info', (req, res) => {
+  const state = loadState();
+  state.defaultEmulator = getDefaultEmulator();
+  state.phoneRunner = getDefaultPhoneRunner();
+  const { startedMs, limitMs, elapsedMs, remainingMs } = sessionClock();
   res.json({ home: HOME, workDir: WORK_DIR, platform: process.platform, runId: process.env.GITHUB_RUN_ID || '', runNumber: process.env.GITHUB_RUN_NUMBER || '', ...hubBuildInfo(), ...getAccessInfo(req), state,
     alias: (HOST_ALIAS && hostAliasInstalled) ? { name: HOST_ALIAS, ip: HOST_ALIAS_IP, url: `http://${HOST_ALIAS}:${+process.env.PORT || PORT}` } : null,
-    session: { startedMs, elapsedMs, limitMs, remainingMs: limitMs ? Math.max(0, limitMs - elapsedMs) : null } });
+    session: { startedMs, elapsedMs, limitMs, remainingMs } });
 });
 
 // ─── NETWORKS — all IPs for phone access ───
@@ -1198,7 +1223,308 @@ app.post('/api/runner/restart', async (req, res) => {
   res.json({ success: dispatch.status >= 200 && dispatch.status < 300, status: dispatch.status, mode: 'dispatch', workflow: env.workflowFile, ref: env.ref, repo: env.repo, cancelOld });
 });
 
-// ─── GIT: status / diff / log for a local repo ─────────────────────────
+// ─── ЭСТАФЕТА СЕССИИ: передать работу новому раннеру ────────────────────
+// WHAT
+//   The rules live in ./handoff.js (unit-tested, no I/O). This block is the
+//   hands: it runs the durable save (tools/handoff.sh), launches the successor
+//   workflow, waits until the successor has really published itself and only
+//   then lets this runner step aside. A failed save or a successor that never
+//   appears leaves the user exactly where they were - that is the whole point.
+//
+// WHERE THE SETTINGS LIVE
+//   handoff.json on the session-state branch of the control repo: the limits
+//   must outlive the runner they were set on (that is the entire premise of a
+//   relay), and the panel has to be able to read and write them without a
+//   runner at all. Locally (pc-local) the same file is kept under ~/.npm-hub.
+const { createHandoff, normalizePolicy } = require('./handoff');
+const HANDOFF_SH = path.join(__dirname, '..', '..', 'tools', 'handoff.sh');
+const HANDOFF_FILE = 'handoff.json';
+const HANDOFF_LOCAL = path.join(DATA_DIR, HANDOFF_FILE);
+const HANDOFF_TICK_MS = 15000;
+const HANDOFF_SLOT = process.env.HUB_SLOT || 'hub-linux';
+
+let handoff = null;          // created below, once sessionClock() is available
+let handoffPolicy = normalizePolicy({});
+let handoffDocSha = '';
+let handoffSavedIn = 'local';
+let handoffBusy = false;
+let handoffStatusAt = 0;
+let handoffStatusDirty = true;
+
+const handoffLog = (msg) => {
+  const line = `[handoff ${new Date().toISOString()}] ${msg}\n`;
+  console.log(line.trim());
+  try { fs.appendFileSync(path.join(LOG_DIR, 'handoff.log'), line); } catch {}
+};
+
+const handoffCapability = () => {
+  if (!process.env.GITHUB_RUN_ID) return { available: false, reason: 'локальный запуск: передавать некуда' };
+  if (!runnerToken()) return { available: false, reason: 'нет токена GitHub: нечем сохранить и запустить следующий раннер' };
+  if (!fs.existsSync(HANDOFF_SH)) return { available: false, reason: 'нет tools/handoff.sh в этом checkout' };
+  if (!process.env.GITHUB_WORKFLOW_REF) return { available: false, reason: 'неизвестен workflow: нечем запустить следующий раннер' };
+  return { available: true, reason: '' };
+};
+
+// ── the global settings file ──
+const handoffReadDoc = async () => {
+  const token = runnerToken();
+  if (token && process.env.GITHUB_REPOSITORY) {
+    const r = await ghApi('GET', `${GITHUB_BASE(process.env.GITHUB_REPOSITORY)}/contents/${HANDOFF_FILE}?ref=session-state&t=${Date.now()}`, token);
+    if (r.status === 200 && r.j && r.j.content) {
+      handoffDocSha = r.j.sha || '';
+      try { return { doc: JSON.parse(Buffer.from(String(r.j.content).replace(/\n/g, ''), 'base64').toString('utf8')), where: 'repo' }; } catch {}
+    }
+  }
+  try { return { doc: JSON.parse(fs.readFileSync(HANDOFF_LOCAL, 'utf8')), where: 'local' }; } catch {}
+  return { doc: null, where: 'none' };
+};
+
+// Merge, never clobber: the panel writes the policy while the runner writes
+// the live status, and both go through the same file. A 409 means somebody
+// committed in between - re-read once and try again.
+const handoffWriteDoc = async (patch) => {
+  const nowIso = new Date().toISOString();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const cur = await handoffReadDoc();
+    const doc = Object.assign({}, cur.doc && typeof cur.doc === 'object' ? cur.doc : {}, patch, { updatedAt: nowIso });
+    const token = runnerToken();
+    if (token && process.env.GITHUB_REPOSITORY) {
+      const body = { message: `handoff ${patch.policy ? 'policy' : 'status'} ${nowIso}`, content: Buffer.from(JSON.stringify(doc, null, 2), 'utf8').toString('base64'), branch: 'session-state' };
+      if (handoffDocSha) body.sha = handoffDocSha;
+      const put = await ghApi('PUT', `${GITHUB_BASE(process.env.GITHUB_REPOSITORY)}/contents/${HANDOFF_FILE}`, token, body);
+      if (put.status >= 200 && put.status < 300) { handoffSavedIn = 'repo'; return { ok: true, where: 'repo' }; }
+      if (put.status === 409 || put.status === 422) { handoffDocSha = ''; continue; }
+      handoffLog(`could not write ${HANDOFF_FILE} to GitHub: ${put.status}`);
+    }
+    try {
+      fs.mkdirSync(path.dirname(HANDOFF_LOCAL), { recursive: true });
+      fs.writeFileSync(HANDOFF_LOCAL, JSON.stringify(doc, null, 2));
+      handoffSavedIn = 'local';
+      return { ok: true, where: 'local' };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  return { ok: false, error: 'не удалось записать настройки' };
+};
+
+const handoffStatusBody = () => ({
+  ...handoff.status(),
+  savedIn: handoffSavedIn,
+  session: sessionClock()
+});
+
+const handoffPublishStatus = async (force) => {
+  if (!handoff) return;
+  const now = Date.now();
+  // A running handoff republishes every minute so the panel can render the
+  // countdown; an idle runner only every five minutes, since a status write is
+  // a real commit to the control repo.
+  const gap = handoff.state === 'idle' ? 300000 : 60000;
+  if (!force && !handoffStatusDirty && now - handoffStatusAt < gap) return;
+  handoffStatusDirty = false;
+  handoffStatusAt = now;
+  const r = await handoffWriteDoc({ status: handoffStatusBody(), policy: handoff.policy });
+  if (!r.ok) handoffLog('status not published: ' + (r.error || 'unknown'));
+};
+
+// ── step 1: the durable save ──
+const handoffSave = () => new Promise((resolve) => {
+  const startedIso = new Date(sessionClock().startedMs).toISOString();
+  const env = Object.assign({}, process.env, {
+    GH_TOKEN: runnerToken(),
+    GITHUB_TOKEN: runnerToken(),
+    HUB_LOGS: LOG_DIR,
+    HANDOFF_SLOT,
+    HANDOFF_KIND: 'NPM-Hub',
+    HANDOFF_LABEL: process.env.HUB_LABEL || 'handoff',
+    HANDOFF_URL: (tunnelInfo && tunnelInfo.state === 'ready' && tunnelInfo.url) || '',
+    HANDOFF_STARTED_AT: startedIso,
+    WORK_BACKUP_ROOT: HOME
+  });
+  handoffLog(`saving before the handover (${startedIso})`);
+  let out = '';
+  let child;
+  try {
+    child = spawn('bash', [HANDOFF_SH], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) { return resolve({ ok: false, error: e.message }); }
+  const timer = setTimeout(() => { try { child.kill(); } catch {} }, 9 * 60000);
+  child.stdout.on('data', d => { out += String(d); handoffLog(String(d).trim()); });
+  child.stderr.on('data', d => { out += String(d); });
+  child.on('error', e => { clearTimeout(timer); resolve({ ok: false, error: e.message }); });
+  child.on('close', code => {
+    clearTimeout(timer);
+    if (code === 0) return resolve({ ok: true, out });
+    const lines = out.trim().split('\n').map(s => s.trim()).filter(Boolean);
+    resolve({ ok: false, error: (lines[lines.length - 1] || `tools/handoff.sh завершился с кодом ${code}`).slice(0, 300) });
+  });
+});
+
+// ── step 2: launch the successor ──
+// replace stays FALSE and handoff=true: the concurrency group must NOT cancel
+// this run, because the successor is the one that decides when we step aside
+// (after it has published itself). A panel-driven "заменить" still cancels.
+const handoffDispatch = async () => {
+  const env = runnerEnv();
+  if (!env.actions) return { ok: false, error: 'не на Actions-раннере' };
+  if (!env.workflowFile) return { ok: false, error: 'неизвестен workflow-файл' };
+  const token = runnerToken();
+  if (!token) return { ok: false, error: 'нет токена для запуска' };
+  const r = await ghApi('POST', `${GITHUB_BASE(env.repo)}/actions/workflows/${env.workflowFile}/dispatches`, token, {
+    ref: env.ref,
+    inputs: {
+      os: process.platform === 'win32' ? 'windows' : 'linux',
+      label: process.env.HUB_LABEL || 'hub',
+      token: process.env.HUB_TOKEN || '',
+      gh_token: token,
+      replace: false,
+      handoff: true,
+      handoff_from: process.env.GITHUB_RUN_ID || ''
+    }
+  });
+  if (r.status < 200 || r.status >= 300) {
+    return { ok: false, error: `GitHub ${r.status}${r.j && r.j.message ? ' ' + r.j.message : ''}` };
+  }
+  handoffLog(`successor dispatched (${env.workflowFile}, run of ${thisRunId()})`);
+  return { ok: true, runId: thisRunId(), url: '' };
+};
+
+const thisRunId = () => String(process.env.GITHUB_RUN_ID || '');
+
+// ── step 3: did the successor really show up? ──
+// The session descriptor is owned by the newest run (publish_session.sh keeps
+// startedAt and refuses older runs), so a different, live runId there IS the
+// successor - and it is also what the panel switches to.
+const handoffSuccessor = async () => {
+  const token = runnerToken();
+  if (!token || !process.env.GITHUB_REPOSITORY) return null;
+  const r = await ghApi('GET', `${GITHUB_BASE(process.env.GITHUB_REPOSITORY)}/contents/session-${HANDOFF_SLOT}.json?ref=session-state&t=${Date.now()}`, token);
+  if (r.status !== 200 || !r.j || !r.j.content) return null;
+  let d;
+  try { d = JSON.parse(Buffer.from(String(r.j.content).replace(/\n/g, ''), 'base64').toString('utf8')); } catch { return null; }
+  if (!d || d.state === 'ended') return null;
+  if (String(d.runId || '') === thisRunId() || !d.runId) return null;
+  if (!d.startedAt || Date.parse(d.startedAt) <= sessionClock().startedMs) return null;
+  return d;
+};
+
+// ── step 4: this runner steps aside ──
+const handoffStepAside = async () => {
+  handoffLog('the successor is live - this runner is stepping aside');
+  try { fs.writeFileSync(path.join(LOG_DIR, 'handoff-done'), String(Date.now())); } catch {}
+  await handoffPublishStatus(true);
+  handoffLog('exiting in 2s; the panel follows the new runner');
+  setTimeout(() => process.exit(0), 2000);
+};
+
+// ── the watchdog ──
+const handoffRunSave = async () => {
+  handoffLog('saving before the handover');
+  await handoffPublishStatus(true);
+  const r = await handoffSave();
+  if (r.ok) { handoff.saveOk(); handoffLog('save ok - countdown armed'); }
+  else { handoff.saveFail(new Error(r.error)); handoffLog('save FAILED - staying alive: ' + r.error); }
+  handoffStatusDirty = true;
+  await handoffPublishStatus(true);
+};
+
+const handoffRunDispatch = async () => {
+  await handoffPublishStatus(true);
+  const r = await handoffDispatch();
+  if (r.ok) handoff.dispatchOk({ runId: r.runId, url: r.url });
+  else { handoff.dispatchFail(new Error(r.error)); handoffLog('dispatch FAILED - staying alive: ' + r.error); }
+  handoffStatusDirty = true;
+  await handoffPublishStatus(true);
+};
+
+const handoffTick = async () => {
+  if (!handoff || handoffBusy) return;
+  if (!handoffCapability().available) return;
+  handoffBusy = true;
+  try {
+    // While we wait for the successor, the only thing worth doing is looking
+    // for it: the module's tick cannot know about the network.
+    if (handoff.state === 'standby') {
+      const next = await handoffSuccessor();
+      if (next) {
+        handoff.successorSeen(next.runId, next.url || next.hubUrl || '');
+        handoffStatusDirty = true;
+        await handoffPublishStatus(true);
+        await handoffStepAside();
+        return;
+      }
+    }
+    const action = handoff.tick();
+    if (action && action.type === 'save') {
+      handoffLog(`save requested${action.reason ? ' (' + action.reason + ')' : ''}`);
+      await handoffRunSave();
+    } else if (action && action.type === 'dispatch') {
+      handoffLog('countdown is over - launching the successor');
+      await handoffRunDispatch();
+    }
+    if (handoff.state === 'stopping') { await handoffStepAside(); return; }
+    await handoffPublishStatus(false);
+  } catch (e) {
+    handoffLog('tick failed: ' + e.message);
+  } finally {
+    handoffBusy = false;
+  }
+};
+
+// The relay itself, with the limits that were saved last time.
+handoff = createHandoff({ startedAtMs: sessionClock().startedMs, policy: handoffPolicy });
+setInterval(handoffTick, HANDOFF_TICK_MS).unref();
+
+// Load the global limits at boot; a failure only costs the defaults.
+handoffReadDoc().then(({ doc, where }) => {
+  if (doc && doc.policy) {
+    handoffPolicy = normalizePolicy(doc.policy);
+    handoff.setPolicy(handoffPolicy);
+    handoffSavedIn = where === 'repo' ? 'repo' : 'local';
+    handoffLog(`limits loaded from ${where}: ${JSON.stringify(handoffPolicy)}`);
+  } else if (where === 'local' || where === 'repo') {
+    handoffSavedIn = where;
+  }
+  handoffStatusDirty = true;
+}).catch(() => {});
+
+app.get('/api/handoff', (req, res) => {
+  res.json({ success: true, capability: handoffCapability(), policy: handoff.policy, status: handoffStatusBody() });
+});
+
+// The limits are GLOBAL: they are written to the control repo, so the runner
+// that takes over next already knows them before the panel is opened.
+app.post('/api/handoff/policy', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const policy = handoff.setPolicy((req.body && req.body.policy) || req.body || {});
+    handoffPolicy = policy;
+    // The status travels with the policy in the same write: the panel reads one
+    // file, and a freshly created handoff.json should not look "empty".
+    const saved = await handoffWriteDoc({ policy, status: handoffStatusBody() });
+    handoffStatusDirty = false;
+    handoffStatusAt = Date.now();
+    res.json({ success: !!saved.ok, savedIn: saved.ok ? saved.where : 'local', error: saved.error || '', policy, status: handoffStatusBody() });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+app.post('/api/handoff/start', async (req, res) => {
+  const cap = handoffCapability();
+  if (!cap.available) return res.json({ success: false, ...cap, status: handoffStatusBody() });
+  const action = handoff.request('manual');
+  handoffStatusDirty = true;
+  const started = !!(action && action.type === 'save');
+  // The save takes minutes (backup + push); answer at once and let the UI watch
+  // /api/handoff instead of holding the request open.
+  if (started) handoffRunSave().catch(e => handoffLog('manual save failed: ' + e.message));
+  res.json({ success: true, started, status: handoffStatusBody() });
+});
+
+app.post('/api/handoff/continue', async (req, res) => {
+  const r = handoff.continueWork();
+  handoffStatusDirty = true;
+  await handoffPublishStatus(true);
+  res.json({ success: true, cancelled: r.cancelled, status: handoffStatusBody() });
+});
+
+
 // Repo discovery (declared BEFORE GIT_ROOT below: the GIT_ROOT IIFE runs at
 // module load and calls it - a const declared later is in the temporal dead
 // zone there, and the server died at startup with
@@ -2213,6 +2539,9 @@ wss.on('connection', (ws) => {
       }
       case 'input': {
         if (!session) return;
+        // Typing is the clearest possible sign the user is still here: it resets
+        // the idle clock and cancels a pending handover countdown.
+        if (handoff) handoff.noteActivity();
         if (session.tmux) { tmuxInput(session.id, msg.data); return; }
         // Большой вставленный текст: пишем в PTY кусками — node-pty/OS-buffer
         // спокойнее воспринимают серию умеренных write, чем один мегабайт.
