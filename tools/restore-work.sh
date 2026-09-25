@@ -118,6 +118,75 @@ if [ -z "${SNAP:-}" ] || [ ! -d "$SNAP" ]; then
 fi
 log "restoring from $SNAP"
 
+# ── Glue back the split blobs ────────────────────────────────────────────
+# Anything over 100 MB cannot be a git blob on GitHub, so backup-work.sh split
+# it into big/<n>/part.NNN and wrote big-blobs.json. Rebuild every entry in
+# place, verify the size and the sha256, and only then read the snapshot. A
+# mismatch is reported and the file is left out rather than half-written.
+rebuild_split_blobs() {
+  local snap="$1" failed=0
+  [ -f "$snap/big-blobs.json" ] || return 0
+  if ! python3 - "$snap" <<'BLOBS'
+import hashlib, json, os, sys
+snap = sys.argv[1]
+try:
+    doc = json.load(open(os.path.join(snap, 'big-blobs.json'), encoding='utf-8'))
+except Exception as exc:
+    print('unreadable big-blobs.json: %s' % exc)
+    raise SystemExit(1)
+blobs = doc.get('blobs') or []
+ok = True
+for n, blob in enumerate(blobs, start=1):
+    rel = str(blob.get('rel') or '').strip('/')
+    parts = blob.get('parts') or []
+    if not rel or not parts:
+        continue
+    dest = os.path.join(snap, rel)
+    os.makedirs(os.path.dirname(dest) or snap, exist_ok=True)
+    tmp = dest + '.rebuilt'
+    digest = hashlib.sha256()
+    try:
+        with open(tmp, 'wb') as out:
+            for part in parts:
+                src = os.path.join(snap, 'blobs', str(n), part)
+                if not os.path.isfile(src):
+                    raise IOError('missing chunk %s' % part)
+                with open(src, 'rb') as fh:
+                    while True:
+                        block = fh.read(1 << 20)
+                        if not block:
+                            break
+                        digest.update(block)
+                        out.write(block)
+        want = str(blob.get('sha256') or '')
+        if want and digest.hexdigest() != want:
+            raise IOError('sha256 mismatch')
+        want_size = int(blob.get('size') or 0)
+        if want_size and os.path.getsize(tmp) != want_size:
+            raise IOError('size mismatch: %d != %d' % (os.path.getsize(tmp), want_size))
+        os.replace(tmp, dest)
+        print('rebuilt %s (%d bytes)' % (rel, os.path.getsize(dest)))
+    except Exception as exc:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        print('could not rebuild %s: %s' % (rel, exc))
+        ok = False
+raise SystemExit(0 if ok else 1)
+BLOBS
+  then
+    log "rebuilt the split blobs"
+  else
+    log "some split blobs could not be rebuilt - the snapshot is incomplete"
+    failed=1
+  fi
+  return "$failed"
+}
+BLOBS_FAILED=0
+rebuild_split_blobs "$SNAP" || BLOBS_FAILED=1
+
 find_existing_repo() {
   local meta="$1"
   [ "${WORK_BACKUP_RESTORE_EXISTING:-0}" = "1" ] || return 0
@@ -330,4 +399,4 @@ if [ -d "$SNAP/descriptors" ]; then
 fi
 
 log "done: $restored repo(s) restored"
-[ "$failed" -eq 0 ]
+[ "$failed" -eq 0 ] && [ "$BLOBS_FAILED" -eq 0 ]

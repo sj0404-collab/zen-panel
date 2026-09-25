@@ -705,5 +705,22 @@ check('q92 handover log carries the resume report', handoffSh.includes('session_
   resumeReport.includes('mode=ro') && resumeReport.includes('parent_id IS NULL') &&
   resumeReport.includes('AGENT_SESSION.md') && resumeReport.includes('--json'));
 
+// q93: a snapshot that GitHub refuses must never pass for a backup. The live
+// branch collected latest.json updates for two days while every snapshot was
+// rejected as an oversized blob - the log said "published" every 5 minutes.
+check('q93 oversized blobs are split before the push', backupWork.includes('split_big_blobs()') &&
+  backupWork.includes('WORK_BACKUP_MAX_BLOB_MB:-80') &&
+  backupWork.includes("'blobs', str(index)") &&
+  backupWork.includes('big-blobs.json') &&
+  backupWork.includes('refused (a file over 100 MB is the usual reason)') &&
+  backupWork.includes('git ls-remote origin "refs/heads/$BRANCH"') &&
+  restoreWork.includes('rebuild_split_blobs()') &&
+  restoreWork.includes("'blobs', str(n)") && restoreWork.includes('sha256 mismatch'));
+check('q94 a push without a snapshot is a failure', backupWork.includes('verify_published()') &&
+  backupWork.includes('PUBLISH VERIFIED AS EMPTY') &&
+  backupWork.includes('if [ "$pushed" = 1 ] && ! verify_published "$stamp"; then') &&
+  backupWork.includes('return 3') && backupWork.includes('NOTHING LANDED') &&
+  backupWork.includes('[ "$publish_status" -eq 3 ]'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
