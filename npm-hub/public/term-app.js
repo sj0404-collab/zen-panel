@@ -190,7 +190,7 @@ function attachTab(meta) {
   const panel = document.createElement('div');
   panel.className = 'term-panel';
   panel.id = 'panel-' + id;
-  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span></div><div class="term-info">${dirShort}</div><button class="btn" style="padding:2px 8px;font-size:10px" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll"><button class="term-scroll-arr up">▲</button><button class="term-scroll-handle" title="Потянуть — переместить стрелки; тап — вернуть к краю">⠿</button><button class="term-scroll-arr down">▼</button></div></div><div class="term-cd" id="cd-${id}"></div><div class="term-resumed" id="resumed-${id}">✓ Восстановлено</div>`;
+  panel.innerHTML = `<div class="term-header"><div class="term-header-title"><div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayName}</span></div><div class="term-info">${dirShort}</div><button class="btn" style="padding:2px 8px;font-size:10px" onclick="closeTab('${id}')">✕</button></div><div class="term-wrap"><div class="term" id="term-${id}"></div><div class="term-scroll"><div class="term-mouse-pad" title="Виртуальная мышь: тянуть — прокрутка, тап сверху/снизу — шаг">🖱</div><div class="term-mouse-wheel"><button class="term-scroll-arr up">▲</button><button class="term-scroll-arr down">▼</button></div><button class="term-scroll-handle" title="Потянуть — переместить мышь; тап — вернуть наверх">⠿</button></div></div><div class="term-cd" id="cd-${id}"></div><div class="term-resumed" id="resumed-${id}">✓ Восстановлено</div>`;
   document.getElementById('term-container').appendChild(panel);
   term.open(document.getElementById('term-' + id));
   setTimeout(() => fitAddon.fit(), 30);
@@ -566,6 +566,35 @@ function attachTermScroll(id, panel){
     handle.addEventListener('pointercancel',endDrag);
     window.addEventListener('resize',clampPos);
     zoneCleanup=()=>window.removeEventListener('resize',clampPos);
+  }
+  // Подушечка виртуальной мыши (как на вкладке «Экран»): тянуть = колесо,
+  // тап по верхней/нижней половине = шаг вверх/вниз.
+  const pad=cluster&&cluster.querySelector('.term-mouse-pad');
+  if(pad){
+    let pd=null;
+    pad.addEventListener('pointerdown',(e)=>{
+      e.preventDefault(); e.stopPropagation();
+      clusterDrag=true; clusterActivate();
+      const r=pad.getBoundingClientRect();
+      pd={y:e.clientY,y0:e.clientY,mid:r.top+r.height/2,moved:0};
+      try{ pad.setPointerCapture(e.pointerId); }catch(_){}
+    });
+    pad.addEventListener('pointermove',(e)=>{
+      if(!pd) return;
+      const dy=e.clientY-pd.y;
+      pd.moved+=Math.abs(dy); pd.y=e.clientY;
+      if(Math.abs(dy)>=3) fireWheel(dy*7);
+      e.preventDefault();
+    });
+    const endPad=()=>{
+      if(!pd) return;
+      const wasTap=pd.moved<6, tapUp=pd.y0<pd.mid;
+      pd=null; clusterDrag=false;
+      if(wasTap) scrollStep(tapUp?'up':'down');
+      clusterArmFade();
+    };
+    pad.addEventListener('pointerup',endPad);
+    pad.addEventListener('pointercancel',endPad);
   }
   // Тап по пустой середине — листаем на шаг вверх/вниз.
   if(track) track.addEventListener('pointerdown',(e)=>{

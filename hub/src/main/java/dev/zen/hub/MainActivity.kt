@@ -52,9 +52,14 @@ class MainActivity : ComponentActivity() {
     private var fileChooser: ValueCallback<Array<android.net.Uri>>? = null
     private val filePicker =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
-            val uris = WebChromeClient.FileChooserParams.parseResult(res.resultCode, res.data)
-                ?: emptyArray()
-            fileChooser?.onReceiveValue(uris)
+            val picked = ArrayList<Uri>()
+            val clip = res.data?.clipData
+            if (clip != null) {
+                for (i in 0 until clip.itemCount) picked.add(clip.getItemAt(i).uri)
+            } else {
+                res.data?.data?.let { picked.add(it) }
+            }
+            fileChooser?.onReceiveValue(picked.toTypedArray())
             fileChooser = null
         }
 
@@ -131,6 +136,9 @@ class MainActivity : ComponentActivity() {
                         fileChooser = null
                         false
                     } else {
+                        if (params?.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        }
                         filePicker.launch(intent)
                         true
                     }
