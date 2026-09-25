@@ -224,6 +224,8 @@ check "a refused publish leaves latest.json alone" "$([ "$before_refuse" = "$aft
 cd /
 rm -rf "$TMP/home"; mkdir -p "$TMP/home"
 bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
+restore_rc=$?
+check "a complete restore exits cleanly" "$([ "$restore_rc" -eq 0 ] && echo 1 || echo 0)"
 check "split snapshot restored and rebuilt" "$([ -f "$TMP/home/loose/blob.bin" ] && echo 1 || echo 0)"
 check "shallow repo restored from its archive" "$([ -d "$TMP/home/shallow-code/.git" ] && echo 1 || echo 0)"
 check "shallow repo committed content restored" "$(grep -q '^line 3$' "$TMP/home/shallow-code/history.txt" 2>/dev/null && echo 1 || echo 0)"

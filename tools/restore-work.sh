@@ -157,7 +157,7 @@ log "restoring from $SNAP"
 rebuild_split_blobs() {
   local snap="$1" failed=0
   [ -f "$snap/big-blobs.json" ] || return 0
-  if ! python3 - "$snap" <<'BLOBS'
+  if python3 - "$snap" <<'BLOBS'
 import hashlib, json, os, sys
 snap = sys.argv[1]
 try:
