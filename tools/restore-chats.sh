@@ -124,28 +124,27 @@ import os, subprocess, sys
 root, name = sys.argv[1:]
 SKIP_DIRS = {'node_modules', '.cache', '.npm', '.gradle', '.m2', '.cargo',
              '.rustup', '.venv', 'venv', '__pycache__', '.tox', '.git', '.local'}
-first = None
+remote_match = None
+basename_match = None
 for base, dirs, files in os.walk(root):
     dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.endswith('.git')]
     is_repo = '.git' in dirs or os.path.exists(os.path.join(base, '.git'))
     if not is_repo:
         continue
-    if os.path.basename(base.rstrip('/')) == name:
-        print(base)
-        raise SystemExit(0)
+    if basename_match is None and os.path.basename(base.rstrip('/')) == name:
+        basename_match = base
     try:
         remote = subprocess.check_output(
             ['git', '-C', base, 'remote', 'get-url', 'origin'],
             text=True, stderr=subprocess.DEVNULL).strip()
     except Exception:
         remote = ''
-    if remote:
-        tail = remote.rstrip('/')
-        if tail.endswith('/' + name) or tail.endswith('/' + name + '.git'):
-            if first is None:
-                first = base
-if first:
-    print(first)
+    tail = remote.rstrip('/')
+    if tail.endswith('/' + name) or tail.endswith('/' + name + '.git'):
+        print(base)
+        raise SystemExit(0)
+if basename_match:
+    print(basename_match)
 PY
 }
 
@@ -157,7 +156,7 @@ if [ "$ALL" = 1 ]; then
   roots="${CHAT_ALL_ROOT:-$HOME}"
   if ! command -v opencode >/dev/null 2>&1; then
     echo "restore-chats: opencode CLI not on PATH" >&2
-    exit 0
+    exit 1
   fi
   processed=0
   failed=0
@@ -206,7 +205,7 @@ fi
 [ -s "$BUNDLE" ] || { echo "restore-chats: no chats bundle for $REPO_NAME"; exit 0; }
 if ! command -v opencode >/dev/null 2>&1; then
   echo "restore-chats: opencode CLI not on PATH" >&2
-  exit 0
+  exit 1
 fi
 
 import_bundle "$REPO_DIR" "$BUNDLE"

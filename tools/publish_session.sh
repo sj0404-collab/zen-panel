@@ -67,8 +67,10 @@ ARGS=()
 JSON_FILES=()
 FILE_OVERRIDE=""
 SCRUB=1
+EXPLICIT_STARTED_AT=0
 for arg in "$@"; do
   case "$arg" in
+    startedAt=*)   EXPLICIT_STARTED_AT=1; ARGS+=("$arg") ;;
     slot=linux)    FILE="session-linux.json" ;;
     slot=windows)  FILE="session-windows.json" ;;
     slot=agent)    FILE="session-agent.json" ;;
@@ -215,24 +217,91 @@ else
   git rm -rqf . 2>/dev/null || true
 fi
 
-# Only clear an entry this run owns.
-#
-# Every session calls this with state=ended on the way out, and the file is a
-# single mailbox, so a finishing job would happily stamp "ended" over a
-# different session that is still live - which is what happened: a cancelled
-# agent erased the record of a running desktop, and the panel then reported no
-# session while the desktop was serving fine.
-if grep -q '"state": *"ended"' "$STAGE" 2>/dev/null && [ -f "$FILE" ]; then
-  OWNER_RUN=$(python3 -c "
-import json,sys
+IS_SESSION_FILE=0
+case "$FILE" in
+  session.json|session-*.json) IS_SESSION_FILE=1 ;;
+esac
+
+session_publish_blocked() {
+  [ -f "$FILE" ] || return 1
+  python3 - "$FILE" "$STAGE" "${GITHUB_RUN_ID:-}" <<'PY'
+import json, os, re, sys
+file_path, stage_path, run_id = sys.argv[1:]
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            value = json.load(f)
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+old = read(file_path)
+new = read(stage_path)
+if not old:
+    raise SystemExit(1)
+is_session = os.path.basename(file_path).startswith("session")
+old_state = str(old.get("state", ""))
+new_state = str(new.get("state", ""))
+old_run = str(old.get("runId", ""))
+new_run = str(new.get("runId", "")) or run_id
+if is_session and new_state == "ended":
+    if old_state != "ended" and (not old_run or old_run != new_run):
+        raise SystemExit(0)
+    raise SystemExit(1)
+if is_session and new_state != "live":
+    raise SystemExit(1)
+if not is_session and old_state == "ended":
+    raise SystemExit(1)
+if not old_run or not new_run or old_run == new_run:
+    raise SystemExit(1)
+old_number = str(old.get("runNumber", ""))
+new_number = str(new.get("runNumber", ""))
+if not (re.fullmatch(r"\d+", old_number) and re.fullmatch(r"\d+", new_number)):
+    raise SystemExit(0)
+raise SystemExit(1 if int(new_number) > int(old_number) else 0)
+PY
+}
+
+if session_publish_blocked; then
+  echo "publish_session: $FILE is owned by a newer run; left alone"
+  exit 0
+fi
+
+if [ "$IS_SESSION_FILE" = 1 ] && [ "$EXPLICIT_STARTED_AT" -eq 0 ] && [ -f "$FILE" ]; then
+  EXISTING_RUN=$(python3 - "$FILE" <<'PY'
+import json, sys
 try:
-    print(json.load(open('$FILE')).get('runId',''))
+    print(json.load(open(sys.argv[1], encoding='utf-8')).get('runId', ''))
 except Exception:
     print('')
-" 2>/dev/null)
-  if [ -n "$OWNER_RUN" ] && [ "$OWNER_RUN" != "${GITHUB_RUN_ID:-}" ]; then
-    echo "publish_session: $FILE belongs to run $OWNER_RUN, not ${GITHUB_RUN_ID:-?} - left alone"
-    exit 0
+PY
+)
+  if [ -z "${GITHUB_RUN_ID:-}" ] || [ "$EXISTING_RUN" = "${GITHUB_RUN_ID:-}" ]; then
+    EXISTING_STARTED_AT=$(python3 - "$FILE" <<'PY'
+import json, sys
+try:
+    print(json.load(open(sys.argv[1], encoding='utf-8')).get('startedAt', ''))
+except Exception:
+    print('')
+PY
+)
+    if [ -n "$EXISTING_STARTED_AT" ]; then
+      python3 - "$STAGE" "$EXISTING_STARTED_AT" <<'PY'
+import json, sys
+path, started = sys.argv[1:]
+try:
+    with open(path, encoding='utf-8') as f:
+        data = json.load(f)
+    data['startedAt'] = started
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write('\n')
+except Exception as e:
+    print('publish_session: could not preserve startedAt: %s' % e, file=sys.stderr)
+    raise SystemExit(1)
+PY
+    fi
   fi
 fi
 
@@ -269,6 +338,10 @@ for attempt in $(seq 1 12); do
   echo "publish_session: push attempt $attempt failed; refreshing $BRANCH" >&2
   if git fetch -q origin "$BRANCH" 2>/dev/null; then
     git reset -q --hard FETCH_HEAD
+    if session_publish_blocked; then
+      echo "publish_session: $FILE is owned by a newer run; left alone"
+      exit 0
+    fi
     mkdir -p "$(dirname "$FILE")"
     cp "$STAGE" "$FILE"
     git add "$FILE"

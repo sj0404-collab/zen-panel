@@ -134,6 +134,8 @@ jobs:
       - name: Install OpenCode for session recovery
         run: |
           set -e
+          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
           if ! command -v opencode >/dev/null 2>&1; then
             curl -fsSL https://opencode.ai/install | bash || true
@@ -152,19 +154,20 @@ jobs:
 
       - name: Create the work folder and restore repositories
         run: |
+          set -o pipefail
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p ~/hub-work "$HUB_LOGS" 2>/dev/null || true; mkdir -p ~/.npm-hub/logs
           echo "logs dir ready $(ls -ld ~/.npm-hub/logs 2>&1 || ls -ld "$HUB_LOGS" 2>&1)"
           # Restore repos before importing OpenCode sessions: opencode import
           # needs the real repository CWD, not an empty placeholder folder.
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
             WORK_BACKUP_RESTORE_EXISTING=1 bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" \
-            2>&1 | tee -a "$HUB_LOGS/restore-work.log"
+            2>&1 | tee -a "$HUB_LOGS/restore-work.log" || echo "::warning::hub-work restore failed"
           # Restore-chats imports the zen-panel fork only by default; the
           # hub-work call gets RESTORE_CHATS_ALL=1 so every repo the Files tab
           # cloned (and the fork itself) gets its opencode sessions back.
-          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log"
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || echo "::warning::fork restore failed"
           RESTORE_CHATS_ALL=1 RESTORE_CHATS_ROOT="$HOME" \
-            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" 2>&1 | tee -a "$HUB_LOGS/restore-hubwork.log"
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" 2>&1 | tee -a "$HUB_LOGS/restore-hubwork.log" || echo "::warning::hub-work chats restore failed"
 
       - name: Start the hub and open the tunnel
         run: |
@@ -172,26 +175,41 @@ jobs:
           echo "HUB_LOGS=$HUB_LOGS HOME=$HOME $(ls -ld "$HUB_LOGS" 2>&1)"
           cd "$GITHUB_WORKSPACE/fork/npm-hub"
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
-          # Persist the runner session start so the panel clock survives a hub
-          # restart (watchdog) without resetting "how much of the 6h is left".
-          # Always overwrite: on a self-hosted runner ~/.npm-hub survives between
-          # runs and a leftover timestamp would show "24ч / 6ч · осталось 0"
-          # instead of a fresh clock. The watchdog re-reads this same file.
+          HUB_PORT=8090
+          HUB_TOKEN_VALUE='${{ inputs.token }}'
+          HUB_PID_FILE="$HUB_LOGS/hub.pid"
+          if [ -f "$HUB_PID_FILE" ]; then
+            OLD_PID="$(tr -dc '0-9' < "$HUB_PID_FILE" 2>/dev/null || true)"
+            if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null \
+              && tr '\0' ' ' < "/proc/$OLD_PID/cmdline" 2>/dev/null | grep -q 'src/server.js'; then
+              kill "$OLD_PID" 2>/dev/null || true
+            fi
+          fi
+          pkill -f "cloudflared [t]unnel --url http://127.0.0.1:$HUB_PORT" 2>/dev/null || true
+          for i in $(seq 1 15); do
+            curl -sf -m 2 "http://127.0.0.1:$HUB_PORT/api/tools" >/dev/null 2>&1 || break
+            sleep 1
+          done
+          hub_ready() {
+            local body
+            body="$(curl -sf -m 15 -H "x-hub-token: $HUB_TOKEN_VALUE" "http://127.0.0.1:$HUB_PORT/api/tools" 2>/dev/null)" || return 1
+            echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); raise SystemExit(0 if str(d.get("runId", "")) == sys.argv[1] else 1)' "$GITHUB_RUN_ID"
+          }
           SESSION_FILE="$HOME/.npm-hub/session-start"
           date +%s000 > "$SESSION_FILE"
-          HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 SESSION_STARTED_MS="$(cat "$SESSION_FILE")" SESSION_LIMIT_MS=21600000 nohup node src/server.js > $HUB_LOGS/hub.log 2>&1 &
+          HUB_PORT_STRICT=1 HUB_TOKEN="$HUB_TOKEN_VALUE" GH_TOKEN='${{ inputs.gh_token }}' PORT="$HUB_PORT" SESSION_STARTED_MS="$(cat "$SESSION_FILE")" SESSION_LIMIT_MS=21600000 nohup node src/server.js > "$HUB_LOGS/hub.log" 2>&1 &
+          HUB_PID=$!
+          echo "$HUB_PID" > "$HUB_PID_FILE"
           for i in $(seq 1 60); do
-            body=$(curl -s -m 15 -H "x-hub-token: ${{ inputs.token }}" "http://127.0.0.1:8090/api/tools" || true)
-            echo "$body" | grep -q '"warming":false' && break
+            hub_ready && break
             sleep 2
           done
-          body=$(curl -s -m 15 -H "x-hub-token: ${{ inputs.token }}" "http://127.0.0.1:8090/api/tools" || true)
-          if ! echo "$body" | grep -q '"warming":false'; then
-            echo "::error::the hub did not start."
-            tail -40 $HUB_LOGS/hub.log
+          if ! hub_ready; then
+            echo "::error::the hub did not start for run $GITHUB_RUN_ID."
+            tail -40 "$HUB_LOGS/hub.log"
             exit 1
           fi
-          echo "hub is up on 8090"
+          echo "hub is up on $HUB_PORT for run $GITHUB_RUN_ID"
           # Start audit/code snapshot daemon (audit.json = chat, code.json = diff + sessions), plus chats for every repo
           export SNAPSHOT_INTERVAL=120
           # Also keep chats/<name>.json for every repo fresh every ~20 min,
@@ -263,9 +281,29 @@ jobs:
 
       - name: Keep the session alive
         run: |
-          trap 'exit 143' TERM INT
           export HUB_LOGS="$HOME/.npm-hub/logs"
           mkdir -p "$HUB_LOGS"
+          HUB_PORT=8090
+          HUB_TOKEN_VALUE='${{ inputs.token }}'
+          HUB_PID_FILE="$HUB_LOGS/hub.pid"
+          PIDFILE="$HUB_LOGS/cloudflared-8090.pid"
+          hub_ready() {
+            local body
+            body="$(curl -sf -m 20 -H "x-hub-token: $HUB_TOKEN_VALUE" "http://127.0.0.1:$HUB_PORT/api/tools" 2>/dev/null)" || return 1
+            echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); raise SystemExit(0 if str(d.get("runId", "")) == sys.argv[1] else 1)' "$GITHUB_RUN_ID"
+          }
+          cleanup_watchdog() {
+            local code="${1:-143}"
+            trap - TERM INT
+            if [ -n "${HUB_PID:-}" ]; then kill "$HUB_PID" 2>/dev/null || true; fi
+            if [ -f "$PIDFILE" ]; then
+              local pid; pid="$(tr -dc '0-9' < "$PIDFILE" 2>/dev/null || true)"
+              [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
+            fi
+            pkill -f "cloudflared [t]unnel --url http://127.0.0.1:$HUB_PORT" 2>/dev/null || true
+            exit "$code"
+          }
+          trap 'cleanup_watchdog 143' TERM INT
           # Watch the hub and the tunnel instead of sleeping blindly: a dead
           # hub behind a live tunnel answers 502, and a dead tunnel keeps
           # resolving - both look like "the address is there but nothing
@@ -277,17 +315,16 @@ jobs:
           # instead of re-opening it every loop (the /tmp path never existed
           # -> the tunnel was declared dead every ~90s and reconnected
           # endlessly).
-          PIDFILE="$HUB_LOGS/cloudflared-8090.pid"
           RESTARTING=0
           FAILS=0
-          HUB_PID=""
+          HUB_PID="$(tr -dc '0-9' < "$HUB_PID_FILE" 2>/dev/null || true)"
           for i in $(seq 1 1400); do
             sleep 15
             # One missed probe is NOT a dead hub: the box saturates its CPU
             # launching a game / a build and a 10s curl can legitimately bleed
             # over. Only restart after several consecutive misses, so a single
             # spike doesn't kill the hub and drop every attached tab.
-            if curl -sf -o /dev/null -m 20 -H "x-hub-token: ${{ inputs.token }}" http://127.0.0.1:8090/api/tools; then
+            if hub_ready; then
               FAILS=0
             else
               FAILS=$((FAILS + 1))
@@ -299,16 +336,17 @@ jobs:
               # Brackets, not a plain string: pkill -f matches its own
               # parent shell's command line too, and a plain pattern is
               # suicide - measured the hard way.
-              pkill -f "src/server[.]js" 2>/dev/null || true
+              if [ -n "${HUB_PID:-}" ]; then kill "$HUB_PID" 2>/dev/null || true; fi
               cd "$HUBDIR"
               SESSION_STARTED_MS="$(cat "$HOME/.npm-hub/session-start" 2>/dev/null || date +%s000)"
-              HUB_TOKEN='${{ inputs.token }}' GH_TOKEN='${{ inputs.gh_token }}' PORT=8090 SESSION_STARTED_MS="$SESSION_STARTED_MS" SESSION_LIMIT_MS=21600000 nohup node src/server.js >> $HUB_LOGS/hub.log 2>&1 &
+              HUB_PORT_STRICT=1 HUB_TOKEN="$HUB_TOKEN_VALUE" GH_TOKEN='${{ inputs.gh_token }}' PORT="$HUB_PORT" SESSION_STARTED_MS="$SESSION_STARTED_MS" SESSION_LIMIT_MS=21600000 nohup node src/server.js >> "$HUB_LOGS/hub.log" 2>&1 &
               HUB_PID=$!
+              echo "$HUB_PID" > "$HUB_PID_FILE"
               # Wait for the new hub to serve again before probing it for
               # "dead": otherwise the first check hits it mid-boot and the
               # watchdog loops on itself forever.
               for boot in $(seq 1 12); do
-                if curl -sf -o /dev/null -m 20 -H "x-hub-token: ${{ inputs.token }}" http://127.0.0.1:8090/api/tools; then
+                if hub_ready; then
                   FAILS=0; RESTARTING=0
                   echo "::warning::hub is back."
                   break
@@ -349,9 +387,11 @@ jobs:
                 "url=$URL" "hubUrl=$URL" "desktop=$URL/d" "mobile=$URL/m" \
                 "auth=без пароля" "label=${{ inputs.label }}"
           done
+          cleanup_watchdog 0
 
       - name: Final durable repository and session backup
         if: always()
+        timeout-minutes: 6
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
@@ -479,6 +519,8 @@ jobs:
         shell: pwsh
         run: |
           $bin = "$env:USERPROFILE\.opencode\bin"
+          Add-Content $env:GITHUB_PATH $bin
+          Add-Content $env:GITHUB_PATH "$env:USERPROFILE\.local\bin"
           $env:Path = "$bin;$env:USERPROFILE\.local\bin;$env:Path"
           if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) {
             npm install -g opencode-ai
@@ -513,6 +555,7 @@ jobs:
           # runner with the agent). Redirects are not optional either:
           # without them pwsh waits on the child's stdout forever.
           $env:PORT = '8090'
+          $env:HUB_PORT_STRICT = '1'
           $env:HUB_TOKEN = '${{ inputs.token }}'; $env:GH_TOKEN = '${{ inputs.gh_token }}'
           $SESSION_FILE = "$env:USERPROFILE\.npm-hub\session-start.txt"
           [System.IO.Directory]::CreateDirectory((Split-Path $SESSION_FILE))
@@ -527,7 +570,7 @@ jobs:
             Start-Sleep -Seconds 2
             try {
               $r = Invoke-RestMethod -Uri 'http://127.0.0.1:8090/api/tools' -TimeoutSec 15 -Headers @{'x-hub-token'='${{ inputs.token }}'}
-              if ($r.success -and -not $r.warming) { $up = $true; break }
+              if ($r.success -and -not $r.warming -and $r.runId -eq '${{ github.run_id }}') { $up = $true; break }
             } catch { }
           }
           if (-not $up) {
@@ -647,6 +690,7 @@ jobs:
                 ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
               Set-Location $hubDir
               $env:PORT = '8090'
+              $env:HUB_PORT_STRICT = '1'
               $env:HUB_TOKEN = '${{ inputs.token }}'; $env:GH_TOKEN = '${{ inputs.gh_token }}'
               $SESSION_FILE = "$env:USERPROFILE\.npm-hub\session-start.txt"
               $env:SESSION_STARTED_MS = ((Get-Content $SESSION_FILE -Raw -ErrorAction SilentlyContinue).Trim())
@@ -846,8 +890,19 @@ jobs:
 
       - name: Keep the VNC session alive
         run: |
-          trap 'exit 143' TERM INT
           PIDFILE="$HUB_LOGS/cloudflared-6081.pid"
+          cleanup_vnc() {
+            local code="${1:-143}"
+            trap - TERM INT
+            if [ -f "$PIDFILE" ]; then
+              local pid; pid="$(tr -dc '0-9' < "$PIDFILE" 2>/dev/null || true)"
+              [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
+            fi
+            pkill -f "websockify.*6081" 2>/dev/null || true
+            pkill -f "cloudflared [t]unnel --url http://127.0.0.1:6081" 2>/dev/null || true
+            exit "$code"
+          }
+          trap 'cleanup_vnc 143' TERM INT
           VFAILS=0
           VRESTARTING=0
           for i in $(seq 1 1400); do
@@ -903,6 +958,7 @@ jobs:
                 "url=$URL/vnc.html" "novncUrl=$URL/vnc.html" \
                 "label=${{ inputs.label }}"
           done
+          cleanup_vnc 0
 
       - name: Clear the published VNC session
         if: always()

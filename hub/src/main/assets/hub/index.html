@@ -203,11 +203,14 @@ async function waitForHub(token, sinceMs, sleepMs) {
   }
   throw new Error('Таймаут: хаб не сообщил адрес за 20 минут.');
 }
-async function preflightHub(base, zt) {
+async function preflightHub(base, zt, expectedRunId) {
   const r = await fetch(base + '/api/tools?zt=' + encodeURIComponent(zt));
   const j = await r.json().catch(() => null);
   if (!j || j.success !== true) throw new Error('Хаб не принял токен (' +
     ((j && j.error) || ('HTTP ' + r.status)) + '). Перезапустите хаб.');
+  if (expectedRunId && j.runId && String(j.runId) !== String(expectedRunId)) {
+    throw new Error('Адрес отвечает другим запуском раннера #' + j.runId + '.');
+  }
   return true;
 }
 function buildOpenUrl(s, zt) {
@@ -302,7 +305,7 @@ $('launch').onclick = async () => {
     const s = await waitForHub(token, since);
     const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
     log('Проверяю доступ…');
-    await preflightHub(base, zt);
+    await preflightHub(base, zt, s.runId);
     const url = buildOpenUrl(s, zt);
     saveLast(url);
     log('Хаб жив. Открываю…', 'ok');
@@ -328,7 +331,7 @@ $('restart').onclick = async () => {
     const s = await waitForHub(token, Date.now());
     const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
     log('Проверяю доступ…');
-    await preflightHub(base, zt);
+    await preflightHub(base, zt, s.runId);
     const url = buildOpenUrl(s, zt);
     saveLast(url);
     log('Хаб жив. Открываю…', 'ok');

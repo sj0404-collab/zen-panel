@@ -39,13 +39,11 @@ export CHAT_MAX_BYTES="${CHAT_MAX_BYTES:-41943040}"
 # Heavy/generated dirs to skip while scanning for repos (same spirit as
 # backup-work.sh). node_modules and the toolchain caches are huge and slow.
 find_repos() {
-  local root="$1"
-  find "$root" -maxdepth 8 \
-    -type d \( -name .git -o -path '*/.cache/*' -o -path '*/.nvm/*' -o -path '*/.npm/*' \
-      -o -path '*/.gradle/*' -o -path '*/.m2/*' -o -path '*/.cargo/*' -o -path '*/.rustup/*' \
-      -o -path '*/.local/share/opencode/*' -o -path '*/.zen-agent/*' -o -path '*/node_modules/*' \
-      -o -path '*/.venv/*' -o -path '*/venv/*' -o -path '*/.git/lfs/*' \) \
-    -prune -o -type d -name .git -print 2>/dev/null
+  local root="$1" args=() e
+  for e in .cache .nvm .npm .gradle .m2 .cargo .rustup .local/share/opencode .zen-agent node_modules .venv venv; do
+    args+=( -path "*/$e/*" -prune -o )
+  done
+  find "$root" -maxdepth 8 "${args[@]}" -type d -name .git -print 2>/dev/null
 }
 
 # Export + publish the sessions of ONE repository. Everything a later runner
@@ -72,7 +70,7 @@ export_one() {
   fi
   if ! command -v opencode >/dev/null 2>&1; then
     echo "export-chats: opencode CLI not on PATH" >&2
-    return 0
+    return 1
   fi
 
   mkdir -p "$(dirname "$out")"
@@ -98,7 +96,7 @@ def belongs(directory):
         return False
     # The session ran in this repo if its directory is the repo (or below it).
     # The name test is a fallback for machines where the checkout moved.
-    return rp == repo_dir or rp.startswith(repo_dir + os.sep) or repo_name in rp
+    return rp == repo_dir or rp.startswith(repo_dir + os.sep) or repo_name in rp.split(os.sep)
 
 try:
     con = sqlite3.connect(db)
