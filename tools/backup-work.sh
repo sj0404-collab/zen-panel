@@ -26,6 +26,21 @@
 #   so such a file cannot be committed whole either: it is split into chunks of
 #   WORK_BACKUP_CHUNK_MB and restore-work.sh glues them back together.
 #
+# BIG BLOBS (the same limit, one level up)
+#   The snapshot itself grows blobs: files.tar.gz of the loose home files, and
+#   a repo.bundle of a big repository. Those are not "big files" - they are the
+#   backup - and they outgrew the same 100 MB limit: measured on a live runner,
+#   files.tar.gz reached 140 MB and repo.bundle 96 MB, so the whole snapshot
+#   could not be pushed and the branch kept only the last few commits' worth of
+#   latest.json pointing at snapshots that were never there.
+#
+#   So before publishing, EVERY file in the stage over
+#   WORK_BACKUP_MAX_BLOB_MB is split into blobs/<n>/part.NNN with a
+#   big-blobs.json manifest (name, size, parts). restore-work.sh glues every
+#   manifest entry back before it reads the snapshot, and the manifest is
+#   verified, not trusted. (blobs/ is its own directory: big/ already holds the
+#   per-file chunks of collect_big_files, and both number from 1.)
+#
 # USAGE
 #   backup-work.sh --once            one snapshot, then exit
 #   backup-work.sh                   daemon: snapshot every WORK_BACKUP_INTERVAL
@@ -39,6 +54,8 @@
 #   WORK_BACKUP_MAX_TOTAL_MB bail out over this     (default 400)
 #   WORK_BACKUP_MAX_BIG_MB  largest split-and-send file (default 200)
 #   WORK_BACKUP_CHUNK_MB    chunk size for those     (default 20)
+#   WORK_BACKUP_MAX_BLOB_MB anything bigger inside the snapshot is split
+#                           before the push (default 80)
 #   SESSION_STATE_URL       git remote override for local tests
 set -uo pipefail
 
@@ -50,11 +67,18 @@ MAX_FILE_MB="${WORK_BACKUP_MAX_FILE_MB:-25}"
 MAX_TOTAL_MB="${WORK_BACKUP_MAX_TOTAL_MB:-400}"
 MAX_BIG_MB="${WORK_BACKUP_MAX_BIG_MB:-200}"
 CHUNK_MB="${WORK_BACKUP_CHUNK_MB:-20}"
+# GitHub refuses a blob over 100 MB. Stay well under it: the limit applies to
+# the file as stored, so a snapshot is only pushable if every part of it is.
+MAX_BLOB_MB="${WORK_BACKUP_MAX_BLOB_MB:-80}"
 for _v in MAX_BIG_MB CHUNK_MB; do
   case "${!_v}" in
     ''|*[!0-9]*) eval "$_v=200" ;;
   esac
 done
+case "$MAX_BLOB_MB" in
+  ''|*[!0-9]*) MAX_BLOB_MB=80 ;;
+esac
+[ "$MAX_BLOB_MB" -gt 0 ] && [ "$MAX_BLOB_MB" -le 90 ] || MAX_BLOB_MB=80
 [ "$CHUNK_MB" -gt 0 ] && [ "$CHUNK_MB" -le 90 ] || CHUNK_MB=20
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
 STATE_DIR="${WORK_BACKUP_STATE:-$HOME/.npm-hub/work-backup-state}"
@@ -255,6 +279,61 @@ PY
   return 0
 }
 
+# Every file of the stage that GitHub would refuse (>100 MB) is split here.
+# files.tar.gz and a big repo.bundle are the usual offenders, and one of them is
+# enough to make the whole snapshot unpushable - which is exactly what happened
+# on a live runner: the branch received latest.json updates for two days and
+# not a single snapshot, while latest.json pointed at snapshots that were never
+# there. The manifest is what restore-work.sh rebuilds from, and it is verified.
+split_big_blobs() {
+  local stage="$1"
+  python3 - "$stage" "$MAX_BLOB_MB" "$CHUNK_MB" <<'BLOBS'
+import hashlib, json, os, sys
+stage, limit_mb, chunk_mb = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+limit = limit_mb * 1024 * 1024
+chunk = max(chunk_mb, 1) * 1024 * 1024
+SKIP = {'big-blobs.json', 'manifest.json', 'latest.json', 'tree.txt',
+        'big-skipped.txt'}
+manifest, index = [], 0
+for base, dirs, files in os.walk(stage):
+    dirs.sort()
+    if os.path.basename(base) == 'big':
+        continue
+    for name in sorted(files):
+        if name in SKIP:
+            continue
+        path = os.path.join(base, name)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            continue
+        if size <= limit:
+            continue
+        index += 1
+        digest = hashlib.sha256()
+        parts = []
+        os.makedirs(os.path.join(stage, 'blobs', str(index)), exist_ok=True)
+        with open(path, 'rb') as fh:
+            while True:
+                block = fh.read(chunk)
+                if not block:
+                    break
+                digest.update(block)
+                part = 'part.%03d' % len(parts)
+                with open(os.path.join(stage, 'blobs', str(index), part), 'wb') as w:
+                    w.write(block)
+                parts.append(part)
+        manifest.append({'rel': os.path.relpath(path, stage).replace(os.sep, '/'),
+                         'size': size, 'sha256': digest.hexdigest(),
+                         'parts': parts, 'chunkBytes': chunk})
+        os.remove(path)
+with open(os.path.join(stage, 'big-blobs.json'), 'w', encoding='utf-8') as w:
+    json.dump({'kind': 'work-backup-blobs', 'blobs': manifest}, w,
+              ensure_ascii=False, indent=2)
+print(len(manifest))
+BLOBS
+}
+
 # One digest covering every repo and every loose file: the gate for publishing.
 compute_sig() {
   {
@@ -352,6 +431,17 @@ PY
     mkdir -p "$stage/descriptors" || return 1
     cp -a "$ROOT/.npm-hub/sessions/." "$stage/descriptors/" || return 1
   fi
+  # Last thing before publishing: make sure every file in the stage is
+  # something GitHub will actually accept. One oversized blob and the whole
+  # snapshot is refused - silently, as far as the branch is concerned.
+  local split
+  split="$(split_big_blobs "$stage" | tail -1)"
+  case "$split" in
+    ''|*[!0-9]*) split=0 ;;
+  esac
+  if [ "$split" -gt 0 ]; then
+    log "split $split oversized snapshot file(s) into ${CHUNK_MB}MB parts (GitHub refuses blobs over 100 MB)"
+  fi
 }
 
 backup_run_is_stale() {
@@ -417,6 +507,8 @@ data = {"kind": "work-backup", "stamp": stamp, "snapshot": snap, "repos": repos,
         "runNumber": int(os.environ.get("GITHUB_RUN_NUMBER", 0)),
         "tree": os.path.exists(os.path.join(snap, "tree.txt")),
         "files": os.path.exists(os.path.join(snap, "files.tar.gz")),
+        "blobs": len(json.load(open(os.path.join(snap, "big-blobs.json"), encoding="utf-8")).get("blobs") or [])
+                 if os.path.exists(os.path.join(snap, "big-blobs.json")) else 0,
         "big": os.path.isdir(os.path.join(snap, "big")),
         "descriptors": os.path.isdir(os.path.join(snap, "descriptors"))}
 for p in (os.path.join(snap, "manifest.json"), latest):
@@ -464,8 +556,44 @@ PY
     [ "$delay" -gt 30 ] && delay=30
     sleep "$delay"
   done
+  # Verified from INSIDE the clone: this is the only place where the objects we
+  # just pushed can be inspected (and the working directory is the clone, not
+  # whatever the daemon started in). Return code 3 = pushed, but empty.
+  if [ "$pushed" = 1 ] && ! verify_published "$stamp"; then
+    rm -rf "$work"
+    return 3
+  fi
   rm -rf "$work"
   [ "$pushed" = 1 ]
+}
+
+# Did the snapshot really land? `git push` returning 0 only means the branch
+# moved; it does NOT mean the snapshot is in it. A branch that quietly collects
+# latest.json updates while every snapshot is refused (an oversized blob, a
+# protected branch, a shallow-clone race) looks exactly like success from the
+# log - and then the next runner restores nothing. So: after a push, ask both
+# the commit we pushed and the remote what they actually have, and shout if the
+# answer is "no snapshot".
+verify_published() {
+  local name="$1" sha=""
+  if ! git ls-tree -d --name-only HEAD "snapshots/$name" 2>/dev/null | grep -qx "snapshots/$name"; then
+    log "PUBLISH VERIFIED AS EMPTY: snapshots/$name is not even in the commit we pushed"
+    return 1
+  fi
+  sha="$(git ls-remote origin "refs/heads/$BRANCH" 2>/dev/null | cut -f1)"
+  if [ -z "$sha" ]; then
+    log "PUBLISH VERIFIED AS EMPTY: $BRANCH does not exist on the remote after the push"
+    return 1
+  fi
+  # The first publish onto an empty branch creates it as an orphan, so there is
+  # no origin/$BRANCH to look at until a fetch - ask the remote by sha.
+  if ! git ls-tree -d --name-only "$sha" "snapshots/$name" 2>/dev/null | grep -qx "snapshots/$name"; then
+    log "PUBLISH VERIFIED AS EMPTY: $BRANCH has no snapshots/$name after a successful push"
+    log "  the snapshot was refused (a file over 100 MB is the usual reason) or the branch moved under us"
+    log "  latest.json now points at a snapshot that is not there - the next runner would restore nothing"
+    return 1
+  fi
+  return 0
 }
 
 do_backup() (
@@ -519,6 +647,12 @@ do_backup() (
     local publish_status=$?
     if [ "$publish_status" -eq 2 ]; then
       log "snapshot skipped because a newer run owns $BRANCH"
+    elif [ "$publish_status" -eq 3 ]; then
+      # The push went through and carried no snapshot. That is not a backup,
+      # and treating it as one is how two days of "published" hid an empty
+      # branch. Do not advance the signature: the next cycle must try again.
+      log "NOTHING LANDED: the push carried no snapshot - the next run must retry"
+      result=1
     else
       log "publish failed (will retry next cycle)"
       result=1

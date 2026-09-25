@@ -144,6 +144,49 @@ check "ignored file not restored" "$([ ! -f "$TMP/home/proj/build/out.o" ] && ec
 check "loose file restored" "$([ -f "$TMP/home/loose/note.txt" ] && echo 1 || echo 0)"
 check "chunked big file restored byte for byte" "$([ "$(sha256sum "$TMP/home/loose/big.bin" 2>/dev/null | cut -d' ' -f1)" = "$BIG_SHA" ] && echo 1 || echo 0)"
 
+# ── The oversized blob that broke the live backup ──────────────────────
+# files.tar.gz and a big repo.bundle outgrew GitHub's 100 MB blob limit, so the
+# whole snapshot was refused and the branch collected nothing but latest.json
+# for two days. Everything over WORK_BACKUP_MAX_BLOB_MB is now split into
+# blobs/<n>/part.NNN with a manifest, and restore glues it back.
+dd if=/dev/urandom of="$TMP/home/loose/blob.bin" bs=1M count=3 status=none
+sleep 1
+WORK_BACKUP_MAX_BLOB_MB=1 WORK_BACKUP_CHUNK_MB=1 GITHUB_RUN_ID=500 GITHUB_RUN_NUMBER=500000 \
+  bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
+SPLIT_SNAP="$(git --git-dir="$TMP/remote.git" show work-backup:latest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"])')"
+SPLIT_PARTS="$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only "work-backup:snapshots/$SPLIT_SNAP/blobs" 2>/dev/null | grep -c 'part\.' || true)"
+check "oversized snapshot files are split" "$([ "${SPLIT_PARTS:-0}" -ge 2 ] && echo 1 || echo 0)"
+check "no oversized file is left in the snapshot" "$(git --git-dir="$TMP/remote.git" ls-tree -r -l "work-backup:snapshots/$SPLIT_SNAP" | awk '$4 > 2000000 && $4 != 0 {print $4, $5}' | wc -l | tr -d ' ' | grep -qx 0 && echo 1 || echo 0)"
+check "the split manifest lists the file and its size" "$(git --git-dir="$TMP/remote.git" show "work-backup:snapshots/$SPLIT_SNAP/big-blobs.json" | python3 -c '
+import json,sys
+b=json.load(sys.stdin)["blobs"]
+print(1 if b and b[0]["size"] > 0 and b[0]["sha256"] and b[0]["parts"] else 0)')"
+check "the manifest reports the split count" "$(git --git-dir="$TMP/remote.git" show work-backup:latest.json | python3 -c '
+import json,sys
+print(1 if json.load(sys.stdin).get("blobs", 0) > 0 else 0)')"
+
+# And the guard: a push that carries no snapshot must NOT pass for success.
+git init -q --bare "$TMP/refuse.git"
+cat > "$TMP/refuse.git/hooks/pre-receive" <<'HOOK'
+#!/usr/bin/env bash
+echo "remote: error: refusing this push" >&2
+exit 1
+HOOK
+chmod +x "$TMP/refuse.git/hooks/pre-receive"
+before_refuse="$(git --git-dir="$TMP/refuse.git" rev-parse --verify work-backup 2>/dev/null || echo none)"
+SESSION_STATE_URL="$TMP/refuse.git" WORK_BACKUP_ROOT="$TMP/home" WORK_BACKUP_STATE="$TMP/home/.npm-hub/work-backup-state" \
+  HUB_LOGS="$TMP/logs" bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
+refuse_rc=$?
+after_refuse="$(git --git-dir="$TMP/refuse.git" rev-parse --verify work-backup 2>/dev/null || echo none)"
+check "a refused publish is not reported as success" "$([ "$refuse_rc" -ne 0 ] && echo 1 || echo 0)"
+check "a refused publish leaves latest.json alone" "$([ "$before_refuse" = "$after_refuse" ] && echo 1 || echo 0)"
+
+# Wipe and rebuild: the split loose-file archive must come back byte for byte.
+cd /
+rm -rf "$TMP/home"; mkdir -p "$TMP/home"
+bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
+check "split snapshot restored and rebuilt" "$([ -f "$TMP/home/loose/blob.bin" ] && echo 1 || echo 0)"
+
 # A partial clone must not block restoring the real repository.
 rm -rf "$TMP/home/proj"
 mkdir -p "$TMP/home/proj"
