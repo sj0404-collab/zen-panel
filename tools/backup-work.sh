@@ -135,6 +135,12 @@ EXCLUDES=(
   '*/.config/gh/*' '*/.npm-hub' '*/.npm-hub/*' '*/.npm-hub/tmp/*' '*/.npm-hub/logs/*' '*/.ssh/*'
   '*/.docker/*' '*/.oh-my-zsh/*' '*/.opencode/*' '*/work/*'
   '*/hub-work/*/node_modules/*' '*/.git/lfs/*' '*/.local/share/Code/*'
+  # Downloaded tool stores and browser model caches: hundreds of MB that any
+  # tool re-fetches on its own. They were the reason files.tar.gz grew to
+  # 140 MB and the whole snapshot stopped being pushable.
+  '*.apk' '*.aab' '*.apks'
+  '*/.dotnet/tools/.store/*' '*/optimization_guide_model_store/*'
+  '*/component_crx_cache/*' '*/ShaderCache/*' '*/.local/state/*'
   '*/.vscode-server/*' '*/.java/*' '*/.sonar/*'
   # Gradle/Android build outputs: regenerable and routinely >500MB per build.
   # They were filling the snapshots (one gradle build alone was ~700MB) and
@@ -149,7 +155,11 @@ EXCLUDES=(
 # the untracked-file packer where git ls-files would otherwise include them.
 skip_regenerable() {
   case "$1" in
-    *.apk|*.aab|*.hprof) return 0 ;;
+    *.apk|*.aab|*.apks|*.hprof) return 0 ;;
+    # The tool's own payload inside a repository: a 60 MB binary that the
+    # agent downloads for itself, not the user's work.
+    .opencode|.opencode/*|*/.opencode|*/.opencode/*) return 0 ;;
+    local.properties|*/local.properties) return 0 ;;
     */build/*|build/*|*/target/*|target/*) return 0 ;;
     */.gradle/*|.gradle/*|*/.kotlin/*|.kotlin/*) return 0 ;;
     */.idea/*|.idea/*) return 0 ;;
@@ -357,7 +367,7 @@ compute_sig() {
 collect() {
   local stage="$1"
   mkdir -p "$stage/repos" || return 1
-  local total_bytes=0 budget=$(( MAX_TOTAL_MB * 1024 * 1024 )) gitdir dir rel out sz
+  local total_bytes=0 budget=$(( MAX_TOTAL_MB * 1024 * 1024 )) gitdir dir rel out sz shallow
 
   while IFS= read -r gitdir; do
     [ -n "$gitdir" ] || continue
@@ -366,9 +376,40 @@ collect() {
     out="$stage/repos/$rel"
     mkdir -p "$out" || return 1
     if git -C "$dir" rev-parse HEAD >/dev/null 2>&1; then
-      if ! git -C "$dir" bundle create "$out/repo.bundle" --all >/dev/null 2>&1; then
-        log "bundle failed for $rel"
-        return 1
+      # A shallow clone (the Files tab clones with --depth 1, and so does a
+      # restore) has no history before its boundary, and `git bundle create`
+      # still writes a bundle - one that cannot be cloned: "Failed to traverse
+      # parents of commit ...", "remote did not send all necessary objects".
+      # Measured on a live runner: both big repositories were unrestorable for
+      # exactly this reason, and the log said nothing. So for a shallow repo we
+      # ship the committed tree as an archive instead; with the WIP diff and
+      # the untracked files that follow it, that IS the working state.
+      shallow=0
+      [ "$(git -C "$dir" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ] && shallow=1
+      if [ "$shallow" = 1 ]; then
+        # Same rule as the untracked pack: an APK in the tree is a build
+        # product, not the source. On the live runner the book app carried a
+        # 40 MB .apk and a 13 MB .tar.xz in HEAD, which alone made the archive
+        # too big to push.
+        if ! git -C "$dir" archive --format=tar.gz -o "$out/worktree.tar.gz" HEAD -- . \
+          ':(exclude)*.apk' ':(exclude)*.aab' ':(exclude)*.apks' \
+          ':(exclude)build' ':(exclude)*/build/*' \
+          ':(exclude).gradle' ':(exclude)*/.gradle/*' \
+          ':(exclude).opencode' ':(exclude)*/.opencode/*' \
+          ':(exclude)local.properties' ':(exclude)*/local.properties' 2>/dev/null; then
+          # An old git without pathspec magic: fall back to the whole tree
+          # rather than losing the repository.
+          if ! git -C "$dir" archive --format=tar.gz -o "$out/worktree.tar.gz" HEAD 2>/dev/null; then
+            log "worktree archive failed for $rel (shallow repository)"
+            return 1
+          fi
+        fi
+        [ -s "$out/worktree.tar.gz" ] || rm -f "$out/worktree.tar.gz"
+      else
+        if ! git -C "$dir" bundle create "$out/repo.bundle" --all >/dev/null 2>&1; then
+          log "bundle failed for $rel"
+          return 1
+        fi
       fi
       if ! git -C "$dir" diff --binary HEAD >"$out/wip.patch" 2>/dev/null; then
         log "WIP diff failed for $rel"
@@ -394,12 +435,21 @@ d, rel, path = sys.argv[1], sys.argv[2], sys.argv[3]
 def run(c):
     try: return subprocess.check_output(c, cwd=d, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
     except Exception: return ""
+shallow = run("git rev-parse --is-shallow-repository 2>/dev/null") == "true"
+boundary = ""
+if shallow:
+    try:
+        with open(os.path.join(subprocess.check_output(["git", "-C", d, "rev-parse", "--git-dir"], text=True).strip(), "shallow"), encoding="utf-8") as f:
+            boundary = f.read().strip()
+    except Exception:
+        boundary = ""
 json.dump({
     "rel": rel, "path": d, "name": os.path.basename(os.path.realpath(d)),
     "branch": run("git branch --show-current") or run("git rev-parse --abbrev-ref HEAD"),
     "head": run("git rev-parse HEAD"),
     "remote": run("git remote get-url origin 2>/dev/null"),
     "dirty": bool(run("git status --porcelain")),
+    "shallow": shallow, "shallowBoundary": boundary,
 }, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY
     then
@@ -442,6 +492,7 @@ PY
   if [ "$split" -gt 0 ]; then
     log "split $split oversized snapshot file(s) into ${CHUNK_MB}MB parts (GitHub refuses blobs over 100 MB)"
   fi
+  log "left out by design: node_modules, caches, toolchains, build outputs (build/, .gradle/, target/), APKs and downloaded tool stores - all of them are rebuilt or re-downloaded on the next runner"
 }
 
 backup_run_is_stale() {

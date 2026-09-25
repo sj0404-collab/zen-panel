@@ -722,5 +722,18 @@ check('q94 a push without a snapshot is a failure', backupWork.includes('verify_
   backupWork.includes('return 3') && backupWork.includes('NOTHING LANDED') &&
   backupWork.includes('[ "$publish_status" -eq 3 ]'));
 
+// q95: a shallow clone has no usable bundle, so its committed tree travels as
+// an archive - and a bundle that will not clone must not lose the repository.
+check('q95 shallow repositories are archived', backupWork.includes('--is-shallow-repository') &&
+  backupWork.includes('worktree.tar.gz') && backupWork.includes('worktree archive failed') &&
+  backupWork.includes(':(exclude)*.apk') && backupWork.includes('"shallow": shallow') &&
+  restoreWork.includes('rebuild_from_archive()') &&
+  restoreWork.includes('if rebuild_from_archive "$repodir" "$dest" "$rel"'));
+// q96: builds and re-downloadable payloads stay out, and the log says so.
+check('q96 build products are left out by design', backupWork.includes("'*.apk' '*.aab' '*.apks'") &&
+  backupWork.includes("'*/.dotnet/tools/.store/*'") &&
+  backupWork.includes('left out by design') &&
+  backupWork.includes('*/.opencode/*'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
