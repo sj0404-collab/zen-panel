@@ -64,6 +64,37 @@ extract_keep_old() {
   return 1
 }
 
+# Rebuild a repository from worktree.tar.gz - what backup-work.sh writes for a
+# shallow clone, whose bundle cannot be cloned ("Failed to traverse parents").
+# The result is a real repository (git init + one commit), so the next backup
+# can bundle it properly; the caller then applies the WIP diff and the untracked
+# files exactly as it does for a cloned repository.
+rebuild_from_archive() {
+  local repodir="$1" dest="$2" rel="$3"
+  [ -s "$repodir/worktree.tar.gz" ] || return 1
+  mkdir -p "$dest" || return 1
+  if ! tar -xzf "$repodir/worktree.tar.gz" -C "$dest" 2>/dev/null; then
+    log "could not unpack the archive of $rel"
+    return 1
+  fi
+  ( cd "$dest" && git init -q ) || return 1
+  if [ -f "$repodir/meta.json" ]; then
+    META_REMOTE=$(python3 - "$repodir/meta.json" <<'META'
+import json, sys
+try:
+    print(json.load(open(sys.argv[1], encoding='utf-8')).get('remote', ''))
+except Exception:
+    print('')
+META
+)
+    [ -z "$META_REMOTE" ] || git -C "$dest" remote add origin "$META_REMOTE" 2>/dev/null || true
+  fi
+  ( cd "$dest" && git add -A >/dev/null 2>&1 && \
+      git -c user.email "restore@zen-panel" -c user.name "Restore" \
+          commit -q -m "state restored from the previous runner" >/dev/null 2>&1 ) || true
+  return 0
+}
+
 copy_legacy_manifest() {
   local dir="$1"
   local legacy="$(dirname "$dir")/MANIFEST.md"
@@ -288,9 +319,16 @@ PY
   mkdir -p "$(dirname "$dest")"
   if [ -f "$repodir/repo.bundle" ]; then
      if ! git clone -q "$repodir/repo.bundle" "$dest" 2>/dev/null; then
-       log "clone of $rel failed; skipped"
-       failed=1
-       continue
+       # A bundle that will not clone is still better than no repository: the
+       # archive next to it holds the committed tree, and the WIP patch plus
+       # the untracked pack that follow bring the working state with it.
+       if rebuild_from_archive "$repodir" "$dest" "$rel"; then
+         log "restored $rel from its archive (the bundle would not clone)"
+       else
+         log "clone of $rel failed; skipped"
+         failed=1
+         continue
+       fi
      fi
      if [ -f "$repodir/meta.json" ]; then
        META_REMOTE=$(python3 - "$repodir/meta.json" <<'PY'
@@ -304,7 +342,7 @@ PY
        [ -z "$META_REMOTE" ] || git -C "$dest" remote set-url origin "$META_REMOTE" 2>/dev/null || true
      fi
 
-  else
+  elif ! rebuild_from_archive "$repodir" "$dest" "$rel"; then
     mkdir -p "$dest"
     ( cd "$dest" && git init -q )
   fi

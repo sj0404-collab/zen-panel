@@ -144,6 +144,45 @@ check "ignored file not restored" "$([ ! -f "$TMP/home/proj/build/out.o" ] && ec
 check "loose file restored" "$([ -f "$TMP/home/loose/note.txt" ] && echo 1 || echo 0)"
 check "chunked big file restored byte for byte" "$([ "$(sha256sum "$TMP/home/loose/big.bin" 2>/dev/null | cut -d' ' -f1)" = "$BIG_SHA" ] && echo 1 || echo 0)"
 
+# A build product in the tree is not the user's work: the APK, the Gradle
+# build directories and the tool's own payload stay out of the snapshot, and
+# the tool re-creates them on the next runner.
+printf 'android apk payload\n' > /dev/null
+dd if=/dev/urandom of="$TMP/home/bigcode/app-release.apk" bs=1M count=2 status=none
+mkdir -p "$TMP/home/bigcode/app/build/outputs"
+dd if=/dev/urandom of="$TMP/home/bigcode/app/build/outputs/apk/output.apk" bs=1M count=2 status=none
+
+# ── A shallow clone has no usable bundle ───────────────────────────────
+# The Files tab clones with --depth 1, and a restore clones shallow too. On
+# such a repository `git bundle create --all` still writes a bundle - and it
+# cannot be cloned ("Failed to traverse parents of commit ..."), so the repo was
+# captured and then unrestorable. Measured on a live runner: both big
+# repositories. Now the committed tree travels as an archive instead.
+SHALLOW_SRC="$TMP/shallow-src"
+git init -q "$SHALLOW_SRC"
+(
+  cd "$SHALLOW_SRC"
+  git config user.email t@t; git config user.name t
+  echo "first" > history.txt
+  for i in 1 2 3; do echo "line $i" >> history.txt; git add -A; git commit -qm "c$i"; done
+)
+rm -rf "$TMP/home/shallow-code"
+git clone -q --depth 1 "file://$SHALLOW_SRC" "$TMP/home/shallow-code" 2>/dev/null
+echo "shallow edit" >> "$TMP/home/shallow-code/history.txt"
+echo "shallow untracked" > "$TMP/home/shallow-code/scratch.txt"
+sleep 1
+GITHUB_RUN_ID=600 GITHUB_RUN_NUMBER=600000 WORK_BACKUP_KEEP=4 bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
+# Find the snapshot that actually carries the shallow repository rather than
+# trusting latest.json: several publishes happen in this test, and the point of
+# the check is the content, not which run won.
+SHALLOW_SNAP="$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only work-backup \
+  | grep -E '^snapshots/[0-9]{8}T[0-9]{6}/repos/shallow-code/worktree\.tar\.gz$' \
+  | sed 's|^snapshots/||; s|/repos/.*||' | LC_ALL=C sort -r | head -1)"
+SHALLOW_META="$(git --git-dir="$TMP/remote.git" show "work-backup:snapshots/$SHALLOW_SNAP/repos/shallow-code/meta.json" 2>/dev/null)"
+check "shallow repo is marked as such" "$(printf '%s' "$SHALLOW_META" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(1 if d.get("shallow") else 0)' 2>/dev/null || echo 0)"
+check "build products stay out of the loose set" "$([ "$(git --git-dir="$TMP/remote.git" show "work-backup:snapshots/$SHALLOW_SNAP/tree.txt" 2>/dev/null | grep -c '\.apk')" = 0 ] && echo 1 || echo 0)"
+check "shallow repo ships an archive, not a bundle" "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only "work-backup:snapshots/$SHALLOW_SNAP/repos/shallow-code" | grep -qx 'worktree.tar.gz' && [ -z "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only "work-backup:snapshots/$SHALLOW_SNAP/repos/shallow-code" | grep 'repo.bundle')" ] && echo 1 || echo 0)"
+
 # ── The oversized blob that broke the live backup ──────────────────────
 # files.tar.gz and a big repo.bundle outgrew GitHub's 100 MB blob limit, so the
 # whole snapshot was refused and the branch collected nothing but latest.json
@@ -151,7 +190,7 @@ check "chunked big file restored byte for byte" "$([ "$(sha256sum "$TMP/home/loo
 # blobs/<n>/part.NNN with a manifest, and restore glues it back.
 dd if=/dev/urandom of="$TMP/home/loose/blob.bin" bs=1M count=3 status=none
 sleep 1
-WORK_BACKUP_MAX_BLOB_MB=1 WORK_BACKUP_CHUNK_MB=1 GITHUB_RUN_ID=500 GITHUB_RUN_NUMBER=500000 \
+WORK_BACKUP_MAX_BLOB_MB=1 WORK_BACKUP_CHUNK_MB=1 GITHUB_RUN_ID=700 GITHUB_RUN_NUMBER=700000 WORK_BACKUP_KEEP=4 \
   bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
 SPLIT_SNAP="$(git --git-dir="$TMP/remote.git" show work-backup:latest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"])')"
 SPLIT_PARTS="$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only "work-backup:snapshots/$SPLIT_SNAP/blobs" 2>/dev/null | grep -c 'part\.' || true)"
@@ -186,6 +225,10 @@ cd /
 rm -rf "$TMP/home"; mkdir -p "$TMP/home"
 bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
 check "split snapshot restored and rebuilt" "$([ -f "$TMP/home/loose/blob.bin" ] && echo 1 || echo 0)"
+check "shallow repo restored from its archive" "$([ -d "$TMP/home/shallow-code/.git" ] && echo 1 || echo 0)"
+check "shallow repo committed content restored" "$(grep -q '^line 3$' "$TMP/home/shallow-code/history.txt" 2>/dev/null && echo 1 || echo 0)"
+check "shallow repo uncommitted change restored" "$(grep -q 'shallow edit' "$TMP/home/shallow-code/history.txt" 2>/dev/null && echo 1 || echo 0)"
+check "shallow repo untracked file restored" "$([ -f "$TMP/home/shallow-code/scratch.txt" ] && echo 1 || echo 0)"
 
 # A partial clone must not block restoring the real repository.
 rm -rf "$TMP/home/proj"
