@@ -75,15 +75,58 @@ GITHUB_RUN_ID=100 GITHUB_RUN_NUMBER=10 bash "$TOOLS/backup-work.sh" --once >/dev
 
 rm -rf "$TMP/home/.npm-hub"
 GITHUB_RUN_ID=200 GITHUB_RUN_NUMBER=20 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub.example startedAt=2026-01-01T00:00:00Z >/dev/null 2>&1
-check "session publish bootstraps staging" "$(git --git-dir="$TMP/remote.git" show session-state:session-hub-linux.json >/dev/null 2>&1 && echo 1 || echo 0)"
+check "session publish bootstraps staging" "$(git --git-dir="$TMP/remote.git" show session-state:live/session-hub-linux.json >/dev/null 2>&1 && echo 1 || echo 0)"
 GITHUB_RUN_ID=200 GITHUB_RUN_NUMBER=20 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub-new.example >/dev/null 2>&1
-check "same run republish keeps startedAt" "$(git --git-dir="$TMP/remote.git" show session-state:session-hub-linux.json | grep -q '2026-01-01T00:00:00Z' && echo 1 || echo 0)"
+check "same run republish keeps startedAt" "$(git --git-dir="$TMP/remote.git" show session-state:live/session-hub-linux.json | grep -q '2026-01-01T00:00:00Z' && echo 1 || echo 0)"
 GITHUB_RUN_ID=100 GITHUB_RUN_NUMBER=10 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub-old.example >/dev/null 2>&1
-check "older run cannot reclaim live session" "$(git --git-dir="$TMP/remote.git" show session-state:session-hub-linux.json | grep -q 'https://hub-new.example' && echo 1 || echo 0)"
+check "older run cannot reclaim live session" "$(git --git-dir="$TMP/remote.git" show session-state:live/session-hub-linux.json | grep -q 'https://hub-new.example' && echo 1 || echo 0)"
 GITHUB_RUN_ID=100 GITHUB_RUN_NUMBER=10 bash "$TOOLS/publish_session.sh" slot=hub-linux state=ended >/dev/null 2>&1
-check "older run cannot end newer session" "$(git --git-dir="$TMP/remote.git" show session-state:session-hub-linux.json | grep -q '"state": "live"' && echo 1 || echo 0)"
+check "older run cannot end newer session" "$(git --git-dir="$TMP/remote.git" show session-state:live/session-hub-linux.json | grep -q '"state": "live"' && echo 1 || echo 0)"
 GITHUB_RUN_ID=300 GITHUB_RUN_NUMBER=30 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub-third.example >/dev/null 2>&1
-check "newer run replaces live session" "$(git --git-dir="$TMP/remote.git" show session-state:session-hub-linux.json | grep -q 'https://hub-third.example' && echo 1 || echo 0)"
+check "newer run replaces live session" "$(git --git-dir="$TMP/remote.git" show session-state:live/session-hub-linux.json | grep -q 'https://hub-third.example' && echo 1 || echo 0)"
+
+# ── the branch is sorted into folders: live/, models/, snapshots/, history/ ──
+check "live descriptor moved into live/" "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only session-state | grep -qx 'live/session-hub-linux.json' && echo 1 || echo 0)"
+check "root is free of flat session files" "$([ "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only session-state | grep -c '^session-')" = 0 ] && echo 1 || echo 0)"
+GITHUB_RUN_ID=300 GITHUB_RUN_NUMBER=30 bash "$TOOLS/publish_session.sh" slot=hub-linux file=models-hub-linux.json kind=NPM-Hub json=/dev/null >/dev/null 2>&1
+check "models roster goes to models/" "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only session-state | grep -qx 'models/models-hub-linux.json' && echo 1 || echo 0)"
+GITHUB_RUN_ID=300 GITHUB_RUN_NUMBER=30 bash "$TOOLS/publish_session.sh" file=audit.json json=/dev/null kind=snapshot-audit.json >/dev/null 2>&1
+check "audit snapshot goes to snapshots/" "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only session-state | grep -qx 'snapshots/audit.json' && echo 1 || echo 0)"
+GITHUB_RUN_ID=300 GITHUB_RUN_NUMBER=30 bash "$TOOLS/publish_session.sh" "file=saved/hub-linux-20260102T030405.json" json=/dev/null kind=save >/dev/null 2>&1
+check "saved bundle is filed under its day" "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only session-state | grep -q '^history/2026-01-02/Fri/saved-hub-linux-20260102T030405.json$' && echo 1 || echo 0)"
+GITHUB_RUN_ID=300 GITHUB_RUN_NUMBER=30 bash "$TOOLS/publish_session.sh" journal_date=2026-01-02 journal=1 slot=hub-linux kind=NPM-Hub os=linux conclusion=success handoff=false >/dev/null 2>&1
+check "run journal lands in history by day" "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only session-state | grep -q '^history/2026-01-02/Fri/run-30.json$' && echo 1 || echo 0)"
+check "run journal keeps the outcome" "$(git --git-dir="$TMP/remote.git" show session-state:history/2026-01-02/Fri/run-30.json | grep -q '"conclusion": "success"' && echo 1 || echo 0)"
+check "stray file override is still refused" "$(GITHUB_RUN_ID=300 GITHUB_RUN_NUMBER=30 bash "$TOOLS/publish_session.sh" file=evil/payload.json >/dev/null 2>&1; [ $? -ne 0 ] && echo 1 || echo 0)"
+
+# The one-time migration: a branch that still has the old flat layout must end
+# up in the folders, with every file intact. Its own bare repo, so the pushed
+# branch is exactly what this scenario builds.
+git init -q --bare "$TMP/old.git"
+OLD_CLONE="$TMP/old"
+git clone -q "$TMP/old.git" "$OLD_CLONE" 2>/dev/null
+cd "$OLD_CLONE"
+# A hand-made flat branch, exactly as it looked before this change.
+git checkout -q --orphan session-state
+git rm -rqf . 2>/dev/null || true
+mkdir -p saved
+printf '{"state":"live","runId":"7","url":"https://old.example","startedAt":"2026-01-01T00:00:00Z"}\n' > session-hub-linux.json
+printf '{"models":[]}\n' > models-hub-linux.json
+printf '{"audit":[]}\n' > audit.json
+printf '{"code":[]}\n' > code.json
+printf '{"handoff":1}\n' > handoff.json
+printf '{"saved":1}\n' > saved/hub-linux-20260101T101010.json
+git add -A >/dev/null 2>&1
+git -c user.email=t@t -c user.name=t commit -q -m "old flat layout"
+git push -q origin HEAD:session-state
+SESSION_STATE_URL="$TMP/old.git" bash "$TOOLS/migrate_session_state.sh" >/dev/null 2>&1
+check "migrated live descriptor" "$(git --git-dir="$TMP/old.git" ls-tree -r --name-only session-state | grep -qx 'live/session-hub-linux.json' && echo 1 || echo 0)"
+check "migrated models + handoff" "$(git --git-dir="$TMP/old.git" ls-tree -r --name-only session-state | grep -qx 'models/models-hub-linux.json' && git --git-dir="$TMP/old.git" ls-tree -r --name-only session-state | grep -qx 'live/handoff.json' && echo 1 || echo 0)"
+check "migrated audit and code" "$(git --git-dir="$TMP/old.git" ls-tree -r --name-only session-state | grep -qx 'snapshots/audit.json' && git --git-dir="$TMP/old.git" ls-tree -r --name-only session-state | grep -qx 'snapshots/code.json' && echo 1 || echo 0)"
+check "migrated saved bundle by its day" "$(git --git-dir="$TMP/old.git" ls-tree -r --name-only session-state | grep -qx 'history/2026-01-01/Thu/saved-hub-linux-20260101T101010.json' && echo 1 || echo 0)"
+check "migrated the old live url" "$(git --git-dir="$TMP/old.git" show session-state:live/session-hub-linux.json | grep -q 'https://old.example' && echo 1 || echo 0)"
+check "no flat files left after the migration" "$([ "$(git --git-dir="$TMP/old.git" ls-tree -r --name-only session-state | grep -cE '^(session-|models-|audit|code|handoff|saved/)')" = 0 ] && echo 1 || echo 0)"
+check "migration is idempotent" "$(SESSION_STATE_URL="$TMP/old.git" bash "$TOOLS/migrate_session_state.sh" >/dev/null 2>&1 && echo 1 || echo 0)"
 
 # Wipe and rebuild.
 cd /

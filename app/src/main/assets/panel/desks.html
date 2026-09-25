@@ -131,12 +131,17 @@ function token() {
 }
 
 async function readSlot(slot) {
-  const url = `https://api.github.com/repos/${REPO}/contents/session-${slot}.json` +
-              `?ref=session-state&t=${Date.now()}`;
+  // live/ first (the reorganised branch), the old root second.
   const h = { Accept: 'application/vnd.github+json' };
   const t = token();
   if (t) h.Authorization = 'token ' + t;
-  const r = await fetch(url, { headers: h });
+  let r = null;
+  for (const path of [`live/session-${slot}.json`, `session-${slot}.json`]) {
+    const url = `https://api.github.com/repos/${REPO}/contents/${path}` +
+                `?ref=session-state&t=${Date.now()}`;
+    r = await fetch(url, { headers: h });
+    if (r.ok) break;
+  }
   if (!r.ok) return null;
   const j = await r.json();
   const s = JSON.parse(decodeURIComponent(escape(atob((j.content || '').replace(/\n/g, '')))));

@@ -254,3 +254,15 @@ jobs:
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
             "slot=windows" "state=ended"
+
+      - name: Record the run in the history
+        if: always()
+        shell: pwsh
+        run: |
+          # history/<YYYY-MM-DD>/<Wd>/run-<runNumber>.json - see the Linux step.
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" journal=1 `
+            "slot=windows" "kind=Столы" "os=windows" `
+            "conclusion=${{ job.status }}" "endedAt=$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))" `
+            "handoff=${{ inputs.handoff }}" `
+            "runUrl=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"

@@ -189,9 +189,13 @@ function parseSessionFile(f) {
   return JSON.parse(raw);
 }
 async function readHubSession(token) {
-  const f = await api(`/repos/${REPO}/contents/session-hub-linux.json?ref=session-state&t=${Date.now()}`, token);
-  if (!f) return null;
-  return parseSessionFile(f);
+  // The branch is organised in folders now; the old flat name stays as a
+  // fallback so an unmigrated branch keeps connecting.
+  for (const path of ['live/session-hub-linux.json', 'session-hub-linux.json']) {
+    const f = await api(`/repos/${REPO}/contents/${path}?ref=session-state&t=${Date.now()}`, token);
+    if (f) return parseSessionFile(f);
+  }
+  return null;
 }
 async function waitForHub(token, sinceMs, sleepMs) {
   const sleep = ms => new Promise(r => setTimeout(r, ms));

@@ -29,9 +29,29 @@ if ! git clone -q --depth 1 --branch "$BRANCH" "$REMOTE" "$TMP/state" 2>/dev/nul
   exit 0
 fi
 status=0
+# The branch was reorganised: audit/code now live under snapshots/, and the
+# historical bundles under history/<date>/<weekday>/. Both layouts are read, so
+# a branch that was never migrated restores exactly as before.
+pick_state_file() {
+  # $1 = leaf name; prints the first existing candidate.
+  local leaf="$1" cand
+  for cand in "snapshots/$leaf" "$leaf" "live/$leaf" "models/$leaf"; do
+    if [ -f "$TMP/state/$cand" ]; then printf '%s' "$cand"; return 0; fi
+  done
+  # history/<date>/<weekday>/<leaf>
+  cand="$(find "$TMP/state/history" -type f -name "$leaf" 2>/dev/null | LC_ALL=C sort | tail -n1)"
+  [ -n "$cand" ] || return 1
+  printf '%s' "${cand#"$TMP/state"/}"
+}
+history_files() {
+  # $1 = glob name (e.g. audit-*.json); prints matching files, new layout first.
+  find "$TMP/state/history" -type f -name "$1" 2>/dev/null | LC_ALL=C sort
+  ls "$TMP/state"/saved/"$1" 2>/dev/null
+}
 for f in audit.json code.json; do
-  if [ -f "$TMP/state/$f" ]; then
-    if ! cp -f "$TMP/state/$f" "$WORK/$f" 2>/dev/null; then
+  rel="$(pick_state_file "$f")" || rel=""
+  if [ -n "$rel" ] && [ -f "$TMP/state/$rel" ]; then
+    if ! cp -f "$TMP/state/$rel" "$WORK/$f" 2>/dev/null; then
       echo "restore_audit_code: could not restore $f" >&2
       status=1
       continue
@@ -56,29 +76,31 @@ PY
         status=1
       fi
     fi
-    echo "restore_audit_code: restored $f ($(wc -c < "$TMP/state/$f" | tr -d ' ')B) -> $WORK/$f"
+    echo "restore_audit_code: restored $rel ($(wc -c < "$TMP/state/$rel" | tr -d ' ')B) -> $WORK/$f"
   fi
 done
 mkdir -p "$WORK/.zen-agent/restored" 2>/dev/null || status=1
-if ls "$TMP/state/saved"/audit-*.json >/dev/null 2>&1; then
-  if ! cp -f "$TMP/state"/saved/audit-*.json "$WORK/.zen-agent/restored/" 2>/dev/null; then status=1; fi
-  echo "restore_audit_code: saved audit snapshots copied"
-fi
-if ls "$TMP/state"/saved/code-*.json >/dev/null 2>&1; then
-  if ! cp -f "$TMP/state"/saved/code-*.json "$WORK/.zen-agent/restored/" 2>/dev/null; then status=1; fi
-  echo "restore_audit_code: saved code snapshots copied"
-fi
+for kind in audit code; do
+  files="$(history_files "*$kind-*.json")"
+  if [ -n "$files" ]; then
+    # shellcheck disable=SC2086
+    if ! printf '%s\n' "$files" | xargs -r cp -f -t "$WORK/.zen-agent/restored/" 2>/dev/null; then status=1; fi
+    echo "restore_audit_code: saved $kind snapshots copied"
+  fi
+done
 mkdir -p "$HOME/.local/share/opencode/history" 2>/dev/null || status=1
-if ls "$TMP/state/saved"/opencode-*.json >/dev/null 2>&1; then
-  for f in "$TMP/state"/saved/opencode-*.json; do
+opencode_bundles="$(history_files '*opencode-*.json')"
+if [ -n "$opencode_bundles" ]; then
+  for f in $opencode_bundles; do
     STAMP="$(basename "$f" .json | sed 's/^opencode-//')"
     DEST="$HOME/.local/share/opencode/history/$STAMP"
     mkdir -p "$DEST" 2>/dev/null || status=1
     if ! cp -f "$f" "$DEST/bundle.json" 2>/dev/null; then status=1; fi
     echo "restore_audit_code: opencode bundle $STAMP restored"
   done
-  if [ -f "$TMP/state/audit.json" ]; then
-    if ! python3 - "$TMP/state/audit.json" "$HOME/.local/share/opencode/history" <<'PY2'
+  audit_rel="$(pick_state_file audit.json || true)"
+  if [ -n "$audit_rel" ] && [ -f "$TMP/state/$audit_rel" ]; then
+    if ! python3 - "$TMP/state/$audit_rel" "$HOME/.local/share/opencode/history" <<'PY2'
 import json, os, sys, glob
 audit_path, hist_root = sys.argv[1], sys.argv[2]
 try:

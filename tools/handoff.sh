@@ -90,8 +90,9 @@ BASE="https://x-access-token:${GH_TOKEN:-${GITHUB_TOKEN:-}}@github.com/${GITHUB_
 if ! verify_remote "$BASE" "work-backup" "latest.json"; then
   fail "work-backup/latest.json is not on the remote yet"
 fi
-if ! verify_remote "$BASE" "session-state" "session-$SLOT.json"; then
-  fail "session-$SLOT.json is not on session-state yet"
+if ! verify_remote "$BASE" "session-state" "live/session-$SLOT.json" \
+  && ! verify_remote "$BASE" "session-state" "session-$SLOT.json"; then
+  fail "the session descriptor for $SLOT is not on session-state yet"
 fi
 
 log "saved: snapshot + chats + session marker are on GitHub"

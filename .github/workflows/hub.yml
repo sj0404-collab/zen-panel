@@ -463,6 +463,26 @@ jobs:
                "kind=NPM-Hub" "os=linux" \
               "json=$HUB_LOGS/hub-models.json"
 
+      - name: Record the run in the history
+        if: always()
+        run: |
+          # One small file per run, filed under the day and the weekday it
+          # belongs to: history/<YYYY-MM-DD>/<Wd>/run-<runNumber>.json - the
+          # diary the panel groups by day, and unlike the Actions UI it does not
+          # disappear when GitHub prunes old runs.
+          STARTED=""
+          if [ -f "$HOME/.npm-hub/session-start" ]; then
+            STARTED="$(date -u -d "@$(( $(cat "$HOME/.npm-hub/session-start" 2>/dev/null || date +%s) / 1000 ))" '+%Y-%m-%d' 2>/dev/null || true)"
+          fi
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" journal=1 \
+              "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
+              "conclusion=${{ job.status }}" "endedAt=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+              ${STARTED:+journal_date="$STARTED"} \
+              "handoff=${{ inputs.handoff }}" \
+              "runUrl=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              2>&1 | tail -5 || echo "::warning::run history record failed"
+
   # ── Hub on Windows ─────────────────────────────────────────────────
   hub-windows:
     if: inputs.os == 'windows'
@@ -851,6 +871,18 @@ jobs:
             bash "$GITHUB_WORKSPACE/fork/tools/export-chats.sh" --all \
             2>&1 | tee -a "$HUB_LOGS/export-chats.log"
 
+      - name: Record the run in the history
+        if: always()
+        shell: pwsh
+        run: |
+          # history/<YYYY-MM-DD>/<Wd>/run-<runNumber>.json - see the Linux step.
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" journal=1 `
+            "slot=hub-windows" "kind=NPM-Hub" "os=windows" `
+            "conclusion=${{ job.status }}" "endedAt=$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))" `
+            "handoff=${{ inputs.handoff }}" `
+            "runUrl=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
   # ── Linux Desktop VNC (parallel runner) ────────────────────────────────
   # A second, independent job next to `hub`. It stands up a headless Linux
   # desktop (openbox + xterm, Mesa software rendering) and exposes it through
@@ -1000,3 +1032,23 @@ jobs:
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=vnc" "state=ended"
+
+      - name: Record the run in the history
+        if: always()
+        run: |
+          # One small file per run, filed under the day and the weekday it
+          # belongs to: history/<YYYY-MM-DD>/<Wd>/run-<runNumber>.json - the
+          # diary the panel groups by day, and unlike the Actions UI it does not
+          # disappear when GitHub prunes old runs.
+          STARTED=""
+          if [ -f "$HOME/.npm-hub/session-start" ]; then
+            STARTED="$(date -u -d "@$(( $(cat "$HOME/.npm-hub/session-start" 2>/dev/null || date +%s) / 1000 ))" '+%Y-%m-%d' 2>/dev/null || true)"
+          fi
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" journal=1 \
+              "slot=vnc" "kind=VNC" "os=linux" \
+              "conclusion=${{ job.status }}" "endedAt=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+              ${STARTED:+journal_date="$STARTED"} \
+              "handoff=${{ inputs.handoff }}" \
+              "runUrl=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              2>&1 | tail -5 || echo "::warning::run history record failed"
