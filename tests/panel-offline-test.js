@@ -53,10 +53,10 @@ function makeSandbox(mockFetch) {
 }
 
 (async () => {
-  let mode = 'ok', at = 0;
-  const mock = async () => {
+  let mode = 'ok', at = 0, failUrl = '';
+  const mock = async (input) => {
     at++;
-    if (mode === 'fail') throw new Error('offline');
+    if (mode === 'fail' && (!failUrl || String(input).includes(failUrl))) throw new Error('offline');
     return new Response(JSON.stringify({ repos: ['a'], at }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const sb = makeSandbox(mock);
@@ -64,6 +64,15 @@ function makeSandbox(mockFetch) {
   const live = await sb.fetch('https://api.github.com/user/repos');
   check('panel fetch transparent online', live.status === 200 && !live.headers.get('x-panel-offline'));
   await new Promise(r => setTimeout(r, 1300));
+
+  await sb.fetch('https://hub.example/api/info');
+  await new Promise(r => setTimeout(r, 15));
+  mode = 'fail'; failUrl = 'hub.example';
+  const hubCached = await sb.fetch('https://hub.example/api/info');
+  check('hub outage does not mark panel offline', hubCached.headers.get('x-panel-offline') === '1' && sb.PanelOffline.isOffline === false);
+  failUrl = '';
+  mode = 'ok';
+  await sb.fetch('https://api.github.com/user/repos');
 
   mode = 'fail';
   const c = await sb.fetch('https://api.github.com/user/repos');
