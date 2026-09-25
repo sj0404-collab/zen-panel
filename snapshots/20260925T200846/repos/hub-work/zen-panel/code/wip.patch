@@ -1,0 +1,38 @@
+diff --git a/tests/mobile-touch-test.js b/tests/mobile-touch-test.js
+index 4f43fb8..4028740 100644
+--- a/tests/mobile-touch-test.js
++++ b/tests/mobile-touch-test.js
+@@ -728,6 +728,7 @@ check('q95 shallow repositories are archived', backupWork.includes('--is-shallow
+   backupWork.includes('worktree.tar.gz') && backupWork.includes('worktree archive failed') &&
+   backupWork.includes(':(exclude)*.apk') && backupWork.includes('"shallow": shallow') &&
+   restoreWork.includes('rebuild_from_archive()') &&
++  restoreWork.includes('if python3 - "$snap" <<') &&
+   restoreWork.includes('if rebuild_from_archive "$repodir" "$dest" "$rel"'));
+ // q96: builds and re-downloadable payloads stay out, and the log says so.
+ check('q96 build products are left out by design', backupWork.includes("'*.apk' '*.aab' '*.apks'") &&
+diff --git a/tests/work-backup-test.sh b/tests/work-backup-test.sh
+index 093a6a1..f29afd4 100755
+--- a/tests/work-backup-test.sh
++++ b/tests/work-backup-test.sh
+@@ -224,6 +224,8 @@ check "a refused publish leaves latest.json alone" "$([ "$before_refuse" = "$aft
+ cd /
+ rm -rf "$TMP/home"; mkdir -p "$TMP/home"
+ bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
++restore_rc=$?
++check "a complete restore exits cleanly" "$([ "$restore_rc" -eq 0 ] && echo 1 || echo 0)"
+ check "split snapshot restored and rebuilt" "$([ -f "$TMP/home/loose/blob.bin" ] && echo 1 || echo 0)"
+ check "shallow repo restored from its archive" "$([ -d "$TMP/home/shallow-code/.git" ] && echo 1 || echo 0)"
+ check "shallow repo committed content restored" "$(grep -q '^line 3$' "$TMP/home/shallow-code/history.txt" 2>/dev/null && echo 1 || echo 0)"
+diff --git a/tools/restore-work.sh b/tools/restore-work.sh
+index c2a5f1c..b7c8bff 100755
+--- a/tools/restore-work.sh
++++ b/tools/restore-work.sh
+@@ -157,7 +157,7 @@ log "restoring from $SNAP"
+ rebuild_split_blobs() {
+   local snap="$1" failed=0
+   [ -f "$snap/big-blobs.json" ] || return 0
+-  if ! python3 - "$snap" <<'BLOBS'
++  if python3 - "$snap" <<'BLOBS'
+ import hashlib, json, os, sys
+ snap = sys.argv[1]
+ try:
