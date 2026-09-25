@@ -19,6 +19,13 @@
 #   Heavy, regenerable paths (node_modules, caches, toolchains, the runner's own
 #   checkout, the opencode database) are excluded by name.
 #
+# BIG FILES
+#   A file over WORK_BACKUP_MAX_FILE_MB used to be dropped from the snapshot
+#   without a word - a 150 MB dataset, a video, a big log simply never reached
+#   the next runner. GitHub refuses any blob over 100 MB ("exceeds 100 MiB"),
+#   so such a file cannot be committed whole either: it is split into chunks of
+#   WORK_BACKUP_CHUNK_MB and restore-work.sh glues them back together.
+#
 # USAGE
 #   backup-work.sh --once            one snapshot, then exit
 #   backup-work.sh                   daemon: snapshot every WORK_BACKUP_INTERVAL
@@ -30,6 +37,8 @@
 #   WORK_BACKUP_KEEP        snapshots to retain     (default 4)
 #   WORK_BACKUP_MAX_FILE_MB max single file to pack (default 25)
 #   WORK_BACKUP_MAX_TOTAL_MB bail out over this     (default 400)
+#   WORK_BACKUP_MAX_BIG_MB  largest split-and-send file (default 200)
+#   WORK_BACKUP_CHUNK_MB    chunk size for those     (default 20)
 #   SESSION_STATE_URL       git remote override for local tests
 set -uo pipefail
 
@@ -39,6 +48,14 @@ INTERVAL="${WORK_BACKUP_INTERVAL:-300}"
 KEEP="${WORK_BACKUP_KEEP:-4}"
 MAX_FILE_MB="${WORK_BACKUP_MAX_FILE_MB:-25}"
 MAX_TOTAL_MB="${WORK_BACKUP_MAX_TOTAL_MB:-400}"
+MAX_BIG_MB="${WORK_BACKUP_MAX_BIG_MB:-200}"
+CHUNK_MB="${WORK_BACKUP_CHUNK_MB:-20}"
+for _v in MAX_BIG_MB CHUNK_MB; do
+  case "${!_v}" in
+    ''|*[!0-9]*) eval "$_v=200" ;;
+  esac
+done
+[ "$CHUNK_MB" -gt 0 ] && [ "$CHUNK_MB" -le 90 ] || CHUNK_MB=20
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
 STATE_DIR="${WORK_BACKUP_STATE:-$HOME/.npm-hub/work-backup-state}"
 ONCE=0
@@ -162,6 +179,82 @@ loose_listing() {
       -printf '%y %P %s %T@\n' 2>/dev/null | LC_ALL=C sort )
 }
 
+# Loose files between MAX_FILE_MB and MAX_BIG_MB: too big for files.tar.gz
+# (and unsendable as one git blob), so each is split into CHUNK_MB parts under
+# big/<n>/ next to a meta.json with size + sha256. restore-work.sh rebuilds and
+# verifies them. Anything over MAX_BIG_MB is reported, never silently dropped.
+collect_big_files() {
+  local stage="$1" list chunks=0 skipped=0
+  list="$(mktemp)" || return 1
+  loose_predicates
+  if ! ( cd "$ROOT" || exit 1
+    find . -mindepth 1 -type f ${LOOSE_PREDICATES[@]+"${LOOSE_PREDICATES[@]}"} \
+      -size +"${MAX_FILE_MB}"M -print0 2>/dev/null > "$list" ); then
+    rm -f "$list"
+    return 1
+  fi
+  if [ ! -s "$list" ]; then
+    rm -f "$list"
+    return 0
+  fi
+  mkdir -p "$stage/big" || { rm -f "$list"; return 1; }
+  if ! python3 - "$ROOT" "$stage" "$list" "$((CHUNK_MB * 1024 * 1024))" <<'PY'
+import hashlib, json, os, sys
+root, stage, listfile, chunk = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+index = 0
+for raw in open(listfile, 'rb').read().split(b'\0'):
+    if not raw:
+        continue
+    rel = raw.decode('utf-8', 'replace').replace('\\', '/')
+    src = os.path.join(root, rel)
+    if os.path.islink(src) or not os.path.isfile(src):
+        continue
+    size = os.path.getsize(src)
+    if size <= 0:
+        continue
+    index += 1
+    out = os.path.join(stage, 'big', str(index))
+    os.makedirs(out, exist_ok=True)
+    digest = hashlib.sha256()
+    parts = []
+    with open(src, 'rb') as fh:
+        while True:
+            block = fh.read(chunk)
+            if not block:
+                break
+            digest.update(block)
+            name = 'part.%03d' % len(parts)
+            with open(os.path.join(out, name), 'wb') as w:
+                w.write(block)
+            parts.append(name)
+    with open(os.path.join(out, 'meta.json'), 'w', encoding='utf-8') as w:
+        json.dump({'rel': rel, 'size': size, 'sha256': digest.hexdigest(),
+                   'parts': parts, 'chunkBytes': chunk}, w, ensure_ascii=False, indent=2)
+PY
+  then
+    log "python could not split the big files"
+    rm -f "$list"
+    return 1
+  fi
+  chunks="$(find "$stage/big" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+  [ -n "$chunks" ] || chunks=0
+  if ! ( cd "$ROOT" || exit 1
+    find . -mindepth 1 -type f ${LOOSE_PREDICATES[@]+"${LOOSE_PREDICATES[@]}"} \
+      -size +"${MAX_BIG_MB}"M -printf '%s %P\n' 2>/dev/null > "$stage/big-skipped.txt" ); then
+    : > "$stage/big-skipped.txt"
+  fi
+  skipped="$(wc -l < "$stage/big-skipped.txt" 2>/dev/null | tr -d ' ')"
+  [ -n "$skipped" ] || skipped=0
+  if [ "$skipped" -gt 0 ]; then
+    log "$skipped file(s) over ${MAX_BIG_MB}MB not sent (raise WORK_BACKUP_MAX_BIG_MB to include them):"
+    while read -r size rel; do log "  skipped $rel ($((size / 1024 / 1024))MB)"; done \
+      < "$stage/big-skipped.txt"
+  fi
+  rm -f "$list"
+  [ "$chunks" -gt 0 ] && log "split $chunks big file(s) into ${CHUNK_MB}MB chunks"
+  return 0
+}
+
 # One digest covering every repo and every loose file: the gate for publishing.
 compute_sig() {
   {
@@ -251,6 +344,10 @@ PY
     return 1
   fi
   [ -s "$stage/files.tar.gz" ] || rm -f "$stage/files.tar.gz"
+  if ! collect_big_files "$stage"; then
+    log "big-file chunking failed"
+    return 1
+  fi
   if [ -d "$ROOT/.npm-hub/sessions" ]; then
     mkdir -p "$stage/descriptors" || return 1
     cp -a "$ROOT/.npm-hub/sessions/." "$stage/descriptors/" || return 1
@@ -317,9 +414,10 @@ if os.path.isdir(rroot):
 repos.sort(key=lambda x: str(x.get("rel", "")))
 data = {"kind": "work-backup", "stamp": stamp, "snapshot": snap, "repos": repos,
         "runId": os.environ.get("GITHUB_RUN_ID", ""),
-        "runNumber": int(os.environ.get("GITHUB_RUN_NUMBER") or 0),
+        "runNumber": int(os.environ.get("GITHUB_RUN_NUMBER", 0)),
         "tree": os.path.exists(os.path.join(snap, "tree.txt")),
         "files": os.path.exists(os.path.join(snap, "files.tar.gz")),
+        "big": os.path.isdir(os.path.join(snap, "big")),
         "descriptors": os.path.isdir(os.path.join(snap, "descriptors"))}
 for p in (os.path.join(snap, "manifest.json"), latest):
     json.dump(data, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
@@ -407,7 +505,10 @@ do_backup() (
     return 1
   fi
   local repos; repos="$(find "$stage/repos" -type f -name meta.json 2>/dev/null | wc -l | tr -d ' ')"
-  if [ "$repos" = 0 ] && [ ! -s "$stage/files.tar.gz" ]; then
+  local bigs; bigs="$(find "$stage/big" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+  [ -n "$repos" ] || repos=0
+  [ -n "$bigs" ] || bigs=0
+  if [ "$repos" = 0 ] && [ "$bigs" = 0 ] && [ ! -s "$stage/files.tar.gz" ]; then
     log "nothing to publish"; rm -rf "$stage"; printf '%s' "$sig" > "$STATE_DIR/global.sig"; return 0
   fi
   local result=0

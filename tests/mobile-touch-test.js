@@ -546,7 +546,7 @@ check('q59 upload progress UI',
 const sessionWorkflows = [hubWorkflow, agentWorkflow, opencodeWorkflow, desksWorkflow];
 check('q60 one session workflow lock', sessionWorkflows.every(x =>
   x.includes('zen-panel-session-${{ github.repository }}')) &&
-  hubWorkflow.includes('cancel-in-progress: ${{ inputs.replace }}') &&
+  hubWorkflow.includes('cancel-in-progress: ${{ inputs.replace && !inputs.handoff }}') &&
   agentWorkflow.includes('cancel-in-progress: false') &&
   opencodeWorkflow.includes('cancel-in-progress: false') &&
   desksWorkflow.includes('cancel-in-progress: false'));
@@ -625,6 +625,40 @@ check('q80 terminal virtual mouse', [mob, desk, term].every(x =>
   [mobHtml, deskHtml, fs.readFileSync(termHtmlPath, 'utf8')].every(x =>
     x.includes('.term-mouse-pad{') && x.includes('left:8px;top:8px') &&
     !x.includes('left:6px;top:50%')));
+
+// q81: the session relay end to end. The runner must SAVE FIRST and only then
+// count down: a failed push keeps the user on the current runner, and the old
+// runner steps aside only after the new one has published itself.
+const handoffMod = fs.readFileSync(path.join(__dirname, '..', 'npm-hub', 'src', 'handoff.js'), 'utf8');
+const handoffSh = fs.readFileSync(path.join(__dirname, '..', 'tools', 'handoff.sh'), 'utf8');
+check('q81 handoff state machine', handoffMod.includes('const DEFAULTS = {') &&
+  handoffMod.includes("maxAgeMin: 330") && handoffMod.includes("countdownSec: 180") &&
+  handoffMod.includes('saveFail(error, ts)') && handoffMod.includes('successorSeen(runId') &&
+  handoffMod.includes("lastError = 'новый раннер не поднялся за '"));
+check('q82 handoff save refuses to hand over unsaved work', handoffSh.includes('SAVE FAILED') &&
+  handoffSh.includes('refusing to hand over an unsaved session') &&
+  handoffSh.includes('verify_remote "$BASE" "work-backup" "latest.json"') &&
+  handoffSh.includes('backup-work.sh" --once'));
+check('q83 handoff endpoints and activity tracking', server.includes("app.get('/api/handoff'") &&
+  server.includes("app.post('/api/handoff/policy'") && server.includes("app.post('/api/handoff/start'") &&
+  server.includes("app.post('/api/handoff/continue'") &&
+  server.includes('HANDOFF_QUIET') && server.includes('createHandoff(') &&
+  server.includes('handoff.noteActivity();') && server.includes("handoff.json"));
+check('q84 the successor run is not cancelled by the old one', hubWorkflow.includes('handoff:') &&
+  hubWorkflow.includes('handoff_from:') &&
+  hubWorkflow.includes('cancel-in-progress: ${{ inputs.replace && !inputs.handoff }}') &&
+  hubWorkflow.includes('handoff-done') && server.includes("'handoff-done'") &&
+  server.includes('handoff: true'));
+check('q85 handoff UI in both hubs and the panel', [mob, desk].every(x =>
+  x.includes('function handoffRender()') && x.includes('function handoffSave()') &&
+  x.includes('function handoffStart()') && x.includes('function handoffContinue()') &&
+  x.includes('handoffPollStart()')) &&
+  panel.includes('function handoffPanelSave()') && panel.includes('handoff.json') &&
+  panel.includes('handoffPanelPoll()'));
+check('q86 big files travel as chunks', backupWork.includes('collect_big_files()') &&
+  backupWork.includes('WORK_BACKUP_MAX_BIG_MB:-200') && backupWork.includes('WORK_BACKUP_CHUNK_MB:-20') &&
+  backupWork.includes('"big": os.path.isdir') && restoreWork.includes('chunked big files') &&
+  restoreWork.includes('sha256'));
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

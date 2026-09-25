@@ -266,6 +266,32 @@
     <div id="runner-res"></div>
   </div>
 
+  <div class="card" id="handoff-card">
+    <h2>🔁 Эстафета сессии</h2>
+    <div class="note" style="margin-top:0" id="ho-line">читаю настройки…</div>
+    <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap">
+      <label class="note">работает до
+        <input id="ho-age" type="number" min="0" max="720" step="10" inputmode="numeric"
+               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
+      <label class="note">простой
+        <input id="ho-idle" type="number" min="0" max="720" step="5" inputmode="numeric"
+               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
+      <label class="note">отсчёт
+        <input id="ho-count" type="number" min="30" max="1800" step="30" inputmode="numeric"
+               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> с</label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="small" onclick="handoffPanelSave()">💾 Сохранить</button>
+      <button class="ghost small" id="ho-start" onclick="handoffPanelStart()">🔁 Передать сейчас</button>
+      <button class="ghost small" id="ho-continue" onclick="handoffPanelContinue()">▶️ Продолжить</button>
+    </div>
+    <div class="note" id="ho-hint" style="margin-top:6px">
+      Лимиты хранятся в control-репозитории, поэтому новый раннер читает их сам.
+      Передача сначала сохраняет всё на GitHub, потом считает 3 минуты; «Продолжить» отменяет.
+      0 = выключено. Если не удалось сохранить — раннер не выключается.
+    </div>
+  </div>
+
   <div class="card">
     <h2>Активная сессия</h2>
     <div id="live"><span class="spin">проверяю…</span></div>
@@ -2406,6 +2432,118 @@ async function runnerPanelRestart() {
     : `<span class="danger">${esc(r.error || 'не вышло')}</span>`;
 }
 
+// ── Эстафета сессии ────────────────────────────────────────────────────
+// GitHub-hosted раннер живёт шесть часов и умирает вместе со всем диском.
+// Раннер сам следит за лимитами, сохраняет всё на GitHub, считает 3 минуты и
+// передаёт сессию следующему запуску. Настройки лежат в handoff.json на ветке
+// session-state: это единственное место, которое переживает смену раннера, и
+// панель читает его даже когда живого хаба ещё нет.
+const HO_STATE_TEXT = {
+  idle: 'спокойно — передача не нужна',
+  saving: 'раннер сохраняет всё на GitHub…',
+  countdown: 'скоро передача следующему раннеру',
+  dispatching: 'запускается следующий раннер…',
+  standby: 'новый раннер запущен, ждём его адрес…',
+  stopping: 'новый раннер готов, старый отключается',
+  failed: 'не получилось передать — раннер остаётся'
+};
+const HO_WHY = { age: 'подходит конец лимита GitHub', idle: 'давно ничего не делали', manual: 'по кнопке', retry: 'повтор после неудачи' };
+function hoMmss(sec) {
+  sec = Math.max(0, Math.round(sec || 0));
+  return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+}
+async function readHandoffDoc() {
+  try {
+    const f = await api(`${CTL()}/contents/handoff.json?ref=session-state&t=${Date.now()}`);
+    if (!f || !f.content) return null;
+    return JSON.parse(decodeURIComponent(escape(atob(String(f.content).replace(/\n/g, '')))));
+  } catch (e) { return null; }
+}
+async function writeHandoffDoc(patch) {
+  let sha = '';
+  let cur = {};
+  try {
+    const f = await api(`${CTL()}/contents/handoff.json?ref=session-state&t=${Date.now()}`);
+    if (f && f.content) {
+      sha = f.sha || '';
+      cur = JSON.parse(decodeURIComponent(escape(atob(String(f.content).replace(/\n/g, '')))));
+    }
+  } catch (e) { /* the file may not exist yet */ }
+  const doc = Object.assign({}, cur, patch, { updatedAt: new Date().toISOString() });
+  await api(`${CTL()}/contents/handoff.json`, {
+    method: 'PUT',
+    headers: Object.assign(hdr(), { 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      message: 'handoff settings', branch: 'session-state',
+      content: btoa(unescape(encodeURIComponent(JSON.stringify(doc, null, 2)))),
+      ...(sha ? { sha } : {})
+    })
+  });
+}
+function handoffPanelRender(doc) {
+  const line = $('ho-line');
+  if (!line) return;
+  const p = (doc && doc.policy) || {};
+  const s = (doc && doc.status) || null;
+  const set = (id, v) => { const el = $(id); if (el && document.activeElement !== el) el.value = v == null ? '' : v; };
+  set('ho-age', p.maxAgeMin); set('ho-idle', p.idleMin); set('ho-count', p.countdownSec);
+  if (!s) {
+    line.textContent = doc
+      ? 'раннер ещё не публиковал состояние — лимиты сохранены, передача начнётся сама'
+      : 'handoff.json ещё нет: сохрани лимиты, и раннер подхватит их';
+    return;
+  }
+  const bits = [];
+  bits.push('<b>' + esc(HO_STATE_TEXT[s.state] || s.state || '—') + '</b>');
+  if (s.state === 'countdown') {
+    // leftSec публикуется раз в минуту, поэтому считаем от абсолютного дедлайна.
+    const left = s.deadlineAt ? Math.max(0, (s.deadlineAt - Date.now()) / 1000) : (s.leftSec || 0);
+    bits.push('осталось <b>' + hoMmss(left) + '</b>');
+  }
+  if (s.reason) bits.push(esc(HO_WHY[s.reason] || s.reason));
+  if (s.lastError) bits.push('<span class="danger">' + esc(s.lastError) + '</span>');
+  if (s.successor && s.successor.url) bits.push('новый: <a href="' + esc(s.successor.url) + '" target="_blank" rel="noreferrer">' + esc(s.successor.url) + '</a>');
+  if (s.savedIn) bits.push('настройки: ' + (s.savedIn === 'repo' ? 'в репозитории' : 'локально у раннера'));
+  line.innerHTML = bits.join(' · ');
+  const cont = $('ho-continue');
+  if (cont) cont.disabled = !(s.state === 'countdown' || s.state === 'failed');
+  const start = $('ho-start');
+  if (start) start.disabled = !(s.state === 'idle' || s.state === 'failed');
+}
+async function handoffPanelPoll() {
+  if (page !== 'sess') return;
+  handoffPanelRender(await readHandoffDoc());
+}
+async function handoffPanelSave() {
+  const num = (id, def) => { const v = parseInt(($(id) || {}).value, 10); return Number.isFinite(v) ? v : def; };
+  const policy = { maxAgeMin: num('ho-age', 0), idleMin: num('ho-idle', 0), countdownSec: num('ho-count', 180) };
+  const hint = $('ho-hint');
+  try {
+    await writeHandoffDoc({ policy });
+    if (hint) hint.textContent = 'сохранено в control-репозитории — новый раннер прочитает эти лимиты сам';
+  } catch (e) {
+    if (hint) hint.textContent = 'не сохранилось: ' + e.message;
+  }
+  handoffPanelPoll();
+}
+async function handoffPanelStart() {
+  const base = runnerBase();
+  if (!base) { const hint = $('ho-hint'); if (hint) hint.textContent = 'живого хаба нет — запусти NPM-Hub'; return; }
+  if (!(confirm('Передать сессию новому раннеру? Сначала всё сохранится на GitHub, потом 3 минуты на отмену.'))) return;
+  const r = await fetch(`${base}/api/handoff/start`, { method: 'POST' }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+  const hint = $('ho-hint');
+  if (hint) hint.textContent = r && r.success ? 'запущено: раннер сохраняет всё на GitHub' : ((r && (r.reason || r.error)) || 'не вышло');
+  handoffPanelPoll();
+}
+async function handoffPanelContinue() {
+  const base = runnerBase();
+  if (!base) { const hint = $('ho-hint'); if (hint) hint.textContent = 'живого хаба нет — нечего продолжать'; return; }
+  const r = await fetch(`${base}/api/handoff/continue`, { method: 'POST' }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+  const hint = $('ho-hint');
+  if (hint) hint.textContent = r && r.cancelled ? 'отменено, раннер остаётся' : ((r && r.error) || 'отменить нечего');
+  handoffPanelPoll();
+}
+
 /**
  * Stamp the session file ended the moment the user stops the run.
  *
@@ -2704,6 +2842,7 @@ async function refresh() {
     if (e && e.is403) sessPausedUntil = Date.now() + (e.unbanMs || 600000);
     return;
   }
+  handoffPanelPoll();
 
   const live = anyLive(runs);
   LAST_RUNS = live;
@@ -2782,6 +2921,9 @@ setInterval(tickAges, 1000);
 // Session tab: session-state + run list. 12s is enough to feel live without
 // stacking GitHub calls the way a 5s jobs poll did.
 setInterval(() => { if (page === 'sess' && !document.hidden && Date.now() >= sessPausedUntil) refresh(); }, 12000);
+// Эстафета: статус и лимиты лежат в репозитории, поэтому карточка обновляется
+// сама — и работает, даже когда хаб уже переехал на новый раннер.
+setInterval(() => { if (typeof handoffPanelPoll === 'function') handoffPanelPoll(); }, 15000);
 // Back on screen: catch up immediately instead of waiting for the next tick,
 // and replay anything the offline queue promised to send.
 document.addEventListener('visibilitychange', () => {

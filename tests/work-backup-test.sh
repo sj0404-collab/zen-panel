@@ -55,6 +55,20 @@ check "latest manifest points at a live snapshot" "$(git -C "$TMP/remote.git" ca
 echo "newer-run-marker" >> "$TMP/home/proj/committed.txt"
 sleep 1
 GITHUB_RUN_ID=300000 GITHUB_RUN_NUMBER=300000 bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
+
+# A file over the single-file cap is too big to be one git blob (GitHub
+# refuses >100 MB), so it is split into chunks and glued back on restore. The
+# caps are lowered to 1 MB here to keep the test quick, and this snapshot is
+# the newest one, so it is the one restore-work.sh picks up.
+dd if=/dev/urandom of="$TMP/home/loose/big.bin" bs=1M count=3 status=none
+BIG_SHA="$(sha256sum "$TMP/home/loose/big.bin" | cut -d' ' -f1)"
+sleep 1
+WORK_BACKUP_MAX_FILE_MB=1 WORK_BACKUP_CHUNK_MB=1 GITHUB_RUN_ID=400 GITHUB_RUN_NUMBER=400000 bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
+BIG_SNAP="$(git --git-dir="$TMP/remote.git" show work-backup:latest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"])')"
+check "big file published as chunks" "$([ "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only "work-backup:snapshots/$BIG_SNAP/big" | grep -c 'part\.')" -ge 3 ] && echo 1 || echo 0)"
+check "big file manifest records the size" "$(git --git-dir="$TMP/remote.git" show "work-backup:snapshots/$BIG_SNAP/big/1/meta.json" | grep -q '"size": 3145728' && echo 1 || echo 0)"
+check "latest manifest marks big files" "$(git --git-dir="$TMP/remote.git" show work-backup:latest.json | grep -q '"big": true' && echo 1 || echo 0)"
+
 echo "older-run-marker" >> "$TMP/home/proj/committed.txt"
 sleep 1
 GITHUB_RUN_ID=100 GITHUB_RUN_NUMBER=10 bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
@@ -85,6 +99,7 @@ check "older run cannot overwrite backup" "$(! grep -q 'older-run-marker' "$TMP/
 check "session descriptor restored" "$([ -f "$TMP/home/.npm-hub/sessions/npmhub-term_1.meta.json" ] && echo 1 || echo 0)"
 check "ignored file not restored" "$([ ! -f "$TMP/home/proj/build/out.o" ] && echo 1 || echo 0)"
 check "loose file restored" "$([ -f "$TMP/home/loose/note.txt" ] && echo 1 || echo 0)"
+check "chunked big file restored byte for byte" "$([ "$(sha256sum "$TMP/home/loose/big.bin" 2>/dev/null | cut -d' ' -f1)" = "$BIG_SHA" ] && echo 1 || echo 0)"
 
 # A partial clone must not block restoring the real repository.
 rm -rf "$TMP/home/proj"

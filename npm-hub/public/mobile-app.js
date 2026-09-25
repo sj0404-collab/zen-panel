@@ -136,6 +136,7 @@ async function init() {
   ]);
   sessionClock();
   setInterval(sessionClock, 30000);
+  handoffPollStart();
   if (toolsR.success) tools = toolsR.tools;
   if (infoR.home) homeDir = infoR.home;
   if (infoR.workDir) workDir = infoR.workDir;
@@ -836,11 +837,114 @@ function runnerRender() {
     </div>
     <div id="runner-scan"></div>
     <div id="runner-res"></div>
+    <div class="runner-h" style="margin-top:10px">🔁 Эстафета <span class="runner-dot" id="handoff-dot"></span></div>
+    <div class="runner-line" id="handoff-line">загружаю состояние…</div>
+    <div class="runner-btns">
+      <label class="runner-lbl">работает до <input id="ho-age" class="runner-inp" type="number" min="0" max="720" step="10" inputmode="numeric"> мин</label>
+      <label class="runner-lbl">простой <input id="ho-idle" class="runner-inp" type="number" min="0" max="720" step="5" inputmode="numeric"> мин</label>
+      <label class="runner-lbl">отсчёт <input id="ho-count" class="runner-inp" type="number" min="30" max="1800" step="30" inputmode="numeric"> с</label>
+      <button class="btn btn-sm" onclick="handoffSave()">💾 Лимиты</button>
+      <button class="btn btn-sm btn-ok" onclick="handoffStart()" id="ho-start">🔁 Передать</button>
+      <button class="btn btn-sm btn-ok" onclick="handoffContinue()" id="ho-continue" hidden>▶️ Продолжить</button>
+    </div>
+    <div class="runner-line" style="font-size:11px;opacity:.7" id="handoff-hint"></div>
   </div>`;
+  handoffRender();
   if (RUNNER_BUSY) {
     const s = document.getElementById('runner-scan');
     if (s) s.innerHTML = '<div class="runner-busy">работаю…</div>';
   }
+}
+
+// ===== ЭСТАФЕТА СЕССИИ (handoff) =====
+// Рано или поздно GitHub-hosted раннер умирает вместе со всем диском. Здесь
+// видно, что происходит: два лимита (возраст сессии и простой), обязательное
+// сохранение перед передачей, отсчёт с кнопкой «Продолжить» и состояние
+// «ждём новый раннер». Настройки лежат в control-репозитории, поэтому новый
+// раннер читает их сам.
+let HANDOFF = null;
+let HANDOFF_TIMER = null;
+const HANDOFF_TEXT = {
+  idle: 'спокойно — передача не нужна',
+  saving: 'сохраняю всё на GitHub…',
+  countdown: 'скоро передам сессию следующему раннеру',
+  dispatching: 'запускаю следующий раннер…',
+  standby: 'новый раннер запущен, жду его адрес…',
+  stopping: 'новый раннер готов — этот отключается',
+  failed: 'не получилось передать — остаёмся здесь'
+};
+const HANDOFF_WHY = {
+  age: 'пора: раннер скоро умрёт от лимита GitHub',
+  idle: 'пора: давно ничего не делали',
+  manual: 'передача по кнопке',
+  retry: 'повтор после неудачи'
+};
+function handoffRender() {
+  const line = document.getElementById('handoff-line');
+  if (!line || !HANDOFF) return;
+  const s = HANDOFF.status || {};
+  const p = HANDOFF.policy || {};
+  const cap = HANDOFF.capability || {};
+  const mmss = (sec) => {
+    sec = Math.max(0, Math.round(sec || 0));
+    return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+  };
+  const bits = [];
+  bits.push('<b>' + escHtml((HANDOFF_TEXT[s.state] || s.state || '—')) + '</b>');
+  if (s.state === 'countdown' && s.leftSec != null) bits.push('осталось <b>' + mmss(s.leftSec) + '</b>');
+  if (s.reason) bits.push(escHtml(HANDOFF_WHY[s.reason] || s.reason));
+  if (s.state === 'failed' && s.lastError) bits.push('<span style="color:var(--err)">' + escHtml(s.lastError) + '</span>');
+  if (s.successor && s.successor.url) bits.push('новый: <a href="' + escAttr(s.successor.url) + '" target="_blank" rel="noreferrer">' + escHtml(s.successor.url) + '</a>');
+  bits.push('раннер живёт ' + (s.ageMin || 0) + ' мин' + (p.idleMin > 0 ? ', простой ' + (s.idleMin || 0) + '/' + p.idleMin + ' мин' : ''));
+  bits.push('настройки: ' + (s.savedIn === 'repo' ? 'в control-репозитории' : 'локально'));
+  line.innerHTML = bits.join(' · ');
+  const dot = document.getElementById('handoff-dot');
+  if (dot) dot.className = 'runner-dot' + (cap.available && s.state !== 'idle' ? ' on' : '');
+  const set = (id, v) => { const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = v; };
+  set('ho-age', p.maxAgeMin == null ? '' : p.maxAgeMin);
+  set('ho-idle', p.idleMin == null ? '' : p.idleMin);
+  set('ho-count', p.countdownSec == null ? '' : p.countdownSec);
+  const cont = document.getElementById('ho-continue');
+  if (cont) cont.hidden = !(s.state === 'countdown' || s.state === 'failed');
+  const start = document.getElementById('ho-start');
+  if (start) start.disabled = !cap.available || s.state === 'saving' || s.state === 'standby' || s.state === 'stopping';
+  const hint = document.getElementById('handoff-hint');
+  if (hint) hint.textContent = !cap.available
+    ? (cap.reason || 'передача недоступна')
+    : '0 = выключено. Передача сначала сохраняет всё на GitHub и только потом считает 3 минуты; «Продолжить» отменяет.';
+}
+async function handoffPoll() {
+  try {
+    const r = await fetch('/api/handoff').then(x => x.json());
+    if (r && r.success) { HANDOFF = r; handoffRender(); }
+  } catch (e) { /* the runner may be restarting */ }
+}
+function handoffPollStart() {
+  handoffPoll();
+  if (!HANDOFF_TIMER) HANDOFF_TIMER = setInterval(handoffPoll, 12000);
+}
+async function handoffSave() {
+  const num = (id, def) => { const v = parseInt((document.getElementById(id) || {}).value, 10); return Number.isFinite(v) ? v : def; };
+  const r = await fetch('/api/handoff/policy', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ policy: { maxAgeMin: num('ho-age', 0), idleMin: num('ho-idle', 0), countdownSec: num('ho-count', 180) } })
+  }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+  if (r && r.policy) HANDOFF = Object.assign({}, HANDOFF || {}, { policy: r.policy, status: r.status || (HANDOFF && HANDOFF.status) });
+  const hint = document.getElementById('handoff-hint');
+  if (hint) hint.textContent = r && r.success
+    ? 'сохранено: ' + (r.savedIn === 'repo' ? 'в control-репозитории (переживёт смену раннера)' : 'локально (нет токена GitHub)')
+    : 'не сохранилось: ' + ((r && r.error) || '?');
+  handoffPoll();
+}
+async function handoffStart() {
+  if (!(await fmConfirm('Передать сессию новому раннеру? Сначала всё сохранится на GitHub, потом 3 минуты на отмену.', 'Передать'))) return;
+  const r = await fetch('/api/handoff/start', { method: 'POST' }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+  if (r && r.status) { HANDOFF = Object.assign({}, HANDOFF || {}, { status: r.status }); handoffRender(); }
+  if (r && !r.success) { const hint = document.getElementById('handoff-hint'); if (hint) hint.textContent = (r.reason || r.error || 'не вышло'); }
+}
+async function handoffContinue() {
+  const r = await fetch('/api/handoff/continue', { method: 'POST' }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+  if (r && r.status) { HANDOFF = Object.assign({}, HANDOFF || {}, { status: r.status }); handoffRender(); }
 }
 async function runnerScan() {
   const w = document.getElementById('runner-scan');
