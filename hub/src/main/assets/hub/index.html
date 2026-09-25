@@ -92,38 +92,97 @@ async function api(path, token, opts) {
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
-async function dispatchHub(token, zt, runner) {
-  const inputs = { os: 'linux', label: 'hub-apk', token: zt, gh_token: token };
+async function dispatchHub(token, zt, runner, replace) {
+  const inputs = { os: 'linux', label: 'hub-apk', token: zt, gh_token: token, replace: replace === true };
   if (runner) inputs.runner_linux = runner;
   await api(`/repos/${REPO}/actions/workflows/hub.yml/dispatches`, token, {
     method: 'POST',
     body: JSON.stringify({ ref: 'main', inputs })
   });
 }
-async function cancelCurrentRun(token) {
-  let cancelled = 0;
+const ACTIVE_RUN_STATUSES = ['queued', 'requested', 'waiting', 'in_progress', 'pending'];
+const SESSION_WORKFLOWS = new Set([
+  '.github/workflows/hub.yml',
+  '.github/workflows/agent.yml',
+  '.github/workflows/opencode.yml',
+  '.github/workflows/desks.yml'
+]);
+function isActiveRun(run) {
+  return !!run && ACTIVE_RUN_STATUSES.includes(run.status);
+}
+function isHubRun(run) {
+  return !!run && (run.path === '.github/workflows/hub.yml' || run.name === 'NPM Hub');
+}
+function isSessionRun(run) {
+  return !!run && (SESSION_WORKFLOWS.has(run.path) ||
+    ['NPM Hub', 'Zen agent', 'OpenCode', 'opencode', 'Remote session', 'Desks'].includes(run.name));
+}
+async function listActiveRuns(token, predicate) {
+  const active = [];
   for (let page = 1; page <= 5; page++) {
     const r = await api(`/repos/${REPO}/actions/runs?per_page=100&page=${page}`, token);
     const runs = r && r.workflow_runs;
     if (!runs || !runs.length) break;
-    const active = ['queued', 'requested', 'waiting', 'in_progress', 'pending'];
     for (const run of runs) {
-      if (run.path !== '.github/workflows/hub.yml' || !active.includes(run.status)) continue;
-      try {
-        await api(`/repos/${REPO}/actions/runs/${run.id}/cancel`, token, { method: 'POST' });
-        cancelled++;
-      } catch (e) {}
+      if (isActiveRun(run) && (!predicate || predicate(run))) active.push(run);
     }
-    if (cancelled) break;
+    if (runs.length < 100) break;
   }
-  return cancelled;
+  return active;
+}
+async function cancelCurrentRun(token) {
+  const runs = await listActiveRuns(token, isHubRun);
+  const ids = [];
+  let failed = 0;
+  for (const run of runs) {
+    try {
+      await api(`/repos/${REPO}/actions/runs/${run.id}/cancel`, token, { method: 'POST' });
+      ids.push(run.id);
+    } catch (e) {
+      if (!/HTTP 409/.test(e && e.message || '')) failed++;
+    }
+  }
+  if (failed) throw new Error('GitHub не принял остановку старого запуска.');
+  return ids;
+}
+async function waitForRunsToStop(token, ids, sleepMs, attempts) {
+  const pending = new Set((ids || []).map(String));
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const pause = sleepMs == null ? 3000 : sleepMs;
+  const limit = attempts == null ? 400 : attempts;
+  for (let i = 0; pending.size && i < limit; i++) {
+    await sleep(pause);
+    for (const id of Array.from(pending)) {
+      const run = await api(`/repos/${REPO}/actions/runs/${id}`, token);
+      if (!run || !isActiveRun(run)) pending.delete(id);
+    }
+  }
+  if (pending.size) throw new Error('Старый запуск ещё не остановлен GitHub. Повторите перезапуск через минуту.');
+  return true;
+}
+async function cancelAndWait(token) {
+  const ids = await cancelCurrentRun(token);
+  if (ids.length) await waitForRunsToStop(token, ids);
+  return ids.length;
+}
+async function assertNoActiveSession(token) {
+  const active = await listActiveRuns(token, isSessionRun);
+  if (!active.length) return;
+  if (active.some(isHubRun)) {
+    throw new Error('NPM Hub уже запущен. Откройте его или используйте «Остановить и перезапустить».');
+  }
+  throw new Error('Другая сессия уже использует раннер. Остановите её перед запуском NPM Hub.');
 }
 async function restartRunner(token, zt, runner) {
-  const n = await cancelCurrentRun(token);
+  const active = await listActiveRuns(token, isSessionRun);
+  if (active.some(run => !isHubRun(run))) {
+    throw new Error('Другая сессия уже использует раннер. Остановите её перед перезапуском NPM Hub.');
+  }
+  const n = await cancelAndWait(token);
   if (n > 0) log('Остановлено активных ранов: ' + n, 'ok');
   else log('Активных ранов hub.yml не найдено.', 'err');
   log('Запускаю новый ранер…');
-  await dispatchHub(token, zt, runner);
+  await dispatchHub(token, zt, runner, true);
 }
 function parseSessionFile(f) {
   const raw = decodeURIComponent(escape(atob((f.content || '').replace(/\n/g, ''))));
@@ -136,13 +195,13 @@ async function readHubSession(token) {
 }
 async function waitForHub(token, sinceMs, sleepMs) {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  for (let i = 0; i < 150; i++) {
+  for (let i = 0; i < 240; i++) {
     const s = await readHubSession(token);
     const born = s && s.startedAt ? new Date(s.startedAt).getTime() : 0;
     if (s && s.state === 'live' && born >= sinceMs - 15000 && (s.hubUrl || s.url)) return s;
     await sleep(sleepMs || 5000);
   }
-  throw new Error('Таймаут: хаб не сообщил адрес за 12 минут.');
+  throw new Error('Таймаут: хаб не сообщил адрес за 20 минут.');
 }
 async function preflightHub(base, zt) {
   const r = await fetch(base + '/api/tools?zt=' + encodeURIComponent(zt));
@@ -179,7 +238,17 @@ function vaultUrl() {
   if (!base) return '';
   return base.replace(/\/+$/, '') + '/external-memory.html' + (zt ? '?zt=' + encodeURIComponent(zt) : '');
 }
-function openLast() { if (last && last.url) location.href = last.url; }
+async function openLast() {
+  if (!last || !last.url) return;
+  const { base, zt } = lastOriginToken();
+  if (!base) { log('Сохранённый адрес не найден.', 'err'); return; }
+  try {
+    await preflightHub(base, zt);
+    location.href = last.url;
+  } catch (e) {
+    log('Последний хаб недоступен: ' + (e && e.message || e), 'err');
+  }
+}
 function openVault() {
   const u = vaultUrl();
   if (!u) { log('Сначала подключись к хабу — адрес появится после запуска.', 'err'); return; }
@@ -224,6 +293,7 @@ $('launch').onclick = async () => {
   const btn = $('launch');
   btn.disabled = true;
   try {
+    await assertNoActiveSession(token);
     const zt = genZt();
     const since = Date.now();
     log('Отправляю запуск…');

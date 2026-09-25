@@ -542,7 +542,13 @@ check('q59 upload progress UI',
 
 const sessionWorkflows = [hubWorkflow, agentWorkflow, opencodeWorkflow, desksWorkflow];
 check('q60 one session workflow lock', sessionWorkflows.every(x =>
-  x.includes('zen-panel-session-${{ github.repository }}') && x.includes('cancel-in-progress: false')));
+  x.includes('zen-panel-session-${{ github.repository }}')) &&
+  hubWorkflow.includes('cancel-in-progress: ${{ inputs.replace }}') &&
+  agentWorkflow.includes('cancel-in-progress: false') &&
+  opencodeWorkflow.includes('cancel-in-progress: false') &&
+  desksWorkflow.includes('cancel-in-progress: false'));
+check('q60a replacement launch is serialized', panel.includes('await cancelRunsAndWait(running)') &&
+  panel.includes('foreignSession(runs, running)') && hubWorkflow.includes("trap 'exit 143' TERM INT"));
 check('q61 background snapshots receive token',
   hubWorkflow.includes('nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"') &&
   agentWorkflow.includes('nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"') &&

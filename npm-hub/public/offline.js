@@ -113,6 +113,7 @@
   // ── Баннер офлайна ──
   var banner = null;
   function ensureBanner() {
+    try { if (window.top && window.self && window.top !== window.self) return null; } catch (e) {}
     if (banner || !document.body) return banner;
     banner = document.createElement('div');
     banner.id = 'hub-offline-bar';

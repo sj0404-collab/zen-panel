@@ -11,6 +11,8 @@ const liveSession = { state: 'live', kind: 'NPM-Hub', hubUrl: 'https://hub.local
 function b64(o) { return Buffer.from(JSON.stringify(o)).toString('base64'); }
 
 const dispatches = [];
+const runStates = new Map();
+const cancelOrder = [];
 let sessionMode = 'live'; // live | missing | flaky
 let polls = 0;
 async function stubFetch(url, opts) {
@@ -19,6 +21,20 @@ async function stubFetch(url, opts) {
     if (opts.headers.Authorization === 'token BAD') return { ok: false, status: 401, json: async () => ({}) };
     dispatches.push(JSON.parse(opts.body));
     return { ok: true, status: 204, json: async () => ({}) };
+  }
+  if (u.includes('/actions/runs?')) {
+    return { ok: true, status: 200, json: async () => ({ workflow_runs: Array.from(runStates.values()).map(x => ({ ...x })) }) };
+  }
+  const cancel = u.match(/\/actions\/runs\/(\d+)\/cancel$/);
+  if (cancel && opts && opts.method === 'POST') {
+    cancelOrder.push(Number(cancel[1]));
+    runStates.set(Number(cancel[1]), { id: Number(cancel[1]), status: 'completed', conclusion: 'cancelled', path: '.github/workflows/hub.yml', name: 'NPM Hub' });
+    return { ok: true, status: 202, json: async () => ({}) };
+  }
+  const one = u.match(/\/actions\/runs\/(\d+)$/);
+  if (one) {
+    const run = runStates.get(Number(one[1]));
+    return { ok: !!run, status: run ? 200 : 404, json: async () => run || {} };
   }
   if (u.includes('/api/tools')) {
     return u.includes('zt=good')
@@ -57,6 +73,26 @@ function check(name, cond, extra) {
     d.inputs.runner_linux === undefined, JSON.stringify(d));
   await window.dispatchHub('ghp_x', 'zt123', 'mypc');
   check('c2b dispatch runner', dispatches[1].inputs.runner_linux === 'mypc', JSON.stringify(dispatches[1]));
+  await window.dispatchHub('ghp_x', 'zt123', '', true);
+  check('c2c replace flag', dispatches[2].inputs.replace === true, JSON.stringify(dispatches[2]));
+
+  runStates.set(7, { id: 7, status: 'in_progress', path: '.github/workflows/hub.yml', name: 'NPM Hub' });
+  let duplicateError = '';
+  try { await window.assertNoActiveSession('ghp_x'); } catch (e) { duplicateError = e.message; }
+  check('c2d duplicate launch blocked', /уже запущен/.test(duplicateError), duplicateError);
+  runStates.set(7, { id: 7, status: 'in_progress', path: '.github/workflows/hub.yml', name: 'NPM Hub' });
+  let waitError = '';
+  try { await window.waitForRunsToStop('ghp_x', [7], 0, 1); } catch (e) { waitError = e.message; }
+  check('c2e cancellation wait times out safely', /не остановлен/.test(waitError), waitError);
+  runStates.set(7, { id: 7, status: 'completed', conclusion: 'cancelled', path: '.github/workflows/hub.yml', name: 'NPM Hub' });
+  check('c2f completed run needs no wait', await window.waitForRunsToStop('ghp_x', [7], 0, 1) === true);
+  runStates.clear();
+  runStates.set(7, { id: 7, status: 'queued', path: '.github/workflows/hub.yml', name: 'NPM Hub' });
+  runStates.set(8, { id: 8, status: 'in_progress', path: '.github/workflows/hub.yml', name: 'NPM Hub' });
+  cancelOrder.length = 0;
+  const cancelledIds = await window.cancelCurrentRun('ghp_x');
+  check('c2g all active runs cancelled', cancelledIds.length === 2 && cancelOrder.length === 2, JSON.stringify(cancelOrder));
+  runStates.clear();
 
   sessionMode = 'live';
   const s = await window.readHubSession('ghp_x');

@@ -52,10 +52,14 @@ on:
         description: "Install all CLI agents at startup (minutes); off = each installs at first click"
         type: boolean
         default: false
+      replace:
+        description: "Replace an active session run"
+        type: boolean
+        default: false
 
 concurrency:
   group: zen-panel-session-${{ github.repository }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ inputs.replace }}
 
 permissions:
   contents: write
@@ -259,6 +263,7 @@ jobs:
 
       - name: Keep the session alive
         run: |
+          trap 'exit 143' TERM INT
           export HUB_LOGS="$HOME/.npm-hub/logs"
           mkdir -p "$HUB_LOGS"
           # Watch the hub and the tunnel instead of sleeping blindly: a dead
@@ -841,6 +846,7 @@ jobs:
 
       - name: Keep the VNC session alive
         run: |
+          trap 'exit 143' TERM INT
           PIDFILE="$HUB_LOGS/cloudflared-6081.pid"
           VFAILS=0
           VRESTARTING=0

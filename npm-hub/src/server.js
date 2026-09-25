@@ -1183,7 +1183,7 @@ app.post('/api/runner/restart', async (req, res) => {
   // cancelled in the background — GitHub can take minutes to actually kill it.
   const dispatch = await ghApi(
     'POST', `${GITHUB_BASE(env.repo)}/actions/workflows/${env.workflowFile}/dispatches`, token,
-    { ref: env.ref, inputs: { os: process.platform === 'win32' ? 'windows' : 'linux', gh_token: token } });
+    { ref: env.ref, inputs: { os: process.platform === 'win32' ? 'windows' : 'linux', gh_token: token, replace: true } });
   let cancelOld = false;
   if (dispatch.status >= 200 && dispatch.status < 300) {
     const c = await ghApi('POST', `${GITHUB_BASE(env.repo)}/actions/runs/${env.runId}/cancel`, token);

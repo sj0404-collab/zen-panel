@@ -424,6 +424,12 @@ const GH = 'https://api.github.com';
     if (/token|secret|password|passwd|auth/i.test(url.pathname + url.search)) return null;
     return url;
   }
+  function isConnectivityUrl(url) {
+    try {
+      url = url instanceof URL ? url : new URL(url, location.href);
+      return url.origin === 'https://api.github.com' || url.origin === location.origin;
+    } catch (e) { return false; }
+  }
   if (realFetch) {
     window.fetch = function (input, init) {
       var req;
@@ -434,7 +440,7 @@ const GH = 'https://api.github.com';
       var key = url.href;
       return realFetch(input, init).then(function (res) {
         if (res && res.ok) {
-          setOffline(false);
+          if (isConnectivityUrl(url)) setOffline(false);
           var ct = res.headers.get('content-type') || 'application/json';
           if (/(json|text|javascript)/i.test(ct)) {
             try { res.clone().text().then(function (body) { store({ key: key, status: res.status, ct: ct, body: body }); }).catch(function () {}); } catch (e) {}
@@ -443,8 +449,11 @@ const GH = 'https://api.github.com';
         return res;
       }).catch(function (err) {
         var c = load(key);
-        if (c) { setOffline(true); return new Response(c.body, { status: c.status || 200, headers: { 'content-type': c.ct || 'application/json', 'x-panel-offline': '1' } }); }
-        setOffline(true);
+        if (c) {
+          if (isConnectivityUrl(url)) setOffline(true);
+          return new Response(c.body, { status: c.status || 200, headers: { 'content-type': c.ct || 'application/json', 'x-panel-offline': '1' } });
+        }
+        if (isConnectivityUrl(url)) setOffline(true);
         throw err;
       });
     };
@@ -1768,6 +1777,38 @@ function anyLive(runs) {
   return runs.filter(r => ['Zen agent', 'Remote session', 'OpenCode', 'opencode', 'Desks', 'NPM Hub'].includes(r.name)
                           && r.status !== 'completed');
 }
+const ACTIVE_RUN_STATUSES = ['queued', 'requested', 'waiting', 'in_progress', 'pending'];
+async function runStatus(id, repo) {
+  try { return await api(`${GH}/repos/${repo || ctlRepo()}/actions/runs/${id}`); }
+  catch (e) { if (/^404:/.test(e.message)) return null; throw e; }
+}
+async function waitForRunsToStop(ids, repo, attempts, pauseMs) {
+  const pending = new Set((ids || []).map(String));
+  const limit = attempts == null ? 400 : attempts;
+  const pause = pauseMs == null ? 2500 : pauseMs;
+  for (let i = 0; pending.size && i < limit; i++) {
+    await new Promise(r => setTimeout(r, pause));
+    for (const id of Array.from(pending)) {
+      const run = await runStatus(id, repo);
+      if (!run || !ACTIVE_RUN_STATUSES.includes(run.status)) pending.delete(id);
+    }
+  }
+  if (pending.size) throw new Error('GitHub ещё не остановил старый запуск. Повторите запуск позже.');
+  return true;
+}
+async function cancelRunsAndWait(runs, repo) {
+  const ids = [];
+  for (const run of runs) {
+    if (!await cancelRun(run.id, repo)) throw new Error('GitHub не принял остановку старого запуска.');
+    ids.push(run.id);
+  }
+  if (ids.length) await waitForRunsToStop(ids, repo);
+  return ids.length;
+}
+function foreignSession(runs, own) {
+  const ids = new Set((own || []).map(r => String(r.id)));
+  return anyLive(runs).find(r => !ids.has(String(r.id))) || null;
+}
 
 let PENDING_Q = '';
 function readFirstCommand() {
@@ -1788,15 +1829,20 @@ function chatUrlWithQ(url) {
 async function launchDesks() {
   if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
 
-  const already = (await currentRuns()).filter(
-    r => r.name === 'Desks' && r.status !== 'completed');
+  const runs = await currentRuns();
+  const already = runs.filter(r => r.name === 'Desks' && r.status !== 'completed');
+  const other = foreignSession(runs, already);
+  if (other) {
+    alert('Другая сессия уже использует раннер. Остановите её перед запуском стола.');
+    return;
+  }
   if (already.length) {
     if (!confirm(`Стол уже поднят (${mins(already[0].created_at)} мин).\n\n` +
                  'ОК — остановить и поднять заново.\nОтмена — оставить как есть.')) {
       await refresh(); return;
     }
-    for (const r of already) await cancelRun(r.id);
-    await new Promise(r => setTimeout(r, 8000));
+    try { await cancelRunsAndWait(already); }
+    catch (e) { alert('Не вышло: ' + e.message); return; }
   }
 
   const btn = $('btn-windows');
@@ -1856,14 +1902,20 @@ async function launchAgent() {
   const where = confirm('Где поднять CLI-агента?\n\nОК — Linux (2 ядра, умеет собирать APK)\n' +
                         'Отмена — Windows (4 ядра, 16 ГБ)') ? 'linux' : 'windows';
 
-  const running = liveAgents(await currentRuns());
+  const runs = await currentRuns();
+  const running = liveAgents(runs);
+  const other = foreignSession(runs, running);
+  if (other) {
+    alert('Другая сессия уже использует раннер. Остановите её перед запуском CLI-агента.');
+    return;
+  }
   if (running.length) {
     if (!confirm(`CLI-агент уже идёт (${mins(running[0].created_at)} мин).\n\n` +
                  'ОК — остановить его и поднять заново.\nОтмена — открыть текущий чат.')) {
       await refresh(); openDeskInPanel(liveSlotOf('agent')); return;
     }
-    for (const r of running) await cancelRun(r.id);
-    await new Promise(r => setTimeout(r, 8000));
+    try { await cancelRunsAndWait(running); }
+    catch (e) { alert('Не вышло: ' + e.message); return; }
   }
 
   const btn = $('btn-agent');
@@ -1890,14 +1942,20 @@ async function launchOpencode() {
   readFirstCommand();
   const where = confirm('Где поднять OpenCode?\n\nОК — Linux\nОтмена — Windows') ? 'linux' : 'windows';
 
-  const running = liveOpencode(await currentRuns());
+  const runs = await currentRuns();
+  const running = liveOpencode(runs);
+  const other = foreignSession(runs, running);
+  if (other) {
+    alert('Другая сессия уже использует раннер. Остановите её перед запуском OpenCode.');
+    return;
+  }
   if (running.length) {
     if (!confirm(`OpenCode уже идёт (${mins(running[0].created_at)} мин).\n\n` +
                  'ОК — остановить и поднять заново.\nОтмена — открыть текущий чат.')) {
       await refresh(); openDeskInPanel(liveSlotOf('opencode')); return;
     }
-    for (const r of running) await cancelRun(r.id);
-    await new Promise(r => setTimeout(r, 8000));
+    try { await cancelRunsAndWait(running); }
+    catch (e) { alert('Не вышло: ' + e.message); return; }
   }
 
   const btn = $('btn-opencode');
@@ -1930,14 +1988,20 @@ async function launchHubInternal(preferOs) {
   try { if (window.ZenBridge && ZenBridge.requestNotifications) ZenBridge.requestNotifications(); } catch (e) {}
   const where = preferOs || (confirm('Где поднять NPM-Hub?\n\nОК — Linux\nОтмена — Windows') ? 'linux' : 'windows');
 
-  const running = liveHub(await currentRuns());
+  const runs = await currentRuns();
+  const running = liveHub(runs);
+  const other = foreignSession(runs, running);
+  if (other) {
+    alert('Другая сессия уже использует раннер. Остановите её перед запуском NPM-Hub.');
+    return;
+  }
   if (running.length) {
     if (!confirm(`NPM-Hub уже идёт (${mins(running[0].created_at)} мин).\n\n` +
                  'ОК — остановить и поднять заново.\nОтмена — открыть текущий.')) {
       await refresh(); openDeskInPanel(liveSlotOf('hub')); return;
     }
-    for (const r of running) await cancelRun(r.id);
-    await new Promise(r => setTimeout(r, 8000));
+    try { await cancelRunsAndWait(running); }
+    catch (e) { alert('Не вышло: ' + e.message); return; }
   }
 
   const btn = $('btn-hub');
@@ -1951,7 +2015,7 @@ async function launchHubInternal(preferOs) {
     const hubToken = HUB_TOKENS['hub-' + where] || genHubToken();
     HUB_TOKENS['hub-' + where] = hubToken;
     saveHubTokens();
-    const r = await dispatchWorkflow('hub.yml', { os: where, label: 'hub', token: hubToken, ...runnerInputs() });
+    const r = await dispatchWorkflow('hub.yml', { os: where, label: 'hub', token: hubToken, replace: running.length > 0, ...runnerInputs() });
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
     await waitAndOpen('hub-' + where, launchSince);
   } catch (e) {
