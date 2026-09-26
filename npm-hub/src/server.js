@@ -123,6 +123,18 @@ async function ensureHostAlias() {
 // 4MB (~a real terminal's worth) is configurable for low-memory runners.
 const SESSION_OUTPUT_CAP = parseInt(process.env.SESSION_OUTPUT_CAP || String(4 * 1024 * 1024), 10) || (4 * 1024 * 1024);
 const SESSION_OUTPUT_CHUNK = 64 * 1024; // replay frames this size so a phone stays responsive
+// How much of the scrollback is actually re-sent when a client (re)attaches.
+//
+// SESSION_OUTPUT_CAP is what we KEEP, not what we replay. Replaying all 4MB on
+// every reconnect is what made the terminal jump: the frames were appended to a
+// terminal that already had the output, so the view climbed into the middle of
+// the session and the agent's current position scrolled off. It also froze the
+// page - 4MB through term.write() blocks the main thread, which is why every
+// other tab went black for seconds while one tab reconnected.
+//
+// A tail is enough: the terminal has its own scrollback, and what a returning
+// client needs is "where the agent is now", not the whole transcript.
+const SESSION_REPLAY_BYTES = parseInt(process.env.HUB_REPLAY_BYTES || String(512 * 1024), 10) || (512 * 1024);
 const STATE_FILE = path.join(HOME, '.npm-hub-state.json');
 
 app.use(express.json({ limit: '50mb' }));
@@ -2377,15 +2389,22 @@ const attachPtyClient = (session, ws) => {
   // huge frame is buffered by mobile browsers / tunnels and the terminal
   // appears to load only a fragment before it freezes. 64KB per message with
   // a micro-break lets the client render progressively and stay responsive.
+  //
+  // Only the tail goes out (see SESSION_REPLAY_BYTES): the client resets the
+  // terminal on the first replay frame, so anything older than the tail would
+  // be replayed and then thrown away while still costing a main-thread stall.
   if (session.output) {
-    const out = session.output;
+    const out = session.output.length > SESSION_REPLAY_BYTES
+      ? session.output.slice(-SESSION_REPLAY_BYTES)
+      : session.output;
     let pos = 0;
     const step = () => {
       if (ws.readyState !== 1 || pos >= out.length) return;
       const part = out.slice(pos, pos + SESSION_OUTPUT_CHUNK);
       pos += part.length;
-      ws.send(JSON.stringify({ type: 'output', id: session.id, data: part, replay: true }));
-      if (pos < out.length) setTimeout(step, 25);
+      const last = pos >= out.length;
+      ws.send(JSON.stringify({ type: 'output', id: session.id, data: part, replay: true, replayEnd: last }));
+      if (!last) setTimeout(step, 10);
     };
     step();
   }

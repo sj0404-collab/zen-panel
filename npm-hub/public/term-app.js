@@ -19,7 +19,19 @@ function kickReconnect() {
     try { if (t.connect) t.connect(); } catch (e) {}
   });
 }
-window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') kickReconnect(); });
+// Coming back to the app is the moment the terminal broke worst: while we were
+// away the socket died, the reconnect replayed the whole transcript, and the
+// refit left a blank band under the last line for a few seconds. Refit, then
+// land at the end again.
+window.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  kickReconnect();
+  const t = activeTab;
+  if (!t) return;
+  setTimeout(() => {
+    try { t.fitAddon?.fit(); t.term?.scrollToBottom(); } catch {}
+  }, 120);
+});
 window.addEventListener('focus', () => setTimeout(kickReconnect, 250));
 window.addEventListener('online', kickReconnect);
 
@@ -197,7 +209,8 @@ function attachTab(meta) {
 
   const td = {
     id, toolId: toolId === '_terminal' ? null : toolId, toolName: displayName, color, icon, dirShort, cwd,
-    term, fitAddon, el: panel, ws: null, manualClose: false, lastPong: 0, reconnectTimer: null, keepAlive: null, resizeObs: null, cdTimer: null, connect: () => {}
+    term, fitAddon, el: panel, ws: null, manualClose: false, lastPong: 0, reconnectTimer: null, keepAlive: null, resizeObs: null, cdTimer: null,
+    replaying: false, connect: () => {}
   };
   tabs.push(td);
 
@@ -216,6 +229,19 @@ function attachTab(meta) {
     }
   };
 
+  // The server flags the last frame of a replay; a live frame without the
+  // flag also ends it (the tail can be empty). Either way the view must end up
+  // at the bottom - that is the agent's current position, not the top of the
+  // session the user was reading a minute ago.
+  const termReplayDone = () => {
+    if (!td.replaying) return;
+    td.replaying = false;
+    // Queue the scroll behind everything already written. Calling it now would
+    // run while the replay frames are still pending and leave the view where
+    // reset() put it - the same "it scrolled away" the user reported.
+    try { term.write('', () => { try { term.scrollToBottom(); } catch {} }); } catch {}
+  };
+
   const connect = () => {
     hideCountdown(id);
     const socket = new WebSocket(`${protocol}//${location.host}/ws`);
@@ -231,7 +257,22 @@ function attachTab(meta) {
       let m; try { m = JSON.parse(e.data); } catch { return; }
       if (m.type === 'pong') { td.lastPong = Date.now(); return; }
       if (m.type === 'opened') { if (m.resumed) showResumed(1.5); }
-      if (m.type === 'output') { term.write(m.data); }
+      if (m.type === 'output') {
+        // Replay arrives when a client (re)attaches to a live session. It used
+        // to be appended to whatever the terminal already held, so every
+        // reconnect duplicated the whole transcript: the view climbed into the
+        // middle of the session, showed output the user had already scrolled
+        // past, and the agent's actual position scrolled off the screen.
+        // Reset on the FIRST replay frame instead, so the client shows exactly
+        // what the server holds - the tail, where the agent is now.
+        if (m.replay) {
+          if (!td.replaying) { td.replaying = true; try { term.reset(); } catch {} }
+          term.write(m.data, m.replayEnd ? termReplayDone : undefined);
+        } else {
+          if (td.replaying) termReplayDone();
+          term.write(m.data);
+        }
+      }
       if (m.type === 'exit') { term.write(`\r\n\x1b[33m[Exited ${m.code} — нажми ⟲, чтобы перезапустить]\x1b[0m\r\n`); termRecoverShow('⚠ Сессия завершилась — перезапустите агента'); }
       if (m.type === 'error') term.write(`\r\n\x1b[31m[Error: ${m.error}]\x1b[0m\r\n`);
     };
