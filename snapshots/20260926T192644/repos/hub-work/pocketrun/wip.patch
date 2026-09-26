@@ -1,0 +1,48 @@
+diff --git a/android/app/build.gradle.kts b/android/app/build.gradle.kts
+index c4ae936..65c5cba 100644
+--- a/android/app/build.gradle.kts
++++ b/android/app/build.gradle.kts
+@@ -150,13 +150,6 @@ fun licensePublicKey(): String {
+     return "DEMO00000000000000000000000000000000000000000000000000000000000000"
+ }
+ 
+-chaquopy {
+-    defaultConfig {
+-        version = "3.13.15"
+-        build = "3.14.0-0"
+-    }
+-}
+-
+ dependencies {
+     implementation("androidx.core:core-ktx:1.13.1")
+     implementation("androidx.activity:activity-compose:1.9.3")
+diff --git a/android/build.gradle.kts b/android/build.gradle.kts
+index cb36d03..800b556 100644
+--- a/android/build.gradle.kts
++++ b/android/build.gradle.kts
+@@ -2,5 +2,5 @@ plugins {
+     id("com.android.application") version "8.7.3" apply false
+     id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+     id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+-    id("com.chaquo.python") version "3.14.0-0" apply false
++    id("com.chaquo.python") version "17.0.0" apply false
+ }
+diff --git a/android/settings.gradle.kts b/android/settings.gradle.kts
+index a0d6026..49b0757 100644
+--- a/android/settings.gradle.kts
++++ b/android/settings.gradle.kts
+@@ -4,6 +4,14 @@ pluginManagement {
+         mavenCentral()
+         gradlePluginPortal()
+     }
++    resolutionStrategy {
++        eachPlugin {
++            // Chaquopy publishes the plugin itself but not a plugin marker artifact.
++            if (requested.id.id == "com.chaquo.python") {
++                useModule("com.chaquo.python:gradle:${requested.version}")
++            }
++        }
++    }
+ }
+ 
+ dependencyResolutionManagement {
