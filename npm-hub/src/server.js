@@ -126,6 +126,97 @@ const SESSION_OUTPUT_CHUNK = 64 * 1024; // replay frames this size so a phone st
 const STATE_FILE = path.join(HOME, '.npm-hub-state.json');
 
 app.use(express.json({ limit: '50mb' }));
+
+// ─── GATE ───────────────────────────────────────────────────────────────
+// The hub is published through a public trycloudflare address, and it serves
+// a file manager plus node-pty terminals - i.e. remote shell. hub.yml has
+// always passed a per-launch `token`, and the panel opens the hub as
+// /m?zt=<token>, but nothing ever CHECKED it: every page, every /api/fs
+// call and the /ws terminal socket answered 200 to anybody who knew the URL.
+//
+// With HUB_TOKEN set, a request now has to carry the token (?zt=,
+// `x-hub-token:` or the cookie set on the first ?zt= hit) or come from
+// loopback - loopback is what the runner's own probes use, and the tunnel
+// health check treats 401 as "the edge reached the app" (it accepts 4xx),
+// so open_tunnel.sh keeps working unchanged.
+//
+// WITHOUT HUB_TOKEN the gate stays wide open, exactly as before: a local
+// `node src/server.js` with no env keeps working with no password.
+const HUB_TOKEN = String(process.env.HUB_TOKEN || '').trim();
+const GATE_COOKIE = 'hub_zt';
+// The tunnel dies with the run, so the cookie only has to outlive a reload.
+const GATE_COOKIE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+// Length-independent comparison: a plain === on a shared secret leaks its
+// prefix through timing.
+function gateEquals(a, b) {
+  const A = Buffer.from(String(a), 'utf8');
+  const B = Buffer.from(String(b), 'utf8');
+  if (A.length !== B.length) return false;
+  let diff = 0;
+  for (let i = 0; i < A.length; i++) diff |= A[i] ^ B[i];
+  return diff === 0;
+}
+function gateIsLoopback(req) {
+  const addr = String((req.socket && req.socket.remoteAddress) || '');
+  return addr === '' || addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+function gateQueryToken(req) {
+  // Works for both express requests and raw upgrade sockets (no req.query).
+  try {
+    const u = new URL(req.url || '/', 'http://localhost');
+    return u.searchParams.get('zt') || u.searchParams.get('token') || '';
+  } catch { return ''; }
+}
+function gateCookieToken(req) {
+  const raw = req.headers && req.headers.cookie;
+  if (!raw) return '';
+  for (const part of String(raw).split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    if (part.slice(0, i).trim() === GATE_COOKIE) {
+      try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return ''; }
+    }
+  }
+  return '';
+}
+function gateGranted(req) {
+  if (!HUB_TOKEN) return true;
+  if (gateIsLoopback(req)) return true;
+  const header = (req.get && req.get('x-hub-token')) || (req.headers && req.headers['x-hub-token']) || '';
+  const candidates = [gateQueryToken(req), Array.isArray(header) ? header[0] : header, gateCookieToken(req)];
+  return candidates.some((v) => v && gateEquals(v, HUB_TOKEN));
+}
+if (HUB_TOKEN) {
+  app.use((req, res, next) => {
+    if (!gateGranted(req)) {
+      // The tunnel probe and the panel's preflight both read the status code:
+      // 401 says "the edge is live, the token is not accepted".
+      if (/^\/api\//.test(req.path)) return res.status(401).json({ success: false, error: 'hub token required' });
+      return res.status(401).send('401 - hub token required. Open the link with ?zt=<token>.');
+    }
+    // The panel puts ?zt= in the address bar once; everything after that
+    // (relative fetches, websockets, reloads) authenticates on the cookie.
+    const q = gateQueryToken(req);
+    if (q && !gateCookieToken(req)) {
+      res.cookie(GATE_COOKIE, HUB_TOKEN, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: GATE_COOKIE_MAX_AGE_MS });
+    }
+    next();
+  });
+}
+
+// A socket is not a page: there is no status code the browser can show, and
+// an un-authenticated terminal socket is remote shell. Answer 401 by hand
+// and drop the connection.
+function gateDenySocket(req, socket) {
+  if (gateGranted(req)) return false;
+  try {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n'
+      + 'Content-Type: text/plain; charset=utf-8\r\n\r\n401 hub token required\n');
+  } catch {}
+  try { socket.destroy(); } catch {}
+  return true;
+}
+
 app.use(express.static(path.join(__dirname, '..', 'public'), {
   setHeaders: (res, filePath) => {
     if (/\.(html?|js|css|json)$/.test(filePath)) {
@@ -2000,6 +2091,7 @@ server.on('upgrade', (req, socket, head) => {
   try { u = new URL(req.url, 'http://' + (req.headers.host || 'localhost')); }
   catch { try { socket.destroy(); } catch {} return; }
   if (u.pathname !== '/ws/audio') return;
+  if (gateDenySocket(req, socket)) return;
   try {
     audioWss.handleUpgrade(req, socket, head, (ws) => audioWss.emit('connection', ws, req));
   } catch (e) {
@@ -2019,6 +2111,7 @@ server.on('upgrade', (req, socket, head) => {
   try { pathname = new URL(req.url, 'http://' + (req.headers.host || 'localhost')).pathname; }
   catch { return; }
   if (WS_CLAIMED.has(pathname.replace(/\/+$/, ''))) return;
+  if (gateDenySocket(req, socket)) return;
   try {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   } catch (e) {
@@ -3106,6 +3199,7 @@ server.on('upgrade', (req, socket, head) => {
   try { u = new URL(req.url, 'http://' + (req.headers.host || 'localhost')); }
   catch { return; }
   if (u.pathname !== '/ws/vnc') return; // let the main /ws WSS handle it
+  if (gateDenySocket(req, socket)) return;
   try {
   vncWss.handleUpgrade(req, socket, head, (ws) => {
     const tcp = net.connect(PHONE_VNC_PORT, '127.0.0.1');
@@ -4155,6 +4249,7 @@ try {
     app,
     server,
     port: PORT,
+    gate: (req, socket) => gateDenySocket(req, socket),
     log: (m) => console.log('  🖥 ' + m)
   });
   console.log('  🖥 Always-on desktop: ' + JSON.stringify(vncKeeper.status().note));
