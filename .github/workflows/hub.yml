@@ -335,10 +335,7 @@ jobs:
               >/dev/null 2>&1 || true
             exit "$code"
           }
-          # Exit 0, not 143: a cancelled run is already `cancelled` by GitHub,
-          # and a non-zero step on top of it reads as a failure in the history
-          # and skips the `if: always()` cleanup steps.
-          trap 'cleanup_watchdog 0' TERM INT
+          trap 'cleanup_watchdog 143' TERM INT
           # Watch the hub and the tunnel instead of sleeping blindly: a dead
           # hub behind a live tunnel answers 502, and a dead tunnel keeps
           # resolving - both look like "the address is there but nothing
@@ -1000,7 +997,7 @@ jobs:
               >/dev/null 2>&1 || true
             exit "$code"
           }
-          trap 'cleanup_vnc 0' TERM INT
+          trap 'cleanup_vnc 143' TERM INT
           VFAILS=0
           VRESTARTING=0
           for i in $(seq 1 1400); do
