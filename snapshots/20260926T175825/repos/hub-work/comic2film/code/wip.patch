@@ -1,0 +1,207 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 5fd237b..e4ce8c6 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -70,6 +70,13 @@ android {
+     lint {
+         abortOnError = false
+     }
++
++    testOptions {
++        unitTests {
++            isIncludeAndroidResources = true
++            isReturnDefaultValues = true
++        }
++    }
+ }
+ 
+ kotlin {
+@@ -118,4 +125,10 @@ dependencies {
+     implementation(libs.exifinterface)
+ 
+     testImplementation(libs.junit)
++    testImplementation(libs.robolectric)
++    testImplementation(libs.androidx.test.core)
++    testImplementation(libs.androidx.test.ext.junit)
++    testImplementation(platform(libs.androidx.compose.bom))
++    testImplementation(libs.androidx.compose.ui.test.junit4)
++    debugImplementation(libs.androidx.compose.ui.test.manifest)
+ }
+diff --git a/app/src/main/java/com/voicecomic/app/ai/AiClient.kt b/app/src/main/java/com/voicecomic/app/ai/AiClient.kt
+index 711e68d..556fee4 100644
+--- a/app/src/main/java/com/voicecomic/app/ai/AiClient.kt
++++ b/app/src/main/java/com/voicecomic/app/ai/AiClient.kt
+@@ -28,8 +28,6 @@ import okhttp3.Request
+ import okhttp3.RequestBody.Companion.toRequestBody
+ import java.util.concurrent.TimeUnit
+ 
+-data class Msg(val role: String, val content: String)
+-
+ class AiException(message: String, val status: Int = 0) : Exception(message)
+ 
+ /**
+diff --git a/app/src/main/java/com/voicecomic/app/ai/Providers.kt b/app/src/main/java/com/voicecomic/app/ai/Providers.kt
+index 05e2f76..c542436 100644
+--- a/app/src/main/java/com/voicecomic/app/ai/Providers.kt
++++ b/app/src/main/java/com/voicecomic/app/ai/Providers.kt
+@@ -5,6 +5,7 @@ import com.voicecomic.app.data.Settings
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.withContext
+ import kotlinx.serialization.Serializable
++import java.io.File
+ import kotlinx.serialization.json.Json
+ 
+ @Serializable
+@@ -161,6 +162,20 @@ object Providers {
+ 
+     suspend fun loadDevCatalog(context: Context) = withContext(Dispatchers.IO) {
+         if (devProviders != null) return@withContext
++        // если в репозитории уже лежит кэш свежего каталога — берём его
++        runCatching {
++            val cache = File(context.filesDir, "models.dev.json")
++            if (cache.exists() && cache.length() > 1000) {
++                val map = LinkedHashMap<String, DevProvider>()
++                for ((pid, v) in json.parseToJsonElement(cache.readText()).let { el ->
++                    val obj = el as kotlinx.serialization.json.JsonObject
++                    obj.mapValues { (_, e) -> json.decodeFromJsonElement(DevProvider.serializer(), e) }
++                }) {
++                    map[pid] = v
++                }
++                if (map.isNotEmpty()) devProviders = map
++            }
++        }
+         runCatching {
+             val txt = context.assets.open("models.dev.json").bufferedReader().use { it.readText() }
+             val map = LinkedHashMap<String, DevProvider>()
+@@ -174,6 +189,36 @@ object Providers {
+         }
+     }
+ 
++    /**
++     * Догружает каталог моделей из сети (models.dev) и кладёт в кэш приложения.
++     * Нужен, когда в зашитом ассете ещё нет свежих моделей.
++     */
++    suspend fun refreshFromNetwork(context: Context, http: okhttp3.OkHttpClient): Int =
++        withContext(Dispatchers.IO) {
++            val req = okhttp3.Request.Builder()
++                .url("https://models.dev/api.json")
++                .header("User-Agent", "voicecomic/gen-models")
++                .build()
++            val txt = http.newCall(req).execute().use { resp ->
++                if (!resp.isSuccessful) return@withContext 0
++                resp.body?.string() ?: return@withContext 0
++            }
++            runCatching {
++                val map = LinkedHashMap<String, DevProvider>()
++                for ((pid, v) in json.parseToJsonElement(txt).let { el ->
++                    val obj = el as kotlinx.serialization.json.JsonObject
++                    obj.mapValues { (_, e) -> json.decodeFromJsonElement(DevProvider.serializer(), e) }
++                }) {
++                    map[pid] = v
++                }
++                if (map.isEmpty()) return@withContext 0
++                devProviders = map
++                val cache = File(context.filesDir, "models.dev.json")
++                cache.writeText(txt)
++                map.values.sumOf { it.models.size }
++            }.getOrDefault(0)
++        }
++
+     /** Слияние как в ai.js: сначала curated, потом models.dev (пустой endpoint пропускается). */
+     fun catalog(): List<Provider> {
+         val out = LinkedHashMap<String, Provider>()
+diff --git a/app/src/main/java/com/voicecomic/app/audio/EdgeTts.kt b/app/src/main/java/com/voicecomic/app/audio/EdgeTts.kt
+index 0949971..242d35f 100644
+--- a/app/src/main/java/com/voicecomic/app/audio/EdgeTts.kt
++++ b/app/src/main/java/com/voicecomic/app/audio/EdgeTts.kt
+@@ -28,6 +28,14 @@ class EdgeTts(private val client: OkHttpClient) {
+ 
+     companion object {
+         private const val HOST = "speech.platform.bing.com"
++
++        /**
++         * User-Agent должен быть настоящим: Edge-TTS отвечает 403 на мусорный UA
++         * (проверено живьёй: Chrome/143.0.3650.75.0.0.0 → 403, Chrome/143.0.0.0 → 101).
++         */
++        const val BROWSER_UA =
++            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
++                "Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
+         private const val PATH = "/consumer/speech/synthesize/readaloud"
+         private const val OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3"
+         private val CLIENT = OkHttpClient.Builder()
+@@ -101,8 +109,7 @@ class EdgeTts(private val client: OkHttpClient) {
+             "&Sec-MS-GEC-Version=${Gec.GEC_VERSION}"
+         val request = Request.Builder().url(url)
+             .header("Origin", "https://$HOST")
+-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+-                "(KHTML, like Gecko) Chrome/${Gec.CHROMIUM}.0.0.0 Safari/537.36 Edg/${Gec.CHROMIUM}.0.0.0")
++            .header("User-Agent", BROWSER_UA)
+             .build()
+ 
+         val audio = ByteArrayOutputStream()
+@@ -169,11 +176,14 @@ class EdgeTts(private val client: OkHttpClient) {
+             }
+ 
+             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+-                if (!done.isCompleted) {
+-                    done.completeExceptionally(
+-                        IllegalStateException("Edge-TTS: сеть недоступна или сервер не ответил", t)
+-                    )
++                // без кода ответа и текста причины диагностировать 403 невозможно
++                val detail = buildString {
++                    append("Edge-TTS: ")
++                    append(response?.code?.let { "HTTP $it" } ?: "сеть недоступна")
++                    val msg = t.message
++                    if (!msg.isNullOrBlank()) append(" — ").append(msg.take(160))
+                 }
++                if (!done.isCompleted) done.completeExceptionally(IllegalStateException(detail, t))
+             }
+         })
+ 
+diff --git a/app/src/test/java/com/voicecomic/app/CoreTest.kt b/app/src/test/java/com/voicecomic/app/CoreTest.kt
+index cf81d21..7f8e6ba 100644
+--- a/app/src/test/java/com/voicecomic/app/CoreTest.kt
++++ b/app/src/test/java/com/voicecomic/app/CoreTest.kt
+@@ -48,6 +48,14 @@ class CoreTest {
+         assertEquals(288, out.size)
+     }
+ 
++    @Test
++    fun browserUaIsWellFormed() {
++        // на мусорный UA Edge-TTS отвечает 403 — это уже стоило нам нерабочей озвучки
++        val ua = com.voicecomic.app.audio.EdgeTts.BROWSER_UA
++        assertTrue(ua, ua.matches(Regex("^Mozilla/5\\.0 \\(Windows NT 10\\.0.*Chrome/\\d+\\.\\d+\\.\\d+\\.\\d+ .*Edg/\\d+\\.\\d+\\.\\d+\\.\\d+$")))
++        assertTrue("UA не должен содержать GEC-версию дважды", !ua.contains(Gec.CHROMIUM))
++    }
++
+     @Test
+     fun ssmlAndLocale() {
+         val tts = com.voicecomic.app.audio.EdgeTts(okhttp3.OkHttpClient())
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index a9973d8..7d9c1af 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -15,6 +15,9 @@ mlkitCjk = "16.0.1"
+ junrar = "8.1.1"
+ exifinterface = "1.4.2"
+ junit = "4.13.2"
++robolectric = "4.16"
++androidxTest = "1.7.0"
++androidxTestExt = "1.3.0"
+ 
+ [libraries]
+ androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
+@@ -41,6 +44,13 @@ mlkit-text-korean = { module = "com.google.mlkit:text-recognition-korean", versi
+ junrar = { module = "com.github.junrar:junrar", version.ref = "junrar" }
+ exifinterface = { module = "androidx.exifinterface:exifinterface", version.ref = "exifinterface" }
+ junit = { module = "junit:junit", version.ref = "junit" }
++robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
++androidx-test-core = { module = "androidx.test:core-ktx", version.ref = "androidxTest" }
++androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTest" }
++androidx-test-rules = { module = "androidx.test:rules", version.ref = "androidxTest" }
++androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidxTestExt" }
++androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
++androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+ 
+ [plugins]
+ android-application = { id = "com.android.application", version.ref = "agp" }

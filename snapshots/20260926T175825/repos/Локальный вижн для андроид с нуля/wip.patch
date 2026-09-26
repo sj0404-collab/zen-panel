@@ -1,0 +1,30 @@
+diff --git a/.gitignore b/.gitignore
+index 005b1ea..bc2bba2 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -7,6 +7,9 @@ venv/
+ # 1.1 GB fp32 export. Rebuild with:
+ #   python3 tools/build_skeleton.py omni-t
+ build/
++build-cmake/
++build-*/
++cmake-build-*/
+ *.onnx
+ *.ort
+ *.tflite
+diff --git a/requirements.txt b/requirements.txt
+index dc7eaa0..291d70d 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,4 +1,11 @@
++# core: model definition, ONNX export, memory probes
+ torch==2.14.0
+ onnx==1.23.0
+ onnxruntime==1.30.0
+ numpy>=2.0
++
++# LiteRT probes: build the two-sector .tflite artifact and measure the
++# CompiledModel path. tensorflow-cpu is only needed by the converter.
++ai-edge-litert==2.2.0
++tensorflow-cpu==2.21.0
++flatbuffers>=24.0

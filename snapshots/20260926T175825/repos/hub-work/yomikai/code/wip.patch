@@ -1,0 +1,193 @@
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+index f05d9e72e..548e15a18 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+@@ -994,13 +994,17 @@ class ReaderViewModel @JvmOverloads constructor(
+                 } finally {
+                     if (work !== bitmap) work.recycle()
+                 }
++                // Читаем ПОСЛЕ распознавания: без сети онлайн-движок
++                // пропускается, и текст читает локальный. Показываем
++                // фактического исполнителя, иначе «онлайн» — враньё.
++                val usedEngine = ocrProcessor.lastUsedEngine()
+                 withUIContext {
+                     val queryText = flattenOcrTextForQuery(text)
+                     if (queryText.isNotBlank()) {
+                         showOcrResult(
+                             queryText = queryText,
+                             origin = OcrResultOrigin.ManualSelection,
+-                            engineLabel = ocrEngineLabel(),
++                            source = ocrSource(usedEngine),
+                         )
+                         mutableState.update { it.copy(isProcessingOcr = false) }
+                     } else {
+diff --git a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+index addd70bdc..dbfec4d33 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+@@ -99,10 +99,42 @@ class OcrRepositoryImpl(
+     private var detEngine: DetOcrEngine? = null
+ 
+     private val engineLocks = OcrEngineLocks()
++
++    /**
++     * Движок, который реально вернул последний распознанный текст.
++     *
++     * Читатель жаловался, что «у онлайн ИИ качество такое же, как у
++     * локального». Причина была в тихом фолбэке: без сети онлайн-движок
++     * пропускался, и страницу читал локальный. Теперь подпись в окне
++     * результата показывает фактического исполнителя, а не выбранного.
++     */
++    @Volatile
++    override var lastRecognizedEngine: OcrModel? = null
++        private set
++
++    private fun noteEngineUsed(type: EngineType) {
++        lastRecognizedEngine = type.toOcrModel()
++    }
++
++    /**
++     * Старые значения настройки (LEGACY/FAST) давно ведут в тот же русский
++     * движок. Отчёт показывает, что ОТРАБОТАЛО, а не что стояло в настройке
++     * три года назад.
++     */
++    private fun EngineType.toOcrModel(): OcrModel = when (this) {
++        EngineType.CYRILLIC -> OcrModel.CYRILLIC
++        EngineType.MLKIT -> OcrModel.MLKIT
++        EngineType.GLENS -> OcrModel.GLENS
++        EngineType.OWOCR -> OcrModel.OWOCR
++        EngineType.OPENROUTER -> OcrModel.OPENROUTER
++        EngineType.GOOGLE -> OcrModel.GOOGLE
++        EngineType.ZEN_FREE -> OcrModel.ZEN_FREE
++        EngineType.LEGACY, EngineType.FAST -> OcrModel.CYRILLIC
++    }
++
+     private val cleanupMutex = Mutex()
+     private val sessionMutex = Mutex()
+-    private val operationMutex = Mutex()
+-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++    private val operationMutex = Mutex()    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+     private val taskQueue = PrioritizedTaskQueue(scope) {
+         scope.launch {
+             performDeferredCleanupIfIdle()
+@@ -332,12 +364,17 @@ class OcrRepositoryImpl(
+         )
+     }
+ 
++    /**
++     * Единственное место, где движок реально отработал: отмечаем его здесь,
++     * иначе вызывающий код узнал бы только «первый, кто ответил», а это
++     * ровно то, что он и так не знает.
++     */
+     private suspend fun recognizeWithEngine(type: EngineType, image: Bitmap): String {
+         return engineLocks.withTextEngineLock(type) {
+             // Онлайн-модели отдают текст построчно и не склеивают переносы —
+             // соединяем «пере-\nносится» в «переносится» централизованно.
+             OcrTextCleaner.joinLineHyphens(engineFor(type).recognizeText(image))
+-        }
++        }.also { noteEngineUsed(type) }
+     }
+ 
+     private suspend fun recognizeWithFallback(primary: EngineType, image: Bitmap): String {
+@@ -378,6 +415,9 @@ class OcrRepositoryImpl(
+     }
+ 
+     override suspend fun recognizeText(image: OcrImage): String {
++        // Новый вызов — новый отчёт: без сброса неудача показала бы движок
++        // ПРЕДЫДУщего распознавания.
++        lastRecognizedEngine = null
+         return withActiveOperation {
+             submitTask(PrioritizedTaskQueue.Priority.HIGH) {
+                 image.useBitmap { bitmap ->
+@@ -568,6 +608,10 @@ class OcrRepositoryImpl(
+         type: EngineType,
+         onPartial: ((OcrRegion) -> Unit)? = null,
+     ): OcrPageResult {
++        // Страничный скан тоже идёт по резервной цепочке, поэтому и тут
++        // запоминаем фактического исполнителя: тап по готовой странице
++        // показывает подпись того движка, который её прочитал.
++        noteEngineUsed(type)
+         return when (type) {
+             EngineType.CYRILLIC -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, type, onPartial)
+             EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT, onPartial)
+diff --git a/domain/src/main/java/mihon/domain/ocr/interactor/OcrProcessor.kt b/domain/src/main/java/mihon/domain/ocr/interactor/OcrProcessor.kt
+index 0297e2893..e9621681b 100644
+--- a/domain/src/main/java/mihon/domain/ocr/interactor/OcrProcessor.kt
++++ b/domain/src/main/java/mihon/domain/ocr/interactor/OcrProcessor.kt
+@@ -1,6 +1,7 @@
+ package mihon.domain.ocr.interactor
+ 
+ import mihon.domain.ocr.model.OcrImage
++import mihon.domain.ocr.model.OcrModel
+ import mihon.domain.ocr.repository.OcrRepository
+ 
+ class OcrProcessor(
+@@ -9,4 +10,13 @@ class OcrProcessor(
+     suspend fun getText(image: OcrImage): String {
+         return ocrRepository.recognizeText(image)
+     }
++
++    /**
++     * Движок, который реально вернул текст последнего [getText].
++     *
++     * Не совпадает с выбранным в настройках, когда сети нет: онлайн-движок
++     * пропускается, и читает локальный. Показываем читателю именно
++     * фактического исполнителя, иначе «онлайн» в подписи была бы враньём.
++     */
++    fun lastUsedEngine(): OcrModel? = ocrRepository.lastRecognizedEngine
+ }
+diff --git a/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt b/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
+index 43b503616..e8ca0a98a 100644
+--- a/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
++++ b/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
+@@ -1,12 +1,24 @@
+ package mihon.domain.ocr.repository
+ 
+ import mihon.domain.ocr.model.OcrImage
++import mihon.domain.ocr.model.OcrModel
+ import mihon.domain.ocr.model.OcrPageResult
+ import mihon.domain.ocr.model.OcrRegion
+ 
+ interface OcrRepository {
+     suspend fun recognizeText(image: OcrImage): String
+ 
++    /**
++     * Движок, который ФАКТИЧЕСКИ вернул последний распознанный текст.
++     *
++     * Нужен читателю, а не разработчику: без сети онлайн-движок молча
++     * пропускается, и страницу читает локальный. Отсюда жалоба «у онлайн
++     * качество такое же, как у локального» — на самом деле это был один и
++     * тот же движок. null означает, что до вызова ни один движок не
++     * отработал.
++     */
++    val lastRecognizedEngine: OcrModel?
++
+     /**
+      * Спросить у ВЫБРАННОЙ vision-модели произвольный вопрос о картинке.
+      *
+diff --git a/i18n/src/commonMain/moko-resources/base/strings.xml b/i18n/src/commonMain/moko-resources/base/strings.xml
+index 8c54c98df..204326424 100644
+--- a/i18n/src/commonMain/moko-resources/base/strings.xml
++++ b/i18n/src/commonMain/moko-resources/base/strings.xml
+@@ -1242,6 +1242,8 @@
+     <string name="ocr_model_tesseract">Tesseract (устаревший)</string>
+     <string name="ocr_model_cyrillic">Русский Cyrillic OCR (офлайн, PP-OCR)</string>
+     <string name="ocr_model_mlkit">Google ML Kit (латиница, офлайн)</string>
++    <string name="ocr_recognized_by">Распознано: %1$s</string>
++    <string name="ocr_recognized_by_fallback">Распознано: %1$s (выбранный %2$s не ответил)</string>
+ 
+     <!-- Voice / Text-to-Speech Settings -->
+     <string name="pref_category_voice">Voices &amp; Text-to-Speech</string>
+diff --git a/i18n/src/commonMain/moko-resources/ru/strings.xml b/i18n/src/commonMain/moko-resources/ru/strings.xml
+index 589645d4c..1c8eaf703 100644
+--- a/i18n/src/commonMain/moko-resources/ru/strings.xml
++++ b/i18n/src/commonMain/moko-resources/ru/strings.xml
+@@ -937,6 +937,8 @@
+     <string name="ocr_model_google">Google AI / Gemini Vision</string>
+     <string name="ocr_model_zen_free">Space Bunny Free (OpenCode Zen)</string>
+     <string name="ocr_model_mlkit">Google ML Kit (латиница, офлайн)</string>
++    <string name="ocr_recognized_by">Распознано: %1$s</string>
++    <string name="ocr_recognized_by_fallback">Распознано: %1$s (выбранный %2$s не ответил)</string>
+ 
+     <!-- Voice / Text-to-Speech Settings -->
+     <string name="pref_category_voice">Голоса и Озвучка (TTS)</string>
