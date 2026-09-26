@@ -85,7 +85,14 @@ async function api(path, token, opts) {
     body: o.body
   });
   if (r.status === 401) throw new Error('401: токен недействителен. Вставьте новый.');
-  if (r.status === 403) throw new Error('403: нет прав (нужны repo + workflow) или лимит.');
+  if (r.status === 403) {
+    const rem = r.headers.get('X-RateLimit-Remaining');
+    if (rem === '0') {
+      const at = new Date(Number(r.headers.get('X-RateLimit-Reset') || 0) * 1000);
+      throw new Error('Лимит API GitHub исчерпан (5000/час). Обнулится в ' + at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' — дождитесь и запустите снова.');
+    }
+    throw new Error('403: у токена нет прав. Нужны разрешения repo + workflow (Actions).');
+  }
   if (r.status === 429) throw new Error('429: слишком много запросов — подождите минуту.');
   if (r.status === 404) return null;
   if (r.status === 202 || r.status === 204) return true;
@@ -152,10 +159,9 @@ async function waitForRunsToStop(token, ids, sleepMs, attempts) {
   const limit = attempts == null ? 400 : attempts;
   for (let i = 0; pending.size && i < limit; i++) {
     await sleep(pause);
-    for (const id of Array.from(pending)) {
-      const run = await api(`/repos/${REPO}/actions/runs/${id}`, token);
-      if (!run || !isActiveRun(run)) pending.delete(id);
-    }
+    const r = await api(`/repos/${REPO}/actions/runs?per_page=50`, token);
+    const alive = new Set((r && r.workflow_runs || []).filter(isActiveRun).map(x => String(x.id)));
+    for (const id of Array.from(pending)) if (!alive.has(id)) pending.delete(id);
   }
   if (pending.size) throw new Error('Старый запуск ещё не остановлен GitHub. Повторите перезапуск через минуту.');
   return true;
@@ -188,7 +194,21 @@ function parseSessionFile(f) {
   const raw = decodeURIComponent(escape(atob((f.content || '').replace(/\n/g, ''))));
   return JSON.parse(raw);
 }
+// raw.githubusercontent.com is a web page, not the REST API: it costs no
+// token quota. The session-state branch is plain git content, so the session
+// address can be polled this way hundreds of times for free.
+async function readHubSessionRaw() {
+  for (const path of ['live/session-hub-linux.json', 'session-hub-linux.json']) {
+    try {
+      const r = await fetch(`https://raw.githubusercontent.com/${REPO}/session-state/${path}?t=${Date.now()}`, { cache: 'no-store' });
+      if (r.ok) return JSON.parse(await r.text());
+    } catch (e) { /* try next */ }
+  }
+  return null;
+}
 async function readHubSession(token) {
+  const viaRaw = await readHubSessionRaw();
+  if (viaRaw) return viaRaw;
   // The branch is organised in folders now; the old flat name stays as a
   // fallback so an unmigrated branch keeps connecting.
   for (const path of ['live/session-hub-linux.json', 'session-hub-linux.json']) {
