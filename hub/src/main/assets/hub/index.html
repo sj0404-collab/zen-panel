@@ -171,13 +171,43 @@ async function cancelAndWait(token) {
   if (ids.length) await waitForRunsToStop(token, ids);
   return ids.length;
 }
-async function assertNoActiveSession(token) {
+async function detectSessionConflict(token) {
   const active = await listActiveRuns(token, isSessionRun);
-  if (!active.length) return;
-  if (active.some(isHubRun)) {
-    throw new Error('NPM Hub уже запущен. Откройте его или используйте «Остановить и перезапустить».');
+  if (!active.length) return null;
+  if (active.some(isHubRun)) return 'hub';
+  return 'other';
+}
+// The run is alive but the page forgot how to open it (reload, cleared
+// storage): read the session address (raw = free) and try the launch token
+// saved at dispatch, then the last connected one, then an open gate.
+async function tryOpenLive(token) {
+  const s = await readHubSessionRaw();
+  if (!s || s.state !== 'live' || !(s.hubUrl || s.url)) {
+    log('Запуск уже идёт, но адрес хаб ещё не сообщил (или он уже выключен). Подожди пару минут и нажми «Запустить хаб» снова — страница подключится к уже идущему.', 'err');
+    return false;
   }
-  throw new Error('Другая сессия уже использует раннер. Остановите её перед запуском NPM Hub.');
+  log('Хаб уже запущен. Подбираю доступ…');
+  const ztStored = lastOriginToken().zt;
+  const pend = readPending();
+  const seen = {};
+  const candidates = [];
+  for (const v of [pend && pend.zt, ztStored, '']) {
+    const k = String(v || '');
+    if (seen[k]) continue; seen[k] = 1; candidates.push(k);
+  }
+  for (const zk of candidates) {
+    try {
+      await preflightHub(String(s.hubUrl || s.url).replace(/\/+$/, ''), zk, s.runId);
+      const url = buildOpenUrl(s, zk);
+      saveLast(url);
+      clearPending();
+      log('Подключился к уже запущенному хабу. Открываю…', 'ok');
+      location.href = url;
+      return true;
+    } catch (e) { /* следующий кандидат */ }
+  }
+  log('Хаб запущен, но закрыт токеном запуска, которого на этом устройстве уже нет. Нажми «Остановить и перезапустить ранер».', 'err');
+  return false;
 }
 async function restartRunner(token, zt, runner) {
   const active = await listActiveRuns(token, isSessionRun);
@@ -246,6 +276,17 @@ function saveLast(url) {
 }
 function readLast() {
   try { return JSON.parse(localStorage.getItem('hub_last') || 'null'); } catch (e) { return null; }
+}
+// The gate token of a launch the page has not connected to yet: survives a
+// page reload, so a freshly started hub stays openable.
+function savePending(zt) {
+  try { localStorage.setItem('hub_pending', JSON.stringify({ zt, since: Date.now() })); } catch (e) {}
+}
+function readPending() {
+  try { return JSON.parse(localStorage.getItem('hub_pending') || 'null'); } catch (e) { return null; }
+}
+function clearPending() {
+  try { localStorage.removeItem('hub_pending'); } catch (e) {}
 }
 // ── UI ──
 try { $('token').value = localStorage.getItem('hub_gh_token') || ''; } catch (e) {}
@@ -320,11 +361,14 @@ $('launch').onclick = async () => {
   const btn = $('launch');
   btn.disabled = true;
   try {
-    await assertNoActiveSession(token);
+    const conflict = await detectSessionConflict(token);
+    if (conflict === 'other') throw new Error('Другая сессия уже использует раннер. Остановите её перед запуском NPM Hub.');
+    if (conflict === 'hub') { await tryOpenLive(token); return; }
     const zt = genZt();
     const since = Date.now();
     log('Отправляю запуск…');
     await dispatchHub(token, zt, runner);
+    savePending(zt);
     log('Ран принят. Жду адрес (обычно 1–3 мин)…', 'ok');
     const s = await waitForHub(token, since);
     const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
@@ -332,6 +376,7 @@ $('launch').onclick = async () => {
     await preflightHub(base, zt, s.runId);
     const url = buildOpenUrl(s, zt);
     saveLast(url);
+    clearPending();
     log('Хаб жив. Открываю…', 'ok');
     location.href = url;
   } catch (e) {
@@ -351,6 +396,7 @@ $('restart').onclick = async () => {
   try {
     const zt = genZt();
     await restartRunner(token, zt, runner);
+    savePending(zt);
     log('Ран принят. Жду адрес (обычно 1–3 мин)…', 'ok');
     const s = await waitForHub(token, Date.now());
     const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
@@ -358,6 +404,7 @@ $('restart').onclick = async () => {
     await preflightHub(base, zt, s.runId);
     const url = buildOpenUrl(s, zt);
     saveLast(url);
+    clearPending();
     log('Хаб жив. Открываю…', 'ok');
     location.href = url;
   } catch (e) {
@@ -366,6 +413,17 @@ $('restart').onclick = async () => {
     btn.disabled = false;
   }
 };
+// A dispatch whose connect got interrupted (reload, crash): try to open it.
+(function autoPending() {
+  const p = readPending();
+  if (!p) return;
+  if (Date.now() - (p.since || 0) > 30 * 60 * 1000) return;
+  if (last && last.url && Date.now() - (last.at || 0) <= 30 * 60 * 1000) return;
+  const t2 = ($('token').value || '').trim();
+  if (!t2) return;
+  log('Есть незавершённый запуск — проверяю, жив ли он…');
+  tryOpenLive(t2);
+})();
 </script>
 </body>
 </html>
