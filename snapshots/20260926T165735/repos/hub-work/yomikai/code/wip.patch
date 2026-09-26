@@ -1,0 +1,481 @@
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt b/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt
+index 339b92592..33e895cae 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt
+@@ -3,7 +3,10 @@ package eu.kanade.presentation.reader
+ import android.speech.tts.TextToSpeech
+ import androidx.compose.foundation.clickable
+ import androidx.compose.foundation.horizontalScroll
++import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.ExperimentalLayoutApi
++import androidx.compose.foundation.layout.FlowRow
+ import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.heightIn
+@@ -40,11 +43,59 @@ import mihon.domain.ocr.service.OcrPreferences
+ import uy.kohesive.injekt.Injekt
+ import uy.kohesive.injekt.api.get
+ 
++/**
++ * Голос в списках выбора: [key] сохраняется в настройках, [label] — подпись,
++ * [lang] — язык голоса (для переключателя), [local] — работает без сети.
++ */
++private data class VoiceChoice(
++    val key: String,
++    val label: String,
++    val lang: String,
++    val local: Boolean,
++)
++
++/**
++ * Сетка голосов 4×N: двадцать голосов помещаются в один экран, против
++ * двадцати строк, которые приходилось прокручивать.
++ */
++@OptIn(ExperimentalLayoutApi::class)
++@Composable
++private fun VoiceGrid(
++    voices: List<VoiceChoice>,
++    selected: String?,
++    onSelect: (String) -> Unit,
++    modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier,
++) {
++    FlowRow(
++        modifier = modifier.fillMaxWidth(),
++        maxItemsInEachRow = 4,
++        horizontalArrangement = Arrangement.spacedBy(4.dp),
++        verticalArrangement = Arrangement.spacedBy(4.dp),
++    ) {
++        voices.forEach { choice ->
++            val isOn = selected == choice.key
++            Text(
++                text = "${if (choice.local) "📱" else "☁"} ${choice.label}",
++                style = MaterialTheme.typography.labelSmall,
++                color = if (isOn) {
++                    MaterialTheme.colorScheme.onPrimaryContainer
++                } else {
++                    MaterialTheme.colorScheme.onSurfaceVariant
++                },
++                modifier = Modifier
++                    .weight(1f)
++                    .clickable { onSelect(choice.key) }
++                    .padding(6.dp),
++            )
++        }
++    }
++}
++
+ /**
+  * Настройки озвучки: три источника голосов.
+  * • Системные — все голоса Android TTS (локальные и сетевые)
+  * • Веб (без ключа) — Google Translate TTS прямо с сайта
+- * • ElevenLabs — нейроголоса по API-ключу
++ * • ElevenLabs — нейроголоса по API-ключа
+  */
+ @Composable
+ fun TtsSettingsDialog(
+@@ -87,7 +138,23 @@ fun TtsSettingsDialog(
+     }
+     var assignMode by remember { mutableStateOf(0) } // 0=основной, 1=женский, 2=мужской
+ 
+-    var voices by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
++    // Полный перечень голосов устройства + активный языковой фильтр. Раньше
++    // список был жёстко ru-only, и при движке без ru-голосов он был пуст, а
++    // приложение требовало «установите TTS-движок».
++    var allVoiceChoices by remember { mutableStateOf<List<VoiceChoice>>(emptyList()) }
++    var voiceLangs by remember { mutableStateOf<List<String>>(emptyList()) }
++    var voiceLang by remember { mutableStateOf("ru") }
++    // Список движков для пустого состояния: installedEngines() ждёт onInit,
++    // поэтому в composable вызывать его нельзя — только из фонового потока.
++    var detectedEngines by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
++    val voices: List<VoiceChoice> = remember(allVoiceChoices, voiceLang) {
++        when {
++            allVoiceChoices.isEmpty() -> emptyList()
++            // "" — показать все языки: включается автоматически, если ru не найден.
++            voiceLang.isBlank() -> allVoiceChoices
++            else -> allVoiceChoices.filter { it.lang == voiceLang }
++        }
++    }
+     var showAddSlot by remember { mutableStateOf(false) }
+     var addSlotRole by remember { mutableStateOf<String?>(null) }
+     var sysReady by remember { mutableStateOf(false) }
+@@ -118,7 +185,8 @@ fun TtsSettingsDialog(
+     var probeInitStatus by remember { mutableStateOf(Int.MIN_VALUE) }
+ 
+     DisposableEffect(systemEnginePkg) {
+-        voices = emptyList()
++        allVoiceChoices = emptyList()
++        voiceLangs = emptyList()
+         sysReady = false
+         probe = null
+         probeInitStatus = Int.MIN_VALUE
+@@ -146,6 +214,12 @@ fun TtsSettingsDialog(
+         }
+     }
+ 
++    androidx.compose.runtime.LaunchedEffect(Unit) {
++        detectedEngines = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
++            eu.kanade.tachiyomi.data.tts.TtsSpeaker.installedEngines(context)
++        }
++    }
++
+     androidx.compose.runtime.LaunchedEffect(probe, probeInitStatus, systemEnginePkg) {
+         val activeProbe = probe
+         if (probeInitStatus != TextToSpeech.SUCCESS || activeProbe == null) {
+@@ -153,19 +227,24 @@ fun TtsSettingsDialog(
+             return@LaunchedEffect
+         }
+         sysReady = false
+-        eu.kanade.tachiyomi.data.tts.VoiceHelper.prepareForLanguage(activeProbe, "ru")
+-        var found = emptyList<android.speech.tts.Voice>()
++        val helper = eu.kanade.tachiyomi.data.tts.VoiceHelper
++        helper.prepareForLanguage(activeProbe, "ru")
++        // ru-голоса могут не отдаться, пока не докачан языковой пакет. Движок при
++        // этом установлен и работает, поэтому берём ВСЕ его голоса и показываем
++        // те, что реально есть, вместо требования «установите TTS-движок».
++        // Повторяем опрос: часть движков публикует голоса с задержкой.
++        var fromDefault = emptyList<android.speech.tts.Voice>()
+         for (attempt in 0 until 6) {
+-            found = eu.kanade.tachiyomi.data.tts.VoiceHelper
+-                .russianVoices(activeProbe, systemEnginePkg)
+-            if (found.isNotEmpty()) break
++            fromDefault = helper.allVoices(activeProbe, systemEnginePkg)
++            if (fromDefault.isNotEmpty()) break
+             kotlinx.coroutines.delay(250L + attempt * 150L)
+         }
+-        voices = found
++        val choices = mutableListOf<VoiceChoice>()
++        choices += fromDefault
+             .sortedWith(
+                 compareBy(
+                     {
+-                        when (eu.kanade.tachiyomi.data.tts.VoiceHelper.classify(it)) {
++                        when (helper.classify(it)) {
+                             eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE -> 0
+                             eu.kanade.tachiyomi.data.tts.VoiceKind.MALE -> 1
+                             eu.kanade.tachiyomi.data.tts.VoiceKind.TEEN -> 2
+@@ -177,19 +256,22 @@ fun TtsSettingsDialog(
+                 ),
+             )
+             .map { voice ->
+-                val kind = when (eu.kanade.tachiyomi.data.tts.VoiceHelper.classify(voice)) {
++                val kind = when (helper.classify(voice)) {
+                     eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE -> "♀ Женский"
+                     eu.kanade.tachiyomi.data.tts.VoiceKind.MALE -> "♂ Мужской"
+                     eu.kanade.tachiyomi.data.tts.VoiceKind.TEEN -> "👦 Подросток"
+                     else -> "Другой"
+                 }
+-                val net = if (voice.isNetworkConnectionRequired) "☁ сеть" else "📱 локальный"
+-                voice.name to "$kind • $net • ${voice.name.substringAfterLast(':')}"
++                VoiceChoice(
++                    key = voice.name,
++                    label = "$kind • ${voice.name.substringAfterLast(':')}",
++                    lang = voice.locale?.language?.lowercase(java.util.Locale.US).orEmpty(),
++                    local = !voice.isNetworkConnectionRequired,
++                )
+             }
+ 
+         // v1.9.39: голоса ВСЕХ установленных движков (RHVoice и др.), а не только
+         // движка по умолчанию: каждый движок инициализируется явно своим пакетом.
+-        val extraVoices = mutableListOf<Pair<String, String>>()
+         for ((pkg, label) in eu.kanade.tachiyomi.data.tts.TtsSpeaker.installedEngines(context)) {
+             val isDefault = pkg == systemEnginePkg ||
+                 (systemEnginePkg.isBlank() && pkg == runCatching { activeProbe.defaultEngine }.getOrDefault(""))
+@@ -201,18 +283,31 @@ fun TtsSettingsDialog(
+                 latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+                 tts
+             }
+-            val vs = eu.kanade.tachiyomi.data.tts.VoiceHelper.russianVoices(eng, pkg)
++            val vs = helper.allVoices(eng, pkg)
+             runCatching { eng?.shutdown() }
+             vs.forEach { v ->
+-                val net = if (v.isNetworkConnectionRequired) "☁ сеть" else "📱 локальный"
+-                extraVoices.add(("$pkg::${v.name}") to "$label • $net • ${v.name}")
++                choices.add(
++                    VoiceChoice(
++                        key = "$pkg::${v.name}",
++                        label = "$label • ${v.name}",
++                        lang = v.locale?.language?.lowercase(java.util.Locale.US).orEmpty(),
++                        local = !v.isNetworkConnectionRequired,
++                    ),
++                )
+             }
+         }
+-        voices = voices + extraVoices
++        val distinct = choices.distinctBy { it.key }
++        allVoiceChoices = distinct
++        val langs = helper.languagesIn(fromDefault)
++        voiceLangs = langs
++        // Если ru-голосов нет, но другие языки есть — показываем все, иначе список
++        // выглядел бы пустым при заведомо установленном движке.
++        val hasRu = distinct.any { it.lang == "ru" }
++        voiceLang = if (hasRu) "ru" else ""
+ 
+         // Автовыбор выполняется по тому же выбранному пакету движка, включая
+         // RHVoice fallback для прошивок с пустым getVoices().
+-        val names = voices.map { it.first }.toSet()
++        val names = distinct.map { it.key }.toSet()
+         if (selectedVoice.isBlank() || selectedVoice !in names) {
+             eu.kanade.tachiyomi.data.tts.VoiceHelper
+                 .pick(
+@@ -383,15 +478,38 @@ fun TtsSettingsDialog(
+                             confirmButton = { TextButton(onClick = { addSlotRole = null; showAddSlot = false }) { Text("Отмена") } },
+                             title = { Text("Голос для роли (локальный или онлайн)") },
+                             text = {
+-                                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+-                                    voices.forEach { (name, label) ->
+-                                        TextButton(onClick = {
+-                                            val arr = runCatching { org.json.JSONArray(prefs.voiceSlots().get()) }.getOrDefault(org.json.JSONArray())
+-                                            arr.put(org.json.JSONObject().apply { put("role", addSlotRole); put("voice", name) })
+-                                            prefs.voiceSlots().set(arr.toString())
+-                                            addSlotRole = null
+-                                            showAddSlot = false
+-                                        }) { Text(label) }
++                                if (voices.isEmpty()) {
++                                    // Раньше здесь была пустая коробка без единого
++                                    // слова — читатель не понимал, что делать.
++                                    Text(
++                                        "Голосов не найдено. Закройте окно и проверьте " +
++                                            "настройки озвучки: список берётся из TTS-движков " +
++                                            "устройства (Speech Services by Google, RHVoice).",
++                                        style = MaterialTheme.typography.bodySmall,
++                                    )
++                                } else {
++                                    Column(
++                                        Modifier
++                                            .fillMaxWidth()
++                                            .heightIn(max = 420.dp)
++                                            .verticalScroll(rememberScrollState()),
++                                    ) {
++                                        Text(
++                                            "Найдено голосов: ${voices.size}",
++                                            style = MaterialTheme.typography.labelMedium,
++                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                                        )
++                                        VoiceGrid(
++                                            voices = voices,
++                                            selected = null,
++                                            onSelect = { name ->
++                                                val arr = runCatching { org.json.JSONArray(prefs.voiceSlots().get()) }.getOrDefault(org.json.JSONArray())
++                                                arr.put(org.json.JSONObject().apply { put("role", addSlotRole); put("voice", name) })
++                                                prefs.voiceSlots().set(arr.toString())
++                                                addSlotRole = null
++                                                showAddSlot = false
++                                            },
++                                        )
+                                     }
+                                 }
+                             },
+@@ -733,48 +851,82 @@ fun TtsSettingsDialog(
+                         )
+                         when {
+                             !sysReady -> Text("Инициализация системного TTS…")
+-                            voices.isEmpty() -> Text(
+-                                "Голосов не найдено. Установите TTS-движок " +
+-                                    "(Speech Services by Google, RHVoice) в настройках системы.",
+-                            )
+-                            else -> Column(modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
+-                                voices.forEach { (name, label) ->
++                            allVoiceChoices.isEmpty() -> Column {
++                                Text(
++                                    "Голосов не найдено. Установите TTS-движок " +
++                                        "(Speech Services by Google, RHVoice) в настройках системы.",
++                                    style = MaterialTheme.typography.bodySmall,
++                                )
++                                // Показываем, что именно найдено: пустой список при
++                                // установленном движке выглядел как «не установлено».
++                                if (detectedEngines.isNotEmpty()) {
++                                    Text(
++                                        "Найдено движков: " +
++                                            detectedEngines.joinToString(", ") { it.second },
++                                        style = MaterialTheme.typography.bodySmall,
++                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
++                                    )
++                                }
++                            }
++                            else -> Column {
++                                if (voiceLangs.size > 1) {
+                                     Row(
+-                                        verticalAlignment = Alignment.CenterVertically,
+                                         modifier = Modifier
+-                                            .fillMaxWidth()
+-                                            .clickable {
+-                                                when (assignMode) {
+-                                                    1 -> voiceFemale = name
+-                                                    2 -> voiceMale = name
+-                                                    else -> selectedVoice = name
+-                                                }
+-                                            },
++                                            .padding(bottom = 4.dp)
++                                            .horizontalScroll(rememberScrollState()),
+                                     ) {
+-                                        RadioButton(
+-                                            selected = when (assignMode) {
+-                                                1 -> voiceFemale == name
+-                                                2 -> voiceMale == name
+-                                                else -> selectedVoice == name
+-                                            },
+-                                            onClick = {
+-                                                when (assignMode) {
+-                                                    1 -> voiceFemale = name
+-                                                    2 -> voiceMale = name
+-                                                    else -> selectedVoice = name
+-                                                }
+-                                            },
+-                                        )
+-                                        Column {
+-                                            Text(label, style = MaterialTheme.typography.bodyMedium)
+-                                            Text(
+-                                                name,
+-                                                style = MaterialTheme.typography.bodySmall,
+-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
++                                        voiceLangs.forEach { lang ->
++                                            FilterChip(
++                                                selected = voiceLang == lang,
++                                                onClick = { voiceLang = lang },
++                                                label = { Text(lang.uppercase()) },
++                                                modifier = Modifier.padding(end = 4.dp),
+                                             )
+                                         }
++                                        // «Все» появляется, когда выбранного языка
++                                        // в движке нет — иначе список был бы пуст.
++                                        FilterChip(
++                                            selected = voiceLang.isBlank(),
++                                            onClick = { voiceLang = "" },
++                                            label = { Text("Все") },
++                                            modifier = Modifier.padding(end = 4.dp),
++                                        )
+                                     }
+                                 }
++                                if (voices.isEmpty()) {
++                                    Text(
++                                        "Голосов на языке ${voiceLang.uppercase()} нет. " +
++                                            "Выберите «Все» — или скачайте языковой пакет " +
++                                            "в настройках Android.",
++                                        style = MaterialTheme.typography.bodySmall,
++                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
++                                    )
++                                } else {
++                                    Text(
++                                        "Найдено голосов: ${voices.size}" +
++                                            if (voiceLang.isNotBlank()) " • $voiceLang" else "",
++                                        style = MaterialTheme.typography.labelMedium,
++                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
++                                    )
++                                    VoiceGrid(
++                                        voices = voices,
++                                        selected = when (assignMode) {
++                                            1 -> voiceFemale
++                                            2 -> voiceMale
++                                            else -> selectedVoice
++                                        },
++                                        onSelect = { key ->
++                                            when (assignMode) {
++                                                1 -> voiceFemale = key
++                                                2 -> voiceMale = key
++                                                else -> selectedVoice = key
++                                            }
++                                        },
++                                        modifier = Modifier
++                                            .heightIn(max = 320.dp)
++                                            .verticalScroll(rememberScrollState()),
++                                    )
++                                }
+                             }
+                         }
+                     }
+@@ -1015,7 +1167,7 @@ fun TtsSettingsDialog(
+  */
+ @Composable
+ private fun AddRoleDialog(
+-    voices: List<Pair<String, String>>,
++    voices: List<VoiceChoice>,
+     onDismiss: () -> Unit,
+     onAdd: (eu.kanade.tachiyomi.data.tts.VoiceRole) -> Unit,
+ ) {
+@@ -1096,16 +1248,23 @@ private fun AddRoleDialog(
+                     }
+                 }
+                 Text("Голос (пусто = подбор по полу/возрасту):", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+-                Column(modifier = Modifier.heightIn(max = 150.dp).verticalScroll(rememberScrollState())) {
+-                    voices.forEach { (vname, vlabel) ->
+-                        Row(modifier = Modifier.fillMaxWidth()) {
+-                            androidx.compose.material3.RadioButton(
+-                                selected = voice == vname,
+-                                onClick = { voice = vname },
+-                            )
+-                            Text(vlabel, style = MaterialTheme.typography.bodySmall)
+-                        }
+-                    }
++                if (voices.isEmpty()) {
++                    Text(
++                        "Голосов не найдено — список пуст, поэтому роль сохранится без " +
++                            "голоса и будет подбирать его по полу/возрасту. Проверьте " +
++                            "TTS-движок устройства в настройках озвучки.",
++                        style = MaterialTheme.typography.bodySmall,
++                        color = MaterialTheme.colorScheme.onSurfaceVariant,
++                    )
++                } else {
++                    VoiceGrid(
++                        voices = voices,
++                        selected = voice.ifBlank { null },
++                        onSelect = { voice = it },
++                        modifier = Modifier
++                            .heightIn(max = 220.dp)
++                            .verticalScroll(rememberScrollState()),
++                    )
+                 }
+                 Text(
+                     "Питч: ×${"%.2f".format(pitch)} (1.0 = обычный)",
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceHelper.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceHelper.kt
+index 5635d0c14..75899df4e 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceHelper.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceHelper.kt
+@@ -96,6 +96,47 @@ object VoiceHelper {
+         return runCatching { engine.setLanguage(locale) }.getOrDefault(TextToSpeech.ERROR)
+     }
+ 
++    /**
++     * Все голоса движка БЕЗ языкового фильтра.
++     *
++     * Нужно там, где жёсткий фильтр по языку оставляет пустой список: часть
++     * OEM-движков не отдаёт ru-голоса, пока не докачан языковой пакет, и
++     * `voicesFor(tts, "ru")` возвращает пусто при заведомо рабочем движке —
++     * список в настройках выглядел пустым, а приложение требовало «установите
++     * TTS-движок». [voicesFor] намеренно не меняется: он остаётся точным
++     * выбором языка, а откат делает вызывающий UI.
++     */
++    fun allVoices(tts: TextToSpeech?, enginePackage: String? = null): List<Voice> {
++        val engine = tts ?: return emptyList()
++        val packageName = enginePackage?.takeIf { it.isNotBlank() }
++            ?: runCatching { engine.defaultEngine }.getOrNull()
++        val fromEngine = try {
++            engine.voices.orEmpty()
++        } catch (e: Exception) {
++            logcat(LogPriority.WARN, e) { "voices() failed" }
++            emptySet()
++        }.filterNot { voice ->
++            blacklist.any { blocked -> voice.name.equals(blocked, true) }
++        }
++        val isRhVoice = packageName.orEmpty().contains("rhvoice", ignoreCase = true)
++        if (!isRhVoice) return fromEngine.sortedBy { it.name }
++        // У RHVoice getVoices() часто пуст — доузнаём каталоги вручную.
++        val probed = installedRhVoices(engine, "ru") +
++            installedRhVoices(engine, "en") +
++            installedRhVoices(engine, "uk")
++        return (fromEngine + probed)
++            .distinctBy { it.name.lowercase(Locale.US) }
++            .sortedBy { it.name }
++    }
++
++    /** Языки, реально представленные в списке голосов (для переключателя). */
++    fun languagesIn(voices: List<Voice>): List<String> =
++        voices.asSequence()
++            .mapNotNull { it.locale?.language?.lowercase(Locale.US)?.takeIf(String::isNotBlank) }
++            .distinct()
++            .sorted()
++            .toList()
++
+     /**
+      * Голоса для языка [language] (ISO-639-1). Handles ISO-2/ISO-3 locale
+      * differences, lazy engines and an RHVoice-specific OEM fallback.
