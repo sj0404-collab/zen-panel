@@ -1,0 +1,589 @@
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
+index 7e73b7cb7..3bc2a1da9 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
+@@ -15,9 +15,14 @@ import androidx.compose.foundation.layout.heightIn
+ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.ui.unit.dp
++import androidx.compose.ui.res.stringResource
+ import eu.kanade.domain.dictionary.OcrResultPresentation
+ import eu.kanade.tachiyomi.ui.dictionary.DictionarySearchScreenModel
+ import mihon.domain.dictionary.model.DictionaryTerm
++import mihon.domain.ocr.model.OcrTextSource
++import mihon.feature.ocr.selectedOcrModel
++import mihon.feature.ocr.titleRes
++import tachiyomi.i18n.MR
+ 
+ data class OcrResultPopupSettings(
+     val widthDp: Int,
+@@ -34,11 +39,11 @@ fun OcrResultOverlay(
+     queryText: String,
+     initialSearchText: String = queryText,
+     /**
+-     * Подпись «кто распознал»: при ручном выборе областей качество сильно
+-     * зависит от движка, и без подписи непонятно, почему один и тот же
+-     * фрагмент читается то лучше, то хуже. Пустая строка — не показываем.
++     * Кто распознал: при ручном выборе областей качество сильно зависит от
++     * движка, и без подписи непонятно, почему один и тот же фрагмент читается
++     * то лучше, то хуже. null — источник неизвестен, подписи нет.
+      */
+-    engineLabel: String = "",
++    source: OcrTextSource? = null,
+     anchorRect: RectF?,
+     onCopyText: () -> Unit,
+     searchState: DictionarySearchScreenModel.State,
+@@ -75,7 +80,7 @@ fun OcrResultOverlay(
+             noDictionaries -> {
+                 OcrPlainTextCard(
+                     text = queryText,
+-                    engineLabel = engineLabel,
++                    source = source,
+                     onDismissRequest = onDismissRequest,
+                     onCopyText = onCopyText,
+                     onSpeak = onSpeak,
+@@ -119,7 +124,7 @@ fun OcrResultOverlay(
+ @Composable
+ private fun OcrPlainTextCard(
+     text: String,
+-    engineLabel: String,
++    source: OcrTextSource?,
+     onCopyText: () -> Unit,
+     onDismissRequest: () -> Unit,
+     onSpeak: () -> Unit = {},
+@@ -143,16 +148,7 @@ private fun OcrPlainTextCard(
+             androidx.compose.foundation.layout.Column(
+                 modifier = Modifier.padding(16.dp),
+             ) {
+-                if (engineLabel.isNotBlank()) {
+-                    androidx.compose.material3.Text(
+-                        text = "Распознано: $engineLabel",
+-                        style = MaterialTheme.typography.labelSmall,
+-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+-                    )
+-                    androidx.compose.foundation.layout.Spacer(
+-                        modifier = Modifier.height(6.dp),
+-                    )
+-                }
++                OcrEngineCaption(source)
+                 androidx.compose.material3.Text(
+                     text = text,
+                     style = MaterialTheme.typography.bodyLarge,
+@@ -204,3 +200,31 @@ private fun OcrPlainTextCard(
+         }
+     }
+ }
++
++/**
++ * Подпись «кто распознал» над распознанным текстом.
++ *
++ * Если текст прочитал не тот движок, который выбран в настройках (без сети
++ * онлайн пропускается и читает локальный), это сказано прямо: иначе
++ * читатель сравнивает качество двух разных движков и делает вывод, что они
++ * одинаковые.
++ */
++@Composable
++private fun OcrEngineCaption(source: OcrTextSource?) {
++    if (source == null) return
++    val engineName = stringResource(source.engine.titleRes)
++    val text = if (source.usedInsteadOfSelected) {
++        val selectedName = stringResource(selectedOcrModel().titleRes)
++        stringResource(MR.strings.ocr_recognized_by_fallback, engineName, selectedName)
++    } else {
++        stringResource(MR.strings.ocr_recognized_by, engineName)
++    }
++    androidx.compose.material3.Text(
++        text = text,
++        style = MaterialTheme.typography.labelSmall,
++        color = MaterialTheme.colorScheme.onSurfaceVariant,
++    )
++    androidx.compose.foundation.layout.Spacer(
++        modifier = Modifier.height(6.dp),
++    )
++}
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt b/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt
+index 33e895cae..de324ef9b 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt
+@@ -152,7 +152,9 @@ fun TtsSettingsDialog(
+             allVoiceChoices.isEmpty() -> emptyList()
+             // "" — показать все языки: включается автоматически, если ru не найден.
+             voiceLang.isBlank() -> allVoiceChoices
+-            else -> allVoiceChoices.filter { it.lang == voiceLang }
++            // Записи движков без языка (голос по умолчанию) показываем всегда:
++            // иначе при фильтре «ru» список снова становился пустым.
++            else -> allVoiceChoices.filter { it.lang.isBlank() || it.lang == voiceLang }
+         }
+     }
+     var showAddSlot by remember { mutableStateOf(false) }
+@@ -222,65 +224,78 @@ fun TtsSettingsDialog(
+ 
+     androidx.compose.runtime.LaunchedEffect(probe, probeInitStatus, systemEnginePkg) {
+         val activeProbe = probe
+-        if (probeInitStatus != TextToSpeech.SUCCESS || activeProbe == null) {
+-            sysReady = probeInitStatus != Int.MIN_VALUE
+-            return@LaunchedEffect
+-        }
+-        sysReady = false
++        val probeOk = probeInitStatus == TextToSpeech.SUCCESS && activeProbe != null
+         val helper = eu.kanade.tachiyomi.data.tts.VoiceHelper
+-        helper.prepareForLanguage(activeProbe, "ru")
+-        // ru-голоса могут не отдаться, пока не докачан языковой пакет. Движок при
+-        // этом установлен и работает, поэтому берём ВСЕ его голоса и показываем
+-        // те, что реально есть, вместо требования «установите TTS-движок».
+-        // Повторяем опрос: часть движков публикует голоса с задержкой.
+-        var fromDefault = emptyList<android.speech.tts.Voice>()
+-        for (attempt in 0 until 6) {
+-            fromDefault = helper.allVoices(activeProbe, systemEnginePkg)
+-            if (fromDefault.isNotEmpty()) break
+-            kotlinx.coroutines.delay(250L + attempt * 150L)
+-        }
+         val choices = mutableListOf<VoiceChoice>()
+-        choices += fromDefault
+-            .sortedWith(
+-                compareBy(
+-                    {
+-                        when (helper.classify(it)) {
+-                            eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE -> 0
+-                            eu.kanade.tachiyomi.data.tts.VoiceKind.MALE -> 1
+-                            eu.kanade.tachiyomi.data.tts.VoiceKind.TEEN -> 2
+-                            else -> 3
+-                        }
+-                    },
+-                    { it.isNetworkConnectionRequired },
+-                    { it.name },
+-                ),
+-            )
+-            .map { voice ->
+-                val kind = when (helper.classify(voice)) {
+-                    eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE -> "♀ Женский"
+-                    eu.kanade.tachiyomi.data.tts.VoiceKind.MALE -> "♂ Мужской"
+-                    eu.kanade.tachiyomi.data.tts.VoiceKind.TEEN -> "👦 Подросток"
+-                    else -> "Другой"
+-                }
+-                VoiceChoice(
+-                    key = voice.name,
+-                    label = "$kind • ${voice.name.substringAfterLast(':')}",
+-                    lang = voice.locale?.language?.lowercase(java.util.Locale.US).orEmpty(),
+-                    local = !voice.isNetworkConnectionRequired,
+-                )
++
++        // Раньше перебор возвращался сразу, если движок по умолчанию не
++        // инициализировался, и НЕ ОПИСЫВАЛ остальные установленные движки
++        // вообще. На части прошивок (в том числе на Itel) дефолтный движок
++        // не отвечает, и читатель видел пустой список — то есть выбрать
++        // локальный движок было нечем, оставался только онлайн. Поэтому
++        // перебираем установленные движки ВСЕГДА, а дефолтный — если он готов.
++        var fromDefault = emptyList<android.speech.tts.Voice>()
++        if (probeOk) {
++            sysReady = false
++            helper.prepareForLanguage(activeProbe, "ru")
++            // ru-голоса могут не отдаться, пока не докачан языковой пакет. Движок
++            // при этом установлен и работает, поэтому берём ВСЕ его голоса и
++            // показываем те, что реально есть. Повторяем опрос: часть движков
++            // публикует голоса с задержкой.
++            for (attempt in 0 until 6) {
++                fromDefault = helper.allVoices(activeProbe, systemEnginePkg)
++                if (fromDefault.isNotEmpty()) break
++                kotlinx.coroutines.delay(250L + attempt * 150L)
+             }
++            choices += fromDefault
++                .sortedWith(
++                    compareBy(
++                        {
++                            when (helper.classify(it)) {
++                                eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE -> 0
++                                eu.kanade.tachiyomi.data.tts.VoiceKind.MALE -> 1
++                                eu.kanade.tachiyomi.data.tts.VoiceKind.TEEN -> 2
++                                else -> 3
++                            }
++                        },
++                        { it.isNetworkConnectionRequired },
++                        { it.name },
++                    ),
++                )
++                .map { voice ->
++                    val kind = when (helper.classify(voice)) {
++                        eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE -> "♀ Женский"
++                        eu.kanade.tachiyomi.data.tts.VoiceKind.MALE -> "♂ Мужской"
++                        eu.kanade.tachiyomi.data.tts.VoiceKind.TEEN -> "👦 Подросток"
++                        else -> "Другой"
++                    }
++                    VoiceChoice(
++                        key = voice.name,
++                        label = "$kind • ${voice.name.substringAfterLast(':')}",
++                        lang = voice.locale?.language?.lowercase(java.util.Locale.US).orEmpty(),
++                        local = !voice.isNetworkConnectionRequired,
++                    )
++                }
++        } else {
++            sysReady = false
++        }
+ 
+-        // v1.9.39: голоса ВСЕХ установленных движков (RHVoice и др.), а не только
+-        // движка по умолчанию: каждый движок инициализируется явно своим пакетом.
+-        for ((pkg, label) in eu.kanade.tachiyomi.data.tts.TtsSpeaker.installedEngines(context)) {
++        // Голоса ВСЕХ установленных движков (RHVoice и др.), а не только движка
++        // по умолчанию: каждый движок инициализируется явно своим пакетом.
++        val installed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
++            eu.kanade.tachiyomi.data.tts.TtsSpeaker.installedEngines(context)
++        }
++        for ((pkg, label) in installed) {
+             val isDefault = pkg == systemEnginePkg ||
+-                (systemEnginePkg.isBlank() && pkg == runCatching { activeProbe.defaultEngine }.getOrDefault(""))
++                (systemEnginePkg.isBlank() && probeOk && pkg == runCatching { activeProbe!!.defaultEngine }.getOrDefault(""))
+             if (isDefault) continue
+             val eng = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                 val latch = java.util.concurrent.CountDownLatch(1)
+                 var tts: TextToSpeech? = null
+                 tts = TextToSpeech(context.applicationContext, { latch.countDown() }, pkg)
+-                latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
++                // 3 секунды на инициализацию движка не хватало на части
++                // прошивок: движок успевал отдать пустой getVoices().
++                latch.await(6, java.util.concurrent.TimeUnit.SECONDS)
+                 tts
+             }
+             val vs = helper.allVoices(eng, pkg)
+@@ -295,6 +310,24 @@ fun TtsSettingsDialog(
+                     ),
+                 )
+             }
++            if (vs.isEmpty()) {
++                // Голоса движок не перечислил ( OEM-пустой getVoices() ), но сам
++                // он установлен и speak() через него работает. Без такой записи
++                // выбрать локальный движок было невозможно вообще. Спецификация
++                // с пустым именем голоса оставляет движку его голос по умолчанию.
++                choices.add(
++                    VoiceChoice(
++                        key = "$pkg::",
++                        label = "$label • голос по умолчанию",
++                        lang = "",
++                        local = true,
++                    ),
++                )
++            }
++        }
++        if (installed.isEmpty() && choices.isEmpty()) {
++            // Ни одного движка: сообщаем честно, что телефон их не видит.
++            sysReady = false
+         }
+         val distinct = choices.distinctBy { it.key }
+         allVoiceChoices = distinct
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index c57097018..fd511b77d 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -1213,7 +1213,7 @@ class ReaderActivity : BaseActivity() {
+                             dimBackground = dimOcrBackground,
+                             queryText = dialog.queryText,
+                             initialSearchText = dialog.initialSearchText,
+-                            engineLabel = dialog.engineLabel,
++                            source = dialog.source,
+                             anchorRect = activeOcrOverlaySession?.anchorRectInDialogRoot,
+                             onCopyText = {
+                                 // Копируем РАСПОЗНАННЫЙ текст, а не строку поиска по
+@@ -2041,7 +2041,7 @@ class ReaderActivity : BaseActivity() {
+             queryText = selection.queryText,
+             origin = ReaderViewModel.OcrResultOrigin.CachedPageTap,
+             initialSearchText = searchTextForOffset(selection.queryText, selection.initialSelectionOffset),
+-            engineLabel = viewModel.ocrEngineLabel(),
++            source = viewModel.currentOcrSource(),
+         )
+     }
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+index f05d9e72e..5bbe744db 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+@@ -62,6 +62,7 @@ import logcat.LogPriority
+ import mihon.domain.ocr.exception.OcrException
+ import mihon.domain.ocr.interactor.OcrProcessor
+ import mihon.domain.ocr.model.OcrModel
++import mihon.domain.ocr.model.OcrTextSource
+ import mihon.domain.ocr.model.flattenOcrTextForQuery
+ import mihon.domain.ocr.repository.OcrRepository
+ import mihon.domain.ocr.service.OcrPreferences
+@@ -994,13 +995,17 @@ class ReaderViewModel @JvmOverloads constructor(
+                 } finally {
+                     if (work !== bitmap) work.recycle()
+                 }
++                // Читаем ПОСЛЕ распознавания: без сети онлайн-движок
++                // пропускается, и текст читает локальный. Показываем
++                // фактического исполнителя, иначе «онлайн» — враньё.
++                val usedEngine = ocrProcessor.lastUsedEngine()
+                 withUIContext {
+                     val queryText = flattenOcrTextForQuery(text)
+                     if (queryText.isNotBlank()) {
+                         showOcrResult(
+                             queryText = queryText,
+                             origin = OcrResultOrigin.ManualSelection,
+-                            engineLabel = ocrEngineLabel(),
++                            source = ocrSource(usedEngine),
+                         )
+                         mutableState.update { it.copy(isProcessingOcr = false) }
+                     } else {
+@@ -1119,37 +1124,33 @@ class ReaderViewModel @JvmOverloads constructor(
+         queryText: String,
+         origin: OcrResultOrigin,
+         initialSearchText: String = queryText,
+-        engineLabel: String = "",
++        source: OcrTextSource? = null,
+     ) {
+         mutableState.update {
+-            it.copy(dialog = Dialog.OcrResult(queryText, origin, initialSearchText, engineLabel))
++            it.copy(dialog = Dialog.OcrResult(queryText, origin, initialSearchText, source))
+         }
+     }
+ 
+     /**
+-     * Человеческое имя выбранного движка OCR — для подписи в окне результата.
++     * Кто распознал текст на самом деле.
+      *
+-     * Показываем именно ВЫБРАННЫЙ движок, а не последний сработавший: при
+-     * недоступной сети репозиторий молча уходит в резервную цепочку, и
+-     * подпись «локальный» была бы враньём. Поэтому здесь только то, что
+-     * читатель выбрал сам.
++     * Разница важна читателю: без сети онлайн-движок не отвечает, и страницу
++     * читает локальный. Именно это породило жалобу «у онлайн качество то же,
++     * что у локального» — движок был один и тот же. Поэтому в подписи стоит
++     * исполнитель, а когда он не совпадает с выбранным, это сказано прямо.
+      */
+-    fun ocrEngineLabel(): String {
+-        val model = Injekt.get<OcrPreferences>().ocrModel().get()
+-        return when (model) {
+-            OcrModel.CYRILLIC -> "PP-OCR локально"
+-            OcrModel.LEGACY -> "OCR локально (медленно)"
+-            OcrModel.FAST -> "OCR локально (быстро)"
+-            OcrModel.MLKIT -> "ML Kit"
+-            OcrModel.GLENS -> "Glens OCR"
+-            OcrModel.OWOCR -> "OwOcr"
+-            OcrModel.OPENROUTER -> "OpenRouter (онлайн)"
+-            OcrModel.GOOGLE -> "Google OCR (онлайн)"
+-            OcrModel.ZEN_FREE -> "Zen Free (онлайн)"
+-            OcrModel.TESSERACT -> "Tesseract"
+-        }
++    fun ocrSource(used: OcrModel?): OcrTextSource? {
++        if (used == null) return null
++        val selected = Injekt.get<OcrPreferences>().ocrModel().get()
++        return OcrTextSource(engine = used, usedInsteadOfSelected = used != selected)
+     }
+ 
++    /**
++     * Источник для тапа по уже распознанной странице: там движок тот, что
++     * отработал при сканировании, — читаем его из репозитория.
++     */
++    fun currentOcrSource(): OcrTextSource? = ocrSource(ocrProcessor.lastUsedEngine())
++
+     fun setBrightnessOverlayValue(value: Int) {
+         mutableState.update { it.copy(brightnessOverlayValue = value) }
+     }
+@@ -1324,13 +1325,14 @@ class ReaderViewModel @JvmOverloads constructor(
+             /**
+              * Кто именно распознал текст. Читатель вручную выбирает области и
+              * видит, что качество зависит от размера выделения, но не понимает,
+-             * какой движок это сделал — при локальном и онлайновом OCR разница
+-             * в потере слов была неочевидной. Пустая строка — источник неизвестен.
++             * какой движок это сделал. null — источник неизвестен.
+              */
+-            val engineLabel: String = "",
++            val source: OcrTextSource? = null,
+         ) : Dialog
+     }
+ 
++
++
+     enum class OcrResultOrigin {
+         CachedPageTap,
+         ManualSelection,
+diff --git a/app/src/main/java/mihon/feature/ocr/OcrModelExtensions.kt b/app/src/main/java/mihon/feature/ocr/OcrModelExtensions.kt
+index a502952e4..1b4e03f0c 100644
+--- a/app/src/main/java/mihon/feature/ocr/OcrModelExtensions.kt
++++ b/app/src/main/java/mihon/feature/ocr/OcrModelExtensions.kt
+@@ -2,7 +2,10 @@ package mihon.feature.ocr
+ 
+ import dev.icerock.moko.resources.StringResource
+ import mihon.domain.ocr.model.OcrModel
++import mihon.domain.ocr.service.OcrPreferences
+ import tachiyomi.i18n.MR
++import uy.kohesive.injekt.Injekt
++import uy.kohesive.injekt.api.get
+ 
+ val OcrModel.titleRes: StringResource
+     get() = when (this) {
+@@ -17,3 +20,11 @@ val OcrModel.titleRes: StringResource
+         OcrModel.TESSERACT -> MR.strings.ocr_model_tesseract
+         OcrModel.MLKIT -> MR.strings.ocr_model_mlkit
+     }
++
++/**
++ * Движок, ВЫБРАННЫЙ в настройках.
++ *
++ * Нужен, чтобы сказать «прочитал не тот»: без сети онлайн пропускается, и
++ * текст читает локальный. Читателю важно видеть и выбранное, и фактическое.
++ */
++fun selectedOcrModel(): OcrModel = Injekt.get<OcrPreferences>().ocrModel().get()
+diff --git a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+index addd70bdc..9838653b1 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+@@ -99,6 +99,39 @@ class OcrRepositoryImpl(
+     private var detEngine: DetOcrEngine? = null
+ 
+     private val engineLocks = OcrEngineLocks()
++
++    /**
++     * Движок, который реально вернул последний распознанный текст.
++     *
++     * Читатель жаловался, что «у онлайн ИИ качество такое же, как у
++     * локального». Причина была в тихом фолбэке: без сети онлайн-движок
++     * пропускался, и страницу читал локальный. Теперь подпись в окне
++     * результата показывает фактического исполнителя, а не выбранного.
++     */
++    @Volatile
++    override var lastRecognizedEngine: OcrModel? = null
++        private set
++
++    private fun noteEngineUsed(type: EngineType) {
++        lastRecognizedEngine = type.toOcrModel()
++    }
++
++    /**
++     * Старые значения настройки (LEGACY/FAST) давно ведут в тот же русский
++     * движок. Отчёт показывает, что ОТРАБОТАЛО, а не что стояло в настройке
++     * три года назад.
++     */
++    private fun EngineType.toOcrModel(): OcrModel = when (this) {
++        EngineType.CYRILLIC -> OcrModel.CYRILLIC
++        EngineType.MLKIT -> OcrModel.MLKIT
++        EngineType.GLENS -> OcrModel.GLENS
++        EngineType.OWOCR -> OcrModel.OWOCR
++        EngineType.OPENROUTER -> OcrModel.OPENROUTER
++        EngineType.GOOGLE -> OcrModel.GOOGLE
++        EngineType.ZEN_FREE -> OcrModel.ZEN_FREE
++        EngineType.LEGACY, EngineType.FAST -> OcrModel.CYRILLIC
++    }
++
+     private val cleanupMutex = Mutex()
+     private val sessionMutex = Mutex()
+     private val operationMutex = Mutex()
+@@ -332,12 +365,17 @@ class OcrRepositoryImpl(
+         )
+     }
+ 
++    /**
++     * Единственное место, где движок реально отработал: отмечаем его здесь,
++     * иначе вызывающий код узнал бы только «первый, кто ответил», а это
++     * ровно то, что он и так не знает.
++     */
+     private suspend fun recognizeWithEngine(type: EngineType, image: Bitmap): String {
+         return engineLocks.withTextEngineLock(type) {
+             // Онлайн-модели отдают текст построчно и не склеивают переносы —
+             // соединяем «пере-\nносится» в «переносится» централизованно.
+             OcrTextCleaner.joinLineHyphens(engineFor(type).recognizeText(image))
+-        }
++        }.also { noteEngineUsed(type) }
+     }
+ 
+     private suspend fun recognizeWithFallback(primary: EngineType, image: Bitmap): String {
+@@ -378,6 +416,9 @@ class OcrRepositoryImpl(
+     }
+ 
+     override suspend fun recognizeText(image: OcrImage): String {
++        // Новый вызов — новый отчёт: без сброса неудача показала бы движок
++        // ПРЕДЫДУщего распознавания.
++        lastRecognizedEngine = null
+         return withActiveOperation {
+             submitTask(PrioritizedTaskQueue.Priority.HIGH) {
+                 image.useBitmap { bitmap ->
+@@ -568,6 +609,10 @@ class OcrRepositoryImpl(
+         type: EngineType,
+         onPartial: ((OcrRegion) -> Unit)? = null,
+     ): OcrPageResult {
++        // Страничный скан тоже идёт по резервной цепочке, поэтому и тут
++        // запоминаем фактического исполнителя: тап по готовой странице
++        // показывает подпись того движка, который её прочитал.
++        noteEngineUsed(type)
+         return when (type) {
+             EngineType.CYRILLIC -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, type, onPartial)
+             EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT, onPartial)
+diff --git a/domain/src/main/java/mihon/domain/ocr/interactor/OcrProcessor.kt b/domain/src/main/java/mihon/domain/ocr/interactor/OcrProcessor.kt
+index 0297e2893..e9621681b 100644
+--- a/domain/src/main/java/mihon/domain/ocr/interactor/OcrProcessor.kt
++++ b/domain/src/main/java/mihon/domain/ocr/interactor/OcrProcessor.kt
+@@ -1,6 +1,7 @@
+ package mihon.domain.ocr.interactor
+ 
+ import mihon.domain.ocr.model.OcrImage
++import mihon.domain.ocr.model.OcrModel
+ import mihon.domain.ocr.repository.OcrRepository
+ 
+ class OcrProcessor(
+@@ -9,4 +10,13 @@ class OcrProcessor(
+     suspend fun getText(image: OcrImage): String {
+         return ocrRepository.recognizeText(image)
+     }
++
++    /**
++     * Движок, который реально вернул текст последнего [getText].
++     *
++     * Не совпадает с выбранным в настройках, когда сети нет: онлайн-движок
++     * пропускается, и читает локальный. Показываем читателю именно
++     * фактического исполнителя, иначе «онлайн» в подписи была бы враньём.
++     */
++    fun lastUsedEngine(): OcrModel? = ocrRepository.lastRecognizedEngine
+ }
+diff --git a/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt b/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
+index 43b503616..e8ca0a98a 100644
+--- a/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
++++ b/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
+@@ -1,12 +1,24 @@
+ package mihon.domain.ocr.repository
+ 
+ import mihon.domain.ocr.model.OcrImage
++import mihon.domain.ocr.model.OcrModel
+ import mihon.domain.ocr.model.OcrPageResult
+ import mihon.domain.ocr.model.OcrRegion
+ 
+ interface OcrRepository {
+     suspend fun recognizeText(image: OcrImage): String
+ 
++    /**
++     * Движок, который ФАКТИЧЕСКИ вернул последний распознанный текст.
++     *
++     * Нужен читателю, а не разработчику: без сети онлайн-движок молча
++     * пропускается, и страницу читает локальный. Отсюда жалоба «у онлайн
++     * качество такое же, как у локального» — на самом деле это был один и
++     * тот же движок. null означает, что до вызова ни один движок не
++     * отработал.
++     */
++    val lastRecognizedEngine: OcrModel?
++
+     /**
+      * Спросить у ВЫБРАННОЙ vision-модели произвольный вопрос о картинке.
+      *
+diff --git a/i18n/src/commonMain/moko-resources/base/strings.xml b/i18n/src/commonMain/moko-resources/base/strings.xml
+index 8c54c98df..204326424 100644
+--- a/i18n/src/commonMain/moko-resources/base/strings.xml
++++ b/i18n/src/commonMain/moko-resources/base/strings.xml
+@@ -1242,6 +1242,8 @@
+     <string name="ocr_model_tesseract">Tesseract (устаревший)</string>
+     <string name="ocr_model_cyrillic">Русский Cyrillic OCR (офлайн, PP-OCR)</string>
+     <string name="ocr_model_mlkit">Google ML Kit (латиница, офлайн)</string>
++    <string name="ocr_recognized_by">Распознано: %1$s</string>
++    <string name="ocr_recognized_by_fallback">Распознано: %1$s (выбранный %2$s не ответил)</string>
+ 
+     <!-- Voice / Text-to-Speech Settings -->
+     <string name="pref_category_voice">Voices &amp; Text-to-Speech</string>
+diff --git a/i18n/src/commonMain/moko-resources/ru/strings.xml b/i18n/src/commonMain/moko-resources/ru/strings.xml
+index 589645d4c..1c8eaf703 100644
+--- a/i18n/src/commonMain/moko-resources/ru/strings.xml
++++ b/i18n/src/commonMain/moko-resources/ru/strings.xml
+@@ -937,6 +937,8 @@
+     <string name="ocr_model_google">Google AI / Gemini Vision</string>
+     <string name="ocr_model_zen_free">Space Bunny Free (OpenCode Zen)</string>
+     <string name="ocr_model_mlkit">Google ML Kit (латиница, офлайн)</string>
++    <string name="ocr_recognized_by">Распознано: %1$s</string>
++    <string name="ocr_recognized_by_fallback">Распознано: %1$s (выбранный %2$s не ответил)</string>
+ 
+     <!-- Voice / Text-to-Speech Settings -->
+     <string name="pref_category_voice">Голоса и Озвучка (TTS)</string>
