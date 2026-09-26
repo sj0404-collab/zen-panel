@@ -195,9 +195,16 @@
 <!-- ══ ACTIONS ══════════════════════════════════════════════════════ -->
 <div class="page" id="p-act">
   <div class="card" id="watch-card" style="display:none">
-    <h2>Идёт сейчас <button class="ghost small" style="float:right"
+    <h2>Журнал раннера <button class="ghost small" style="float:right"
         onclick="toggleWatch()" id="watch-btn">пауза</button></h2>
+    <div class="note" style="margin:-2px 0 8px" id="watch-meta"></div>
     <div id="watch"></div>
+    <h2 style="margin-top:16px">Хронология: что за чем и сколько заняло
+      <button class="ghost small" style="float:right"
+        onclick="toggleJournal()" id="runner-journal-btn">свернуть</button></h2>
+    <div class="note" style="margin:-2px 0 8px">Шаги всех job'ов в порядке старта. Между шагами
+      показан простой — время, когда раннер ничего не делал (очередь, ожидание runner'а).</div>
+    <div id="runner-journal"></div>
   </div>
 
   <div class="card">
@@ -1048,8 +1055,17 @@ let ACT_REPO = ctlRepo();
 
 let watchTimer = null;
 let watchPaused = false;
+let runnerJournalOpen = true;
+let journalAt = 0;              // when the last successful poll landed
+let runnerJournalDone = new Map();    // runId -> jobs, so a finished run is fetched once
 let sessPausedUntil = 0;   // a 403 parks the Sessions auto-refresh until this time
-const WATCH_NAMES = ['Build APK', 'Tests', 'Panel APK', 'Build Zen Panel APK', 'Zen agent', 'Remote session', 'Desks', 'OpenCode'];
+const WATCH_NAMES = ['Build APK', 'Tests', 'JS syntax', 'Panel APK', 'Build Zen Panel APK',
+  'Build NPM Hub APK', 'Zen agent', 'Remote session', 'Desks', 'OpenCode', 'NPM Hub',
+  'Build Zen Panel Desktop'];
+// How many finished runs stay in the journal. Their steps cost one request each
+// and are fetched once on demand - polling them every 8s would burn the hourly
+// API rate for a log nobody is watching change.
+const JOURNAL_DONE_LIMIT = 6;
 
 function fmtSecs(sec) {
   if (sec < 60) return sec + ' с';
@@ -1072,6 +1088,89 @@ function stepSecs(st) {
   return Math.max(0, Math.round((to - from) / 1000));
 }
 
+// A finished job has a real end; a running one has to be measured against
+// now. Using "now" for both is what made a job that ended an hour ago look
+// like it had been running for an hour.
+function runSecs(j, r) {
+  const from = j.started_at || r.started_at || r.run_started_at || r.created_at;
+  if (!from) return null;
+  const start = new Date(from).getTime();
+  const running = j.status === 'in_progress' || r.status !== 'completed';
+  const end = running ? null : (j.completed_at || r.updated_at || r.run_started_at);
+  if (!end) return Math.max(0, Math.round((Date.now() - start) / 1000));
+  return Math.max(0, Math.round((new Date(end).getTime() - start) / 1000));
+}
+
+const clockOf = (iso) => {
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
+    + ':' + String(d.getSeconds()).padStart(2, '0');
+};
+
+function toggleJournal() {
+  runnerJournalOpen = !runnerJournalOpen;
+  const b = $('runner-journal-btn');
+  if (b) b.textContent = runnerJournalOpen ? 'свернуть' : 'развернуть';
+  const j = $('runner-journal');
+  if (j) j.style.display = runnerJournalOpen ? '' : 'none';
+}
+
+const conclusionPill = (conclusion, status) => pill(status === 'completed' ? (conclusion || 'completed') : status);
+
+async function fetchJobs(r) {
+  if (runnerJournalDone.has(r.id)) return runnerJournalDone.get(r.id);
+  const d = (await api(`${CTL()}/actions/runs/${r.id}/jobs`)).jobs || [];
+  runnerJournalDone.set(r.id, d);
+  return d;
+}
+
+function renderDoneSteps(r, jobs) {
+  return (jobs || []).filter(j => j.conclusion !== 'skipped').map(j => {
+    const sec = runSecs(j, r);
+    return `<div style="margin:6px 0 2px"><b>${esc(j.name)}</b>
+        <span class="note">· ${sec != null ? fmtSecs(sec) : ''}</span></div>`
+      + (j.steps || []).map(st => `<div style="font-size:12.5px;padding:2px 0 2px 12px">
+        ${stepIcon(st)} ${esc(st.name)}
+        ${stepSecs(st) != null ? `<span class="note">· ${fmtSecs(stepSecs(st))}</span>` : ''}
+      </div>`).join('');
+  }).join('') || '<span class="note">шагов нет</span>';
+}
+
+// One merged list of every step of every job, ordered by start time, with the
+// idle gaps in between. The per-job cards answer "how is this job doing"; this
+// answers "what happened after what, and where did the twenty minutes go" -
+// which is the question you actually have when a session is slow to come up.
+function renderJournal(events) {
+  const box = $('runner-journal');
+  if (!box) return;
+  if (!runnerJournalOpen) { box.innerHTML = ''; return; }
+  if (!events.length) {
+    box.innerHTML = '<span class="note">пока нет выполненных шагов</span>';
+    return;
+  }
+  const rows = [];
+  let prevEnd = null;
+  for (const e of events) {
+    const start = new Date(e.started_at).getTime();
+    // A gap over 20s is worth naming: it is queue time or a self-hosted runner
+    // still being claimed, and it is invisible otherwise.
+    if (prevEnd != null && start - prevEnd > 20000) {
+      rows.push(`<div style="font-size:11.5px;color:var(--dim);padding:2px 0 2px 18px">
+        └ простой ${fmtSecs(Math.round((start - prevEnd) / 1000))}</div>`);
+    }
+    const dur = stepSecs(e);
+    rows.push(`<div style="display:flex;gap:8px;align-items:baseline;padding:2px 0;border-bottom:1px solid #1d1d27">
+      <span style="font-family:monospace;color:var(--dim);font-size:11.5px;flex:0 0 62px">${clockOf(e.started_at)}</span>
+      <span style="flex:0 0 14px">${stepIcon(e)}</span>
+      <span style="flex:1;min-width:0;font-size:12.5px">${esc(e.name)}
+        <span class="note">· ${esc(e.job)}</span></span>
+      <span style="font-size:11.5px;color:var(--dim);flex:0 0 auto">${dur != null ? fmtSecs(dur) : ''}</span>
+    </div>`);
+    prevEnd = e.completed_at ? new Date(e.completed_at).getTime() : Date.now();
+  }
+  box.innerHTML = rows.join('');
+}
+
 async function pollWatch() {
   const card = $('watch-card'), box = $('watch');
   if (!card || !box) return;
@@ -1079,38 +1178,41 @@ async function pollWatch() {
   try { runs = (await api(`${CTL()}/actions/runs?per_page=15`)).workflow_runs || []; }
   catch (e) { pauseWatchOn403(e); return; }
 
-  const live = runs.filter(r => r.status !== 'completed' && WATCH_NAMES.includes(r.name));
-  if (!live.length) {
+  const mine = runs.filter(r => WATCH_NAMES.includes(r.name));
+  const live = mine.filter(r => r.status !== 'completed').slice(0, 3);
+  const done = mine.filter(r => r.status === 'completed').slice(0, JOURNAL_DONE_LIMIT);
+  if (!live.length && !done.length) {
     card.style.display = 'none';
-    box.innerHTML = '';
+    journalAt = 0;
     return;
   }
   card.style.display = '';
 
   const parts = [];
-  for (const r of live.slice(0, 3)) {
+  const events = [];
+  for (const r of live) {
     let jobs = [];
-    try { jobs = (await api(`${CTL()}/actions/runs/${r.id}/jobs`)).jobs || []; }
+    try { jobs = await fetchJobs(r); }
     catch (e) { if (pauseWatchOn403(e)) return; continue; }
     for (const j of jobs) {
       if (j.conclusion === 'skipped') continue;
-      const done = j.steps.filter(x => x.status === 'completed').length;
+      for (const st of j.steps || []) if (st.started_at) events.push(Object.assign({}, st, { job: j.name }));
+      const doneN = j.steps.filter(x => x.status === 'completed').length;
       const total = j.steps.length;
       const cur = j.steps.find(x => x.status === 'in_progress');
-      const elapsed = j.started_at
-        ? Math.round((Date.now() - new Date(j.started_at).getTime()) / 1000) : 0;
+      const elapsed = runSecs(j, r);
 
       parts.push(`
         <div style="margin-bottom:12px">
-          <div><b>${esc(r.name)}</b> #${r.run_number} ${pill(r)}
-            <span class="note">· ${fmtSecs(elapsed)} · ${done}/${total}</span></div>
+          <div><b>${esc(r.name)}</b> #${r.run_number} ${conclusionPill(r.conclusion, r.status)}
+            <span class="note">· ${elapsed != null ? fmtSecs(elapsed) : ''} · ${doneN}/${total}</span></div>
           <div style="height:6px;background:#22222e;border-radius:99px;margin:6px 0">
-            <div style="height:6px;width:${Math.round(done / Math.max(1, total) * 100)}%;
+            <div style="height:6px;width:${Math.round(doneN / Math.max(1, total) * 100)}%;
                  background:var(--cyan);border-radius:99px;transition:width .4s"></div>
           </div>
           ${cur ? `<div class="note" style="margin:0">сейчас: ${esc(cur.name)}
                     ${stepSecs(cur) != null ? '· ' + fmtSecs(stepSecs(cur)) : ''}</div>` : ''}
-          <details style="margin-top:6px">
+          <details style="margin-top:6px" open>
             <summary>все шаги</summary>
             ${j.steps.map(st => `<div style="font-size:12.5px;padding:2px 0">
               ${stepIcon(st)} ${esc(st.name)}
@@ -1118,13 +1220,59 @@ async function pollWatch() {
             </div>`).join('')}
           </details>
           <div class="row" style="margin-top:6px">
-            <a class="note" href="#" onclick="openExternal(\'${esc(r.html_url)}\');return false">полный лог на GitHub</a>
+            <a class="note" href="#" onclick="openExternal('${esc(r.html_url)}');return false">полный лог на GitHub</a>
           </div>
         </div>`);
     }
   }
-  box.innerHTML = parts.join('') ||
-    '<span class="note">запуск ставится в очередь…</span>';
+
+  // Finished runs: the summary line is free (it arrives with /actions/runs), the
+  // steps cost one request each and are then cached - so re-opening the
+  // journal does not spend the hourly rate limit on a log that cannot change.
+  for (const r of done) {
+    const cached = runnerJournalDone.has(r.id);
+    if (cached) {
+      for (const j of runnerJournalDone.get(r.id)) {
+        for (const st of j.steps || []) if (st.started_at) events.push(Object.assign({}, st, { job: j.name }));
+      }
+    }
+    parts.push(`
+      <div style="margin-bottom:12px">
+        <div><b>${esc(r.name)}</b> #${r.run_number} ${conclusionPill(r.conclusion, r.status)}
+          <span class="note">· ${esc(r.display_title || '')}</span></div>
+        <details style="margin-top:6px" onToggle="loadDoneSteps(${r.id}, this)">
+          <summary>шаги ${cached ? '' : '(загрузить)'}</summary>
+          <div id="done-${r.id}">${cached ? renderDoneSteps(r, runnerJournalDone.get(r.id)) : ''}</div>
+        </details>
+        <div class="row" style="margin-top:6px">
+          <a class="note" href="#" onclick="openExternal('${esc(r.html_url)}');return false">полный лог на GitHub</a>
+        </div>
+      </div>`);
+  }
+
+  box.innerHTML = parts.join('') || '<span class="note">запуск ставится в очередь…</span>';
+  events.sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+  renderJournal(events);
+  journalAt = Date.now();
+  const meta = $('watch-meta');
+  if (meta) {
+    meta.textContent = 'обновлено ' + new Date(journalAt).toLocaleTimeString()
+      + (watchPaused ? ' · на паузе' : ' · автообновление каждые 8 с')
+      + ' · живыми ' + live.length + ', завершённых в журнале ' + done.length;
+  }
+}
+
+// Lazy load of a finished run's steps, on the first expand of its <details>.
+async function loadDoneSteps(runId, det) {
+  if (!det || !det.open || runnerJournalDone.has(runId)) return;
+  const box = document.getElementById('done-' + runId);
+  if (!box) return;
+  box.innerHTML = '<span class="spin">загрузка…</span>';
+  const r = await api(`${CTL()}/actions/runs/${runId}`);
+  const jobs = await fetchJobs(r);
+  box.innerHTML = renderDoneSteps(r, jobs);
+  const s = det.querySelector('summary');
+  if (s) s.textContent = 'шаги';
 }
 
 function pauseWatchOn403(e) {
