@@ -26,8 +26,21 @@ function check(name, cond, extra) {
 }
 const sh = (cmd, args, opts) => spawnSync(cmd, args, Object.assign({ encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }, opts || {}));
 
+// The report itself needs bash and sqlite3 (it reads opencode.db directly).
+// Checking only for the database was not enough: on a machine that HAS the
+// database but no sqlite3, the suite reported 7 hard failures that say
+// nothing about the repository. Those are environment gaps, not defects.
+const haveBash = sh('bash', ['--version']).status === 0;
+const haveSqlite3 = sh('sqlite3', ['-version']).status === 0;
+
 if (!fs.existsSync(DB) || !fs.existsSync(REPORT)) {
   console.log('SKIP no OpenCode database on this machine - nothing to resume');
+  console.log(`OPENCODE-RESUME: ${pass} passed, ${fail} failed, 1 skipped`);
+  process.exit(0);
+}
+if (!haveBash || !haveSqlite3) {
+  const missing = [!haveBash && 'bash', !haveSqlite3 && 'sqlite3'].filter(Boolean).join(' and ');
+  console.log(`SKIP ${missing} not available - the report cannot run here`);
   console.log(`OPENCODE-RESUME: ${pass} passed, ${fail} failed, 1 skipped`);
   process.exit(0);
 }
