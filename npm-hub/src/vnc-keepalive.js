@@ -76,7 +76,11 @@ const state = {
   desktop: 'unknown',      // xvfb + openbox alive?
   novnc: 'unknown',        // websockify answering?
   x11vnc: 'unknown',
-  proxy: null,             // registered on the hub server?
+  proxy: null,            // registered on the hub server?
+  // Deny hook handed over by server.js: a socket has no status page, so the
+  // hub's HUB_TOKEN gate (see server.js) is applied before every desktop
+  // upgrade - the noVNC screen is a remote desktop, not a public picture.
+  gate: null,
   wall: null,              // wallpaper path in use
   paint: null,             // 'ok' | 'flat' — pixels actually drawn?
   missing: [],             // пакеты, которых нет на раннере
@@ -894,6 +898,9 @@ function registerProxy(app, server) {
     try { u = new URL(req.url, 'http://' + (req.headers.host || 'localhost')); }
     catch { return; }
     if (!WS_PATHS.has(u.pathname.replace(/\/+$/, ''))) return;
+    // Same gate as the hub's own /ws: an unauthenticated desktop socket is a
+    // remote screen with a keyboard.
+    if (typeof state.gate === 'function' && state.gate(req, socket)) return;
     try {
     wss.handleUpgrade(req, socket, head, (ws) => {
       const tcp = net.connect(Number(VNC_PORT), '127.0.0.1');
@@ -1037,6 +1044,8 @@ function start(opts = {}) {
   repoRootRef = root;
   state.enabled = true;
   state.note = 'starting';
+  // Before registerProxy: the proxy's upgrade handler reads state.gate.
+  state.gate = typeof opts.gate === 'function' ? opts.gate : null;
   if (opts.app && opts.server) {
     try { registerProxy(opts.app, opts.server); } catch (e) { state.note = 'proxy: ' + e.message; }
   }

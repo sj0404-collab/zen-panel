@@ -584,6 +584,21 @@ check('q70 hub start verifies its own run id',
   hubWorkflow.includes('HUB_PORT_STRICT=1') && server.includes("runId: process.env.GITHUB_RUN_ID"));
 check('q71 watchdog removes its own hub and tunnel',
   hubWorkflow.includes('cleanup_watchdog') && hubWorkflow.includes('trap \'cleanup_watchdog 143\' TERM INT'));
+// The runner waits for EVERY process in the job before it can close a step.
+// The snapshot and work-backup daemons (and the detached X stack) are
+// `while true; do sleep` loops, so a cancelled run hung "Complete job" for
+// ~45 minutes and the job was recorded as `failure`. And a cancelled run never
+// reaches its `if: always()` steps, so the panel kept a live slot pointing at
+// a tunnel that was already gone - hence the state=ended inside the trap.
+const hubCleanup = hubWorkflow.slice(hubWorkflow.indexOf('cleanup_watchdog() {'), hubWorkflow.indexOf("trap 'cleanup_watchdog"));
+const vncCleanup = hubWorkflow.slice(hubWorkflow.indexOf('cleanup_vnc() {'), hubWorkflow.indexOf("trap 'cleanup_vnc"));
+check('q71b the watchdog stops the daemons it started',
+  hubCleanup.includes('pkill -f "[s]napshot-audit-code.sh"') &&
+  hubCleanup.includes('pkill -f "[b]ackup-work.sh"') &&
+  vncCleanup.includes('pkill -f "Xvfb'));
+check('q71c a cancelled session still closes its published slot',
+  hubCleanup.includes('publish_session.sh') && hubCleanup.includes('state=ended') &&
+  vncCleanup.includes('publish_session.sh') && vncCleanup.includes('state=ended'));
 check('q72 opencode path survives later steps',
   hubWorkflow.includes('echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"') &&
   hubWorkflow.includes('Add-Content $env:GITHUB_PATH $bin'));

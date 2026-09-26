@@ -44,6 +44,10 @@ jobs:
           node --check npm-hub/src/server.js
           node --check npm-hub/src/tunnel.js
           node --check npm-hub/src/models/manager.js
+          # Both live under src/ and both run inside the hub process - a typo
+          # in either is a crash at boot, and neither was ever checked here.
+          node --check npm-hub/src/vnc-keepalive.js
+          node --check npm-hub/src/handoff.js
           for f in npm-hub/src/storage/*.js; do node --check "$f"; done
           node --check npm-hub/public/desktop-app.js
           node --check npm-hub/public/mobile-app.js

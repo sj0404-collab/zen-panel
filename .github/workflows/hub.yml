@@ -230,11 +230,13 @@ jobs:
           # so an interrupted runner still hands sessions to the next one.
           export SNAPSHOT_EXPORT_ALL_CHATS=1
           nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/snapshot-audit-code.sh" hub "$GITHUB_WORKSPACE/fork" > "$HUB_LOGS/snapshot-hub.log" 2>&1 &
+          echo $! > "$HUB_LOGS/snapshot.pid"
           echo "snapshot daemon: audit.json + code.json every 120s -> session-state"
           # Durable work backup: every repo under HOME becomes a git bundle plus
           # its WIP diff and untracked files on the work-backup branch, so a
           # runner that dies with unpushed work loses nothing.
           nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_INTERVAL=300 bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" >> "$HUB_LOGS/work-backup.log" 2>&1 &
+          echo $! > "$HUB_LOGS/work-backup.pid"
           echo "work-backup daemon: HOME snapshot every 300s -> work-backup branch"
 
           URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 $HUB_LOGS/tunnel.log)
@@ -309,12 +311,28 @@ jobs:
           cleanup_watchdog() {
             local code="${1:-143}"
             trap - TERM INT
+            # The two daemons below are `while true; do sleep ...` loops with no
+            # trap of their own, and the runner waits for every process in the
+            # job before it can close the step. Leaving them alive made
+            # "Complete job" hang for ~45 minutes after a cancel - and the job
+            # was recorded as `failure` instead of `cancelled`. Bracket
+            # patterns: a plain one matches this shell's own command line.
+            pkill -f "[s]napshot-audit-code.sh" 2>/dev/null || true
+            pkill -f "[b]ackup-work.sh" 2>/dev/null || true
             if [ -n "${HUB_PID:-}" ]; then kill "$HUB_PID" 2>/dev/null || true; fi
             if [ -f "$PIDFILE" ]; then
               local pid; pid="$(tr -dc '0-9' < "$PIDFILE" 2>/dev/null || true)"
               [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
             fi
             pkill -f "cloudflared [t]unnel --url http://127.0.0.1:$HUB_PORT" 2>/dev/null || true
+            # A cancelled run never reaches its `if: always()` steps - GitHub
+            # stops the job right here - so the published session kept saying
+            # "live" and the panel handed out a tunnel that is already dead.
+            # Close the slot from the trap instead, after the writers above
+            # are gone so the ended marker cannot race them.
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=hub-linux" "state=ended" \
+              >/dev/null 2>&1 || true
             exit "$code"
           }
           trap 'cleanup_watchdog 143' TERM INT
@@ -967,6 +985,16 @@ jobs:
             fi
             pkill -f "websockify.*6081" 2>/dev/null || true
             pkill -f "cloudflared [t]unnel --url http://127.0.0.1:6081" 2>/dev/null || true
+            # The X stack is started detached by start_desktop.sh and the
+            # runner waits for it too - leaving Xvfb/openbox/x11vnc running
+            # hangs "Complete job" exactly like the hub's daemons did.
+            pkill -f "Xvfb ${VNC_DISPLAY:-:99}" 2>/dev/null || true
+            pkill -f "[o]penbox" 2>/dev/null || true
+            pkill -f "x11vnc.*${VNC_DISPLAY:-:99}" 2>/dev/null || true
+            # Same as the hub job: `if: always()` does not survive a cancel.
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=vnc" "state=ended" \
+              >/dev/null 2>&1 || true
             exit "$code"
           }
           trap 'cleanup_vnc 143' TERM INT
