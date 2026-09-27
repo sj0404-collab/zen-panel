@@ -607,7 +607,8 @@ check('q73 session publication keeps identity and clock',
   publishSession.includes('EXISTING_STARTED_AT') &&
   publishSession.includes('int(new_number) > int(old_number)'));
 check('q74 backup keeps the newest snapshot and descriptors',
-  backupWork.includes('LC_ALL=C sort -r') && backupWork.includes('backup_run_is_stale') &&
+  backupWork.includes('keep = set(snaps[:keep_n])') && backupWork.includes('for d in with_repos[:2]') &&
+  backupWork.includes('backup_run_is_stale') &&
   backupWork.includes('stage/descriptors') && restoreWork.includes('SNAP/descriptors'));
 check('q75 chat export finds repositories and exact paths',
   exportChats.includes('args+=( -path "*/$e/*" -prune -o )') &&
