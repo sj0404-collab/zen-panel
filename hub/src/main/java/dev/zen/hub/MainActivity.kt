@@ -192,6 +192,13 @@ class MainActivity : ComponentActivity() {
         web.setDownloadListener { url, _, contentDisposition, mimeType, _ ->
             runCatching {
                 val request = DownloadManager.Request(Uri.parse(url)).apply {
+                    // DownloadManager ходит не из WebView: без этого запроса к
+                    // закрытому токеном хабу уходят БЕЗ куки hub_zt, сервер
+                    // отвечает 401 и менеджер закачек рапортует «неизвестная
+                    // ошибка» после «Скачивается…».
+                    CookieManager.getInstance().getCookie(url)?.let { cookies ->
+                        if (cookies.isNotBlank()) addRequestHeader("Cookie", cookies)
+                    }
                     setNotificationVisibility(
                         DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
                     )

@@ -4119,10 +4119,17 @@ app.get('/api/gh/repos/:owner/:repo/artifacts/:id/download', async (req, res) =>
   if (!token) return res.status(401).json({ error: 'no GH_TOKEN' });
   try {
     const { owner, repo, id } = req.params;
-    const r = await fetch(
+    // GitHub 302'ит на blob storage; Authorization, повторно отправленный на
+    // azure-URL, даёт 401/400. Редирект ловим вручную и ходим без заголовков.
+    const r0 = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/actions/artifacts/${id}/zip`,
-      { headers: ghHeaders(), redirect: 'follow' }
+      { headers: ghHeaders(), redirect: 'manual' }
     );
+    let r = r0;
+    const loc = r0.headers.get('location');
+    if (r0.status >= 300 && r0.status < 400 && loc) {
+      r = await fetch(loc, { headers: { 'User-Agent': 'zen-panel-hub' } });
+    }
     if (!r.ok) return res.status(r.status).json({ error: await r.text() });
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', cdHeader('attachment', 'artifact-' + id + '.zip'));
