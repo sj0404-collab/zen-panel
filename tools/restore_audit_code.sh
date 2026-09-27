@@ -18,15 +18,41 @@ if [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; then
 fi
 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 REMOTE="${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY:-}.git}"
-if ! TMP="$(mktemp -d)"; then
-  echo "restore_audit_code: cannot create restore directory" >&2
-  exit 1
-fi
-cleanup(){ rm -rf "$TMP"; }
-trap cleanup EXIT
-if ! git clone -q --depth 1 --branch "$BRANCH" "$REMOTE" "$TMP/state" 2>/dev/null; then
-  echo "restore_audit_code: no $BRANCH branch yet"
-  exit 0
+
+# STATE_DIR hands in a session-state tree the caller already cloned, so a
+# second restore of the same branch does not pay for a second clone.
+#
+# This branch had grown past 70 MB, almost half of it one uploaded APK under
+# artifacts/ that nothing here ever reads. The hub workflow called this script
+# twice, so every single hub start downloaded the whole thing twice (~150 MB)
+# before the hub could publish its address - measured: the step took 1:51 on
+# one run and 5:52 on the next with no code change in between. The blob filter
+# drops everything over 1 MB (that APK and any other future upload) and leaves
+# every JSON this script actually reads, and the caller reuses one clone for
+# both calls. The fallback clone without the filter is for remotes that do not
+# speak partial clone (a local file:// repo in the tests, for one).
+STATE_DIR="${STATE_DIR:-}"
+TMP=""
+STATE=""
+if [ -n "$STATE_DIR" ] && [ -d "$STATE_DIR" ]; then
+  STATE="$STATE_DIR"
+else
+  if ! TMP="$(mktemp -d)"; then
+    echo "restore_audit_code: cannot create restore directory" >&2
+    exit 1
+  fi
+  # cleanup() only ever removes a directory this script created: a STATE_DIR
+  # belongs to the caller and outlives us.
+  cleanup(){ rm -rf "$TMP"; }
+  trap cleanup EXIT
+  CLONE_DIR="$TMP/state"
+  if ! git clone -q --depth 1 --filter=blob:limit=1m --branch "$BRANCH" "$REMOTE" "$CLONE_DIR" 2>/dev/null; then
+    if ! git clone -q --depth 1 --branch "$BRANCH" "$REMOTE" "$CLONE_DIR" 2>/dev/null; then
+      echo "restore_audit_code: no $BRANCH branch yet"
+      exit 0
+    fi
+  fi
+  STATE="$CLONE_DIR"
 fi
 status=0
 # The branch was reorganised: audit/code now live under snapshots/, and the
@@ -36,29 +62,35 @@ pick_state_file() {
   # $1 = leaf name; prints the first existing candidate.
   local leaf="$1" cand
   for cand in "snapshots/$leaf" "$leaf" "live/$leaf" "models/$leaf"; do
-    if [ -f "$TMP/state/$cand" ]; then printf '%s' "$cand"; return 0; fi
+    if [ -f "$STATE/$cand" ]; then printf '%s' "$cand"; return 0; fi
   done
   # history/<date>/<weekday>/<leaf>
-  cand="$(find "$TMP/state/history" -type f -name "$leaf" 2>/dev/null | LC_ALL=C sort | tail -n1)"
+  cand="$(find "$STATE/history" -type f -name "$leaf" 2>/dev/null | LC_ALL=C sort | tail -n1)"
   [ -n "$cand" ] || return 1
-  printf '%s' "${cand#"$TMP/state"/}"
+  printf '%s' "${cand#"$STATE"/}"
 }
 history_files() {
   # $1 = glob name (e.g. audit-*.json); prints matching files, new layout first.
-  find "$TMP/state/history" -type f -name "$1" 2>/dev/null | LC_ALL=C sort
-  ls "$TMP/state"/saved/"$1" 2>/dev/null
+  find "$STATE/history" -type f -name "$1" 2>/dev/null | LC_ALL=C sort
+  ls "$STATE"/saved/"$1" 2>/dev/null
 }
 for f in audit.json code.json; do
   rel="$(pick_state_file "$f")" || rel=""
-  if [ -n "$rel" ] && [ -f "$TMP/state/$rel" ]; then
-    if ! cp -f "$TMP/state/$rel" "$WORK/$f" 2>/dev/null; then
+  if [ -n "$rel" ] && [ -f "$STATE/$rel" ]; then
+    if ! cp -f "$STATE/$rel" "$WORK/$f" 2>/dev/null; then
       echo "restore_audit_code: could not restore $f" >&2
       status=1
       continue
     fi
     if [ "$f" = "audit.json" ] && [ ! -s "$WORK/.zen-agent/audit.jsonl" ]; then
       mkdir -p "$WORK/.zen-agent" || status=1
-      if ! python3 - "$TMP/state/$f" "$WORK/.zen-agent/audit.jsonl" <<'PY'
+      # $rel, not $f: the branch moved audit.json under snapshots/, and reading
+      # the bare leaf name looked in the root of the clone, where it has not
+      # been since the layout change. It failed on every single start ("No such
+      # file or directory: .../cloned/audit.json"), set status=1, and left
+      # .zen-agent/audit.jsonl empty - so the audit trail the hub reads was
+      # never restored at all.
+      if ! python3 - "$STATE/$rel" "$WORK/.zen-agent/audit.jsonl" <<'PY'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 try:
@@ -76,7 +108,7 @@ PY
         status=1
       fi
     fi
-    echo "restore_audit_code: restored $rel ($(wc -c < "$TMP/state/$rel" | tr -d ' ')B) -> $WORK/$f"
+    echo "restore_audit_code: restored $rel ($(wc -c < "$STATE/$rel" | tr -d ' ')B) -> $WORK/$f"
   fi
 done
 mkdir -p "$WORK/.zen-agent/restored" 2>/dev/null || status=1
@@ -99,8 +131,8 @@ if [ -n "$opencode_bundles" ]; then
     echo "restore_audit_code: opencode bundle $STAMP restored"
   done
   audit_rel="$(pick_state_file audit.json || true)"
-  if [ -n "$audit_rel" ] && [ -f "$TMP/state/$audit_rel" ]; then
-    if ! python3 - "$TMP/state/$audit_rel" "$HOME/.local/share/opencode/history" <<'PY2'
+  if [ -n "$audit_rel" ] && [ -f "$STATE/$audit_rel" ]; then
+    if ! python3 - "$STATE/$audit_rel" "$HOME/.local/share/opencode/history" <<'PY2'
 import json, os, sys, glob
 audit_path, hist_root = sys.argv[1], sys.argv[2]
 try:
@@ -135,11 +167,11 @@ fi
 # hub-work/), so sessions come back for all repos, not just this $WORK.
 if [ "${RESTORE_CHATS_ALL:-0}" = "1" ] && [ -f "$SCRIPT_DIR/restore-chats.sh" ]; then
   CHAT_ALL_ROOT="${RESTORE_CHATS_ROOT:-$HOME}" \
-    bash "$SCRIPT_DIR/restore-chats.sh" --all --state "$TMP/state" 2>&1 | sed 's/^/  /'
+    bash "$SCRIPT_DIR/restore-chats.sh" --all --state "$STATE" 2>&1 | sed 's/^/  /'
   chat_status=${PIPESTATUS[0]}
   [ "$chat_status" -eq 0 ] || status=1
 elif [ "${RESTORE_CHATS:-1}" != "0" ] && [ -f "$SCRIPT_DIR/restore-chats.sh" ]; then
-  CHAT_REPO_DIR="$WORK" bash "$SCRIPT_DIR/restore-chats.sh" --state "$TMP/state" 2>&1 | sed 's/^/  /'
+  CHAT_REPO_DIR="$WORK" bash "$SCRIPT_DIR/restore-chats.sh" --state "$STATE" 2>&1 | sed 's/^/  /'
   chat_status=${PIPESTATUS[0]}
   [ "$chat_status" -eq 0 ] || status=1
 fi

@@ -21,3 +21,16 @@ jobs:
       - name: Run the jsdom suites
         working-directory: tests
         run: npm test
+
+  shell:
+    # Its own job on purpose. The jsdom suites above run first in npm test, and
+    # when one of them fails the && chain stops - the shell suites never run and
+    # the failure looks like the whole suite is about that one test. Measured:
+    # a red hub-connect-e2e.js hid restore-chats-test.sh entirely.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the shell suites
+        run: bash tests/restore-chats-test.sh
+
