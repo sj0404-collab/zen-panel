@@ -779,6 +779,9 @@ async function runHubFlow(kind) {
         progStage('Хаб уже идёт — подбираю доступ…');
         const opened = await tryOpenLive(token);
         if (opened) progFinish(true, 'Подключился к уже запущенному хабу.');
+        // Без этого return уходил без progFinish: карточка «Запуск хаба»
+        // крутилась бесконечно, пока пользователь не жмёт «Прервать ожидание».
+        else progFinish(false, 'Доступ не подошёл — хаб закрыт чужим токеном запуска. Нажми «Остановить и перезапустить ранер».');
         return;
       }
       const zt = genZt();
