@@ -63,6 +63,8 @@ import_bundle() {
   [ -s "$bundle" ] || { echo "restore-chats: empty bundle $bundle" >&2; return 1; }
   CHAT_ONLY="${CHAT_ONLY:-}" CHAT_REPO_DIR="$repo_dir" BUNDLE="$bundle" python3 - <<'PY'
 import json, os, subprocess, sys, tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 bundle_path = os.environ["BUNDLE"]
 repo_dir = os.environ["CHAT_REPO_DIR"]
@@ -78,12 +80,26 @@ sessions = bundle.get("sessions") or []
 if only:
     sessions = [s for s in sessions if s.get("id") == only]
 
-ok = 0
-for s in sessions:
+say_lock = threading.Lock()
+
+def say(msg, err=False):
+    with say_lock:
+        print(msg, file=sys.stderr if err else sys.stdout, flush=True)
+
+# The imports run side by side.
+#
+# `opencode import` is a node CLI: every call pays the node start-up before it
+# does any work, and the bundles only ever grow - 38 sessions across 6 repos
+# the day this was measured. One at a time is what turned a two-minute restore
+# into six, and it gets worse with every session saved from here on. Each
+# import writes its own session directory, so they are independent and go in a
+# small pool. CHAT_IMPORT_JOBS=1 puts them back in a row when something needs
+# to be watched one by one.
+def import_one(s):
     data = s.get("export")
     if not isinstance(data, dict):
-        print("restore-chats: %s has no export payload, skip" % s.get("id"), file=sys.stderr)
-        continue
+        say("restore-chats: %s has no export payload, skip" % s.get("id"), err=True)
+        return False
     sid = s.get("id") or (data.get("info") or {}).get("id")
     fd, path = tempfile.mkstemp(suffix=".json", prefix="chat-")
     try:
@@ -94,17 +110,31 @@ for s in sessions:
         out = (proc.stdout or b"").decode("utf-8", "replace").strip()
         err = (proc.stderr or b"").decode("utf-8", "replace").strip()
         if proc.returncode == 0:
-            ok += 1
-            print("restore-chats: imported %s" % (sid or "?"))
-        else:
-            print("restore-chats: %s import failed: %s" % (sid, (err or out)[:200]), file=sys.stderr)
+            say("restore-chats: imported %s" % (sid or "?"))
+            return True
+        say("restore-chats: %s import failed: %s" % (sid, (err or out)[:200]), err=True)
+        return False
     except Exception as e:
-        print("restore-chats: %s import error: %s" % (sid, e), file=sys.stderr)
+        say("restore-chats: %s import error: %s" % (sid, e), err=True)
+        return False
     finally:
         try:
             os.unlink(path)
         except Exception:
             pass
+
+try:
+    jobs = int(os.environ.get("CHAT_IMPORT_JOBS") or "4")
+except ValueError:
+    jobs = 4
+jobs = max(1, min(jobs, 16))
+
+if jobs > 1 and len(sessions) > 1:
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        results = list(pool.map(import_one, sessions))
+else:
+    results = [import_one(s) for s in sessions]
+ok = sum(1 for r in results if r)
 
 print("restore-chats: %d/%d sessions imported from %s" % (ok, len(sessions), bundle_path))
 if sessions and ok < len(sessions):
@@ -114,37 +144,55 @@ PY
   return "$python_status"
 }
 
-# Find the local repo that matches a chats/<name>.json bundle: same basename,
-# or same remote owner/name. First exact basename hit wins; otherwise an origin
-# whose path ends with /<name> or /<name>.git.
-find_repo_for() {
-  local root="$1" name="$2"
-  python3 - "$root" "$name" <<'PY'
+# Map every chats/<name>.json to the local repo that matches, in ONE walk of
+# the root.
+#
+# This used to be one full walk per bundle (find_repo_for), and a walk here is
+# not cheap: it stats every directory under $HOME and shells out to
+# `git remote get-url` for every repository it meets. With six bundles that was
+# six identical walks before a single chat was imported. One walk now, all the
+# names answered from it.
+#
+# Matching rules, unchanged: a remote whose path ends in /<name> or /<name>.git
+# wins; a directory whose basename is <name> is the fallback.
+map_repos_for() {
+  local root="$1"; shift
+  python3 - "$root" "$@" <<'PY'
 import os, subprocess, sys
-root, name = sys.argv[1:]
+
+root = sys.argv[1]
+want = sys.argv[2:]
+
 SKIP_DIRS = {'node_modules', '.cache', '.npm', '.gradle', '.m2', '.cargo',
              '.rustup', '.venv', 'venv', '__pycache__', '.tox', '.git', '.local'}
-remote_match = None
-basename_match = None
+basename_match = {}
+remote_match = {}
+
 for base, dirs, files in os.walk(root):
     dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.endswith('.git')]
     is_repo = '.git' in dirs or os.path.exists(os.path.join(base, '.git'))
     if not is_repo:
         continue
-    if basename_match is None and os.path.basename(base.rstrip('/')) == name:
-        basename_match = base
-    try:
-        remote = subprocess.check_output(
-            ['git', '-C', base, 'remote', 'get-url', 'origin'],
-            text=True, stderr=subprocess.DEVNULL).strip()
-    except Exception:
-        remote = ''
-    tail = remote.rstrip('/')
-    if tail.endswith('/' + name) or tail.endswith('/' + name + '.git'):
-        print(base)
-        raise SystemExit(0)
-if basename_match:
-    print(basename_match)
+    name = os.path.basename(base.rstrip('/'))
+    if name in want and name not in basename_match:
+        basename_match[name] = base
+    for target in want:
+        if target in remote_match:
+            continue
+        try:
+            remote = subprocess.check_output(
+                ['git', '-C', base, 'remote', 'get-url', 'origin'],
+                text=True, stderr=subprocess.DEVNULL).strip()
+        except Exception:
+            remote = ''
+        tail = remote.rstrip('/')
+        if tail.endswith('/' + target) or tail.endswith('/' + target + '.git'):
+            remote_match[target] = base
+
+for name in want:
+    hit = remote_match.get(name) or basename_match.get(name)
+    if hit:
+        print("%s\t%s" % (name, hit))
 PY
 }
 
@@ -161,27 +209,45 @@ if [ "$ALL" = 1 ]; then
   processed=0
   failed=0
   shopt -s nullglob
+  bundles=()
+  names=()
   for bundle in "$STATE"/chats/*.json; do
     [ -s "$bundle" ] || continue
-    name="$(basename "$bundle" .json)"
-    match=""
-    for root in $roots; do
-      match="$(find_repo_for "$root" "$name")"
-      [ -n "$match" ] && break
-    done
-     if [ -z "$match" ]; then
-       echo "restore-chats: no local repo for $name; skipped"
-       failed=1
-       continue
-     fi
-     echo "restore-chats: --- import $name -> $match"
-     if ! import_bundle "$match" "$bundle"; then failed=1; fi
-     processed=$((processed + 1))
-   done
-   echo "restore-chats: done, $processed bundle(s) processed"
-   [ "$failed" -eq 0 ]
-   exit $?
+    bundles+=("$bundle")
+    names+=("$(basename "$bundle" .json)")
+  done
 
+  # One walk per root, not one per bundle: the first root that matches a name
+  # wins, which is the order the old per-bundle loop had. Skipped entirely when
+  # there is nothing to look up - the walk is not free, and asking it for no
+  # names is exactly the case where it would be pure waste.
+  declare -A REPO_MAP=()
+  if [ "${#names[@]}" -gt 0 ]; then
+    for root in $roots; do
+      while IFS=$'\t' read -r n p; do
+        [ -n "$n" ] || continue
+        [ -n "${REPO_MAP[$n]:-}" ] && continue
+        REPO_MAP["$n"]="$p"
+      done < <(map_repos_for "$root" "${names[@]}")
+    done
+  fi
+
+  for i in "${!bundles[@]}"; do
+    bundle="${bundles[$i]}"
+    name="${names[$i]}"
+    match="${REPO_MAP[$name]:-}"
+    if [ -z "$match" ]; then
+      echo "restore-chats: no local repo for $name; skipped"
+      failed=1
+      continue
+    fi
+    echo "restore-chats: --- import $name -> $match"
+    if ! import_bundle "$match" "$bundle"; then failed=1; fi
+    processed=$((processed + 1))
+  done
+  echo "restore-chats: done, $processed bundle(s) processed"
+  [ "$failed" -eq 0 ]
+  exit $?
 fi
 
 REPO_DIR="${CHAT_REPO_DIR:-${GITHUB_WORKSPACE:-$(pwd)}}"

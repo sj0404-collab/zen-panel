@@ -171,17 +171,45 @@ jobs:
           if [ "${{ inputs.handoff }}" = "true" ]; then
             echo "::notice::session relay: taking the session over from run ${{ inputs.handoff_from }}. Everything below is a restore of what that runner saved; its watchdog is waiting for this run to publish before it steps aside."
           fi
+          # ONE clone of session-state for both restores below.
+          #
+          # The branch had grown past 70 MB, and each restore_audit_code.sh
+          # cloned all of it - twice - before the hub could publish its
+          # address. About 39 MB of that is one uploaded APK under artifacts/
+          # that nothing in the restore path ever reads, so the clone carries
+          # the same blob filter the script does. Both calls get the tree.
+          STATE_DIR="$HOME/.npm-hub/tmp/session-state"
+          mkdir -p "$(dirname "$STATE_DIR")"
+          rm -rf "$STATE_DIR"
+          STATE_REMOTE="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          if ! git clone -q --depth 1 --filter=blob:limit=1m --branch session-state \
+               "$STATE_REMOTE" "$STATE_DIR" 2>/dev/null; then
+            if ! git clone -q --depth 1 --branch session-state \
+                 "$STATE_REMOTE" "$STATE_DIR" 2>/dev/null; then
+              STATE_DIR=""
+              echo "::notice::no session-state branch yet; starting without the saved history"
+            fi
+          fi
           # Restore repos before importing OpenCode sessions: opencode import
           # needs the real repository CWD, not an empty placeholder folder.
+          # The fork's own history does not depend on that restore, so the two
+          # run together; the hub-work chats import below waits for the repos,
+          # and runs after the fork restore so the two never copy the same
+          # opencode bundle at the same time.
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
             WORK_BACKUP_RESTORE_EXISTING=1 bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" \
-            2>&1 | tee -a "$HUB_LOGS/restore-work.log" || echo "::warning::hub-work restore failed"
+            2>&1 | tee -a "$HUB_LOGS/restore-work.log" &
+          WORK_PID=$!
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" STATE_DIR="$STATE_DIR" \
+            bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || echo "::warning::fork restore failed"
+          wait "$WORK_PID" || echo "::warning::hub-work restore failed"
           # Restore-chats imports the zen-panel fork only by default; the
           # hub-work call gets RESTORE_CHATS_ALL=1 so every repo the Files tab
           # cloned (and the fork itself) gets its opencode sessions back.
-          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$GITHUB_WORKSPACE/fork" 2>&1 | tee -a "$HUB_LOGS/restore.log" || echo "::warning::fork restore failed"
           RESTORE_CHATS_ALL=1 RESTORE_CHATS_ROOT="$HOME" \
-            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" 2>&1 | tee -a "$HUB_LOGS/restore-hubwork.log" || echo "::warning::hub-work chats restore failed"
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" STATE_DIR="$STATE_DIR" \
+            bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work" 2>&1 | tee -a "$HUB_LOGS/restore-hubwork.log" || echo "::warning::hub-work chats restore failed"
+          rm -rf "$STATE_DIR"
 
       - name: Start the hub and open the tunnel
         run: |
