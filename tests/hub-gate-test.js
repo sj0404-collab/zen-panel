@@ -106,6 +106,33 @@ check('g16 ::ffff:127.0.0.1 is loopback too', gated.gateGranted(req({
   url: '/api/tools', remoteAddress: '::ffff:127.0.0.1',
 })) === true);
 
+// The hole this suite missed for as long as the gate has existed: cloudflared
+// runs on the same runner and dials 127.0.0.1, so EVERY request off the
+// internet also arrives as loopback. g15 and g16 above are exactly the shape
+// of an attacker's request, and they passed. A proxy header is what tells the
+// two apart - Cloudflare stamps CF-Connecting-IP/CF-Ray on everything it
+// forwards, and a local curl has neither.
+check('g16b loopback behind a proxy needs the token', gated.gateGranted(req({
+  url: '/api/fs/list', remoteAddress: '127.0.0.1', headers: { 'cf-connecting-ip': '203.0.113.9' },
+})) === false);
+check('g16c x-forwarded-for counts as a proxy too', gated.gateGranted(req({
+  url: '/m', remoteAddress: '127.0.0.1', headers: { 'x-forwarded-for': '203.0.113.9' },
+})) === false);
+check('g16d an empty remote address is not a free pass', gated.gateGranted(req({
+  url: '/m', remoteAddress: '', headers: { 'cf-ray': '8a1b2c3d4e5f6789-LHR' },
+})) === false);
+check('g16e loopback behind a proxy still opens with the header token', gated.gateGranted(req({
+  url: '/api/tools', remoteAddress: '127.0.0.1',
+  headers: { 'cf-connecting-ip': '203.0.113.9', 'x-hub-token': T },
+})) === true);
+check('g16f ...and with the cookie the browser already holds', gated.gateGranted(req({
+  url: '/api/tools', remoteAddress: '127.0.0.1',
+  headers: { 'cf-connecting-ip': '203.0.113.9', cookie: 'hub_zt=' + T },
+})) === true);
+check('g16g an empty proxy header is not a proxy', gated.gateGranted(req({
+  url: '/api/tools', remoteAddress: '127.0.0.1', headers: { 'cf-connecting-ip': '' },
+})) === true);
+
 // Upgrade sockets carry no express getters, so gateGranted has to work off
 // req.url/req.headers alone - that is how the /ws gate is invoked.
 check('g17 raw upgrade socket (?zt=) grants', gated.gateGranted(req({ url: '/ws?zt=' + T })) === true);
