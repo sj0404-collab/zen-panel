@@ -4468,7 +4468,7 @@ app.get('/api/work-snapshots', async (req, res) => {
         const size = parseInt(m[1], 10) || 0;
         const stamp = m[2], rel = m[3];
         let s = snaps.get(stamp);
-        if (!s) { s = { stamp, repos: new Map(), total: 0 }; snaps.set(stamp, s); }
+        if (!s) { s = { stamp, repos: new Map(), extras: 0, chats: 0, settings: false, total: 0 }; snaps.set(stamp, s); }
         s.total += size;
         const base = rel.split('/').pop();
         const dir = rel.slice(0, -(base.length + 1));
@@ -4476,17 +4476,29 @@ app.get('/api/work-snapshots', async (req, res) => {
           const e = s.repos.get(dir) || { rel: dir, bytes: 0, kind: '' };
           if (size > 0) { e.bytes += size; e.kind = base === 'repo.bundle' ? 'git' : 'архив'; }
           s.repos.set(dir, e);
+        } else if (base === 'wip.patch' || base === 'untracked.tar.gz') {
+          if (size > 0) s.extras += size;
+        } else if (rel.startsWith('opencode/chats/') && base.endsWith('.json')) {
+          s.chats += 1;
+        } else if (rel.startsWith('opencode/settings/') && base !== 'manifest.json') {
+          s.settings = true;
         }
       }
-      const list = [...snaps.values()].map(s => ({
-        stamp: s.stamp,
-        repos: [...s.repos.values()].filter(r => r.bytes > 0).sort((a, b) => a.rel.localeCompare(b.rel)),
-        totalMb: Math.round(s.total / 104857.6) / 10
-      }));
+      const list = [...snaps.values()].map(s => {
+        const active = s.repos.size > 0 || s.chats > 0 || s.settings;
+        return {
+          stamp: s.stamp,
+          repos: [...s.repos.values()].filter(r => r.bytes > 0).sort((a, b) => a.rel.localeCompare(b.rel)),
+          extrasMb: Math.round(s.extras / 104857.6) / 10,
+          chats: s.chats, settings: s.settings, active,
+          totalMb: Math.round(s.total / 104857.6) / 10
+        };
+      });
       list.sort((a, b) => b.stamp.localeCompare(a.stamp));
-      // The user asked: always mark the newest snapshot whose repos are whole,
-      // not a snapshot that only has audit/code files.
-      const recommended = (list.find(s => s.repos.length > 0) || list[0] || { stamp: '' }).stamp;
+      // "Всегда самые новые; если новые пустые — последние, где что-то делали":
+      // рекомендация = новейший снапшот с реальной активностью (репо или чаты
+      // opencode или настройки), а не просто самый свежий по времени.
+      const recommended = (list.find(s => s.active) || { stamp: '' }).stamp;
       wbIndex = { sha, at: Date.now(), snapshots: list, recommended };
     }
     res.json({ success: true, snapshots: wbIndex.snapshots, recommended: wbIndex.recommended });

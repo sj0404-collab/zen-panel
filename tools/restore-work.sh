@@ -360,6 +360,52 @@ PY
   log "restored $rel -> $dest"
 done < <(find "$SNAP/repos" -type f -name meta.json -print 2>/dev/null)
 
+# ── OpenCode: settings + chat sessions from the SAME snapshot ──
+# Settings go back to the exact path the manifest recorded, never clobbering
+# whatever the fresh runner already wrote (--keep-old semantics via cp -n).
+if [ -f "$SNAP/opencode/settings/manifest.json" ]; then
+  python3 - "$SNAP/opencode" <<'PYP'
+import json, os, shutil, sys
+oc = sys.argv[1]
+try:
+    manifest = json.load(open(os.path.join(oc, 'settings', 'manifest.json'), encoding='utf-8'))
+except Exception as exc:
+    print('opencode settings: bad manifest: %s' % exc)
+    raise SystemExit(1)
+done = 0
+for e in manifest if isinstance(manifest, list) else manifest.get('files', []):
+    rel, fn = e.get('rel', ''), e.get('file', '')
+    src = os.path.join(oc, fn)
+    if not rel or not fn or not os.path.isfile(src):
+        continue
+    dest = os.path.expanduser(rel) if rel.startswith('~') else rel
+    if rel.startswith('hub-work'):
+        dest = os.path.join(os.environ.get('WORK_BACKUP_ROOT', os.path.expanduser('~')), rel)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if os.path.exists(dest):
+        continue  # keep the fresh runner's own copy
+    shutil.copy2(src, dest)
+    done += 1
+print('opencode settings: %d file(s) restored' % done)
+PYP
+fi
+# Chat sessions: per-repo bundle from this very snapshot, imported back into
+# the repo we just restored (restore-chats.sh assigns sessions to the CWD).
+if [ -d "$SNAP/opencode/chats" ] && ls "$SNAP/opencode/chats"/*.json >/dev/null 2>&1; then
+  RESTORE_CHATS_BIN="$HOME/.local/bin/restore-chats.sh"; [ -f "$RESTORE_CHATS_BIN" ] || RESTORE_CHATS_BIN="$(dirname "$0")/restore-chats.sh"
+  for meta in "$SNAP/repos"/hub-work/*/meta.json; do
+    [ -f "$meta" ] || continue
+    name="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); print(d.get("name") or "")' "$meta" 2>/dev/null | tr -c 'A-Za-z0-9._-' '_')"
+    [ -n "$name" ] || continue
+    bundle="$SNAP/opencode/chats/$name.json"
+    [ -s "$bundle" ] || continue
+    rel="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); print(d.get("rel") or "")' "$meta" 2>/dev/null)"
+    dest="$ROOT/$rel"
+    [ -d "$dest" ] || continue
+    CHAT_BUNDLE="$bundle" CHAT_REPO_DIR="$dest" bash "$RESTORE_CHATS_BIN" >/dev/null 2>&1 && log "chats restored for $name" || log "chats restore failed for $name"
+  done
+fi
+
 if [ -s "$SNAP/files.tar.gz" ]; then
   # --keep-old-files: never overwrite whatever the fresh runner already has.
   if extract_keep_old "$ROOT" "$SNAP/files.tar.gz"; then

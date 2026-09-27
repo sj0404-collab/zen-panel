@@ -47,6 +47,13 @@
 #
 # ENV
 #   WORK_BACKUP_ROOT        root to scan            (default $HOME)
+#   WORK_REPOS_ROOT         repos scan root         (default $HOME/hub-work)
+#                           The snapshot packs ONLY the folder where the Files
+#                           tab clones repositories: repos (+ their WIP diffs and
+#                           untracked files), the opencode chat sessions and the
+#                           opencode settings. Loose $HOME files are NOT packed
+#                           any more - that loose sweep was what turned every
+#                           third snapshot into a 40 MB mystery blob.
 #   WORK_BACKUP_BRANCH      destination branch      (default work-backup)
 #   WORK_BACKUP_INTERVAL    daemon seconds          (default 300)
 #   WORK_BACKUP_KEEP        snapshots to retain     (default 4)
@@ -60,6 +67,11 @@
 set -uo pipefail
 
 ROOT="${WORK_BACKUP_ROOT:-$HOME}"
+# Repos live under hub-work by design now (that is where the Files tab clones
+# them). A custom root without a hub-work subfolder falls back to scanning the
+# root itself so tests and old layouts keep working.
+REPOS_ROOT="${WORK_REPOS_ROOT:-$ROOT/hub-work}"
+[ -d "$REPOS_ROOT" ] || REPOS_ROOT="$ROOT"
 BRANCH="${WORK_BACKUP_BRANCH:-work-backup}"
 INTERVAL="${WORK_BACKUP_INTERVAL:-300}"
 KEEP="${WORK_BACKUP_KEEP:-4}"
@@ -170,8 +182,9 @@ skip_regenerable() {
 
 find_repos() {
   local args=()
+  [ -d "$REPOS_ROOT" ] || { return 0; }
   for e in "${EXCLUDES[@]}"; do args+=( -path "$e" -prune -o ); done
-  find "$ROOT" -maxdepth 8 "${args[@]}" -type d -name .git -print 2>/dev/null
+  find "$REPOS_ROOT" -maxdepth 8 "${args[@]}" -type d -name .git -print 2>/dev/null
 }
 
 # HEAD + a digest of the porcelain status (which already lists untracked files).
@@ -359,8 +372,13 @@ compute_sig() {
       find "$ROOT/.npm-hub/sessions" -type f -print0 2>/dev/null \
         | LC_ALL=C sort -z | xargs -0 -r sha1sum
     fi
-    printf 'LOOSE\n'
-    loose_listing | sha1sum
+    printf 'OPENCODE\n'
+    # Sessions move all the time: opencode.db size+mtime is the cheapest
+    # "something happened" signal that does not read the whole database.
+    stat -c '%s %Y' "$HOME/.local/share/opencode/opencode.db" 2>/dev/null || true
+    for f in "$HOME/.config/opencode/opencode.json" "$HOME/.opencode.json" ${REPOS_ROOT:+$REPOS_ROOT/*/opencode.json}; do
+      [ -f "$f" ] && sha1sum "$f" 2>/dev/null
+    done
   } | sha1sum | cut -d' ' -f1
 }
 
@@ -463,20 +481,35 @@ PY
     fi
   done < <(find_repos)
 
-  loose_listing > "$stage/tree.txt" 2>/dev/null || return 1
-  loose_predicates
-  if ! ( cd "$ROOT" || exit 1
-    find . -mindepth 1 -type f ${LOOSE_PREDICATES[@]+"${LOOSE_PREDICATES[@]}"} \
-      ! -size +"${MAX_FILE_MB}"M -print0 2>/dev/null \
-      | tar --null -T - -czf "$stage/files.tar.gz" 2>/dev/null ); then
-    log "loose-file archive failed"
-    return 1
-  fi
-  [ -s "$stage/files.tar.gz" ] || rm -f "$stage/files.tar.gz"
+  # The snapshot is repos + opencode on purpose: no loose $HOME sweep any
+  # more (it costs the whole boot-time budget and helped nobody).
+  ( find_repos; [ -d "$REPOS_ROOT" ] || exit 0
+      excl_args=() 
+      for e in "${EXCLUDES[@]}"; do excl_args+=( ! -path "$e" ); done
+      find "$REPOS_ROOT" -type f ! -path '*/.git/*' ${excl_args[@]+"${excl_args[@]}"} | LC_ALL=C sort ) \
+      > "$stage/tree.txt" 2>/dev/null || return 1
   if ! collect_big_files "$stage"; then
     log "big-file chunking failed"
     return 1
   fi
+  # ── OpenCode: sessions + settings, per the snapshot's own channel ──
+  # Chats: export-chats.sh with PUBLISH=0 builds the importable bundle locally;
+  # restore-work re-imports it with restore-chats.sh. Sessions therefore live
+  # in the SAME snapshot the repos do, not only in session-state.
+  mkdir -p "$stage/opencode/chats" || return 1
+  if [ -d "$REPOS_ROOT" ]; then
+    while IFS= read -r gitdir; do
+      [ -n "$gitdir" ] || continue
+      dir="$(dirname "$gitdir")"
+      name="$(basename "$dir" | tr -c 'A-Za-z0-9._-' '_')"; [ -n "$name" ] || name=repo
+      CHAT_REPO_DIR="$dir" CHAT_BUNDLE_OUT="$stage/opencode/chats/$name.json" PUBLISH=0         bash "$(dirname "$0")/export-chats.sh" >/dev/null 2>&1 || log "chat export failed for $name"
+    done < <(find_repos)
+  fi
+  rmdir "$stage/opencode/chats" 2>/dev/null || true
+  # Settings: global config + per-project opencode.json, with a manifest that
+  # maps every packed file back to its home (restore replays it 1:1).
+  bash "$(dirname "$0")/../tools/_oc_settings_pack.sh" "$stage" "$REPOS_ROOT" 2>/dev/null     || log "opencode settings pack skipped"
+
   if [ -d "$ROOT/.npm-hub/sessions" ]; then
     mkdir -p "$stage/descriptors" || return 1
     cp -a "$ROOT/.npm-hub/sessions/." "$stage/descriptors/" || return 1
@@ -568,7 +601,25 @@ PY
     python_status=$?
     [ "$python_status" -eq 0 ] || return 1
     if [ "$KEEP" -gt 0 ]; then
-      ls -1d snapshots/*/ 2>/dev/null | LC_ALL=C sort -r | tail -n +$((KEEP + 1)) | xargs -r rm -rf || return 1
+      # "Always the newest; and when the newest are empty, the last ones where
+      # something was done" (user rule): keep KEEP newest snapshots, and
+      # additionally the newest 2 that actually carry repositories - an empty
+      # audit-only snapshot must never push a workable one overboard.
+      python3 - "$KEEP" <<'PYP'
+import os, shutil, sys
+keep_n = int(sys.argv[1])
+snaps = sorted([d for d in os.listdir('snapshots') if os.path.isdir(os.path.join('snapshots', d))],
+               reverse=True)
+keep = set(snaps[:keep_n])
+with_repos = [d for d in snaps
+              if os.path.isdir(os.path.join('snapshots', d, 'repos'))
+              and os.listdir(os.path.join('snapshots', d, 'repos'))]
+for d in with_repos[:2]:
+    keep.add(d)
+for d in snaps:
+    if d not in keep:
+        shutil.rmtree(os.path.join('snapshots', d), ignore_errors=True)
+PYP
     fi
   }
   if ! materialize_snapshot "$stage" "$stamp"; then
