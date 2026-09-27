@@ -4402,6 +4402,145 @@ app.get('/api/tunnel', (req, res) => {
   }
 });
 
+// ─── ON-DEMAND WORK-REPO RESTORE (Snapshot tab) ───
+// Boot no longer restores repositories (that cost ~4 minutes before the hub
+// could publish its address): the user picks a snapshot from the Snapshot tab
+// after they are in. Listing uses a tree-only partial clone (objects are just
+// filenames+sizes, so a 100 MB snapshot index costs a few KB); the restore
+// itself goes through the very same tools/restore-work.sh the workflow used.
+const RESTORE_WORK_SH = path.join(__dirname, '..', '..', 'tools', 'restore-work.sh');
+const WB_CACHE_DIR = path.join(DATA_DIR, 'tmp', 'work-backup-index');
+let wbIndex = { sha: '', at: 0, snapshots: [], recommended: '' };
+let wbRestore = { running: false, startedAt: 0, doneAt: 0, code: null, tail: [] };
+
+const wbRemote = () => {
+  const token = runnerToken();
+  const repo = process.env.GITHUB_REPOSITORY || '';
+  if (!token || !repo) return '';
+  return `https://x-access-token:${token}@github.com/${repo}.git`;
+};
+const wbRunCmd = (cmd, args, timeoutMs) => new Promise((resolve) => {
+  let out = '', expired = false, child;
+  try { child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] }); }
+  catch (e) { return resolve({ code: 1, out: '', err: e.message }); }
+  const timer = setTimeout(() => { expired = true; try { child.kill('SIGKILL'); } catch {} }, timeoutMs || 60000);
+  child.stdout.on('data', d => { out += String(d); });
+  child.stderr.on('data', d => { out += String(d); });
+  child.on('error', e => { clearTimeout(timer); resolve({ code: 1, out, err: e.message }); });
+  child.on('close', code => { clearTimeout(timer); resolve({ code: expired ? 124 : (code || 0), out: out.slice(0, 400000), err: '' }); });
+});
+const wbPushTail = (s) => {
+  for (const ln of String(s).split('\n')) {
+    const v = ln.trim();
+    if (!v) continue;
+    wbRestore.tail.push(v.slice(0, 300));
+    if (wbRestore.tail.length > 250) wbRestore.tail.shift();
+  }
+  // mirror into the hub log for post-mortem
+  try { fs.appendFileSync(path.join(LOG_DIR, 'restore-work-manual.log'), String(s)); } catch {}
+};
+
+app.get('/api/work-snapshots', async (req, res) => {
+  try {
+    const remote = wbRemote();
+    if (!remote) return res.json({ success: true, snapshots: [], recommended: '', note: 'не на Actions-раннере' });
+    // ls-remote is the cheap freshness check; refresh the tree only when the
+    // branch really moved (a snapshot push) or every 5 minutes max.
+    const heads = await wbRunCmd('git', ['ls-remote', remote, 'refs/heads/work-backup'], 30000);
+    const sha = (heads.out.trim().split(/\s+/)[0] || '').trim();
+    if (!sha || heads.code !== 0 || !/^[0-9a-f]{40}$/.test(sha)) {
+      return res.json({ success: true, snapshots: wbIndex.snapshots || [], recommended: wbIndex.recommended || '', note: 'ветка work-backup пока пустая' });
+    }
+    if (wbIndex.sha !== sha || !wbIndex.at || (Date.now() - wbIndex.at) > 300000) {
+      fs.mkdirSync(WB_CACHE_DIR, { recursive: true });
+      if (!fs.existsSync(path.join(WB_CACHE_DIR, 'HEAD'))) {
+        const init = await wbRunCmd('git', ['init', '-q', '--bare', WB_CACHE_DIR], 20000);
+        if (init.code !== 0) throw new Error('git init: ' + init.out.slice(0, 200));
+      }
+      const fch = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'fetch', '-q', '--depth=1', '--filter=blob:none', remote, '+refs/heads/work-backup:refs/wb'], 180000);
+      if (fch.code !== 0) throw new Error('fetch: ' + fch.out.slice(0, 200));
+      const tree = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'ls-tree', '-r', '-l', 'refs/wb', '--', 'snapshots/'], 60000);
+      if (tree.code !== 0) throw new Error('ls-tree: ' + tree.out.slice(0, 200));
+      const snaps = new Map();
+      for (const line of tree.out.split('\n')) {
+        const m = line.match(/^\S+ blob +\S+ +(\d+)\tsnapshots\/([^/]+)\/(.+)$/);
+        if (!m) continue;
+        const size = parseInt(m[1], 10) || 0;
+        const stamp = m[2], rel = m[3];
+        let s = snaps.get(stamp);
+        if (!s) { s = { stamp, repos: new Map(), total: 0 }; snaps.set(stamp, s); }
+        s.total += size;
+        const base = rel.split('/').pop();
+        const dir = rel.slice(0, -(base.length + 1));
+        if (base === 'repo.bundle' || base === 'worktree.tar.gz') {
+          const e = s.repos.get(dir) || { rel: dir, bytes: 0, kind: '' };
+          if (size > 0) { e.bytes += size; e.kind = base === 'repo.bundle' ? 'git' : 'архив'; }
+          s.repos.set(dir, e);
+        }
+      }
+      const list = [...snaps.values()].map(s => ({
+        stamp: s.stamp,
+        repos: [...s.repos.values()].filter(r => r.bytes > 0).sort((a, b) => a.rel.localeCompare(b.rel)),
+        totalMb: Math.round(s.total / 104857.6) / 10
+      }));
+      list.sort((a, b) => b.stamp.localeCompare(a.stamp));
+      // The user asked: always mark the newest snapshot whose repos are whole,
+      // not a snapshot that only has audit/code files.
+      const recommended = (list.find(s => s.repos.length > 0) || list[0] || { stamp: '' }).stamp;
+      wbIndex = { sha, at: Date.now(), snapshots: list, recommended };
+    }
+    res.json({ success: true, snapshots: wbIndex.snapshots, recommended: wbIndex.recommended });
+  } catch (e) {
+    res.json({ success: false, error: 'не прочитал work-backup: ' + e.message });
+  }
+});
+
+app.post('/api/work-snapshots/restore', express.json(), (req, res) => {
+  try {
+    const stamp = String((req.body && req.body.snapshot) || '').trim();
+    if (!stamp || !/^[A-Za-z0-9._:-]+$/.test(stamp) || stamp.includes('..') || stamp.includes('/')) {
+      return res.json({ success: false, error: 'некорректное имя снапшота' });
+    }
+    if (wbRestore.running) return res.json({ success: false, error: 'восстановление уже идёт' });
+    const token = runnerToken();
+    if (!token) return res.json({ success: false, error: 'нет токена GitHub' });
+    if (!fs.existsSync(RESTORE_WORK_SH)) return res.json({ success: false, error: 'нет скрипта восстановления' });
+    wbRestore = { running: true, startedAt: Date.now(), doneAt: 0, code: null, tail: [] };
+    wbPushTail('♻ восстановление из snapshots/' + stamp + '\n');
+    const env = Object.assign({}, process.env, {
+      GH_TOKEN: token,
+      GITHUB_TOKEN: token,
+      GITHUB_REPOSITORY: process.env.GITHUB_REPOSITORY || '',
+      HUB_LOGS: LOG_DIR,
+      WORK_BACKUP_ROOT: HOME,
+      WORK_BACKUP_RESTORE_EXISTING: '1',
+      WORK_BACKUP_SNAPSHOT: 'snapshots/' + stamp
+    });
+    const child = spawn('bash', [RESTORE_WORK_SH], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child.stdout.on('data', d => { process.stdout.write(d); wbPushTail(d); });
+    child.stderr.on('data', d => { wbPushTail(d); });
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} ; wbPushTail('⏱ таймаут 40 минут — прервал'); }, 40 * 60000);
+    child.on('error', e => { clearTimeout(timer); wbRestore.running = false; wbRestore.doneAt = Date.now(); wbRestore.code = -1; wbPushTail('ошибка запуска: ' + e.message); });
+    child.on('close', code => { clearTimeout(timer); wbRestore.running = false; wbRestore.doneAt = Date.now(); wbRestore.code = code; wbPushTail(code === 0 ? '✅ восстановление завершено' : ('❌ скрипт завершился с кодом ' + code)); });
+    res.json({ success: true });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+app.get('/api/work-snapshots/restore/status', (req, res) => {
+  const t = wbRestore;
+  res.json({
+    success: true,
+    running: t.running,
+    startedAt: t.startedAt || 0,
+    doneAt: t.doneAt || 0,
+    code: t.code,
+    elapsed: t.startedAt ? Math.round((((t.running ? Date.now() : t.doneAt) || Date.now()) - t.startedAt) / 1000) : 0,
+    tail: t.tail.slice(-80)
+  });
+});
+
 // ─── PULSE AUDIO AUTO-START ───
 (async () => {
   try {
