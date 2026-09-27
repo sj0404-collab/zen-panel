@@ -196,8 +196,13 @@ jobs:
           # run together; the hub-work chats import below waits for the repos,
           # and runs after the fork restore so the two never copy the same
           # opencode bundle at the same time.
+          # Repo restore is opt-in from the hub's Snapshot tab now: pulling the
+          # whole work-backup copy BEFORE the tunnel publishes cost the connect
+          # page ~4 of the user's minutes at every launch. The script sees
+          # WORK_BACKUP_RESTORE=0 and exits at once; everything else in this
+          # step (audit/code, chat bundles) is small and stays.
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" \
-            WORK_BACKUP_RESTORE_EXISTING=1 bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" \
+            WORK_BACKUP_RESTORE=0 WORK_BACKUP_RESTORE_EXISTING=1 bash "$GITHUB_WORKSPACE/fork/tools/restore-work.sh" \
             2>&1 | tee -a "$HUB_LOGS/restore-work.log" &
           WORK_PID=$!
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" STATE_DIR="$STATE_DIR" \
