@@ -35,14 +35,18 @@ mkdir -p "$W/bin" "$W/state/snapshots" "$W/state/chats" "$W/home/zen-panel" "$W/
 # wall clock of an import is therefore "2s per session / pool size".
 cat > "$W/bin/opencode" <<'SH'
 #!/usr/bin/env bash
-echo "$*" >> "$FAKE_LOG"
+# One file per import, never one shared log: four imports appending to the same
+# file at the same time lose lines (measured: 7 of 8), which is exactly the kind
+# of flake that makes a timing test untrustworthy. The fake opencode gets the
+# bundle path as its last argument, and that name is unique per import.
+touch "$FAKE_DIR/$(basename "${!#}")"
 sleep 2
 exit 0
 SH
 chmod +x "$W/bin/opencode"
 export PATH="$W/bin:$PATH"
-export FAKE_LOG="$W/opencode.log"
-: > "$FAKE_LOG"
+export FAKE_DIR="$W/imports"
+rm -rf "$FAKE_DIR"; mkdir -p "$FAKE_DIR"
 
 # The local repo the bundle is imported into. Its origin is what the mapping
 # has to match on, not its folder name.
@@ -65,8 +69,9 @@ if uname -s 2>/dev/null | grep -qiE 'mingw|msys|cygwin'; then
     cp "$(dirname "$PYEXE")"/python3*.dll "$W/bin/" 2>/dev/null
     cat > "$W/home/zen-panel/import" <<'SH'
 import os, sys, time
-with open(os.environ["FAKE_LOG"], "a") as f:
-    f.write(sys.argv[-1] + "\n")
+# A file per import, for the same reason as the shell stub above: concurrent
+# appends to one file lose writes.
+open(os.path.join(os.environ["FAKE_DIR"], os.path.basename(sys.argv[-1])), "w").close()
 time.sleep(2)
 SH
   fi
@@ -100,8 +105,8 @@ if ! git clone -q --depth 1 --filter=blob:limit=1m --branch session-state \
   git clone -q --depth 1 --branch session-state "file://$W/bare" "$STATE"
 fi
 
-# ── 1 + 2: STATE_DIR is used, and audit.json is found under snapshots/ ──────
-: > "$FAKE_LOG"
+# в”Ђв”Ђ 1 + 2: STATE_DIR is used, and audit.json is found under snapshots/ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+rm -rf "$FAKE_DIR"; mkdir -p "$FAKE_DIR"
 start=$(date +%s)
 GH_TOKEN=x SESSION_STATE_URL="file://$W/bare" STATE_DIR="$STATE" \
   bash "$REPO/tools/restore_audit_code.sh" "$W/home/zen-panel" > "$W/out.log" 2>&1
@@ -123,12 +128,12 @@ else
   grep -i "audit" "$W/out.log" | head -3
 fi
 
-imports=$(wc -l < "$FAKE_LOG" | tr -d ' ')
+imports=$(ls -1 "$FAKE_DIR" | wc -l | tr -d ' ')
 if [ "$imports" = "8" ]; then ok "all 8 sessions imported"
 else bad "imported $imports of 8 sessions"; fi
 
-# ── 3: the same import in one row has to be clearly slower ─────────────────
-: > "$FAKE_LOG"
+# в”Ђв”Ђ 3: the same import in one row has to be clearly slower в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+rm -rf "$FAKE_DIR"; mkdir -p "$FAKE_DIR"
 start=$(date +%s)
 CHAT_IMPORT_JOBS=1 GH_TOKEN=x SESSION_STATE_URL="file://$W/bare" STATE_DIR="$STATE" \
   bash "$REPO/tools/restore_audit_code.sh" "$W/home/zen-panel" >/dev/null 2>&1
@@ -142,7 +147,7 @@ else
   bad "imports did not get faster in a pool: ${pool}s vs ${serial}s"
 fi
 
-# ── 4: the bundle -> repo mapping, one walk instead of one per bundle ───────
+# в”Ђв”Ђ 4: the bundle -> repo mapping, one walk instead of one per bundle в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 # --all is the mode that used to walk $HOME once per bundle, running `git
 # remote get-url` in every repository it passed. Skipped on Windows: os.walk
 # hands back C:/... paths there, which the shell test then cannot stat, and
