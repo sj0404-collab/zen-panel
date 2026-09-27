@@ -753,5 +753,21 @@ check('q96 build products are left out by design', backupWork.includes("'*.apk' 
   backupWork.includes('left out by design') &&
   backupWork.includes('*/.opencode/*'));
 
+// q97: a wedged runner is reachable again (Z10). Two lifelines outlive any
+// dead hub/tunnel: a tmate SSH/web shell published to control/rescue.json and
+// a whitelisted command queue on control/queue.json - and the watchdog's
+// cleanup kills them like the older daemons so cancel stays fast.
+const hubControl = fs.readFileSync(path.join(__dirname, '..', 'tools/hub_control.sh'), 'utf8');
+const rescueSsh = fs.readFileSync(path.join(__dirname, '..', 'tools/rescue_ssh.sh'), 'utf8');
+check('q97 runner rescue channels: tmate ssh + command queue',
+  hubWorkflow.includes('rescue_ssh') && hubWorkflow.includes('command_queue') &&
+  hubWorkflow.includes('tools/rescue_ssh.sh') && hubWorkflow.includes('tools/hub_control.sh') &&
+  hubWorkflow.includes('pkill -f "[h]ub_control.sh"') && hubWorkflow.includes('tmate -S "$HUB_LOGS/tmate.sock" kill-session') &&
+  hubControl.includes('backup-now') && hubControl.includes('restart-hub') &&
+  hubControl.includes('restart-tunnel') && hubControl.includes('handoff-save') &&
+  hubControl.includes('control/queue.json') && hubControl.includes('control/results/') &&
+  !hubControl.includes('eval ') &&
+  rescueSsh.includes("#{tmate_ssh}") && rescueSsh.includes('control/rescue.json'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
