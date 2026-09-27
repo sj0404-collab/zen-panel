@@ -123,6 +123,9 @@ async function ensureHostAlias() {
 // 4MB (~a real terminal's worth) is configurable for low-memory runners.
 const SESSION_OUTPUT_CAP = parseInt(process.env.SESSION_OUTPUT_CAP || String(4 * 1024 * 1024), 10) || (4 * 1024 * 1024);
 const SESSION_OUTPUT_CHUNK = 64 * 1024; // replay frames this size so a phone stays responsive
+// Строк истории панели, дублируемых в xterm при аттаче, — чтобы свайп вверх
+// на большой сессии показывал прошлые экраны, а не «пустой буфер».
+const SESSION_ATTACH_HISTORY_LINES = parseInt(process.env.SESSION_ATTACH_HISTORY_LINES || '600', 10) || 600;
 // How much of the scrollback is actually re-sent when a client (re)attaches.
 //
 // SESSION_OUTPUT_CAP is what we KEEP, not what we replay. Replaying all 4MB on
@@ -2411,10 +2414,56 @@ const respawnToolShell = (session) => {
   }
 };
 
+// ── Перерисовка TUI и история для свайпа при аттаче ──
+// Полноэкранные TUI (opencode UI с дифом, less, vim) перерисовываются только
+// по SIGWINCH: после аттача клиент видел бы «несколько секунд обычного
+// текста». Дёргаем высоту окна на 1 строку туда-обратно — tmux шлёт SIGWINCH,
+// панель сразу рисует настоящий экран с текущим состоянием/моделью.
+const tmuxWiggleSize = (session) => {
+  if (!session || !session.tmux) return;
+  const name = safeSessionName(session.id);
+  const cur = tmuxRun(['display-message', '-p', '-t', name, '#{window_width} #{window_height}'], 2000);
+  if (cur.status !== 0) return;
+  const m = /(\d+)\s+(\d+)/.exec(String(cur.stdout || '').trim());
+  if (!m) return;
+  const w = m[1], h = Number(m[2]);
+  if (h < 3) return;
+  tmuxRun(['resize-window', '-t', name, '-x', w, '-y', String(h - 1)], 2000);
+  setTimeout(() => {
+    try { tmuxRun(['resize-window', '-t', name, '-x', w, '-y', String(h)], 2000); } catch {}
+  }, 250);
+};
+const scheduleTuiRepaint = (session, delayMs, slot) => {
+  if (!session || !session.tmux) return;
+  session['_repaint' + slot] && clearTimeout(session['_repaint' + slot]);
+  session['_repaint' + slot] = setTimeout(() => { session['_repaint' + slot] = null; tmuxWiggleSize(session); }, delayMs);
+};
+// Последние N строк истории панели — в xterm до реплея, чтобы свайп вверх
+// показывал прошлые экраны. В alternate screen (TUI) история — каша из
+// перерисованных кадров, её не шлём.
+const tmuxAttachHistory = (session) => {
+  const alt = tmuxRun(['display-message', '-p', '-t', safeSessionName(session.id), '#{alternate_on}'], 2000);
+  if (alt.status === 0 && String(alt.stdout).trim() === '1') return '';
+  const r = tmuxRun(['capture-pane', '-p', '-e', '-J', '-t', safeSessionName(session.id), '-S', String(-SESSION_ATTACH_HISTORY_LINES)], 5000);
+  if (r.status !== 0 || typeof r.stdout !== 'string') return '';
+  const txt = r.stdout.replace(/\n+$/, '');
+  return txt ? txt + '\r\n' : '';
+};
+
 const attachPtyClient = (session, ws) => {
   session.clients.add(ws);
   session.lastLeave = 0;
   ws.send(JSON.stringify({ type: 'opened', id: session.id, resumed: session.resumed }));
+  if (session.tmux) {
+    const hist = tmuxAttachHistory(session);
+    if (hist) ws.send(JSON.stringify({ type: 'output', id: session.id, data: hist, replay: true, replayEnd: false }));
+    // Перерисовка сразу (не ждать replay) и страхующая после него.
+    scheduleTuiRepaint(session, 300, 1);
+    const replayMs = session.output
+      ? Math.ceil(Math.min(session.output.length, SESSION_REPLAY_BYTES) / SESSION_OUTPUT_CHUNK) * 10
+      : 0;
+    scheduleTuiRepaint(session, replayMs + 1200, 2);
+  }
   // Replay the scrollback in chunks, not one multi-MB WS frame: a single
   // huge frame is buffered by mobile browsers / tunnels and the terminal
   // appears to load only a fragment before it freezes. 64KB per message with
@@ -2561,6 +2610,19 @@ const tmuxInputFlush = (id) => {
     if (item.tries < 3) {
       item.timer = setTimeout(() => tmuxInputFlush(id), 500);
       tmuxInputBuf.set(id, item);
+    }
+  }
+  // /ss (выбор сессии в opencode) заканчивается перерисовкой всего экрана только
+  // по SIGWINCH — иначе пользователь пару секунд видит обычный текст вместо
+  // дифа сессии и текущей модели. Команда собирается по кускам из разных
+  // флешей (между ней и Enter — стрелки), поэтому читаем хвост последних
+  // введённых байт, а не один флеш.
+  const s = sessions.get(id);
+  if (s && s.tmux) {
+    s._cmdTail = ((s._cmdTail || '') + pending).slice(-24);
+    if (/\r$/.test(s._cmdTail) && /\/ss[^/]{0,12}$/.test(s._cmdTail)) {
+      scheduleTuiRepaint(s, 1200, 3);
+      scheduleTuiRepaint(s, 3500, 4);
     }
   }
 };
