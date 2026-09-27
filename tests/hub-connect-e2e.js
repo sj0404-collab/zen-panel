@@ -76,10 +76,25 @@ function check(name, cond, extra) {
   await window.dispatchHub('ghp_x', 'zt123', '', true);
   check('c2c replace flag', dispatches[2].inputs.replace === true, JSON.stringify(dispatches[2]));
 
+  // Stage X replaced the assertNoActiveSession() helper - which threw - with
+  // detectSessionConflict(), which answers instead. The test kept calling the
+  // helper that no longer exists, so it failed on every run with
+  // "window.assertNoActiveSession is not a function" and took the whole Tests
+  // job with it. Check the replacement and both of the answers it can give.
   runStates.set(7, { id: 7, status: 'in_progress', path: '.github/workflows/hub.yml', name: 'NPM Hub' });
-  let duplicateError = '';
-  try { await window.assertNoActiveSession('ghp_x'); } catch (e) { duplicateError = e.message; }
-  check('c2d duplicate launch blocked', /уже запущен/.test(duplicateError), duplicateError);
+  const hubConflict = await window.detectSessionConflict('ghp_x');
+  check('c2d duplicate hub run detected', hubConflict === 'hub', hubConflict);
+
+  runStates.clear();
+  runStates.set(8, { id: 8, status: 'in_progress', path: '.github/workflows/agent.yml', name: 'Zen agent' });
+  const otherConflict = await window.detectSessionConflict('ghp_x');
+  check('c2d2 another session detected', otherConflict === 'other', otherConflict);
+
+  runStates.clear();
+  const noConflict = await window.detectSessionConflict('ghp_x');
+  check('c2d3 no conflict when idle', noConflict === null, noConflict);
+
+  runStates.clear();
   runStates.set(7, { id: 7, status: 'in_progress', path: '.github/workflows/hub.yml', name: 'NPM Hub' });
   let waitError = '';
   try { await window.waitForRunsToStop('ghp_x', [7], 0, 1); } catch (e) { waitError = e.message; }
