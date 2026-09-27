@@ -147,10 +147,11 @@ app.use(express.json({ limit: '50mb' }));
 // call and the /ws terminal socket answered 200 to anybody who knew the URL.
 //
 // With HUB_TOKEN set, a request now has to carry the token (?zt=,
-// `x-hub-token:` or the cookie set on the first ?zt= hit) or come from
-// loopback - loopback is what the runner's own probes use, and the tunnel
-// health check treats 401 as "the edge reached the app" (it accepts 4xx),
-// so open_tunnel.sh keeps working unchanged.
+// `x-hub-token:` or the cookie set on the first ?zt= hit), or come from a
+// loopback socket that shows no sign of a proxy in front of it (see
+// gateIsLoopback below - that qualifier is the whole ball game). The tunnel
+// health check treats 401 as "the edge reached the app" (it accepts 4xx), so
+// open_tunnel.sh keeps working unchanged.
 //
 // WITHOUT HUB_TOKEN the gate stays wide open, exactly as before: a local
 // `node src/server.js` with no env keeps working with no password.
@@ -168,9 +169,38 @@ function gateEquals(a, b) {
   for (let i = 0; i < A.length; i++) diff |= A[i] ^ B[i];
   return diff === 0;
 }
+// A loopback socket is NOT evidence of a local caller.
+//
+// The comment above this block assumed it was: "loopback is what the runner's
+// own probes use". But cloudflared runs on the same runner and dials
+// http://127.0.0.1:8090, so every request that arrives off the internet also
+// has remoteAddress 127.0.0.1. With this as written the gate waved all of
+// them through: the hub with its file manager and node-pty terminals answered
+// 200 to anybody who knew the trycloudflare address - and that address sits in
+// the public session-state branch. Measured 2026-09-27, on a live hub: both /
+// and /api/tools returned 200 with no token at all, while the panel insisted
+// on one.
+//
+// So loopback counts only when nothing says a proxy is in front. Cloudflare
+// adds CF-Connecting-IP / CF-Ray to every request it forwards, which a local
+// curl never has. The runner's own probes keep working unchanged: they are
+// loopback with no proxy headers, and the public health check is happy with
+// the 401 it now gets (tunnel_health.sh counts any 4xx as "reached us").
+const PROXY_HEADERS = [
+  'cf-connecting-ip', 'cf-ray', 'cf-visitor', 'cf-worker',
+  'x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host', 'forwarded',
+];
+function gateBehindProxy(req) {
+  const h = (req && req.headers) || {};
+  return PROXY_HEADERS.some(k => {
+    const v = h[k];
+    return v !== undefined && v !== null && v !== '';
+  });
+}
 function gateIsLoopback(req) {
   const addr = String((req.socket && req.socket.remoteAddress) || '');
-  return addr === '' || addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+  const local = addr === '' || addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+  return local && !gateBehindProxy(req);
 }
 function gateQueryToken(req) {
   // Works for both express requests and raw upgrade sockets (no req.query).
