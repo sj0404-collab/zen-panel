@@ -4,7 +4,7 @@
   "repo": "sj0404-collab/zen-panel",
   "repoName": "yomikai",
   "workdir": "/home/runner/hub-work/yomikai/code",
-  "updatedAt": "2026-09-27T11:10:19Z",
+  "updatedAt": "2026-09-27T11:36:01Z",
   "count": 7,
   "sessions": [
     {
@@ -12,7 +12,7 @@
       "title": "Что я просил в прошлый раз",
       "slug": "shiny-canyon",
       "directory": "/home/runner/hub-work/yomikai/code",
-      "timeUpdated": 1790452270236,
+      "timeUpdated": 1790507722207,
       "export": {
         "info": {
           "id": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
@@ -23,9 +23,9 @@
           "title": "Что я просил в прошлый раз",
           "agent": "build",
           "model": {
-            "id": "space-bunny-free",
+            "id": "big-pickle",
             "providerID": "opencode",
-            "variant": "max"
+            "variant": "default"
           },
           "version": "1.18.32",
           "summary": {
@@ -36,7 +36,7 @@
           "cost": 0,
           "time": {
             "created": 1790347660807,
-            "updated": 1790452270236
+            "updated": 1790507722207
           }
         },
         "messages": [
@@ -91,6 +91,723 @@
                 "id": "prt_0de18f65b001nuyWLRNm70Yjs1",
                 "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
                 "messageID": "msg_0de18f651001wiyQAZhVBiAHKg"
+              }
+            ]
+          },
+          {
+            "info": {
+              "role": "user",
+              "time": {
+                "created": 1790507685005
+              },
+              "agent": "build",
+              "model": {
+                "providerID": "opencode",
+                "modelID": "big-pickle"
+              },
+              "summary": {
+                "diffs": []
+              },
+              "id": "msg_0e293148d001eX6WMW8JwQh21Y",
+              "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH"
+            },
+            "parts": [
+              {
+                "type": "text",
+                "text": "на чем остановились",
+                "id": "prt_0e293149b0011HBWxEDzHu9Ocs",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e293148d001eX6WMW8JwQh21Y"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e293148d001eX6WMW8JwQh21Y",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790507685039,
+                "completed": 1790507690177
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e29314af00153HqRzarfD99xv",
+              "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH"
+            },
+            "parts": [
+              {
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-start",
+                "id": "prt_0e2932133001kb7KxbaHeMdvsY",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29314af00153HqRzarfD99xv"
+              },
+              {
+                "type": "reasoning",
+                "text": "The user is asking in Russian: \"do you remember what I asked last time\", \"how's it going\", \"what did we stop at\". This is a new session - I don't have prior context. I should check the repo state to see what was in progress. Let me look at git status, recent commits, and any AGENTS.md / notes.\n\nLet me be efficient and check.",
+                "time": {
+                  "start": 1790507688247,
+                  "end": 1790507689176
+                },
+                "id": "prt_0e29321370013VCGSuLFjDTAjU",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29314af00153HqRzarfD99xv"
+              },
+              {
+                "type": "text",
+                "text": "У меня нет истории прошлой сессии — давай посмотрю состояние репозитория.",
+                "time": {
+                  "start": 1790507689178,
+                  "end": 1790507689838
+                },
+                "id": "prt_0e29324da001M8x0Vh37p4h0g2",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29314af00153HqRzarfD99xv"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_8hubhu314f46_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "git status --short && echo \"---LOG---\" && git log --oneline -15 && echo \"---BRANCH---\" && git branch --show-current"
+                  },
+                  "output": "---LOG---\nb2c9b9c78 feat(ai): агент видит картинки из workspace\n6dc30560e fix(ai): разорванная строка в gen_images и токен вместо Context\naa017857d feat(ai): события ранера видны в приложении, GitHub с правом записи\n40947e2f1 feat(ai): пакетная генерация — несколько картинок за один вызов\n034a0a962 feat(ai): обзор папки и чтение пачкой, с вопросами читателю\nbc0835bf2 feat(ai): навыки, которые агент собирает сам\n78a0810d3 fix(ocr): правильный stringResource для moko-ресурсов\n7c725ffc3 fix(ai): папка workspace появляется, файлы видны в чате и в «Загрузки»\n4975b0ebc fix(voice): локальный движок выбирается даже без списка голосов\n85ac8d85b perf(ocr): одиночная область больше не ждёт минуту\nd89fad6a8 feat(ocr): показывать, кто распознал на самом деле\nab8e6fe5f docs: журнал сессии по короткому OCR, голосам и маршрутизации движков\n14d7206d6 test(voice): именованные аргументы нельзя писать для function type\nadfc1e8fe fix(voice): неизвестный id движка читается системным голосом\n440733391 feat(ocr): показывать, кто распознал текст\n---BRANCH---\nwork-from-main\n",
+                  "metadata": {
+                    "output": "---LOG---\nb2c9b9c78 feat(ai): агент видит картинки из workspace\n6dc30560e fix(ai): разорванная строка в gen_images и токен вместо Context\naa017857d feat(ai): события ранера видны в приложении, GitHub с правом записи\n40947e2f1 feat(ai): пакетная генерация — несколько картинок за один вызов\n034a0a962 feat(ai): обзор папки и чтение пачкой, с вопросами читателю\nbc0835bf2 feat(ai): навыки, которые агент собирает сам\n78a0810d3 fix(ocr): правильный stringResource для moko-ресурсов\n7c725ffc3 fix(ai): папка workspace появляется, файлы видны в чате и в «Загрузки»\n4975b0ebc fix(voice): локальный движок выбирается даже без списка голосов\n85ac8d85b perf(ocr): одиночная область больше не ждёт минуту\nd89fad6a8 feat(ocr): показывать, кто распознал на самом деле\nab8e6fe5f docs: журнал сессии по короткому OCR, голосам и маршрутизации движков\n14d7206d6 test(voice): именованные аргументы нельзя писать для function type\nadfc1e8fe fix(voice): неизвестный id движка читается системным голосом\n440733391 feat(ocr): показывать, кто распознал текст\n---BRANCH---\nwork-from-main\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "git status --short && echo \"---LOG---\" && git log --oneline -15 && echo \"---BRANCH---\" && git branch --show-current",
+                  "time": {
+                    "start": 1790507689816,
+                    "end": 1790507689991
+                  }
+                },
+                "id": "prt_0e29325eb001N6f23JZj9U3z1L",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29314af00153HqRzarfD99xv"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_8hubhu314f46_2",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "ls -la"
+                  },
+                  "output": "total 55136\ndrwxr-xr-x 28 runner runner     4096 Sep 27 10:42 .\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:43 ..\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 .devcontainer\n-rw-r--r--  1 runner runner      971 Sep 27 10:42 .editorconfig\ndrwxr-xr-x  7 runner runner     4096 Sep 27 11:14 .git\n-rw-r--r--  1 runner runner      357 Sep 27 10:42 .gitattributes\ndrwxr-xr-x  5 runner runner     4096 Sep 27 10:42 .github\n-rw-r--r--  1 runner runner      473 Sep 27 10:42 .gitignore\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 .idea\ndrwxr-xr-x  3 runner runner     4096 Sep 27 11:12 .opencode\n-rw-r--r--  1 runner runner    28354 Sep 27 10:42 ADVANCED_IMPROVEMENTS_2.md\n-rw-r--r--  1 runner runner    50739 Sep 27 10:42 AGENT_SESSION.md\n-rw-r--r--  1 runner runner    28286 Sep 27 10:42 AUDIT_YOMIKAI_ADVANCED.md\n-rw-r--r--  1 runner runner     6213 Sep 27 10:42 CHANGELOG.md\n-rw-r--r--  1 runner runner    37214 Sep 27 10:42 CHANGES.md\n-rw-r--r--  1 runner runner     5311 Sep 27 10:42 CODE_OF_CONDUCT.md\n-rw-r--r--  1 runner runner     2708 Sep 27 10:42 CONTRIBUTING.md\n-rw-r--r--  1 runner runner    10173 Sep 27 10:42 LICENSE\n-rw-r--r--  1 runner runner     2651 Sep 27 10:42 MANIFEST.md\n-rw-r--r--  1 runner runner     1771 Sep 27 10:42 MODEL_ATTRIBUTION.md\n-rw-r--r--  1 runner runner     4114 Sep 27 10:42 OCR_INVESTIGATION.md\n-rw-r--r--  1 runner runner     4158 Sep 27 10:42 README.md\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 agent\ndrwxr-xr-x  4 runner runner     4096 Sep 27 10:42 app\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 baseline-profile\n-rw-r--r--  1 runner runner     1015 Sep 27 10:42 build.gradle.kts\ndrwxr-xr-x  4 runner runner     4096 Sep 27 10:42 core\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 core-metadata\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 data\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 dictionaries\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 docs\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 domain\ndrwxr-xr-x  4 runner runner     4096 Sep 27 10:42 gradle\n-rw-r--r--  1 runner runner     1040 Sep 27 10:42 gradle.properties\n-rwxr-xr-x  1 runner runner     8656 Sep 27 10:42 gradlew\n-rw-r--r--  1 runner runner     2766 Sep 27 10:42 gradlew.bat\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 i18n\ndrwxr-xr-x  4 runner runner     4096 Sep 27 10:42 npm-hub\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 ocr_models\ndrwxr-xr-x  4 runner runner     4096 Sep 27 10:42 overlay-reader\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 presentation-core\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 presentation-widget\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 scripts\n-rw-r--r--  1 runner runner      988 Sep 27 10:42 settings.gradle.kts\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 source-api\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 source-local\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 telemetry\n-rw-r--r--  1 runner runner    32339 Sep 27 10:42 todo.md\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 tools\n-rw-r--r--  1 runner runner 42027344 Sep 27 10:42 yomikai-v1.9.69.apk\n-rw-r--r--  1 runner runner 14031632 Sep 27 10:42 yomikai.tar.xz\n",
+                  "metadata": {
+                    "output": "total 55136\ndrwxr-xr-x 28 runner runner     4096 Sep 27 10:42 .\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:43 ..\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 .devcontainer\n-rw-r--r--  1 runner runner      971 Sep 27 10:42 .editorconfig\ndrwxr-xr-x  7 runner runner     4096 Sep 27 11:14 .git\n-rw-r--r--  1 runner runner      357 Sep 27 10:42 .gitattributes\ndrwxr-xr-x  5 runner runner     4096 Sep 27 10:42 .github\n-rw-r--r--  1 runner runner      473 Sep 27 10:42 .gitignore\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 .idea\ndrwxr-xr-x  3 runner runner     4096 Sep 27 11:12 .opencode\n-rw-r--r--  1 runner runner    28354 Sep 27 10:42 ADVANCED_IMPROVEMENTS_2.md\n-rw-r--r--  1 runner runner    50739 Sep 27 10:42 AGENT_SESSION.md\n-rw-r--r--  1 runner runner    28286 Sep 27 10:42 AUDIT_YOMIKAI_ADVANCED.md\n-rw-r--r--  1 runner runner     6213 Sep 27 10:42 CHANGELOG.md\n-rw-r--r--  1 runner runner    37214 Sep 27 10:42 CHANGES.md\n-rw-r--r--  1 runner runner     5311 Sep 27 10:42 CODE_OF_CONDUCT.md\n-rw-r--r--  1 runner runner     2708 Sep 27 10:42 CONTRIBUTING.md\n-rw-r--r--  1 runner runner    10173 Sep 27 10:42 LICENSE\n-rw-r--r--  1 runner runner     2651 Sep 27 10:42 MANIFEST.md\n-rw-r--r--  1 runner runner     1771 Sep 27 10:42 MODEL_ATTRIBUTION.md\n-rw-r--r--  1 runner runner     4114 Sep 27 10:42 OCR_INVESTIGATION.md\n-rw-r--r--  1 runner runner     4158 Sep 27 10:42 README.md\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 agent\ndrwxr-xr-x  4 runner runner     4096 Sep 27 10:42 app\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 baseline-profile\n-rw-r--r--  1 runner runner     1015 Sep 27 10:42 build.gradle.kts\ndrwxr-xr-x  4 runner runner     4096 Sep 27 10:42 core\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 core-metadata\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 data\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 dictionaries\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 docs\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 domain\ndrwxr-xr-x  4 runner runner     4096 Sep 27 10:42 gradle\n-rw-r--r--  1 runner runner     1040 Sep 27 10:42 gradle.properties\n-rwxr-xr-x  1 runner runner     8656 Sep 27 10:42 gradlew\n-rw-r--r--  1 runner runner     2766 Sep 27 10:42 gradlew.bat\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 i18n\ndrwxr-xr-x  4 runner runner     4096 Sep 27 10:42 npm-hub\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 ocr_models\ndrwxr-xr-x  4 runner runner     4096 Sep 27 10:42 overlay-reader\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 presentation-core\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 presentation-widget\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 scripts\n-rw-r--r--  1 runner runner      988 Sep 27 10:42 settings.gradle.kts\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 source-api\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 source-local\ndrwxr-xr-x  3 runner runner     4096 Sep 27 10:42 telemetry\n-rw-r--r--  1 runner runner    32339 Sep 27 10:42 todo.md\ndrwxr-xr-x  2 runner runner     4096 Sep 27 10:42 tools\n-rw-r--r--  1 runner runner 42027344 Sep 27 10:42 yomikai-v1.9.69.apk\n-rw-r--r--  1 runner runner 14031632 Sep 27 10:42 yomikai.tar.xz\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "ls -la",
+                  "time": {
+                    "start": 1790507689835,
+                    "end": 1790507689949
+                  }
+                },
+                "id": "prt_0e2932765001Vbre5pSI7S740I",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29314af00153HqRzarfD99xv"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e2932866001dpzgJo3gQLaaa5",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29314af00153HqRzarfD99xv"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e293148d001eX6WMW8JwQh21Y",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790507690183,
+                "completed": 1790507692670
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e29328c7001HqSVZrbrMb2b0S",
+              "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH"
+            },
+            "parts": [
+              {
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-start",
+                "id": "prt_0e2932df3001lCj4dEt2DrewPq",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29328c7001HqSVZrbrMb2b0S"
+              },
+              {
+                "type": "reasoning",
+                "text": "Working tree is clean (git status --short returned nothing before ---LOG---). Let me check AGENT_SESSION.md and todo.md tails to see what was last in progress.",
+                "time": {
+                  "start": 1790507691509,
+                  "end": 1790507692109
+                },
+                "id": "prt_0e2932df5001s69JujI627r8uA",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29328c7001HqSVZrbrMb2b0S"
+              },
+              {
+                "type": "text",
+                "text": "Рабочее дерево чистое. Посмотрю журнал сессии и todo.",
+                "time": {
+                  "start": 1790507692113,
+                  "end": 1790507692541
+                },
+                "id": "prt_0e2933051001ESZCWeobsq750p",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29328c7001HqSVZrbrMb2b0S"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_gpvx5fb2ddyi_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "wc -l AGENT_SESSION.md todo.md CHANGELOG.md && echo \"=== AGENT_SESSION tail ===\" && tail -80 AGENT_SESSION.md"
+                  },
+                  "output": "  613 AGENT_SESSION.md\n  243 todo.md\n  193 CHANGELOG.md\n 1049 total\n=== AGENT_SESSION tail ===\nчерез `MangaTranslatorService` и озвучивается тем же движком, что в читалке.\nПодключён в `OcrOverlayService` и требует только разрешения на микрофон. То\nесть игровой сценарий не «в плане», а в коде — его надо проверить на\nустройстве, а не писать заново.\n\nОстаток работы: захват экрана через `MediaProjection` (в оверлее захвата нет),\nстраница книги в рамке, ИИ-чат внутри оверлея (сейчас агент видит страницу\nтолько из `ReaderActivity`, сервису нужен свой источник картинки), и вкладка\n«Приложения» как точка входа — она сделана.\n\nОговорка по звуку: STT сейчас берёт микрофон, то есть в игре слышит и музыку,\nи эффекты, и голосовой чат. Захват собственного воспроизведения через\n`AudioPlaybackCapture` на Android 13+ поддерживается не на всех прошивках, и на\nItel может не заработать — тогда останется микрофон, и это надо проговорить с\nчитателем, а не выдавать за готовую функцию.\n\n### Следующий шаг\n\n1. Оверлей читалки: захват `MediaProjection`, страница в рамке, ИИ-чат в\n   оверлее, вкладка лаунчера со списком приложений, и только затем удаление\n   `OcrOverlayService` и отдельного приложения `overlay-reader`. Удалять раньше\n   нельзя: читатель останется без оверлея.\n2. Баги из скринов: открытие файлов, созданных агентом; авточтение на\n   нечитаемом тексте и озвучка сцены там, где текста нет.\n\nСекреты и значения токенов в этот файл не записываются.\n\n## 2026-09-26: короткий OCR, список голосов, маршрутизация движков\n\nЧитатель прислал четыре жалобы, и все четыре закрыты коммитами, каждый из\nкоторых проверен сборкой `build.yml`.\n\n**«ч то т» вместо «что-то».** Чем больше текста он отправлял, тем лучше\nработало, а на одной-трёх словах текст ломался. Причина в том, что длинная\nстрока читается по другому пути: распознаватель сам ставит в ней пробелы, и\nнарезка на слова (`splitWords`) не запускается вовсе. На коротком кропе\nпробелов нет, вертикальная проекция ищет щели между словами, но находит их\nвнутри слов — и «что-то» делилось на «ч»/«то»/«т», а склейка ставила между\nкусками пробелы. Теперь результат нарезки сверяется с чтением целиком\n(`segmentationIsDestructive`): если медиана куска — одна буква или в кусках\nпотеряно больше 60% символов строки, берётся целая строка. Короткие\nнастоящие слова («да нет а») под правило не попадают, а настоящая нарезка\n«ИПАЛПОДЛЕЗВИЕМ» → «И ПАЛ ПОД ЛЕЗВИЕМ» работает как раньше.\n\nЧего фикс не делает: без пробелов в строке `что-то` может остаться слитным\nодним куском. Восстановление границ по известным словам\n(`restoreKnownCaptionWords`) срабатывает не на всех слитных строках, и\nразбивать их по словарю дальше мы не будем — это уже угадывание.\n\n**Пустой список голосов.** Окно выбора брало только голоса с языком `ru`.\nЕсли ru-пакета нет, список выглядел пустым и подписывался «установите\nTTS», хотя голоса в системе были. Теперь показываются все языки, есть\nпереключатель, сетка 4×5, а пустые окна «Голос для роли» и «Новая роль»\nобъясняют причину вместо тишины.\n\n**Телефонный режим съедал явный выбор.** «Только голос телефона» отменял\nВСЕ сетевые движки, включая выбранные руками: выбрал edge-tts — получил\nсистемный голос и требование что-то установить. Теперь правило убирает\nтолько автоматический сетевой маршрут (`auto`/`system_tts`), а явный\n`google_web`/`edge_tts`/`eleven_api` побеждает. Заодно неизвестный или пустой\nid движка читается системным голосом, а не ищет голос несуществующего\nдвижка.\n\n**«Кто ищет текст».** Читатель вручную выделяет области и не понимает, от\nкого пришёл результат. В окне распознанного текста теперь подпись\n«Распознано: PP-OCR локально» и т.п. Подписывается ВЫБРАННЫЙ движок, а не\nфактически сработавший: без сети репозиторий молча уходит в резервную\nцепочку, и такая подпись была бы враньём.\n\n**Копирование.** Кнопка копировала строку поиска по словарям, а она пустая —\nбуфер выходил пустым. Копируется распознанный текст.\n\n**Проверено:** CI `36258855962` — `success`. Первая сборка (`36258461764`)\nупала на моём же тесте: у лямбды `{ id, online -> }` именованные аргументы\nзапрещены, это ошибка компиляции всего модуля, а не падение теста.\n\n**Не проверено:** всё это без физического устройства. Реальные миллисекунды\nOCR и живое TTS читатель должен посмотреть сам, установив APK после\nподтверждения. Жалобы на онлайн-OCR/AI и на «столичный город азия» →\n«стол ичны й городарз зия» остаются открытыми.\n",
+                  "metadata": {
+                    "output": "  613 AGENT_SESSION.md\n  243 todo.md\n  193 CHANGELOG.md\n 1049 total\n=== AGENT_SESSION tail ===\nчерез `MangaTranslatorService` и озвучивается тем же движком, что в читалке.\nПодключён в `OcrOverlayService` и требует только разрешения на микрофон. То\nесть игровой сценарий не «в плане», а в коде — его надо проверить на\nустройстве, а не писать заново.\n\nОстаток работы: захват экрана через `MediaProjection` (в оверлее захвата нет),\nстраница книги в рамке, ИИ-чат внутри оверлея (сейчас агент видит страницу\nтолько из `ReaderActivity`, сервису нужен свой источник картинки), и вкладка\n«Приложения» как точка входа — она сделана.\n\nОговорка по звуку: STT сейчас берёт микрофон, то есть в игре слышит и музыку,\nи эффекты, и голосовой чат. Захват собственного воспроизведения через\n`AudioPlaybackCapture` на Android 13+ поддерживается не на всех прошивках, и на\nItel может не заработать — тогда останется микрофон, и это надо проговорить с\nчитателем, а не выдавать за готовую функцию.\n\n### Следующий шаг\n\n1. Оверлей читалки: захват `MediaProjection`, страница в рамке, ИИ-чат в\n   оверлее, вкладка лаунчера со списком приложений, и только затем удаление\n   `OcrOverlayService` и отдельного приложения `overlay-reader`. Удалять раньше\n   нельзя: читатель останется без оверлея.\n2. Баги из скринов: открытие файлов, созданных агентом; авточтение на\n   нечитаемом тексте и озвучка сцены там, где текста нет.\n\nСекреты и значения токенов в этот файл не записываются.\n\n## 2026-09-26: короткий OCR, список голосов, маршрутизация движков\n\nЧитатель прислал четыре жалобы, и все четыре закрыты коммитами, каждый из\nкоторых проверен сборкой `build.yml`.\n\n**«ч то т» вместо «что-то».** Чем больше текста он отправлял, тем лучше\nработало, а на одной-трёх словах текст ломался. Причина в том, что длинная\nстрока читается по другому пути: распознаватель сам ставит в ней пробелы, и\nнарезка на слова (`splitWords`) не запускается вовсе. На коротком кропе\nпробелов нет, вертикальная проекция ищет щели между словами, но находит их\nвнутри слов — и «что-то» делилось на «ч»/«то»/«т», а склейка ставила между\nкусками пробелы. Теперь результат нарезки сверяется с чтением целиком\n(`segmentationIsDestructive`): если медиана куска — одна буква или в кусках\nпотеряно больше 60% символов строки, берётся целая строка. Короткие\nнастоящие слова («да нет а») под правило не попадают, а настоящая нарезка\n«ИПАЛПОДЛЕЗВИЕМ» → «И ПАЛ ПОД ЛЕЗВИЕМ» работает как раньше.\n\nЧего фикс не делает: без пробелов в строке `что-то` может остаться слитным\nодним куском. Восстановление границ по известным словам\n(`restoreKnownCaptionWords`) срабатывает не на всех слитных строках, и\nразбивать их по словарю дальше мы не будем — это уже угадывание.\n\n**Пустой список голосов.** Окно выбора брало только голоса с языком `ru`.\nЕсли ru-пакета нет, список выглядел пустым и подписывался «установите\nTTS», хотя голоса в системе были. Теперь показываются все языки, есть\nпереключатель, сетка 4×5, а пустые окна «Голос для роли» и «Новая роль»\nобъясняют причину вместо тишины.\n\n**Телефонный режим съедал явный выбор.** «Только голос телефона» отменял\nВСЕ сетевые движки, включая выбранные руками: выбрал edge-tts — получил\nсистемный голос и требование что-то установить. Теперь правило убирает\nтолько автоматический сетевой маршрут (`auto`/`system_tts`), а явный\n`google_web`/`edge_tts`/`eleven_api` побеждает. Заодно неизвестный или пустой\nid движка читается системным голосом, а не ищет голос несуществующего\nдвижка.\n\n**«Кто ищет текст».** Читатель вручную выделяет области и не понимает, от\nкого пришёл результат. В окне распознанного текста теперь подпись\n«Распознано: PP-OCR локально» и т.п. Подписывается ВЫБРАННЫЙ движок, а не\nфактически сработавший: без сети репозиторий молча уходит в резервную\nцепочку, и такая подпись была бы враньём.\n\n**Копирование.** Кнопка копировала строку поиска по словарям, а она пустая —\nбуфер выходил пустым. Копируется распознанный текст.\n\n**Проверено:** CI `36258855962` — `success`. Первая сборка (`36258461764`)\nупала на моём же тесте: у лямбды `{ id, online -> }` именованные аргументы\nзапрещены, это ошибка компиляции всего модуля, а не падение теста.\n\n**Не проверено:** всё это без физического устройства. Реальные миллисекунды\nOCR и живое TTS читатель должен посмотреть сам, установив APK после\nподтверждения. Жалобы на онлайн-OCR/AI и на «столичный город азия» →\n«стол ичны й городарз зия» остаются открытыми.\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "wc -l AGENT_SESSION.md todo.md CHANGELOG.md && echo \"=== AGENT_SESSION tail ===\" && tail -80 AGENT_SESSION.md",
+                  "time": {
+                    "start": 1790507692373,
+                    "end": 1790507692412
+                  }
+                },
+                "id": "prt_0e29330550012bc2rlANGCtb0f",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29328c7001HqSVZrbrMb2b0S"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_gpvx5fb2ddyi_2",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "echo \"=== todo head 120 ===\" && head -120 todo.md"
+                  },
+                  "output": "=== todo head 120 ===\n# Local OCR repair\n\n- [x] Trace the local OCR engine, language configuration, image preprocessing, and result post-processing.\n- [x] Reproduce the supplied Russian comic-panel failures: merged words, Latin/Cyrillic substitutions, UI-text capture, and false gibberish.\n- [ ] Add a safe Russian-oriented comic-text preprocessing and recognition path without weakening other configured languages.\n- [ ] Add regression coverage for representative Russian text-panel crops and reject low-confidence garbage.\n- [ ] Build, test, and manually validate OCR results on the supplied screenshots.\n- [x] Configure and trigger the Android APK build only through the repository's GitHub Actions runner; do not assemble APK locally.\n- [ ] Commit and push the verified local OCR fix directly to `sj0404-collab/yomihon-custom` on `main`.\n- [ ] Download the verified GitHub Actions release artifact and upload the APK to GoFile with the user's explicit authorization.\n\n## Caption OCR correction after device validation\n\n- [ ] Reproduce and fix dropped initials and vowel substitutions: `ОН БЫЛ ЛОЖНО ОБВИНЁН В СГОВОРЕ С ДЕМОНОМ` must not become `н был лжн вбинен в сговоре с демоном`.\n- [ ] Reproduce and fix word-boundary and Cyrillic substitutions: `«ОХОТНИЧИЙ ПЁС» ДОМА БАСКЕРВИЛЕЙ.` must not become `ххтничий лес и дма фаскервилаей`.\n- [ ] Preserve explicit spaces in `ВИКИР ВАН БАСКЕРВИЛЬ.` instead of fusing the name.\n- [ ] Build the corrected APK exclusively through GitHub Actions and validate it against these supplied panels before a new external upload.\n\n## Device validation after build 9d19650\n\n- [ ] Reproduce and correct dropped or absent caption results, including the white caption `ПО СЛОВАМ «ОХОТНИЧЬЕГО ПСА», КОТОРЫЙ ПОСВЯТИЛ СЕБЯ ОТЦУ И СЕМЬЕ,` that currently returns no result.\n- [ ] Correct erroneous hyphenation that splits intact words across OCR lines, for example `МНЕ ХО-РОШО`, `НЕУПРАВ-ЛЯЕМЫЙ`, `БЕС-ПОЛЕЗНЫЙ`, and `БЕР-ДИУМА`.\n- [ ] Correct missed letters and word-boundary errors in clean captions, including `МНЕ ХОРОШО ЗНАКОМО ЭТО ИМЯ.`, `«ОХОТНИЧИЙ ПЁС» ДОМА БАСКЕРВИЛЕЙ.`, and `И СХОЖУ ТАМ С УМА.`\n- [ ] Improve coverage for outlined Cyrillic dialogue and narration that currently returns no OCR result.\n- [ ] Add targeted regression tests for the reported hyphen, missing-result, and word-boundary cases without fabricating text from non-Russian artwork.\n\n## Release documentation\n\n- [x] Create a versioned Markdown release report for every future GitHub Actions APK candidate, documenting source commit, build link, improvements, known limitations, test evidence, and unresolved device-validation examples.\n- [x] Validate candidate `9a8e4f8` remotely in GitHub Actions run `33007959697`: focused Cyrillic OCR tests, complete unit tests, signed arm64 APK assembly, and quality-report artifact all succeeded.\n- [x] Upload candidate `9a8e4f8` from GitHub Actions run `33007959697` to GoFile for device testing: `https://gofile.io/d/s7HstrXp`.\n- [ ] Install and device-test candidate `9a8e4f8` against the reported false line-wrap hyphens and missing-result captions before treating the fix as accepted.\n\n## Standalone local OCR overlay APK\n\n- [ ] Inspect the requested Overlay Translator repository and confirm a compatible Android source baseline.\n- [ ] Create a separate Android overlay APK instead of modifying the reader UI: the user explicitly launches it over another app.\n- [ ] Request Android screen-capture and draw-over-other-apps permissions only after an explicit user action, and explain their purpose in-app.\n- [ ] Let the user place and resize one capture frame over the actual page content; crop to that frame before local OCR so status bars, overlay controls, and content outside the frame are excluded.\n- [ ] Run local Russian/Cyrillic OCR on the selected screen crop, render editable text in the overlay, and add optional Russian text-to-speech controls.\n- [ ] Add a Markdown quality report for every overlay APK candidate and build the APK only through GitHub Actions.\n\n## New quality gate: Russian text fidelity\n\n- [ ] Enforce UTF-8 end-to-end and add a regression that rejects mojibake and non-Cyrillic lookalike output when the source text is Russian.\n- [ ] Prevent hallucinated pseudo-words such as `разiiiнение`, `сахар-самаар`, and `мама-нама`; retain the raw OCR or return a clearly low-confidence/no-result state instead of inventing a correction.\n- [ ] Preserve whole detected sentences and large speech bubbles instead of returning a partial word result or `Нет результатов` when usable text exists.\n- [ ] Preserve short valid utterances such as `а`, `а-а-а`, `а!`, and `а...`; do not reject them solely because they are short.\n- [ ] Keep hyphens only for real orthographic hyphens or visual line-wraps that can be safely joined; never introduce a hyphen between recognized Cyrillic words.\n- [x] Decide explicitly whether preprocessing plugins are safe: rejected. Preprocessing stays local, deterministic and UTF-8 aware (high-contrast retry inside `recognizeCrop`), and no third-party preprocessing plugin is enabled; a candidate that lowers ranking in `candidateQuality` simply loses to the unprocessed crop.\n- [ ] Add a release report with positive and negative device examples before uploading the next APK candidate.\n\n## Final one-build gate\n\n- [x] Cancel the in-progress intermediate GitHub Actions run before any further APK build: `Tests` (build.yml) no longer assembles an APK at all, so intermediate builds cannot compete with the single release build.\n- [x] Complete all requested OCR logic, safety filters, full-bubble rescue, short-utterance handling, hyphen handling, and plugin decision before triggering a release workflow.\n- [ ] Finish the complete regression suite and inspect its results before the final build; no APK is to be built from an unverified commit.\n- [ ] Trigger exactly one final GitHub Actions APK build after all tests and the release Markdown report are complete.\n- [ ] Upload only that final APK to GoFile and clearly report its single final commit, run, SHA-256, positive results, and remaining limitations.\n\n## CTC coverage and line salvage\n\n- [x] Count blank steps inside the recognized span and expose them as `coverage` so dropped initials and vowels stop passing as a good result.\n- [x] Normalize the blank class probability with softmax so confidence thresholds mean what they claim; keep the raw mean as a scale-invariant score.\n- [x] Salvage a caption line token by token instead of erasing the whole line when one garbage token appears.\n- [x] Never partially salvage a line that still contains a mixed-script token; return it unchanged.\n- [x] Return a line without any Cyrillic letter unchanged so Latin signs and sound effects are not lost.\n- [x] Add `CtcScoringTest` and `filterGarbageTokens` regressions next to the existing `OcrTextCleanerTest`.\n\n## Single release build gate\n\n- [x] Stop `build.yml` from assembling APKs: it is a test gate for pull requests and manual dispatch only.\n- [x] Make `release.yml` the only place that produces an APK, and run the full regression suite there before `assembleRelease`.\n- [x] Check out with `fetch-depth: 0` so `getLatestCommitCount`/`getLatestCommitSha`/commit-time build stamps are real and the tag version is baked into the APK.\n- [x] Fail the build unless exactly one release APK exists, its `versionName` matches the tag, `versionCode` is not below the 10907 floor and arm64-v8a native code is present.\n- [x] Publish SHA-256 and size in the release body and in the rendered quality report; the release is no longer a draft.\n\n## Модульные плагины OCR/голосов и пресеты областей\n\n- [x] Описать OCR-движки декларативно (`OcrPlugins`): id, модель, требования (сеть, пак моделей, LiteRT, ключ, адрес сервера), порядок во fallback-цепочке, поддержка областей. Реестр не создаёт движки и не трогает мьютексы `OcrEngineLocks`, поэтому кэш моделей и блокировки остались прежними.\n- [x] Перенести семантику пресетов `pref_fallback_preset` (auto/online/offline/single) из зашитых списков `OcrRepositoryImpl` в данные реестра и покрыть их тестами.\n- [x] Зафиксировать миграционные значения enum (`LEGACY`, `FAST`, `TESSERACT`) как алиасы локального кириллического плагина.\n- [x] Описать голосовые движки декларативно (`VoicePlugins`): системный TTS, Google Web, ElevenLabs, ONNX (sherpa-onnx/Piper) с требованиями и признаком доступности; голоса ONNX берутся из реального `OnnxTts.CATALOG` и помечаются по факту установки модели.\n- [x] Вынести числовые параметры детектора и признания результата из констант `CyrillicOcrEngine` в `OcrTuning` и добавить пресеты типа контента: манга, манхва/вебтун, комикс, сбалансированный.\n- [x] Гарантировать, что пресет `BALANCED` побайтово повторяет прежние константы (отдельный тест), поэтому без явного выбора пресета поведение приложения не меняется.\n- [x] Добавить точные переопределения пресета (`OcrTuningOverrides`) с клампингом диапазонов: сохранённая старой версией настройка не может сломать распознавание.\n- [x] Подключить профиль к движку через провайдер `() -> OcrTuning`, чтобы смена пресета применялась без пересоздания движка и без повторной загрузки моделей.\n- [x] Экран настроек с деревом разделов: `SettingsOcrScreen` (пресет типа контента, область, порядок чтения, точная подстройка, движки и цепочка фолбэков) и `SettingsVoicePluginsScreen` (реестр голосовых движков + выбор движка и голоса), вложенный `SettingsOcrPluginsScreen` с требованиями и доступностью каждого OCR-плагина. Все три экрана зарегистрированы в `SettingsMainScreen` и в поиске по настройкам, добавлено 52 ключа в базовый `strings.xml`.\n- [ ] Пресеты областей в UI читалки: быстрый выбор манга/манхва/комикс и отображение зон страницы.\n- [x] Подключение AI-чата к модульной системе: реестр бэкендов `AiBackends` (online / local / runner) с единой проверкой готовности, раздел настроек «AI-ассистент» и переход на вкладку AI из настроек. Агент получил инструменты `reader_status`, `ocr_preset` и `plugins_list` — они читают те же реестры и настройки, что и экраны, поэтому ответ агента не расходится с настройками пользователя. Правила области и точной подстройки вынесены в `OcrRegionRules` (один источник истины для движка, настроек и агента), проверка сети — в `isNetworkAvailable` (core/common). Имена инструментов защищены от перехвата самодельными плагинами: `AiPlugins.RESERVED_TOOL_NAMES`.\n\n## Unified Yomihon APK: OCR and floating voice controls\n\n- [x] Port only the working local OCR changes from the overlay branch into `yomihon-custom` without copying its standalone APK shell or cloud paths.\n- [x] Add Yomihon-native floating `Голос` and `Выбрать голос` controls outside the OCR result card, with the existing copy and close actions preserved.\n- [x] Connect the voice picker to installed Russian system TTS voices and persist the selected voice locally through the existing `TtsSettingsDialog` and `OcrPreferences.voiceName()` path.\n- [x] Keep UTF-8/Cyrillic fidelity, full-bubble rescue, short utterances, safe line-wrap joining, and no pseudo-word hallucination as one shared quality gate.\n- [x] Run the complete regression suite before triggering exactly one signed release APK build in GitHub Actions: `release.yml` now runs migrations, the focused Cyrillic OCR tests, the CTC scoring tests and the full unit-test suite before `assembleRelease`, so an unverified commit cannot produce an APK. Local sandbox compilation stays blocked because Android SDK is unavailable; the GitHub runner remains the authoritative build/test environment.\n- [ ] Upload only the verified Yomihon release APK and its Markdown quality report to GoFile.\n\n## v1.9.91: единый бейдж, OCR всей области, мгновенные скрины, полный кеш главы\n\n- [x] Единый бейдж 🔊 при озвучке реплики: `OcrBubbleVoiceOverlay` рисует ровно один значок у текущего бабла (`isSpeaking = readingActive` в `ReaderActivity`); вне озвучки остаётся только перетаскиваемый значок.\n- [x] Все OCR-модели распознают всю видимую область целиком: `AutoReadEngine.readFrame` для полностраничных (AI) движков больше не режет кадр на баблы и не распознаёт кропы по отдельности — результат всей области сразу делится на реплики; YOLO-баллоны остались запасным путём для пустого результата.\n- [x] Фоновый скрин в минимально читаемом разрешении: `downscaleForScan` (длинная сторона 1600px) в `readFrame` и `captureInstantScreenshot` — «часики» сканирования быстрые, текст не теряется (детектор и так жмёт до 736px).\n- [x] Все слова распознаются: лимит баблов на кадр поднят с 14 до 40, основной путь возвращает все слова видимой области.\n- [x] Читалка открывает и кеширует ВСЕ страницы: `HttpPageLoader` префетчит оставшиеся страницы всей главы (не только 4), текущая страница приоритетнее фоновых; `ChapterCache` поднят с 100 МБ до 1 ГБ.\n- [x] Автоочистка кеша после прочтения: `ReaderActivity.pruneReadPagesFromCache` + `ChapterCache.removeImageFromCache` — прочитанные позади страницы освобождаются (кроме одной ближайшей).\n- [x] Локальная проверка: `:app:compileDebugKotlin`, `:app:testDebugUnitTest` (вкл. `AutoReadEngineCleanTest`), `:data:testDebugUnitTest`, `verifySqlDelightMigration` — все зелёные.\n- [x] Отчёт качества `docs/ocr-releases/2026-09-24-v1.9.91.md` и `CURRENT.md`.\n- [x] Push на `main` и тег `v1.9.91` → единственная подписанная сборка в GitHub Actions `release.yml`; SHA-256 APK подтверждён, релиз опубликован.\n- [ ] (по явному запросу) залить `yomikai-v1.9.91.apk` и отчёт на GoFile для проверки на устройстве.\n\n## v1.9.92: скриншоты с картинкой, добор текста при онлайн-OCR, быстрый скан\n\n- [x] Настоящие скриншоты: `OcrScreenshotBuffer`/`OcrScreenshotEntry` сохраняют JPEG-кадр (`filesDir/screenshots_images/<id>.jpg`); файлы удаляются при вытеснении, очистке и очистке главы; `diskSizeBytes()` учитывает картинки.\n- [x] Кто реально распознал: `engineUsed` в записи берётся из `result.ocrModel` (включая сработавший фолбэк), а не из настройки.\n- [x] Добор текста при онлайн-OCR: если онлайн-движок вернул <3 осмысленных строк (ватермарка вместо реплики), кадр дочитывается локально (YOLO + Cyrillic OCR) и результат доклеивается; дубли режутся историей.\n- [x] Таймаут кадра снижен 45→25 с; `ReaderViewModel.autoScanAndSpeak` получил тот же таймаут (раньше был бесконечный) — «висение» онлайн-движка больше не блокирует авточтение.\n- [x] UI: миниатюры JPEG в карточках вкладки «Скриншоты»; на детальном экране реальный кадр с оверлеем регионов (coil3), сетка-заглушка для старых записей.\n",
+                  "metadata": {
+                    "output": "=== todo head 120 ===\n# Local OCR repair\n\n- [x] Trace the local OCR engine, language configuration, image preprocessing, and result post-processing.\n- [x] Reproduce the supplied Russian comic-panel failures: merged words, Latin/Cyrillic substitutions, UI-text capture, and false gibberish.\n- [ ] Add a safe Russian-oriented comic-text preprocessing and recognition path without weakening other configured languages.\n- [ ] Add regression coverage for representative Russian text-panel crops and reject low-confidence garbage.\n- [ ] Build, test, and manually validate OCR results on the supplied screenshots.\n- [x] Configure and trigger the Android APK build only through the repository's GitHub Actions runner; do not assemble APK locally.\n- [ ] Commit and push the verified local OCR fix directly to `sj0404-collab/yomihon-custom` on `main`.\n- [ ] Download the verified GitHub Actions release artifact and upload the APK to GoFile with the user's explicit authorization.\n\n## Caption OCR correction after device validation\n\n- [ ] Reproduce and fix dropped initials and vowel substitutions: `ОН БЫЛ ЛОЖНО ОБВИНЁН В СГОВОРЕ С ДЕМОНОМ` must not become `н был лжн вбинен в сговоре с демоном`.\n- [ ] Reproduce and fix word-boundary and Cyrillic substitutions: `«ОХОТНИЧИЙ ПЁС» ДОМА БАСКЕРВИЛЕЙ.` must not become `ххтничий лес и дма фаскервилаей`.\n- [ ] Preserve explicit spaces in `ВИКИР ВАН БАСКЕРВИЛЬ.` instead of fusing the name.\n- [ ] Build the corrected APK exclusively through GitHub Actions and validate it against these supplied panels before a new external upload.\n\n## Device validation after build 9d19650\n\n- [ ] Reproduce and correct dropped or absent caption results, including the white caption `ПО СЛОВАМ «ОХОТНИЧЬЕГО ПСА», КОТОРЫЙ ПОСВЯТИЛ СЕБЯ ОТЦУ И СЕМЬЕ,` that currently returns no result.\n- [ ] Correct erroneous hyphenation that splits intact words across OCR lines, for example `МНЕ ХО-РОШО`, `НЕУПРАВ-ЛЯЕМЫЙ`, `БЕС-ПОЛЕЗНЫЙ`, and `БЕР-ДИУМА`.\n- [ ] Correct missed letters and word-boundary errors in clean captions, including `МНЕ ХОРОШО ЗНАКОМО ЭТО ИМЯ.`, `«ОХОТНИЧИЙ ПЁС» ДОМА БАСКЕРВИЛЕЙ.`, and `И СХОЖУ ТАМ С УМА.`\n- [ ] Improve coverage for outlined Cyrillic dialogue and narration that currently returns no OCR result.\n- [ ] Add targeted regression tests for the reported hyphen, missing-result, and word-boundary cases without fabricating text from non-Russian artwork.\n\n## Release documentation\n\n- [x] Create a versioned Markdown release report for every future GitHub Actions APK candidate, documenting source commit, build link, improvements, known limitations, test evidence, and unresolved device-validation examples.\n- [x] Validate candidate `9a8e4f8` remotely in GitHub Actions run `33007959697`: focused Cyrillic OCR tests, complete unit tests, signed arm64 APK assembly, and quality-report artifact all succeeded.\n- [x] Upload candidate `9a8e4f8` from GitHub Actions run `33007959697` to GoFile for device testing: `https://gofile.io/d/s7HstrXp`.\n- [ ] Install and device-test candidate `9a8e4f8` against the reported false line-wrap hyphens and missing-result captions before treating the fix as accepted.\n\n## Standalone local OCR overlay APK\n\n- [ ] Inspect the requested Overlay Translator repository and confirm a compatible Android source baseline.\n- [ ] Create a separate Android overlay APK instead of modifying the reader UI: the user explicitly launches it over another app.\n- [ ] Request Android screen-capture and draw-over-other-apps permissions only after an explicit user action, and explain their purpose in-app.\n- [ ] Let the user place and resize one capture frame over the actual page content; crop to that frame before local OCR so status bars, overlay controls, and content outside the frame are excluded.\n- [ ] Run local Russian/Cyrillic OCR on the selected screen crop, render editable text in the overlay, and add optional Russian text-to-speech controls.\n- [ ] Add a Markdown quality report for every overlay APK candidate and build the APK only through GitHub Actions.\n\n## New quality gate: Russian text fidelity\n\n- [ ] Enforce UTF-8 end-to-end and add a regression that rejects mojibake and non-Cyrillic lookalike output when the source text is Russian.\n- [ ] Prevent hallucinated pseudo-words such as `разiiiнение`, `сахар-самаар`, and `мама-нама`; retain the raw OCR or return a clearly low-confidence/no-result state instead of inventing a correction.\n- [ ] Preserve whole detected sentences and large speech bubbles instead of returning a partial word result or `Нет результатов` when usable text exists.\n- [ ] Preserve short valid utterances such as `а`, `а-а-а`, `а!`, and `а...`; do not reject them solely because they are short.\n- [ ] Keep hyphens only for real orthographic hyphens or visual line-wraps that can be safely joined; never introduce a hyphen between recognized Cyrillic words.\n- [x] Decide explicitly whether preprocessing plugins are safe: rejected. Preprocessing stays local, deterministic and UTF-8 aware (high-contrast retry inside `recognizeCrop`), and no third-party preprocessing plugin is enabled; a candidate that lowers ranking in `candidateQuality` simply loses to the unprocessed crop.\n- [ ] Add a release report with positive and negative device examples before uploading the next APK candidate.\n\n## Final one-build gate\n\n- [x] Cancel the in-progress intermediate GitHub Actions run before any further APK build: `Tests` (build.yml) no longer assembles an APK at all, so intermediate builds cannot compete with the single release build.\n- [x] Complete all requested OCR logic, safety filters, full-bubble rescue, short-utterance handling, hyphen handling, and plugin decision before triggering a release workflow.\n- [ ] Finish the complete regression suite and inspect its results before the final build; no APK is to be built from an unverified commit.\n- [ ] Trigger exactly one final GitHub Actions APK build after all tests and the release Markdown report are complete.\n- [ ] Upload only that final APK to GoFile and clearly report its single final commit, run, SHA-256, positive results, and remaining limitations.\n\n## CTC coverage and line salvage\n\n- [x] Count blank steps inside the recognized span and expose them as `coverage` so dropped initials and vowels stop passing as a good result.\n- [x] Normalize the blank class probability with softmax so confidence thresholds mean what they claim; keep the raw mean as a scale-invariant score.\n- [x] Salvage a caption line token by token instead of erasing the whole line when one garbage token appears.\n- [x] Never partially salvage a line that still contains a mixed-script token; return it unchanged.\n- [x] Return a line without any Cyrillic letter unchanged so Latin signs and sound effects are not lost.\n- [x] Add `CtcScoringTest` and `filterGarbageTokens` regressions next to the existing `OcrTextCleanerTest`.\n\n## Single release build gate\n\n- [x] Stop `build.yml` from assembling APKs: it is a test gate for pull requests and manual dispatch only.\n- [x] Make `release.yml` the only place that produces an APK, and run the full regression suite there before `assembleRelease`.\n- [x] Check out with `fetch-depth: 0` so `getLatestCommitCount`/`getLatestCommitSha`/commit-time build stamps are real and the tag version is baked into the APK.\n- [x] Fail the build unless exactly one release APK exists, its `versionName` matches the tag, `versionCode` is not below the 10907 floor and arm64-v8a native code is present.\n- [x] Publish SHA-256 and size in the release body and in the rendered quality report; the release is no longer a draft.\n\n## Модульные плагины OCR/голосов и пресеты областей\n\n- [x] Описать OCR-движки декларативно (`OcrPlugins`): id, модель, требования (сеть, пак моделей, LiteRT, ключ, адрес сервера), порядок во fallback-цепочке, поддержка областей. Реестр не создаёт движки и не трогает мьютексы `OcrEngineLocks`, поэтому кэш моделей и блокировки остались прежними.\n- [x] Перенести семантику пресетов `pref_fallback_preset` (auto/online/offline/single) из зашитых списков `OcrRepositoryImpl` в данные реестра и покрыть их тестами.\n- [x] Зафиксировать миграционные значения enum (`LEGACY`, `FAST`, `TESSERACT`) как алиасы локального кириллического плагина.\n- [x] Описать голосовые движки декларативно (`VoicePlugins`): системный TTS, Google Web, ElevenLabs, ONNX (sherpa-onnx/Piper) с требованиями и признаком доступности; голоса ONNX берутся из реального `OnnxTts.CATALOG` и помечаются по факту установки модели.\n- [x] Вынести числовые параметры детектора и признания результата из констант `CyrillicOcrEngine` в `OcrTuning` и добавить пресеты типа контента: манга, манхва/вебтун, комикс, сбалансированный.\n- [x] Гарантировать, что пресет `BALANCED` побайтово повторяет прежние константы (отдельный тест), поэтому без явного выбора пресета поведение приложения не меняется.\n- [x] Добавить точные переопределения пресета (`OcrTuningOverrides`) с клампингом диапазонов: сохранённая старой версией настройка не может сломать распознавание.\n- [x] Подключить профиль к движку через провайдер `() -> OcrTuning`, чтобы смена пресета применялась без пересоздания движка и без повторной загрузки моделей.\n- [x] Экран настроек с деревом разделов: `SettingsOcrScreen` (пресет типа контента, область, порядок чтения, точная подстройка, движки и цепочка фолбэков) и `SettingsVoicePluginsScreen` (реестр голосовых движков + выбор движка и голоса), вложенный `SettingsOcrPluginsScreen` с требованиями и доступностью каждого OCR-плагина. Все три экрана зарегистрированы в `SettingsMainScreen` и в поиске по настройкам, добавлено 52 ключа в базовый `strings.xml`.\n- [ ] Пресеты областей в UI читалки: быстрый выбор манга/манхва/комикс и отображение зон страницы.\n- [x] Подключение AI-чата к модульной системе: реестр бэкендов `AiBackends` (online / local / runner) с единой проверкой готовности, раздел настроек «AI-ассистент» и переход на вкладку AI из настроек. Агент получил инструменты `reader_status`, `ocr_preset` и `plugins_list` — они читают те же реестры и настройки, что и экраны, поэтому ответ агента не расходится с настройками пользователя. Правила области и точной подстройки вынесены в `OcrRegionRules` (один источник истины для движка, настроек и агента), проверка сети — в `isNetworkAvailable` (core/common). Имена инструментов защищены от перехвата самодельными плагинами: `AiPlugins.RESERVED_TOOL_NAMES`.\n\n## Unified Yomihon APK: OCR and floating voice controls\n\n- [x] Port only the working local OCR changes from the overlay branch into `yomihon-custom` without copying its standalone APK shell or cloud paths.\n- [x] Add Yomihon-native floating `Голос` and `Выбрать голос` controls outside the OCR result card, with the existing copy and close actions preserved.\n- [x] Connect the voice picker to installed Russian system TTS voices and persist the selected voice locally through the existing `TtsSettingsDialog` and `OcrPreferences.voiceName()` path.\n- [x] Keep UTF-8/Cyrillic fidelity, full-bubble rescue, short utterances, safe line-wrap joining, and no pseudo-word hallucination as one shared quality gate.\n- [x] Run the complete regression suite before triggering exactly one signed release APK build in GitHub Actions: `release.yml` now runs migrations, the focused Cyrillic OCR tests, the CTC scoring tests and the full unit-test suite before `assembleRelease`, so an unverified commit cannot produce an APK. Local sandbox compilation stays blocked because Android SDK is unavailable; the GitHub runner remains the authoritative build/test environment.\n- [ ] Upload only the verified Yomihon release APK and its Markdown quality report to GoFile.\n\n## v1.9.91: единый бейдж, OCR всей области, мгновенные скрины, полный кеш главы\n\n- [x] Единый бейдж 🔊 при озвучке реплики: `OcrBubbleVoiceOverlay` рисует ровно один значок у текущего бабла (`isSpeaking = readingActive` в `ReaderActivity`); вне озвучки остаётся только перетаскиваемый значок.\n- [x] Все OCR-модели распознают всю видимую область целиком: `AutoReadEngine.readFrame` для полностраничных (AI) движков больше не режет кадр на баблы и не распознаёт кропы по отдельности — результат всей области сразу делится на реплики; YOLO-баллоны остались запасным путём для пустого результата.\n- [x] Фоновый скрин в минимально читаемом разрешении: `downscaleForScan` (длинная сторона 1600px) в `readFrame` и `captureInstantScreenshot` — «часики» сканирования быстрые, текст не теряется (детектор и так жмёт до 736px).\n- [x] Все слова распознаются: лимит баблов на кадр поднят с 14 до 40, основной путь возвращает все слова видимой области.\n- [x] Читалка открывает и кеширует ВСЕ страницы: `HttpPageLoader` префетчит оставшиеся страницы всей главы (не только 4), текущая страница приоритетнее фоновых; `ChapterCache` поднят с 100 МБ до 1 ГБ.\n- [x] Автоочистка кеша после прочтения: `ReaderActivity.pruneReadPagesFromCache` + `ChapterCache.removeImageFromCache` — прочитанные позади страницы освобождаются (кроме одной ближайшей).\n- [x] Локальная проверка: `:app:compileDebugKotlin`, `:app:testDebugUnitTest` (вкл. `AutoReadEngineCleanTest`), `:data:testDebugUnitTest`, `verifySqlDelightMigration` — все зелёные.\n- [x] Отчёт качества `docs/ocr-releases/2026-09-24-v1.9.91.md` и `CURRENT.md`.\n- [x] Push на `main` и тег `v1.9.91` → единственная подписанная сборка в GitHub Actions `release.yml`; SHA-256 APK подтверждён, релиз опубликован.\n- [ ] (по явному запросу) залить `yomikai-v1.9.91.apk` и отчёт на GoFile для проверки на устройстве.\n\n## v1.9.92: скриншоты с картинкой, добор текста при онлайн-OCR, быстрый скан\n\n- [x] Настоящие скриншоты: `OcrScreenshotBuffer`/`OcrScreenshotEntry` сохраняют JPEG-кадр (`filesDir/screenshots_images/<id>.jpg`); файлы удаляются при вытеснении, очистке и очистке главы; `diskSizeBytes()` учитывает картинки.\n- [x] Кто реально распознал: `engineUsed` в записи берётся из `result.ocrModel` (включая сработавший фолбэк), а не из настройки.\n- [x] Добор текста при онлайн-OCR: если онлайн-движок вернул <3 осмысленных строк (ватермарка вместо реплики), кадр дочитывается локально (YOLO + Cyrillic OCR) и результат доклеивается; дубли режутся историей.\n- [x] Таймаут кадра снижен 45→25 с; `ReaderViewModel.autoScanAndSpeak` получил тот же таймаут (раньше был бесконечный) — «висение» онлайн-движка больше не блокирует авточтение.\n- [x] UI: миниатюры JPEG в карточках вкладки «Скриншоты»; на детальном экране реальный кадр с оверлеем регионов (coil3), сетка-заглушка для старых записей.\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "echo \"=== todo head 120 ===\" && head -120 todo.md",
+                  "time": {
+                    "start": 1790507692517,
+                    "end": 1790507692536
+                  }
+                },
+                "id": "prt_0e293315c001pE1QN7XASqlnWb",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29328c7001HqSVZrbrMb2b0S"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e2933238001lEkIRwn9ST9e2r",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e29328c7001HqSVZrbrMb2b0S"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e293148d001eX6WMW8JwQh21Y",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790507692676,
+                "completed": 1790507697976
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e2933284001XTxibr4PmhD8VZ",
+              "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH"
+            },
+            "parts": [
+              {
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-start",
+                "id": "prt_0e2933a30001DBr48XtDV3KZaZ",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2933284001XTxibr4PmhD8VZ"
+              },
+              {
+                "type": "reasoning",
+                "text": "Let me see the last part of AGENT_SESSION.md (the 2026-09-26 entry) and the tail of todo.md to see what the last item is. Also the AGENT_SESSION.md has 613 lines; the tail -80 showed the last session which is 2026-09-26. But the latest commits are about AI agent features. Let me check the git log dates and see the most recent session entry. Actually tail -80 showed the last 80 lines which ended with 2026-09-26 entry. Hmm, but the commit b2c9b9c78 \"feat(ai): агент видит картинки из workspace\" — was there a session entry? Let's check the git log with dates, and the tail of todo.md.\n\nAlso check .opencode dir for notes, and whether there are uncommitted changes (git status was clean).\n\nWait — the AGENT_SESSION tail ends with 2026-09-26 entry about short OCR. But commits after that (bc0835bf2 feat(ai): навыки, которые агент собирает сам, 034a0a962, 40947e2f1, aa017857d, 6dc30560e, b2c9b9c78) — were these in that session? Let me check commit dates.",
+                "time": {
+                  "start": 1790507694643,
+                  "end": 1790507697129
+                },
+                "id": "prt_0e2933a33001oTrfjszotJWBq9",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2933284001XTxibr4PmhD8VZ"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_lpu15tz7mm51_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "git log -8 --format='%h %ad %s' --date=format:'%Y-%m-%d %H:%M' && echo \"=== todo tail 60 ===\" && tail -60 todo.md"
+                  },
+                  "output": "b2c9b9c78 2026-09-26 19:35 feat(ai): агент видит картинки из workspace\n6dc30560e 2026-09-26 19:30 fix(ai): разорванная строка в gen_images и токен вместо Context\naa017857d 2026-09-26 19:21 feat(ai): события ранера видны в приложении, GitHub с правом записи\n40947e2f1 2026-09-26 19:10 feat(ai): пакетная генерация — несколько картинок за один вызов\n034a0a962 2026-09-26 19:03 feat(ai): обзор папки и чтение пачкой, с вопросами читателю\nbc0835bf2 2026-09-26 18:59 feat(ai): навыки, которые агент собирает сам\n78a0810d3 2026-09-26 18:47 fix(ocr): правильный stringResource для moko-ресурсов\n7c725ffc3 2026-09-26 18:32 fix(ai): папка workspace появляется, файлы видны в чате и в «Загрузки»\n=== todo tail 60 ===\n- [x] Все сборки — только через GitHub Actions (правило 8 `MANIFEST.md`).\n\n### Не сделано, осознанно\n\n- [ ] Плагин озвучки не воспроизводит звук: есть только решение моста и его\n      тесты. Сами звуки требуют либо файлов от владельца, либо работающего\n      провайдера — выдумывать их и URL нельзя.\n- [ ] Модели не проверялись вживую: нет устройства и ключей читателя. Проверка\n      на устройстве — за пользователем.\n- [ ] Glens не продублирован в списке моделей ИИ: это protobuf-движок\n      распознавания, он не умеет отвечать на вопросы о картинке, поэтому как\n      чат-модель не заработает.\n\n### В работе: вкладка лаунчера (сделано, в CI)\n\n- [x] Вкладка «Приложения» рядом с «Распознавание» и «Голоса»: список\n      запускаемых приложений телефона, тап открывает приложение и поднимает\n      оверлей поверх него, плюс кнопка «Запустить оверлей без приложения».\n- [x] Список берётся по MAIN + LAUNCHER, `<intent>` добавлен в манифест.\n      `QUERY_ALL_PACKAGES` не используется: на Android 11+ видно только\n      явно запрошенное, а широкое разрешение в Google Play не проходит.\n- [x] Ошибка чтения списка показывается текстом, а не пустым экраном.\n- [x] Иконка приложения конвертируется из Drawable в Bitmap: `Icon()` умеет\n      только ImageVector, из-за чего вкладка не компилировалась.\n\n### Уже реализовано, но не проверено читателем\n\n- [x] `GameSttManager` — ровно тот сценарий, ради которого затевался оверлей:\n      игра с английской озвучкой и без текста → STT → перевод → русские\n      голоса. Partial-результаты идут в пузырь сразу, финальный переводится\n      через `MangaTranslatorService` и озвучивается тем же движком, что в\n      читалке. Слушает непрерывно, перезапускаясь после конца фразы.\n      Подключён в `OcrOverlayService`, требует разрешения на микрофон.\n- [ ] Проверить на устройстве: вкладка «Приложения» и игровой STT.\n\n### В работе: оверлей читалки\n\nПорядок обязательный — сначала новый оверлей, потом удаление старого, иначе\nчитатель останется без оверлея вообще.\n\n- [ ] Захват экрана через `MediaProjection` в оверлее (в `OcrOverlayService`\n      захвата нет вообще: 925 строк, только текст из буфера/ручного ввода/STT).\n- [ ] Показ страницы книги в рамке оверлея + листание.\n- [ ] ИИ-чат внутри оверлея с видением текущей страницы: агент сейчас умеет\n      видеть страницу только из `ReaderActivity`; сервису нужен свой источник\n      картинки.\n- [ ] Вкладка лаунчера со списком приложений телефона; тап по приложению —\n      окно захвата экрана и оверлей.\n- [ ] Удалить старые оверлеи: `OcrOverlayService` и отдельное приложение\n      `overlay-reader` (2886 строк, свой `settings.gradle`, вне сборки).\n\n### В работе: баги и фичи из скринов\n\n- [ ] Файлы, созданные агентом, нельзя открыть — нужен вывод/экспорт на\n      устройство.\n- [ ] Авточтение зависает на нечитаемом тексте; там, где текста нет, должна\n      озвучиваться сцена голосом.\n- [ ] Аудио по настроению сцены (мрачный → позитивный → меланхолия → ужасы) с\n      пресетами и возможностью создать свой — продолжение работы над плагином\n      озвучки.\n",
+                  "metadata": {
+                    "output": "b2c9b9c78 2026-09-26 19:35 feat(ai): агент видит картинки из workspace\n6dc30560e 2026-09-26 19:30 fix(ai): разорванная строка в gen_images и токен вместо Context\naa017857d 2026-09-26 19:21 feat(ai): события ранера видны в приложении, GitHub с правом записи\n40947e2f1 2026-09-26 19:10 feat(ai): пакетная генерация — несколько картинок за один вызов\n034a0a962 2026-09-26 19:03 feat(ai): обзор папки и чтение пачкой, с вопросами читателю\nbc0835bf2 2026-09-26 18:59 feat(ai): навыки, которые агент собирает сам\n78a0810d3 2026-09-26 18:47 fix(ocr): правильный stringResource для moko-ресурсов\n7c725ffc3 2026-09-26 18:32 fix(ai): папка workspace появляется, файлы видны в чате и в «Загрузки»\n=== todo tail 60 ===\n- [x] Все сборки — только через GitHub Actions (правило 8 `MANIFEST.md`).\n\n### Не сделано, осознанно\n\n- [ ] Плагин озвучки не воспроизводит звук: есть только решение моста и его\n      тесты. Сами звуки требуют либо файлов от владельца, либо работающего\n      провайдера — выдумывать их и URL нельзя.\n- [ ] Модели не проверялись вживую: нет устройства и ключей читателя. Проверка\n      на устройстве — за пользователем.\n- [ ] Glens не продублирован в списке моделей ИИ: это protobuf-движок\n      распознавания, он не умеет отвечать на вопросы о картинке, поэтому как\n      чат-модель не заработает.\n\n### В работе: вкладка лаунчера (сделано, в CI)\n\n- [x] Вкладка «Приложения» рядом с «Распознавание» и «Голоса»: список\n      запускаемых приложений телефона, тап открывает приложение и поднимает\n      оверлей поверх него, плюс кнопка «Запустить оверлей без приложения».\n- [x] Список берётся по MAIN + LAUNCHER, `<intent>` добавлен в манифест.\n      `QUERY_ALL_PACKAGES` не используется: на Android 11+ видно только\n      явно запрошенное, а широкое разрешение в Google Play не проходит.\n- [x] Ошибка чтения списка показывается текстом, а не пустым экраном.\n- [x] Иконка приложения конвертируется из Drawable в Bitmap: `Icon()` умеет\n      только ImageVector, из-за чего вкладка не компилировалась.\n\n### Уже реализовано, но не проверено читателем\n\n- [x] `GameSttManager` — ровно тот сценарий, ради которого затевался оверлей:\n      игра с английской озвучкой и без текста → STT → перевод → русские\n      голоса. Partial-результаты идут в пузырь сразу, финальный переводится\n      через `MangaTranslatorService` и озвучивается тем же движком, что в\n      читалке. Слушает непрерывно, перезапускаясь после конца фразы.\n      Подключён в `OcrOverlayService`, требует разрешения на микрофон.\n- [ ] Проверить на устройстве: вкладка «Приложения» и игровой STT.\n\n### В работе: оверлей читалки\n\nПорядок обязательный — сначала новый оверлей, потом удаление старого, иначе\nчитатель останется без оверлея вообще.\n\n- [ ] Захват экрана через `MediaProjection` в оверлее (в `OcrOverlayService`\n      захвата нет вообще: 925 строк, только текст из буфера/ручного ввода/STT).\n- [ ] Показ страницы книги в рамке оверлея + листание.\n- [ ] ИИ-чат внутри оверлея с видением текущей страницы: агент сейчас умеет\n      видеть страницу только из `ReaderActivity`; сервису нужен свой источник\n      картинки.\n- [ ] Вкладка лаунчера со списком приложений телефона; тап по приложению —\n      окно захвата экрана и оверлей.\n- [ ] Удалить старые оверлеи: `OcrOverlayService` и отдельное приложение\n      `overlay-reader` (2886 строк, свой `settings.gradle`, вне сборки).\n\n### В работе: баги и фичи из скринов\n\n- [ ] Файлы, созданные агентом, нельзя открыть — нужен вывод/экспорт на\n      устройство.\n- [ ] Авточтение зависает на нечитаемом тексте; там, где текста нет, должна\n      озвучиваться сцена голосом.\n- [ ] Аудио по настроению сцены (мрачный → позитивный → меланхолия → ужасы) с\n      пресетами и возможностью создать свой — продолжение работы над плагином\n      озвучки.\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "git log -8 --format='%h %ad %s' --date=format:'%Y-%m-%d %H:%M' && echo \"=== todo tail 60 ===\" && tail -60 todo.md",
+                  "time": {
+                    "start": 1790507697424,
+                    "end": 1790507697452
+                  }
+                },
+                "id": "prt_0e29343ef001GAoSWQbMr68u4V",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2933284001XTxibr4PmhD8VZ"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_lpu15tz7mm51_2",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "ls -la .opencode .opencode/* 2>/dev/null | head -40; echo \"=== last CHANGELOG ===\"; head -40 CHANGELOG.md"
+                  },
+                  "output": "-rw-r--r--  1 runner runner  4454 Sep 27 10:42 .opencode/PROTOTYPE_FIXES.md\n-rw-r--r--  1 runner runner 14634 Sep 27 11:12 .opencode/package-lock.json\n-rw-r--r--  1 runner runner    65 Sep 27 11:12 .opencode/package.json\n\n.opencode:\ntotal 44\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 .\ndrwxr-xr-x 28 runner runner  4096 Sep 27 10:42 ..\n-rw-r--r--  1 runner runner    63 Sep 27 10:43 .gitignore\n-rw-r--r--  1 runner runner  4454 Sep 27 10:42 PROTOTYPE_FIXES.md\ndrwxr-xr-x 29 runner runner  4096 Sep 27 11:12 node_modules\n-rw-r--r--  1 runner runner 14634 Sep 27 11:12 package-lock.json\n-rw-r--r--  1 runner runner    65 Sep 27 11:12 package.json\n\n.opencode/node_modules:\ntotal 128\ndrwxr-xr-x 29 runner runner  4096 Sep 27 11:12 .\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 ..\ndrwxr-xr-x  2 runner runner  4096 Sep 27 11:12 .bin\n-rw-r--r--  1 runner runner 12150 Sep 27 11:12 .package-lock.json\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 @ai-sdk\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 @msgpackr-extract\ndrwxr-xr-x  4 runner runner  4096 Sep 27 11:12 @opencode-ai\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 @standard-schema\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 cross-spawn\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 detect-libc\ndrwxr-xr-x  4 runner runner  4096 Sep 27 11:12 effect\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 fast-check\ndrwxr-xr-x  5 runner runner  4096 Sep 27 11:12 find-my-way-ts\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 ini\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 isexe\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 json-schema\ndrwxr-xr-x 26 runner runner  4096 Sep 27 11:12 kubernetes-types\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 msgpackr\ndrwxr-xr-x  4 runner runner  4096 Sep 27 11:12 msgpackr-extract\ndrwxr-xr-x  4 runner runner  4096 Sep 27 11:12 multipasta\ndrwxr-xr-x  2 runner runner  4096 Sep 27 11:12 node-gyp-build-optional-packages\ndrwxr-xr-x  2 runner runner  4096 Sep 27 11:12 path-key\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 pure-rand\ndrwxr-xr-x  2 runner runner  4096 Sep 27 11:12 shebang-command\n=== last CHANGELOG ===\n# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format is a modified version of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n- `Added` - for new features.\n- `Changed` - for changes in existing functionality.\n- `Improved` - for enhancement or optimization in existing functionality.\n- `Removed` - for now removed features.\n- `Fixed` - for any bug fixes.\n- `Other` - for technical stuff.\n\n## [v0.4.0] - 2026-07-28\n\n### Added\n- Add option to bold target word in sentence field for Anki card export\n\n### Changed\n- Upgraded upstream base to Mihon v0.20.1 (from v0.19.3)\n  - You can see Mihon's full changelog [here](https://mihon.app/changelogs/)\n\n### Improved\n- Update LiteRT to v2.1.6 for armv7 support\n\n## [v0.3.2] - 2026-06-02\n\n### Added\n- Add self-hosted OwOCR server support\n- Add setting to enable/disable automatic OCR model fallback\n\n### Changed\n- Switch to yomihon/image-decoder\n  - Pass crop coords from the native decoder\n\n### Fixed\n- Fix OCR failure on AVIF and other image types\n- Fix inconsistent auto crop on AVIF and other image types\n- Fix offset OCR coordinates on some images when using auto crop\n\n## [v0.3.1] - 2026-04-14\n",
+                  "metadata": {
+                    "output": "-rw-r--r--  1 runner runner  4454 Sep 27 10:42 .opencode/PROTOTYPE_FIXES.md\n-rw-r--r--  1 runner runner 14634 Sep 27 11:12 .opencode/package-lock.json\n-rw-r--r--  1 runner runner    65 Sep 27 11:12 .opencode/package.json\n\n.opencode:\ntotal 44\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 .\ndrwxr-xr-x 28 runner runner  4096 Sep 27 10:42 ..\n-rw-r--r--  1 runner runner    63 Sep 27 10:43 .gitignore\n-rw-r--r--  1 runner runner  4454 Sep 27 10:42 PROTOTYPE_FIXES.md\ndrwxr-xr-x 29 runner runner  4096 Sep 27 11:12 node_modules\n-rw-r--r--  1 runner runner 14634 Sep 27 11:12 package-lock.json\n-rw-r--r--  1 runner runner    65 Sep 27 11:12 package.json\n\n.opencode/node_modules:\ntotal 128\ndrwxr-xr-x 29 runner runner  4096 Sep 27 11:12 .\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 ..\ndrwxr-xr-x  2 runner runner  4096 Sep 27 11:12 .bin\n-rw-r--r--  1 runner runner 12150 Sep 27 11:12 .package-lock.json\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 @ai-sdk\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 @msgpackr-extract\ndrwxr-xr-x  4 runner runner  4096 Sep 27 11:12 @opencode-ai\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 @standard-schema\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 cross-spawn\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 detect-libc\ndrwxr-xr-x  4 runner runner  4096 Sep 27 11:12 effect\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 fast-check\ndrwxr-xr-x  5 runner runner  4096 Sep 27 11:12 find-my-way-ts\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 ini\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 isexe\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 json-schema\ndrwxr-xr-x 26 runner runner  4096 Sep 27 11:12 kubernetes-types\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 msgpackr\ndrwxr-xr-x  4 runner runner  4096 Sep 27 11:12 msgpackr-extract\ndrwxr-xr-x  4 runner runner  4096 Sep 27 11:12 multipasta\ndrwxr-xr-x  2 runner runner  4096 Sep 27 11:12 node-gyp-build-optional-packages\ndrwxr-xr-x  2 runner runner  4096 Sep 27 11:12 path-key\ndrwxr-xr-x  3 runner runner  4096 Sep 27 11:12 pure-rand\ndrwxr-xr-x  2 runner runner  4096 Sep 27 11:12 shebang-command\n=== last CHANGELOG ===\n# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format is a modified version of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n- `Added` - for new features.\n- `Changed` - for changes in existing functionality.\n- `Improved` - for enhancement or optimization in existing functionality.\n- `Removed` - for now removed features.\n- `Fixed` - for any bug fixes.\n- `Other` - for technical stuff.\n\n## [v0.4.0] - 2026-07-28\n\n### Added\n- Add option to bold target word in sentence field for Anki card export\n\n### Changed\n- Upgraded upstream base to Mihon v0.20.1 (from v0.19.3)\n  - You can see Mihon's full changelog [here](https://mihon.app/changelogs/)\n\n### Improved\n- Update LiteRT to v2.1.6 for armv7 support\n\n## [v0.3.2] - 2026-06-02\n\n### Added\n- Add self-hosted OwOCR server support\n- Add setting to enable/disable automatic OCR model fallback\n\n### Changed\n- Switch to yomihon/image-decoder\n  - Pass crop coords from the native decoder\n\n### Fixed\n- Fix OCR failure on AVIF and other image types\n- Fix inconsistent auto crop on AVIF and other image types\n- Fix offset OCR coordinates on some images when using auto crop\n\n## [v0.3.1] - 2026-04-14\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "ls -la .opencode .opencode/* 2>/dev/null | head -40; echo \"=== last CHANGELOG ===\"; head -40 CHANGELOG.md",
+                  "time": {
+                    "start": 1790507697736,
+                    "end": 1790507697771
+                  }
+                },
+                "id": "prt_0e293451c0016sjwQdzIpkKtBo",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2933284001XTxibr4PmhD8VZ"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e29346df001HpSHAkikOA69DS",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2933284001XTxibr4PmhD8VZ"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e293148d001eX6WMW8JwQh21Y",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790507697982,
+                "completed": 1790507703284
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e293473d001V6o4DVT3iBU9Pv",
+              "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH"
+            },
+            "parts": [
+              {
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-start",
+                "id": "prt_0e2934fa3001AeHWHXnyiFAurW",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e293473d001V6o4DVT3iBU9Pv"
+              },
+              {
+                "type": "reasoning",
+                "text": "The tree is clean, on branch `work-from-main`. The last commits were AI features on 2026-09-26 19:35. Let me check whether the AGENT_SESSION.md has entries for those AI commits — the tail showed the 2026-09-26 short-OCR entry as the last. Hmm, but the last commits are 18:32–19:35 on 2026-09-26 while the AGENT_SESSION last entry is \"2026-09-26: короткий OCR...\" — that was committed at ab8e6fe5f which is earlier. So the AI workspace commits (7c725ffc3 → b2c9b9c78) are after the journal's last entry, meaning the journal wasn't updated for the last ~7 commits. Let me check if there's a session entry elsewhere or if the docs weren't updated. Let me grep AGENT_SESSION.md for \"workspace\" and \"runner\" to see.\n\nAlso check remote: was anything pushed? git status shows no upstream info. Let's check `git log origin/main..HEAD` to see if commits are unpushed.\n\nAlso check if a build was triggered in GitHub Actions for those commits.\n\nLet me also check PROTOTYPE_FIXES.md in .opencode.",
+                "time": {
+                  "start": 1790507700134,
+                  "end": 1790507702529
+                },
+                "id": "prt_0e2934fa6001RqgXZgAkFA60fh",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e293473d001V6o4DVT3iBU9Pv"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_4k7j2fdesuei_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "git log --oneline -1 origin/main 2>/dev/null; echo \"--- unpushed ---\"; git log --oneline origin/main..HEAD 2>/dev/null | cat; echo \"--- remotes ---\"; git remote -v; echo \"--- branches ---\"; git branch -a | head"
+                  },
+                  "output": "--- unpushed ---\n--- remotes ---\norigin\thttps://github.com/sj0404-collab/yomikai.git (fetch)\norigin\thttps://github.com/sj0404-collab/yomikai.git (push)\n--- branches ---\n* work-from-main\n  remotes/origin/HEAD -> origin/work-from-main\n  remotes/origin/work-from-main\n",
+                  "metadata": {
+                    "output": "--- unpushed ---\n--- remotes ---\norigin\thttps://github.com/sj0404-collab/yomikai.git (fetch)\norigin\thttps://github.com/sj0404-collab/yomikai.git (push)\n--- branches ---\n* work-from-main\n  remotes/origin/HEAD -> origin/work-from-main\n  remotes/origin/work-from-main\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "git log --oneline -1 origin/main 2>/dev/null; echo \"--- unpushed ---\"; git log --oneline origin/main..HEAD 2>/dev/null | cat; echo \"--- remotes ---\"; git remote -v; echo \"--- branches ---\"; git branch -a | head",
+                  "time": {
+                    "start": 1790507702848,
+                    "end": 1790507702874
+                  }
+                },
+                "id": "prt_0e2935905001K8BR5YZA1D3dSE",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e293473d001V6o4DVT3iBU9Pv"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_4k7j2fdesuei_2",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "rg -n -i 'workspace|runner|навык' AGENT_SESSION.md | tail -20; echo \"=== PROTOTYPE_FIXES ===\"; cat .opencode/PROTOTYPE_FIXES.md"
+                  },
+                  "output": "/bin/bash: line 1: rg: command not found\n=== PROTOTYPE_FIXES ===\n# Прототип OpenCode-агента — правки (v1.9.82+)\n\nСтатус по результатам теста APK v1.9.81. Ветка-прототип:\n`prototype-opencode-agent` (файлы агента), `opencode.yml` — в `main` (GitHub\nдиспатчит только воркфлоу default-ветки).\n\n## ✅ 1. Запуск «как в оригинале»: сначала сайт, агент выбирается внутри — СДЕЛАНО\n\n`opencode.yml` больше НЕ форсирует `opencode serve` + oc-gateway. Ранер\nподнимает только **npm-hub** (дашборд, терминал, файлы, git, инструменты)\nи туннель. Endpoint: `url` = корень хаба, `terminal` = хаб `/m`. Нужного\nCLI-агента пользователь выбирает/устанавливает сам внутри хаба (вкладка\n«Инструменты» или терминал) — как в оригинальном zen-panel.\n\nСписок агентов в хабе ужат до реально работающих без платных ключей:\n`opencode`, `aish` (офлайн GGUF), `deepseek-harness` (`dsh`, DeepSeek Harness —\nдобавлен по просьбе). Остальные выпилены: им нужен платный ключ (claude-code,\ncodex, copilot, gemini, qwen, mistral…) или нестабильная установка (aider,\ngoose, openhands…).\n\n## 2. Сайт хранить не в приложении, а на GitHub Pages — РЕШЕНИЕ ОТЛОЖЕНО\n\nnpm-hub — это Node-сервер с API (`/api/*`) и терминалом (WebSocket xterm),\nфронтенд зовёт API по относительным путям (`fetch('/api/tools')`). Дословный\nперенос статики на GitHub Pages (другой origin) сломает все API-вызовы и\nтерминал. Сайт и так не живёт в APK — приложение просто открывает WebView на\nтуннель ранера. Рекомендация: оставить npm-hub единым сервером за облачным\nтуннелем. Если всё же хочется Pages — нужен отдельный «парадный» лендинг, а\nне живой хаб (без API он бесполезен).\n\n## ✅ 3. Сайт отрисовывается чёрным — ИСПРАВЛЕНО (дефенсивно)\n\n- фон WebView был `BLACK` — при медленном туннеле выглядел как мёртвый экран;\n  теперь `WHITE` + `MIXED_CONTENT_ALWAYS_ALLOW`;\n- добавлен экран загрузки («подключение…») и обработка `onReceivedError`\n  с кнопкой повтора, вместо пустого чёрного листа;\n- `onReceivedHttpAuthRequest`/`destroy`/`reload` обёрнуты в `runCatching` —\n  APK не крашится «от каждого чиха».\n\n## 4. Вшивать сайт напрямую в приложение (вкладки) — ПОЗЖЕ\n\nХаб открывается внутри той же вкладки AI (WebView + нативные управляющие\nэлементы поверх). Отдельный набор нативных Compose-вкладок (Чат/Терминал/\nФайлы) поверх самого хаба дублирует его внутреннюю навигацию — отложено до\nвопросов пользователя про UX.\n\n## ✅ 5. БАГ: при смене вкладки WebView закрывается и не открывается — ИСПРАВЛЕНО\n\nАктивная сессия перенесена из локального `remember` в объект `AiChatTab`\n(`hubSessionFlow`). Переключение вкладки больше не сбрасывает открытый хаб;\nвозврат на вкладку показывает сайт снова (watch из `collectAsState`),\nперезапускать ранер не нужно.\n\n## ✅ 6. APK не крашится «от каждого чиха» — СДЕЛАНО\n\nWebView-создание, reload/auth/destroy, чтение и удаление сессий, запуск\nранера — везде `runCatching`/`getOrElse` с выводом ошибки в UI, а не падением.",
+                  "metadata": {
+                    "output": "/bin/bash: line 1: rg: command not found\n=== PROTOTYPE_FIXES ===\n# Прототип OpenCode-агента — правки (v1.9.82+)\n\nСтатус по результатам теста APK v1.9.81. Ветка-прототип:\n`prototype-opencode-agent` (файлы агента), `opencode.yml` — в `main` (GitHub\nдиспатчит только воркфлоу default-ветки).\n\n## ✅ 1. Запуск «как в оригинале»: сначала сайт, агент выбирается внутри — СДЕЛАНО\n\n`opencode.yml` больше НЕ форсирует `opencode serve` + oc-gateway. Ранер\nподнимает только **npm-hub** (дашборд, терминал, файлы, git, инструменты)\nи туннель. Endpoint: `url` = корень хаба, `terminal` = хаб `/m`. Нужного\nCLI-агента пользователь выбирает/устанавливает сам внутри хаба (вкладка\n«Инструменты» или терминал) — как в оригинальном zen-panel.\n\nСписок агентов в хабе ужат до реально работающих без платных ключей:\n`opencode`, `aish` (офлайн GGUF), `deepseek-harness` (`dsh`, DeepSeek Harness —\nдобавлен по просьбе). Остальные выпилены: им нужен платный ключ (claude-code,\ncodex, copilot, gemini, qwen, mistral…) или нестабильная установка (aider,\ngoose, openhands…).\n\n## 2. Сайт хранить не в приложении, а на GitHub Pages — РЕШЕНИЕ ОТЛОЖЕНО\n\nnpm-hub — это Node-сервер с API (`/api/*`) и терминалом (WebSocket xterm),\nфронтенд зовёт API по относительным путям (`fetch('/api/tools')`). Дословный\nперенос статики на GitHub Pages (другой origin) сломает все API-вызовы и\nтерминал. Сайт и так не живёт в APK — приложение просто открывает WebView на\nтуннель ранера. Рекомендация: оставить npm-hub единым сервером за облачным\nтуннелем. Если всё же хочется Pages — нужен отдельный «парадный» лендинг, а\nне живой хаб (без API он бесполезен).\n\n## ✅ 3. Сайт отрисовывается чёрным — ИСПРАВЛЕНО (дефенсивно)\n\n- фон WebView был `BLACK` — при медленном туннеле выглядел как мёртвый экран;\n  теперь `WHITE` + `MIXED_CONTENT_ALWAYS_ALLOW`;\n- добавлен экран загрузки («подключение…») и обработка `onReceivedError`\n  с кнопкой повтора, вместо пустого чёрного листа;\n- `onReceivedHttpAuthRequest`/`destroy`/`reload` обёрнуты в `runCatching` —\n  APK не крашится «от каждого чиха».\n\n## 4. Вшивать сайт напрямую в приложение (вкладки) — ПОЗЖЕ\n\nХаб открывается внутри той же вкладки AI (WebView + нативные управляющие\nэлементы поверх). Отдельный набор нативных Compose-вкладок (Чат/Терминал/\nФайлы) поверх самого хаба дублирует его внутреннюю навигацию — отложено до\nвопросов пользователя про UX.\n\n## ✅ 5. БАГ: при смене вкладки WebView закрывается и не открывается — ИСПРАВЛЕНО\n\nАктивная сессия перенесена из локального `remember` в объект `AiChatTab`\n(`hubSessionFlow`). Переключение вкладки больше не сбрасывает открытый хаб;\nвозврат на вкладку показывает сайт снова (watch из `collectAsState`),\nперезапускать ранер не нужно.\n\n## ✅ 6. APK не крашится «от каждого чиха» — СДЕЛАНО\n\nWebView-создание, reload/auth/destroy, чтение и удаление сессий, запуск\nранера — везде `runCatching`/`getOrElse` с выводом ошибки в UI, а не падением.",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "rg -n -i 'workspace|runner|навык' AGENT_SESSION.md | tail -20; echo \"=== PROTOTYPE_FIXES ===\"; cat .opencode/PROTOTYPE_FIXES.md",
+                  "time": {
+                    "start": 1790507703108,
+                    "end": 1790507703141
+                  }
+                },
+                "id": "prt_0e2935a45001K3GF7zQ3xc40cO",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e293473d001V6o4DVT3iBU9Pv"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e2935bba001ILBs7Bx3Pf9CYM",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e293473d001V6o4DVT3iBU9Pv"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e293148d001eX6WMW8JwQh21Y",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790507703289,
+                "completed": 1790507706984
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e2935bf9001KkGijq25qtoFyX",
+              "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH"
+            },
+            "parts": [
+              {
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-start",
+                "id": "prt_0e29361ee001jGMeKYVqsPWVHY",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2935bf9001KkGijq25qtoFyX"
+              },
+              {
+                "type": "reasoning",
+                "text": "No origin/main ref locally, only origin/work-from-main. Everything is pushed (no unpushed shown but that was comparing to origin/main which doesn't exist → empty output). Let me check `git status -sb` and compare HEAD to origin/work-from-main.\n\nLet me check the recent GitHub Actions runs too, to see if a build was triggered for the last commits.",
+                "time": {
+                  "start": 1790507704817,
+                  "end": 1790507705671
+                },
+                "id": "prt_0e29361f1001nL2sfE2owrgMrR",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2935bf9001KkGijq25qtoFyX"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_607zmv4ns8mw_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "git status -sb | head -3; echo \"--- vs origin/work-from-main ---\"; git log --oneline origin/work-from-main..HEAD | cat; echo \"(пусто = всё запушено)\""
+                  },
+                  "output": "## work-from-main...origin/work-from-main\n--- vs origin/work-from-main ---\n(пусто = всё запушено)\n",
+                  "metadata": {
+                    "output": "## work-from-main...origin/work-from-main\n--- vs origin/work-from-main ---\n(пусто = всё запушено)\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "git status -sb | head -3; echo \"--- vs origin/work-from-main ---\"; git log --oneline origin/work-from-main..HEAD | cat; echo \"(пусто = всё запушено)\"",
+                  "time": {
+                    "start": 1790507705991,
+                    "end": 1790507706043
+                  }
+                },
+                "id": "prt_0e293654c001vtwRRtEIkNy7vs",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2935bf9001KkGijq25qtoFyX"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_607zmv4ns8mw_2",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "gh run list --limit 8 2>&1 | head -20"
+                  },
+                  "output": "completed\tsuccess\tfeat(ai): агент видит картинки из workspace\tRelease\tv1.9.107\tpush\t36267025616\t9m7s\t2026-09-26T19:43:20Z\ncompleted\tsuccess\tTests\tTests\tmain\tworkflow_dispatch\t36266613183\t3m54s\t2026-09-26T19:36:02Z\ncompleted\tsuccess\tTests\tTests\tmain\tworkflow_dispatch\t36266272774\t3m46s\t2026-09-26T19:30:13Z\ncompleted\tfailure\tTests\tTests\tmain\tworkflow_dispatch\t36265797779\t1m56s\t2026-09-26T19:21:59Z\ncompleted\tfailure\tTests\tTests\tmain\tworkflow_dispatch\t36265151043\t2m7s\t2026-09-26T19:11:00Z\ncompleted\tsuccess\tTests\tTests\tmain\tworkflow_dispatch\t36264735991\t3m33s\t2026-09-26T19:03:56Z\ncompleted\tfailure\tTests\tTests\tmain\tworkflow_dispatch\t36264464300\t2m7s\t2026-09-26T18:59:22Z\ncompleted\tsuccess\tfix(ocr): правильный stringResource для moko-ресурсов\tRelease\tv1.9.106\tpush\t36264259798\t8m54s\t2026-09-26T18:55:38Z\n",
+                  "metadata": {
+                    "output": "completed\tsuccess\tfeat(ai): агент видит картинки из workspace\tRelease\tv1.9.107\tpush\t36267025616\t9m7s\t2026-09-26T19:43:20Z\ncompleted\tsuccess\tTests\tTests\tmain\tworkflow_dispatch\t36266613183\t3m54s\t2026-09-26T19:36:02Z\ncompleted\tsuccess\tTests\tTests\tmain\tworkflow_dispatch\t36266272774\t3m46s\t2026-09-26T19:30:13Z\ncompleted\tfailure\tTests\tTests\tmain\tworkflow_dispatch\t36265797779\t1m56s\t2026-09-26T19:21:59Z\ncompleted\tfailure\tTests\tTests\tmain\tworkflow_dispatch\t36265151043\t2m7s\t2026-09-26T19:11:00Z\ncompleted\tsuccess\tTests\tTests\tmain\tworkflow_dispatch\t36264735991\t3m33s\t2026-09-26T19:03:56Z\ncompleted\tfailure\tTests\tTests\tmain\tworkflow_dispatch\t36264464300\t2m7s\t2026-09-26T18:59:22Z\ncompleted\tsuccess\tfix(ocr): правильный stringResource для moko-ресурсов\tRelease\tv1.9.106\tpush\t36264259798\t8m54s\t2026-09-26T18:55:38Z\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "gh run list --limit 8 2>&1 | head -20",
+                  "time": {
+                    "start": 1790507706080,
+                    "end": 1790507706905
+                  }
+                },
+                "id": "prt_0e293668e001fsTxUGl0n6fNvE",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2935bf9001KkGijq25qtoFyX"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e2936a3f001TqEIhIs3DCPf25",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2935bf9001KkGijq25qtoFyX"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e293148d001eX6WMW8JwQh21Y",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790507706991,
+                "completed": 1790507712190
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e2936a6f0014q2le5TXT0djpk",
+              "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH"
+            },
+            "parts": [
+              {
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-start",
+                "id": "prt_0e2936f22001r0G5eXZs9VrsaA",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2936a6f0014q2le5TXT0djpk"
+              },
+              {
+                "type": "reasoning",
+                "text": "So the last release v1.9.107 was built and published (success) for commit b2c9b9c78. Everything is pushed, tree is clean.\n\nNow let me summarize where things stopped, based on todo.md \"В работе\" sections:\n\n1. Оверлей читалки (MediaProjection capture, page frame in overlay, AI chat in overlay, then remove old overlays)\n2. Баги из скринов: agent-created files can't be opened; autoplay hangs on unreadable text / scene mood audio\n3. Device validation pending: launcher tab, game STT, voice plugin sounds\n\nLet me check the release v1.9.107 assets to know if APK is available, and whether the user asked to upload to GoFile. Let me quickly check the release list.\n\nActually I should be concise. But it's useful to give the summary. Let me check whether the last thing was \"APK нужно залить на GoFile\" — check todo for unchecked items in the v1.9.107 section. Let me grep todo.md for 1.9.10x.",
+                "time": {
+                  "start": 1790507708196,
+                  "end": 1790507710572
+                },
+                "id": "prt_0e2936f24001GNQnwtgxrWtgVL",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2936a6f0014q2le5TXT0djpk"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_cphqufzgmjtx_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "grep -n '1\\.9\\.10' todo.md | head -20; echo \"=== unreleased sections ===\"; awk '/v1\\.9\\.10[0-9]/{p=1} p' todo.md | head -60"
+                  },
+                  "output": "150:## Состояние на 2026-09-25: читалка, модели, оверлей (v1.9.99 — v1.9.102)\n170:      `space-bunny-free`. Именно это открыло чат в v1.9.100.\n=== unreleased sections ===\n## Состояние на 2026-09-25: читалка, модели, оверлей (v1.9.99 — v1.9.102)\n\n### Реализовано и проверено в CI\n\n- [x] Крэш при открытии главы: `resolveSelectionCaptures` бросал\n      `IllegalStateException` из корутины, фоновый авто-поиск издания обёрнут в\n      `runCatching`. Подтверждено по логу устройства (Itel, Android 13).\n- [x] Остановка авточтения: ожидание запуска фразы сокращено с полного таймаута\n      (мин. 8 с) до 1,2 с; `started` стал `MutableStateFlow` (была гонка).\n- [x] Разбор ремарок `SpeechCue`: `(*шёпотом*)` больше не даёт куски «(» и «)»,\n      `*Ааа!*` и `[Ааа!]` озвучиваются, `*Привет* мир` не теряет слово.\n- [x] Регулярки и ICU-движок Android: неэкранированная `}` в классах символов\n      роняла приложение в `<clinit>` на Android 13+ (три места, аудит пуст).\n- [x] Модели Zen: эндпоинт по семейству (`/chat/completions`, `/responses`,\n      `/messages`, путь Gemini), разбор всех форм ответа, актуальный список\n      бесплатных моделей вместо устаревших.\n- [x] «Размышляют null»: размышления читаются у всех семейств (Claude — блок\n      `thinking`, Responses — отдельный `output`, Gemini — флаг `thought`),\n      литерал `\"null\"` отсекается. Подтверждено скрином с устройства.\n- [x] 403 Zen отбрасывает модель, а не весь чат: ротация доходит до рабочей\n      `space-bunny-free`. Именно это открыло чат в v1.9.100.\n- [x] Отчёт о возможностях не обещает лишнего: доступность Zen выводится из\n      фактического ответа, а не из наличия сети.\n- [x] Читалка: кнопка «Стоп» в чате (гасит ход агента, озвучку и авточтение),\n      очередь сообщений при занятом агенте, очистка поля после отправки.\n- [x] Инструменты агента: `turn_page` (next/prev/first/last) и `auto_read`\n      (on/off/status) — раньше агент физически не мог листать и просил скриншоты.\n- [x] Мусор `@tool` в «Размышлениях» (незакрытый `@tool page_text {`) больше не\n      показывается читателю.\n- [x] Расход токенов: `web_search` ограничен тремя вызовами на ход (на скрине\n      было 8 вызовов и 33 775 токенов на фразу «продолжить постранично»).\n- [x] Ядро моста озвучки: `TtsPluginBridge` решает, что уходит в плагин, а что\n      остаётся на голосе; состояния «выключен / скачан / включён» и перебор\n      вариантов по кругу. Разметка звуков отличает звук от междометия.\n- [x] Все сборки — только через GitHub Actions (правило 8 `MANIFEST.md`).\n\n### Не сделано, осознанно\n\n- [ ] Плагин озвучки не воспроизводит звук: есть только решение моста и его\n      тесты. Сами звуки требуют либо файлов от владельца, либо работающего\n      провайдера — выдумывать их и URL нельзя.\n- [ ] Модели не проверялись вживую: нет устройства и ключей читателя. Проверка\n      на устройстве — за пользователем.\n- [ ] Glens не продублирован в списке моделей ИИ: это protobuf-движок\n      распознавания, он не умеет отвечать на вопросы о картинке, поэтому как\n      чат-модель не заработает.\n\n### В работе: вкладка лаунчера (сделано, в CI)\n\n- [x] Вкладка «Приложения» рядом с «Распознавание» и «Голоса»: список\n      запускаемых приложений телефона, тап открывает приложение и поднимает\n      оверлей поверх него, плюс кнопка «Запустить оверлей без приложения».\n- [x] Список берётся по MAIN + LAUNCHER, `<intent>` добавлен в манифест.\n      `QUERY_ALL_PACKAGES` не используется: на Android 11+ видно только\n      явно запрошенное, а широкое разрешение в Google Play не проходит.\n- [x] Ошибка чтения списка показывается текстом, а не пустым экраном.\n- [x] Иконка приложения конвертируется из Drawable в Bitmap: `Icon()` умеет\n      только ImageVector, из-за чего вкладка не компилировалась.\n\n### Уже реализовано, но не проверено читателем\n",
+                  "metadata": {
+                    "output": "150:## Состояние на 2026-09-25: читалка, модели, оверлей (v1.9.99 — v1.9.102)\n170:      `space-bunny-free`. Именно это открыло чат в v1.9.100.\n=== unreleased sections ===\n## Состояние на 2026-09-25: читалка, модели, оверлей (v1.9.99 — v1.9.102)\n\n### Реализовано и проверено в CI\n\n- [x] Крэш при открытии главы: `resolveSelectionCaptures` бросал\n      `IllegalStateException` из корутины, фоновый авто-поиск издания обёрнут в\n      `runCatching`. Подтверждено по логу устройства (Itel, Android 13).\n- [x] Остановка авточтения: ожидание запуска фразы сокращено с полного таймаута\n      (мин. 8 с) до 1,2 с; `started` стал `MutableStateFlow` (была гонка).\n- [x] Разбор ремарок `SpeechCue`: `(*шёпотом*)` больше не даёт куски «(» и «)»,\n      `*Ааа!*` и `[Ааа!]` озвучиваются, `*Привет* мир` не теряет слово.\n- [x] Регулярки и ICU-движок Android: неэкранированная `}` в классах символов\n      роняла приложение в `<clinit>` на Android 13+ (три места, аудит пуст).\n- [x] Модели Zen: эндпоинт по семейству (`/chat/completions`, `/responses`,\n      `/messages`, путь Gemini), разбор всех форм ответа, актуальный список\n      бесплатных моделей вместо устаревших.\n- [x] «Размышляют null»: размышления читаются у всех семейств (Claude — блок\n      `thinking`, Responses — отдельный `output`, Gemini — флаг `thought`),\n      литерал `\"null\"` отсекается. Подтверждено скрином с устройства.\n- [x] 403 Zen отбрасывает модель, а не весь чат: ротация доходит до рабочей\n      `space-bunny-free`. Именно это открыло чат в v1.9.100.\n- [x] Отчёт о возможностях не обещает лишнего: доступность Zen выводится из\n      фактического ответа, а не из наличия сети.\n- [x] Читалка: кнопка «Стоп» в чате (гасит ход агента, озвучку и авточтение),\n      очередь сообщений при занятом агенте, очистка поля после отправки.\n- [x] Инструменты агента: `turn_page` (next/prev/first/last) и `auto_read`\n      (on/off/status) — раньше агент физически не мог листать и просил скриншоты.\n- [x] Мусор `@tool` в «Размышлениях» (незакрытый `@tool page_text {`) больше не\n      показывается читателю.\n- [x] Расход токенов: `web_search` ограничен тремя вызовами на ход (на скрине\n      было 8 вызовов и 33 775 токенов на фразу «продолжить постранично»).\n- [x] Ядро моста озвучки: `TtsPluginBridge` решает, что уходит в плагин, а что\n      остаётся на голосе; состояния «выключен / скачан / включён» и перебор\n      вариантов по кругу. Разметка звуков отличает звук от междометия.\n- [x] Все сборки — только через GitHub Actions (правило 8 `MANIFEST.md`).\n\n### Не сделано, осознанно\n\n- [ ] Плагин озвучки не воспроизводит звук: есть только решение моста и его\n      тесты. Сами звуки требуют либо файлов от владельца, либо работающего\n      провайдера — выдумывать их и URL нельзя.\n- [ ] Модели не проверялись вживую: нет устройства и ключей читателя. Проверка\n      на устройстве — за пользователем.\n- [ ] Glens не продублирован в списке моделей ИИ: это protobuf-движок\n      распознавания, он не умеет отвечать на вопросы о картинке, поэтому как\n      чат-модель не заработает.\n\n### В работе: вкладка лаунчера (сделано, в CI)\n\n- [x] Вкладка «Приложения» рядом с «Распознавание» и «Голоса»: список\n      запускаемых приложений телефона, тап открывает приложение и поднимает\n      оверлей поверх него, плюс кнопка «Запустить оверлей без приложения».\n- [x] Список берётся по MAIN + LAUNCHER, `<intent>` добавлен в манифест.\n      `QUERY_ALL_PACKAGES` не используется: на Android 11+ видно только\n      явно запрошенное, а широкое разрешение в Google Play не проходит.\n- [x] Ошибка чтения списка показывается текстом, а не пустым экраном.\n- [x] Иконка приложения конвертируется из Drawable в Bitmap: `Icon()` умеет\n      только ImageVector, из-за чего вкладка не компилировалась.\n\n### Уже реализовано, но не проверено читателем\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "grep -n '1\\.9\\.10' todo.md | head -20; echo \"=== unreleased sections ===\"; awk '/v1\\.9\\.10[0-9]/{p=1} p' todo.md | head -60",
+                  "time": {
+                    "start": 1790507710821,
+                    "end": 1790507710849
+                  }
+                },
+                "id": "prt_0e2937873001XFBS8qY6Wi8S2S",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2936a6f0014q2le5TXT0djpk"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_cphqufzgmjtx_2",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "gh release list --limit 5 2>&1"
+                  },
+                  "output": "Yomikai v1.9.107\tLatest\tv1.9.107\t2026-09-26T19:52:25Z\nYomikai v1.9.106\t\tv1.9.106\t2026-09-26T19:04:30Z\nYomikai v1.9.105\t\tv1.9.105\t2026-09-26T17:46:31Z\nYomikai v1.9.104\t\tv1.9.104\t2026-09-26T16:07:45Z\nYomikai v1.9.103\t\tv1.9.103\t2026-09-26T15:49:34Z\n",
+                  "metadata": {
+                    "output": "Yomikai v1.9.107\tLatest\tv1.9.107\t2026-09-26T19:52:25Z\nYomikai v1.9.106\t\tv1.9.106\t2026-09-26T19:04:30Z\nYomikai v1.9.105\t\tv1.9.105\t2026-09-26T17:46:31Z\nYomikai v1.9.104\t\tv1.9.104\t2026-09-26T16:07:45Z\nYomikai v1.9.103\t\tv1.9.103\t2026-09-26T15:49:34Z\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "gh release list --limit 5 2>&1",
+                  "time": {
+                    "start": 1790507711218,
+                    "end": 1790507712051
+                  }
+                },
+                "id": "prt_0e293796b001f5ORY0NmWFZBCt",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2936a6f0014q2le5TXT0djpk"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e2937e90001QaeUmGlMQNdqYN",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2936a6f0014q2le5TXT0djpk"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e293148d001eX6WMW8JwQh21Y",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790507712195,
+                "completed": 1790507722195
+              },
+              "finish": "stop",
+              "id": "msg_0e2937ec3001Iq2mDz4mr0IvOg",
+              "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH"
+            },
+            "parts": [
+              {
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-start",
+                "id": "prt_0e2938789001mclHFztWM3nkCT",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2937ec3001Iq2mDz4mr0IvOg"
+              },
+              {
+                "type": "reasoning",
+                "text": "I have a clear picture. Now summarize concisely for the user in Russian.\n\nKey state:\n- Branch `work-from-main`, всё запушено, дерево чистое.\n- Последний коммит b2c9b9c78 (2026-09-26 19:35) «feat(ai): агент видит картинки из workspace», релиз v1.9.107 собран и опубликован (run 36267025616, success).\n- Последняя серия из ~7 коммитов — ИИ-агент: workspace, навыки, пакетная генерация, события ранера с правом записи, чтение пачкой с вопросами.\n- Не доделано (из todo.md):\n  1. Оверлей читалки: MediaProjection захват, страница в рамке, ИИ-чат в оверлее, потом удаление OcrOverlayService и overlay-reader.\n  2. Баги: файлы агента не открываются на устройстве; авточтение зависает на нечитаемом тексте / сцена без текста.\n  3. Аудио по настроению сцены с пресетами.\n  4. На устройстве не проверено: вкладка «Приложения», игровой STT, плагин озвучки (только мост, звуков нет).\n  5. Пресеты областей в UI читалки.\n  6. APK v1.9.107 на GoFile не залит (если в этом был вопрос).\n\nLet me check if the last unchecked item mentions GoFile for 1.9.107. Also whether user asked to upload. The tail didn't mention. I'll ask what to continue with.\n\nKeep it short. Use file references.\n\nNote: AGENT_SESSION.md hasn't been updated for the last 7 commits (last entry is 2026-09-26 short OCR). Worth mentioning as a small gap.\n\nLet me be concise but useful. I'll present in a short list.",
+                "time": {
+                  "start": 1790507714444,
+                  "end": 1790507718748
+                },
+                "id": "prt_0e293878c001K9IB7GKi55ujO0",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2937ec3001Iq2mDz4mr0IvOg"
+              },
+              {
+                "type": "text",
+                "text": "Прошлой сессии у меня в памяти нет, но состояние репозитория восстановил.\n\n**Где остановились:** ветка `work-from-main`, дерево чистое, всё запушено. Последний коммит `b2c9b9c78` (26.09 19:35) «агент видит картинки из workspace» → релиз **v1.9.107** собран и опубликован (run `36267025616`, success). Последние ~7 коммитов — серия по ИИ-агенту: workspace-папка, навыки, пакетная генерация, чтение пачкой с вопросами, события ранера с правом записи.\n\n**Не сделано (todo.md, три блока «В работе»):**\n1. Оверлей читалки — захват `MediaProjection`, страница в рамке, ИИ-чат в оверлее, и только потом удаление `OcrOverlayService` + `overlay-reader`.\n2. Баги из скринов: файлы, созданные агентом, не открываются; авточтение зависает на нечитаемом тексте / нужна озвучка сцены там, где текста нет.\n3. Аудио по настроению сцены (мрачный→позитивный→меланхолия→ужасы) с пресетами.\n4. Пресеты областей (манга/манхва/комикс) в UI читалки.\n\n**Ждёт тебя на устройстве:** вкладка «Приложения», игровой STT, плагин озвучки (есть только мост — самих звуков нет, их нельзя выдумывать).\n\nМелочь: `AGENT_SESSION.md` не обновлён под последние 7 коммитов — там последняя запись про короткий OCR. Начать с оверлея, с багов из скринов или сначала дописать журнал?",
+                "time": {
+                  "start": 1790507718751,
+                  "end": 1790507722090
+                },
+                "id": "prt_0e293985f0011SvE9YMeg5tAqs",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2937ec3001Iq2mDz4mr0IvOg"
+              },
+              {
+                "reason": "stop",
+                "snapshot": "7ea50b9fff216779d5bb4fb4e567216e6bd9c2bf",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e293a5b0001LzgolmDe8qNQwq",
+                "sessionID": "ses_f26f6b1f9ffeG9jZGyOjZkkicH",
+                "messageID": "msg_0e2937ec3001Iq2mDz4mr0IvOg"
               }
             ]
           }
@@ -555,8 +1272,8 @@
     }
   ],
   "state": "updated",
-  "stamp": "20260927T111019",
-  "startedAt": "2026-09-27T11:10:30Z",
+  "stamp": "20260927T113601",
+  "startedAt": "2026-09-27T11:36:09Z",
   "runId": "36313121760",
   "runNumber": "141"
 }
