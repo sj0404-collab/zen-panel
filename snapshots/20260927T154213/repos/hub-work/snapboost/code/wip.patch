@@ -1,0 +1,1894 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index aabd32b..5d32949 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -84,7 +84,6 @@ dependencies {
+     implementation(libs.androidx.ui.graphics)
+     implementation(libs.androidx.ui.tooling.preview)
+     implementation(libs.androidx.material3)
+-    implementation(libs.shizuku.api)
+     implementation(libs.kotlinx.coroutines.android)
+ 
+     testImplementation(libs.junit)
+diff --git a/app/src/main/java/com/sj0404/snapboost/audio/SoundFixer.kt b/app/src/main/java/com/sj0404/snapboost/audio/SoundFixer.kt
+deleted file mode 100644
+index 05eec18..0000000
+--- a/app/src/main/java/com/sj0404/snapboost/audio/SoundFixer.kt
++++ /dev/null
+@@ -1,312 +0,0 @@
+-package com.sj0404.snapboost.audio
+-
+-import android.app.ActivityManager
+-import android.app.NotificationManager
+-import android.app.PendingIntent
+-import android.bluetooth.BluetoothAdapter
+-import android.content.Context
+-import android.content.Intent
+-import android.os.Build
+-import android.provider.Settings
+-import com.sj0404.snapboost.core.system.Privileged
+-
+-/**
+- * Действия, которые действительно влияют на стабильность.
+- *
+- * Каждое действие возвращает честный исход: применилось, не смогло или
+- * недостаточно привилегий. Ничего не имитируется — если Android запретил
+- * операцию, пользователь увидит именно это, а не зелёную галочку.
+- *
+- * Чего здесь принципиально нет: снятия thermal-лимитов, записи в cpufreq и
+- * KGSL, root-команд. Троттлинг — это защита от деградации SoC, и обход
+- * лимитов ускорение, а не буст: ускоренно изношенный Snapdragon теряет
+- * производительность навсегда.
+- */
+-class SoundFixer(private val context: Context) {
+-
+-    data class Outcome(
+-        val ok: Boolean,
+-        val title: String,
+-        val detail: String
+-    )
+-
+-    private val activityManager: ActivityManager =
+-        context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+-    private val notificationManager: NotificationManager =
+-        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+-
+-    // ------------------------------------------------- 1. Bluetooth-аудио
+-
+-    /**
+-     * Выключает Bluetooth.
+-     *
+-     * Почему это главный кандидат на «рвущийся звук»: A2DP передаёт данные
+-     * по воздуху небольшими блоками с собственной перепаковкой. Как только
+-     * система не успевает отдать блок, на выходе щелчок — и на игре это
+-     * слышно как постоянный треск на спецэффектах.
+-     *
+-     * На Android 13+ выключение BT программно заблокировано для обычных
+-     * приложений, поэтому здесь показывается системный диалог, а не
+-     * бездействующий вызов.
+-     */
+-    fun disableBluetooth(): Outcome {
+-        val adapter = try {
+-            BluetoothAdapter.getDefaultAdapter()
+-        } catch (_: Throwable) {
+-            null
+-        }
+-        if (adapter == null) return Outcome(false, "Bluetooth", "Bluetooth отсутствует на устройстве")
+-        if (!adapter.isEnabled) return Outcome(true, "Bluetooth", "Уже выключен — менять нечего")
+-
+-        if (Build.VERSION.SDK_INT < 33) {
+-            return try {
+-                val ok = adapter.disable()
+-                if (ok) Outcome(true, "Bluetooth", "Bluetooth выключен: аудио пойдёт по проводу или динамику")
+-                else Outcome(false, "Bluetooth", "Система не дала выключить Bluetooth")
+-            } catch (t: Throwable) {
+-                Outcome(false, "Bluetooth", "Отказ: ${t.message}")
+-            }
+-        }
+-
+-        return try {
+-            // Константа BluetoothAdapter.ACTION_REQUEST_DISABLE скрыта в стабах SDK,
+-            // поэтому используется документированное действие напрямую.
+-            val intent = Intent(ACTION_REQUEST_DISABLE)
+-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+-            context.startActivity(intent)
+-            Outcome(
+-                false,
+-                "Bluetooth",
+-                "Система требует подтверждения — появился диалог. После отключения звук пойдёт без перепаковки по воздуху"
+-            )
+-        } catch (t: Throwable) {
+-            Outcome(false, "Bluetooth", "Не удалось показать диалог: ${t.message}")
+-        }
+-    }
+-
+-    // ------------------------------------------------- 2. Уведомления
+-
+-    /** Тихий режим: убирает щелчки от уведомлений и звуки других приложений. */
+-    fun silenceNotifications(enable: Boolean): Outcome {
+-        return try {
+-            if (enable) {
+-                notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+-                Outcome(true, "Уведомления", "Включён приоритетный режим: звуки уведомлений приглушены")
+-            } else {
+-                notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+-                Outcome(true, "Уведомления", "Обычный режим звука восстановлен")
+-            }
+-        } catch (t: Throwable) {
+-            Outcome(
+-                false,
+-                "Уведомления",
+-                "Нет доступа «Не беспокоить»: ${t.javaClass.simpleName}"
+-            )
+-        }
+-    }
+-
+-    // ------------------------------------------------- 3. Анимации
+-
+-    /**
+-     * Обнуляет анимации системы. Экономит кадры на UI-потоке, которые в играх
+-     * уходят на перерисовку элементов интерфейса.
+-     */
+-    fun disableAnimations(enable: Boolean): Outcome {
+-        if (!Privileged.hasShell) {
+-            return Outcome(
+-                false,
+-                "Анимации",
+-                "Нужны права shell (Shizuku): настройка глобальных анимаций защищена WRITE_SECURE_SETTINGS"
+-            )
+-        }
+-        val value = if (enable) "0.0" else "1.0"
+-        val keys = listOf("window_animation_scale", "transition_animation_scale", "animator_duration_scale")
+-        val failed = keys.count { key ->
+-            val r = Privileged.runner().run(listOf("settings", "put", "global", key, value), 3000)
+-            !r.ok
+-        }
+-        return if (failed == 0) {
+-            Outcome(
+-                true,
+-                "Анимации",
+-                if (enable) "Анимации выключены: UI-поток освободится" else "Анимации включены"
+-            )
+-        } else {
+-            Outcome(false, "Анимации", "Не удалось применить $failed из ${keys.size} параметров")
+-        }
+-    }
+-
+-    // ------------------------------------------------- 4. Surround/DSP
+-
+-    /**
+-     * Выключает surround-форматы (Dolby Atmos и аналоги).
+-     *
+-     * Системный DSP для объёмного звука добавляет в тракт дополнительные
+-     * буферы и задержку. Когда игра выдаёт поток, у HAL не остаётся запаса,
+-     * и звук рвётся. Для стерео-игр этот обработчик не нужен.
+-     */
+-    fun disableSurround(): Outcome {
+-        if (!Privileged.hasShell) {
+-            return Outcome(
+-                false,
+-                "Объёмный звук",
+-                "Нужны права shell (Shizuku): переключение surround защищено"
+-            )
+-        }
+-        val list = Privileged.runner().run(listOf("cmd", "audio", "list-surround-formats"), 3000)
+-        if (!list.ok || list.stdout.isBlank()) {
+-            return Outcome(
+-                false,
+-                "Объёмный звук",
+-                "Команда не поддерживается этой прошивкой: ${list.stderr.trim().take(80)}"
+-            )
+-        }
+-        val formats = Regex("^\\s*(\\S+)\\s*$", RegexOption.MULTILINE)
+-            .findAll(list.stdout)
+-            .map { it.groupValues[1] }
+-            .filter { it.isNotBlank() && !it.contains(" ") }
+-            .distinct()
+-            .toList()
+-        if (formats.isEmpty()) {
+-            return Outcome(false, "Объёмный звук", "Список форматов пуст — нечего отключать")
+-        }
+-        var off = 0
+-        for (f in formats) {
+-            val r = Privileged.runner().run(
+-                listOf("cmd", "audio", "set-surround-format-enabled", f, "false"), 3000
+-            )
+-            if (r.ok) off++
+-        }
+-        return if (off > 0) {
+-            Outcome(true, "Объёмный звук", "Отключено форматов: $off из ${formats.size} (${formats.joinToString()})")
+-        } else {
+-            Outcome(false, "Объёмный звук", "Не удалось отключить ни один формат")
+-        }
+-    }
+-
+-    // ------------------------------------------------- 5. Игровой режим
+-
+-    /**
+-     * Просит систему включить производительный режим для игры.
+-     *
+-     * Штатный `GameManager.setGameMode` закрыт в стабах SDK, а `MODE_PERFORMANCE`
+-     * не является публичной константой, поэтому используется документированная
+-     * shell-команда `cmd game mode-performance`, а при её отсутствии —
+-     * рефлексия. Если оба пути недоступны, честно сообщаем об отказе.
+-     */
+-    fun setPerformanceMode(pkg: String?): Outcome {
+-        if (pkg == null) return Outcome(false, "Игровой режим", "Игра не определена")
+-        if (Build.VERSION.SDK_INT < 31) {
+-            return Outcome(false, "Игровой режим", "Требуется Android 12+")
+-        }
+-
+-        if (Privileged.hasShell) {
+-            val r = Privileged.runner().run(listOf("cmd", "game", "mode-performance", pkg), 3000)
+-            if (r.ok) {
+-                return Outcome(true, "Игровой режим", "Производительный режим запрошен для $pkg")
+-            }
+-            val shellErr = r.stderr.trim().take(80).ifEmpty { "код ${r.exitCode}" }
+-            return Outcome(
+-                false,
+-                "Игровой режим",
+-                "Система не переключила режим ($shellErr). Прошивка может не поддерживать эту команду"
+-            )
+-        }
+-
+-        return try {
+-            val svc = context.getSystemService(Context.GAME_SERVICE) ?: return reflectFail()
+-            val method = svc.javaClass.methods.firstOrNull { m ->
+-                m.name == "setGameMode" && m.parameterCount == 2
+-            } ?: return reflectFail()
+-            val mode = gameModePerformance() ?: return reflectFail()
+-            method.invoke(svc, pkg, mode)
+-            Outcome(true, "Игровой режим", "Производительный режим запрошен для $pkg")
+-        } catch (t: Throwable) {
+-            reflectFail(t.javaClass.simpleName)
+-        }
+-    }
+-
+-    private fun reflectFail(reason: String = "API недоступен") =
+-        Outcome(false, "Игровой режим", "Не удалось: $reason. Нужны права shell (Shizuku) или Android 12+")
+-
+-    // ------------------------------------------------- 6. Фоновые процессы
+-
+-    /**
+-     * Освобождает ресурсы: фоновые приложения занимают ядра и память,
+-     * из-за чего страдают и кадры, и аудиобуфер.
+-     */
+-    fun killHeavyBackground(): Outcome {
+-        val heavy = listOf(
+-            "org.telegram.messenger", "com.discord", "com.zhiliaoapp.musically",
+-            "com.google.android.youtube", "com.spotify.music", "com.facebook.katana",
+-            "com.instagram.android", "com.android.chrome", "com.linkedin.android",
+-            "com.netflix.mediaclient", "com.booking", "com.uber.driver",
+-            "com.snapchat.android", "com.twitter.android", "com.whatsapp"
+-        )
+-        val me = context.packageName
+-        var killed = 0
+-        var blocked = 0
+-        for (p in heavy) {
+-            if (p == me) continue
+-            try {
+-                activityManager.killBackgroundProcesses(p)
+-                killed++
+-            } catch (_: SecurityException) {
+-                blocked++
+-            } catch (_: Throwable) {
+-                blocked++
+-            }
+-        }
+-        return if (killed > 0) {
+-            Outcome(
+-                true,
+-                "Фоновые процессы",
+-                "Освобождено пакетов: $killed" + if (blocked > 0) ", системных пропущено: $blocked" else ""
+-            )
+-        } else {
+-            Outcome(false, "Фоновые процессы", "Ни один процесс не завершён (нужно разрешение или нет прав)")
+-        }
+-    }
+-
+-    // ------------------------------------------------- Диагностика
+-
+-    /**
+-     * Запрашивает у системы сведения о текущем маршруте. Используется для
+-     * подтверждения, что переключение Bluetooth реально произошло.
+-     */
+-    fun currentOutputDeviceName(): String? = try {
+-        val res = Privileged.runner().run(listOf("dumpsys", "audio"), 4000)
+-        Regex("Current:\\s*\\d+\\s*\\(([^)]+)\\)").find(res.stdout)?.groupValues?.get(1)
+-    } catch (_: Throwable) {
+-        null
+-    }
+-
+-    fun dndEnabled(): Boolean = try {
+-        notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+-    } catch (_: Throwable) {
+-        false
+-    }
+-
+-    fun animationsDisabled(): Boolean = try {
+-        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+-    } catch (_: Throwable) {
+-        false
+-    }
+-
+-    private companion object {
+-        /**
+-         * Значение BluetoothAdapter.ACTION_REQUEST_DISABLE. Константа скрыта
+-         * в публичных стабах SDK, поэтому берём документированное значение строки.
+-         */
+-        const val ACTION_REQUEST_DISABLE = "android.bluetooth.adapter.action.REQUEST_DISABLE"
+-
+-        /** android.app.GameManager.MODE_PERFORMANCE, прочитанная рефлексией. */
+-        fun gameModePerformance(): Int? = try {
+-            Class.forName("android.app.GameManager")
+-                .getField("MODE_PERFORMANCE")
+-                .get(null) as? Int
+-        } catch (_: Throwable) {
+-            null
+-        }
+-    }
+-}
+diff --git a/app/src/main/java/com/sj0404/snapboost/core/Diagnoser.kt b/app/src/main/java/com/sj0404/snapboost/core/Diagnoser.kt
+index 2e71934..598b006 100644
+--- a/app/src/main/java/com/sj0404/snapboost/core/Diagnoser.kt
++++ b/app/src/main/java/com/sj0404/snapboost/core/Diagnoser.kt
+@@ -14,14 +14,11 @@ object Diagnoser {
+     enum class Action {
+         DISABLE_BT,
+         WIRED_AUDIO,
+-        DISABLE_SURROUND,
+         SILENCE_NOTIFICATIONS,
+         KILL_BACKGROUND,
+-        DISABLE_ANIMATIONS,
+-        PERF_MODE,
+         COOL_DOWN,
+-        SHIZUKU,
+-        RESTART_APP
++        OPEN_AUDIO_SETTINGS,
++        OPEN_DISPLAY_SETTINGS
+     }
+ 
+     data class Finding(
+@@ -43,7 +40,7 @@ object Diagnoser {
+                 "Аудиобуфер голодает: underrun ${"%.1f".format(rate)}/с",
+                 "Счётчик underrun в AudioFlinger растёт. Буфер не успевает наполняться — " +
+                     "именно это слышно как «рыба», щелчки и пропуски на спецэффектах.",
+-                if (a.route == AudioRoute.BLUETOOTH_A2DP) Action.WIRED_AUDIO else Action.DISABLE_SURROUND
++                if (a.route == AudioRoute.BLUETOOTH_A2DP) Action.WIRED_AUDIO else Action.KILL_BACKGROUND
+             )
+         }
+ 
+@@ -77,8 +74,9 @@ object Diagnoser {
+             f += Finding(
+                 Severity.WARN,
+                 "В тракте есть системный DSP",
+-                "Найдено: $it. Объёмная обработка добавляет буферы и задержку; в стерео-играх она не нужна.",
+-                Action.DISABLE_SURROUND
++                "Найдено: $it. Объёмная обработка добавляет буферы и задержку; в стерео-играх она не нужна. " +
++                    "Публичным API обычного приложения её не отключить — только в системных настройках звука.",
++                Action.OPEN_AUDIO_SETTINGS
+             )
+         }
+ 
+@@ -97,9 +95,9 @@ object Diagnoser {
+             f += Finding(
+                 Severity.INFO,
+                 "Счётчик underrun недоступен",
+-                if (s.hasShell) "В дампе AudioFlinger нет поля underrun на этой прошивке."
+-                else "Нужен доступ с правами shell (Shizuku): dumpsys закрыт обычным приложениям.",
+-                Action.SHIZUKU
++                "Он живёт в `dumpsys media.audio_flinger`, а этот дамп требует android.permission.DUMP — " +
++                    "приложению без системных прав он не выдаётся. Приложение не подставляет вместо него " +
++                    "оценку: активный самотест аудиобуфера делается по кнопке и измеряет реальное поведение HAL."
+             )
+         }
+ 
+@@ -197,13 +195,13 @@ object Diagnoser {
+                     Action.COOL_DOWN
+                 )
+             }
+-        } else if (!s.hasShell) {
++        } else {
+             f += Finding(
+                 Severity.INFO,
+-                "Реальный FPS недоступен без Shizuku",
+-                "SurfaceFlinger и AudioFlinger отдают данные только процессам с правами shell. " +
+-                    "С Shizuku открываются настоящие FPS, jank и underrun.",
+-                Action.SHIZUKU
++                "Реальный FPS недоступен обычному приложению",
++                "Настоящие кадры в секунду живут в `dumpsys SurfaceFlinger --latency`, а дамп требует " +
++                    "android.permission.DUMP. Без системных прав приложение не ставит внешних сервисов " +
++                    "ради одной метрики и не выдумывает число: в HUD будет N/A."
+             )
+         }
+ 
+diff --git a/app/src/main/java/com/sj0404/snapboost/core/Model.kt b/app/src/main/java/com/sj0404/snapboost/core/Model.kt
+index d527540..ce41b68 100644
+--- a/app/src/main/java/com/sj0404/snapboost/core/Model.kt
++++ b/app/src/main/java/com/sj0404/snapboost/core/Model.kt
+@@ -109,7 +109,11 @@ data class AudioState(
+     val sampleRate: Int? = null,
+     val framesPerBuffer: Int? = null,
+     val routeInfo: AudioRouteInfo = AudioRouteInfo(),
+-    /** Счётчик underrun из AudioFlinger. Доступен только с shell-привилегиями. */
++    /**
++     * Счётчик underrun из AudioFlinger. Обычному приложению недоступен:
++     * `dumpsys media.audio_flinger` требует android.permission.DUMP,
++     * поэтому поле остаётся null и в HUD отображается как N/A.
++     */
+     val underrunsTotal: Int? = null,
+     val underrunsPerSec: Float? = null,
+     val activeTracks: Int? = null,
+@@ -122,7 +126,6 @@ data class AudioState(
+ ) {
+     val route: AudioRoute get() = routeInfo.route
+     val routeName: String get() = routeInfo.name
+-    val privileged: Boolean get() = underrunsTotal != null
+ }
+ 
+ data class Snapshot(
+@@ -133,7 +136,5 @@ data class Snapshot(
+     val pressure: PressureState = PressureState(),
+     val process: ProcessState = ProcessState(),
+     val audio: AudioState = AudioState(),
+-    val fps: FpsState = FpsState(),
+-    val privilegeSource: String = "app",
+-    val hasShell: Boolean = false
++    val fps: FpsState = FpsState()
+ )
+diff --git a/app/src/main/java/com/sj0404/snapboost/core/Settings.kt b/app/src/main/java/com/sj0404/snapboost/core/Settings.kt
+index b000fd3..2e8a172 100644
+--- a/app/src/main/java/com/sj0404/snapboost/core/Settings.kt
++++ b/app/src/main/java/com/sj0404/snapboost/core/Settings.kt
+@@ -11,10 +11,15 @@ class Settings(context: Context) {
+ 
+     enum class OverlayMode { OFF, MINIMAL, FULL }
+ 
++    /**
++     * По умолчанию HUD выключен: приложение начинает с тюнера, а измерения
++     * включаются пользователем явной кнопкой. Иначе оверлей появляется поверх
++     * игры сам, а это ровно то, чего человек не просил.
++     */
+     var overlayMode: OverlayMode
+         get() = runCatching {
+-            OverlayMode.valueOf(prefs.getString(KEY_MODE, OverlayMode.FULL.name) ?: OverlayMode.FULL.name)
+-        }.getOrDefault(OverlayMode.FULL)
++            OverlayMode.valueOf(prefs.getString(KEY_MODE, OverlayMode.OFF.name) ?: OverlayMode.OFF.name)
++        }.getOrDefault(OverlayMode.OFF)
+         set(value) = prefs.edit().putString(KEY_MODE, value.name).apply()
+ 
+     /**
+@@ -26,14 +31,24 @@ class Settings(context: Context) {
+         get() = prefs.getInt(KEY_INTERVAL, 1000).coerceIn(1000, 5000)
+         set(value) = prefs.edit().putInt(KEY_INTERVAL, value.coerceIn(1000, 5000)).apply()
+ 
+-    var monitorEnabled: Boolean
+-        get() = prefs.getBoolean(KEY_MONITOR, true)
+-        set(value) = prefs.edit().putBoolean(KEY_MONITOR, value).apply()
+-
+     var startOnBoot: Boolean
+         get() = prefs.getBoolean(KEY_BOOT, false)
+         set(value) = prefs.edit().putBoolean(KEY_BOOT, value).apply()
+ 
++    /**
++     * Яркость, которая была на экране до первого понижения профилем.
++     * Нужна для честного отката: «Сбросить» возвращает не 100%, а то
++     * значение, которое человек выставил сам. -1 означает «не запоминать».
++     */
++    var brightnessBeforeTune: Int
++        get() = prefs.getInt(KEY_BRIGHTNESS_BACKUP, -1)
++        set(value) = prefs.edit().putInt(KEY_BRIGHTNESS_BACKUP, value).apply()
++
++    /** Идентификатор последнего применённого профиля — только для показа в UI. */
++    var lastProfileId: String?
++        get() = prefs.getString(KEY_PROFILE, null)?.takeIf { it.isNotBlank() }
++        set(value) = prefs.edit().putString(KEY_PROFILE, value).apply()
++
+     /** Пакет, если пользователь указал игру вручную (когда автоопределение не работает). */
+     var manualGamePackage: String?
+         get() = prefs.getString(KEY_MANUAL_GAME, null)?.takeIf { it.isNotBlank() }
+@@ -68,9 +83,10 @@ class Settings(context: Context) {
+     private companion object {
+         const val KEY_MODE = "overlay_mode"
+         const val KEY_INTERVAL = "sample_interval"
+-        const val KEY_MONITOR = "monitor_enabled"
+         const val KEY_BOOT = "start_on_boot"
+         const val KEY_MANUAL_GAME = "manual_game"
++        const val KEY_BRIGHTNESS_BACKUP = "brightness_backup"
++        const val KEY_PROFILE = "last_profile"
+         const val KEY_ALPHA = "overlay_alpha"
+         const val KEY_X = "overlay_x"
+         const val KEY_Y = "overlay_y"
+diff --git a/app/src/main/java/com/sj0404/snapboost/core/audio/AudioReader.kt b/app/src/main/java/com/sj0404/snapboost/core/audio/AudioReader.kt
+index fbed230..9b3152e 100644
+--- a/app/src/main/java/com/sj0404/snapboost/core/audio/AudioReader.kt
++++ b/app/src/main/java/com/sj0404/snapboost/core/audio/AudioReader.kt
+@@ -99,11 +99,11 @@ class AudioReader(private val context: Context) {
+     /**
+      * Определяет реальный маршрут вывода.
+      *
+-     * Без привилегий надёжно определить можно только когда подключено ровно
+-     * одно внешнее устройство. Если их несколько или ни одного — возвращается
+-     * UNKNOWN с confident=false, а не догадка «наверное динамик».
+-     * С привилегиями парсится `dumpsys audio`, где у потока есть строка
+-     * "Current: N (device)".
++     * Надёжно определить маршрут можно только когда подключено ровно
++     * одно внешнее устройство. Если их несколько или ни одного —
++     * возвращается UNKNOWN с confident=false, а не догадка «наверное динамик».
++     * Строка "Current: N (device)" из `dumpsys audio` парсится, если дамп
++     * доступен, но обычному приложению он не выдаётся.
+      */
+     private fun resolveRoute(audioDump: String?): AudioRouteInfo {
+         if (audioDump != null) {
+diff --git a/app/src/main/java/com/sj0404/snapboost/core/perf/ForegroundGameDetector.kt b/app/src/main/java/com/sj0404/snapboost/core/perf/ForegroundGameDetector.kt
+index 9ab205a..471969b 100644
+--- a/app/src/main/java/com/sj0404/snapboost/core/perf/ForegroundGameDetector.kt
++++ b/app/src/main/java/com/sj0404/snapboost/core/perf/ForegroundGameDetector.kt
+@@ -4,15 +4,14 @@ import android.app.usage.UsageEvents
+ import android.app.usage.UsageStatsManager
+ import android.content.Context
+ import android.os.SystemClock
+-import com.sj0404.snapboost.core.system.Privileged
+ 
+ /**
+  * Определяет, какое приложение сейчас на экране.
+  *
+- * Три независимых источника, каждый дешевле предыдущего по точности:
+- *  1. `dumpsys activity` — точно, но нужен shell (Shizuku).
+- *  2. UsageStatsManager — события активности, требуют «Доступ к использованию».
+- *  3. Ничего — тогда HUD честно пишет, что игра не определена.
++ * Единственный источник — UsageStatsManager: события активности, они требуют
++ * «Доступ к использованию». `dumpsys activity` точнее, но закрыт для обычного
++ * приложения (нужен android.permission.DUMP), поэтому не используется.
++ * Если доступа нет — HUD честно пишет, что игра не определена.
+  *
+  * Никаких догадок по типу окна: неизвестный пакет остаётся неизвестным пакетом.
+  */
+@@ -67,24 +66,12 @@ class ForegroundGameDetector(private val context: Context) {
+         manualPackage?.let { return it }
+         if (SystemClock.elapsedRealtime() - lastDetectedAt < 1500L) return lastDetected
+ 
+-        val pkg = fromDumpsys() ?: fromUsageStats()
++        val pkg = fromUsageStats()
+         lastDetected = pkg
+         lastDetectedAt = SystemClock.elapsedRealtime()
+         return pkg
+     }
+ 
+-    private fun fromDumpsys(): String? {
+-        val dump = Privileged.dumpsys("activity", listOf("activities"), ttlMs = 2000L) ?: return null
+-        val patterns = listOf(
+-            Regex("mResumedActivity:\\s*ActivityRecord\\{[^}]*?\\s([A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+)/"),
+-            Regex("topResumedActivity=.*?\\s([A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+)/")
+-        )
+-        for (p in patterns) {
+-            p.find(dump)?.groupValues?.get(1)?.let { return it }
+-        }
+-        return null
+-    }
+-
+     /**
+      * Восстанавливает передний план из лога событий активности:
+      * пакет считается в фокусе, если он получил RESUMED и после этого не
+diff --git a/app/src/main/java/com/sj0404/snapboost/core/perf/FpsTracker.kt b/app/src/main/java/com/sj0404/snapboost/core/perf/FpsTracker.kt
+index 30c3140..d1c2c3b 100644
+--- a/app/src/main/java/com/sj0404/snapboost/core/perf/FpsTracker.kt
++++ b/app/src/main/java/com/sj0404/snapboost/core/perf/FpsTracker.kt
+@@ -9,9 +9,9 @@ import kotlin.math.abs
+  * Настоящий FPS поверх произвольной игры.
+  *
+  * Важное ограничение, которое не обходится: `SurfaceFlinger --latency`
+- * требует android.permission.DUMP, поэтому реальный FPS доступен только при
+- * наличии shell-привилегий (Shizuku). Без них здесь честно возвращается
+- * valid=false, и HUD показывает N/A, а не частоту дисплея.
++ * требует android.permission.DUMP, а приложение работает от своего UID.
++ * Поэтому реальный FPS и jank недоступны, и здесь честно возвращается
++ * valid=false — HUD показывает N/A, а не частоту дисплея.
+  *
+  * Частоту дисплея измеряем отдельно через Choreographer — она доступна всегда
+  * и нужна как база: 120 Гц-дисплее с 45 FPS это принципиально другая
+diff --git a/app/src/main/java/com/sj0404/snapboost/core/system/Privileged.kt b/app/src/main/java/com/sj0404/snapboost/core/system/Privileged.kt
+index a6ab925..680b55c 100644
+--- a/app/src/main/java/com/sj0404/snapboost/core/system/Privileged.kt
++++ b/app/src/main/java/com/sj0404/snapboost/core/system/Privileged.kt
+@@ -3,34 +3,30 @@ package com.sj0404.snapboost.core.system
+ import android.util.Log
+ 
+ /**
+- * Точка выбора исполнителя команд + кэш «дорогих» дампов.
++ * Единственный исполнитель системных команд + кэш «дорогих» дампов.
+  *
+- * Приоритет: Shizuku (UID shell) → приложение (свой UID). Выбор происходит
+- * один раз на вызов, потому что Shizuku может быть запущен прямо во время
+- * работы приложения, и закешированный "недоступен" не должен быть вечным.
++ * Приложение работает от своего UID и сознательно не требует ни root, ни
++ * внешних сервисов с правами shell. Отсюда важное ограничение: `dumpsys`
++ * требует android.permission.DUMP, поэтому всё, что берётся из него
++ * (реальный FPS, jank, счётчик audio underrun, стек аудио-фокуса), обычному
++ * приложению недоступно и остаётся N/A. Подменять эти поля правдоподобными
++ * догадками нельзя — по ним принимают решения про настройку железа.
++ *
++ * Зато sysfs, procfs и `getprop` читаются полноценно, и на них построены
++ * реальные метрики CPU, GPU, температуры и PSI.
+  */
+ object Privileged {
+ 
+     private val direct = DirectRunner()
+-    private val shizuku = ShizukuRunner()
+ 
+     private const val TAG = "SnapBoost/Privileged"
+ 
+-    /** UID, под которым реально выполняются привилегированные команды. */
++    /** UID, под которым выполняются команды. Всегда собственный UID приложения. */
+     val effectiveUid: Int
+-        get() = runner().run(listOf("id", "-u"), 2000).stdout.trim().toIntOrNull() ?: android.os.Process.myUid()
+-
+-    val hasShell: Boolean get() = effectiveUid == 2000 || effectiveUid == 0
+-
+-    val sourceName: String
+-        get() = when {
+-            shizuku.available -> "shell (Shizuku)"
+-            else -> "app"
+-        }
+-
+-    fun runner(): CommandRunner = if (shizuku.available) shizuku else direct
++        get() = runner().run(listOf("id", "-u"), 2000).stdout.trim().toIntOrNull()
++            ?: android.os.Process.myUid()
+ 
+-    fun shizukuAvailable(): Boolean = shizuku.available
++    fun runner(): CommandRunner = direct
+ 
+     // ---------------------------------------------------------------- dumpsys
+ 
+diff --git a/app/src/main/java/com/sj0404/snapboost/core/system/ShizukuRunner.kt b/app/src/main/java/com/sj0404/snapboost/core/system/ShizukuRunner.kt
+deleted file mode 100644
+index 83cbd97..0000000
+--- a/app/src/main/java/com/sj0404/snapboost/core/system/ShizukuRunner.kt
++++ /dev/null
+@@ -1,58 +0,0 @@
+-package com.sj0404.snapboost.core.system
+-
+-import android.util.Log
+-
+-/**
+- * Мост к Shizuku: процесс, запущенный через него, получает UID shell (2000),
+- * а значит реальный доступ к `dumpsys` и к `settings put`.
+- *
+- * Это единственный способ получить настоящие FPS (SurfaceFlinger --latency) и
+- * счётчик audio underrun (media.audio_flinger) без root. Без Shizuku эти
+- * метрики остаются N/A — приложение не будет их выдумывать.
+- *
+- * Обращение к Shizuku идёт строго через рефлексию: если библиотека или само
+- * приложение Shizuku отсутствует, класс не загрузится, и мост молча
+- * деградирует в "недоступен", вместо того чтобы ронять приложение.
+- */
+-class ShizukuRunner : CommandRunner {
+-
+-    override val name: String = "shizuku"
+-
+-    /**
+-     * Доступность определяется только реальным pingBinder: отдельная проверка
+-     * версии не нужна, потому что библиотека обращается рефлексией и её
+-     * отсутствие само по себе даёт false.
+-     */
+-    override val available: Boolean
+-        get() = try {
+-            val cls = Class.forName("dev.rikka.shizuku.Shizuku")
+-            val ping = cls.getMethod("pingBinder")
+-            (ping.invoke(null) as? Boolean) == true
+-        } catch (_: Throwable) {
+-            false
+-        }
+-
+-    override fun run(cmd: List<String>, timeoutMs: Int): CommandResult {
+-        val remote = spawnRemote(cmd) ?: return CommandResult(
+-            -1, "", "Shizuku недоступен (не установлен, не запущен или нет разрешения)", name
+-        )
+-        return execProcess(remote, timeoutMs, name)
+-    }
+-
+-    private fun spawnRemote(cmd: List<String>): Process? = try {
+-        val cls = Class.forName("dev.rikka.shizuku.Shizuku")
+-        val newProcess = cls.methods.firstOrNull { m ->
+-            m.name == "newProcess" && m.parameterTypes.size == 3 &&
+-                m.parameterTypes[0] == Array<String>::class.java
+-        } ?: return null
+-        @Suppress("UNCHECKED_CAST")
+-        newProcess.invoke(null, cmd.toTypedArray(), null, null) as? Process
+-    } catch (t: Throwable) {
+-        Log.w(TAG, "Shizuku newProcess failed: ${t.message}")
+-        null
+-    }
+-
+-    private companion object {
+-        const val TAG = "SnapBoost/Shizuku"
+-    }
+-}
+diff --git a/app/src/main/java/com/sj0404/snapboost/service/MonitorService.kt b/app/src/main/java/com/sj0404/snapboost/service/MonitorService.kt
+index 9643dd8..ddd7aae 100644
+--- a/app/src/main/java/com/sj0404/snapboost/service/MonitorService.kt
++++ b/app/src/main/java/com/sj0404/snapboost/service/MonitorService.kt
+@@ -30,7 +30,6 @@ import com.sj0404.snapboost.core.perf.ForegroundGameDetector
+ import com.sj0404.snapboost.core.perf.FpsTracker
+ import com.sj0404.snapboost.core.system.CpuReader
+ import com.sj0404.snapboost.core.system.GpuReader
+-import com.sj0404.snapboost.core.system.Privileged
+ import com.sj0404.snapboost.core.system.PressureReader
+ import com.sj0404.snapboost.core.system.ProcReader
+ import com.sj0404.snapboost.core.system.ThermalReader
+@@ -179,9 +178,7 @@ class MonitorService : Service() {
+             pressure = pressure,
+             process = process,
+             audio = audio,
+-            fps = lastFps,
+-            privilegeSource = Privileged.sourceName,
+-            hasShell = Privileged.hasShell
++            fps = lastFps
+         )
+         currentSnapshot = snapshot
+         app.publish(snapshot)
+diff --git a/app/src/main/java/com/sj0404/snapboost/ui/MainActivity.kt b/app/src/main/java/com/sj0404/snapboost/ui/MainActivity.kt
+index 2e980aa..c6c3475 100644
+--- a/app/src/main/java/com/sj0404/snapboost/ui/MainActivity.kt
++++ b/app/src/main/java/com/sj0404/snapboost/ui/MainActivity.kt
+@@ -48,20 +48,27 @@ import androidx.compose.ui.unit.sp
+ import androidx.core.content.ContextCompat
+ import androidx.lifecycle.compose.collectAsStateWithLifecycle
+ import com.sj0404.snapboost.app
+-import com.sj0404.snapboost.audio.SoundFixer
++import com.sj0404.snapboost.audio.AudioTuner
++import com.sj0404.snapboost.audio.TuningProfiles
++import com.sj0404.snapboost.audio.TuningRunner
+ import com.sj0404.snapboost.core.Diagnoser
+ import com.sj0404.snapboost.core.Settings
+ import com.sj0404.snapboost.core.Snapshot
+ import com.sj0404.snapboost.core.audio.AudioProbe
+ import com.sj0404.snapboost.core.perf.ForegroundGameDetector
+ import com.sj0404.snapboost.core.system.GpuReader
+-import com.sj0404.snapboost.core.system.Privileged
+ import com.sj0404.snapboost.service.MonitorService
+-import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.delay
+ import kotlinx.coroutines.launch
+ 
++/**
++ * Экран приложения: сначала тюнер, потом (по кнопке) оверлей и диагностика.
++ *
++ * Порядок экранов отражает то, зачем человек открывает приложение. Оверлей с
++ * метриками — не главное: он включается осознанно, одной кнопкой, и по
++ * умолчанию выключен, чтобы не появляться поверх чужой игры сам.
++ */
+ class MainActivity : ComponentActivity() {
+ 
+     private val notifPermission =
+@@ -90,29 +97,49 @@ private fun AppUi(activity: MainActivity) {
+     val running by app.serviceRunning.collectAsStateWithLifecycle()
+ 
+     val scope = rememberCoroutineScope()
+-    val fixer = remember { SoundFixer(ctx) }
++    val tuner = remember { AudioTuner(ctx) }
++    val runner = remember { TuningRunner(tuner, settings) }
+     val detector = remember { ForegroundGameDetector(ctx) }
+ 
++    var state by remember { mutableStateOf(tuner.readState()) }
+     var overlayGranted by remember { mutableStateOf(AndroidSettings.canDrawOverlays(ctx)) }
+     var usageAccess by remember { mutableStateOf(false) }
+-    var dndAccess by remember { mutableStateOf(false) }
+-    var shellAccess by remember { mutableStateOf(Privileged.shizukuAvailable()) }
+-    var lastOutcome by remember { mutableStateOf<SoundFixer.Outcome?>(null) }
+-    var probeResult by remember { mutableStateOf<AudioProbe.Result?>(null) }
++    var showDiagnostics by remember { mutableStateOf(false) }
++    var lastOutcome by remember { mutableStateOf<AudioTuner.Outcome?>(null) }
++    var report by remember { mutableStateOf<TuningRunner.Report?>(null) }
++    var probe by remember { mutableStateOf<AudioProbe.Result?>(null) }
+     var busy by remember { mutableStateOf(false) }
+ 
+-    // Факты о доступах опрашиваются циклически: пользователь мог выдать
+-    // разрешения в системных настройках, пока приложение было в фоне.
++    /**
++     * Состояние телефона опрашивается циклически: часть переключателей
++     * меняется системой мимо приложения (яркость в шторке, отключение
++     * Bluetooth с панели), и тумблер должен встать в реальное положение, а не
++     * показывать то, что человек нажимал полчаса назад.
++     */
+     LaunchedEffect(Unit) {
+         while (true) {
++            state = tuner.readState()
+             overlayGranted = AndroidSettings.canDrawOverlays(ctx)
+             usageAccess = detector.hasUsageAccess()
+-            dndAccess = fixer.dndEnabled()
+-            shellAccess = Privileged.shizukuAvailable()
+-            delay(1500)
++            delay(2000)
+         }
+     }
+ 
++    /** Любое действие завершается одним и тем же жестом: отчёт + свежий срез. */
++    fun runTuner(block: () -> Unit) {
++        if (busy) return
++        busy = true
++        scope.launch(Dispatchers.IO) {
++            block()
++            state = tuner.readState()
++            busy = false
++        }
++    }
++
++    fun showOutcome(o: AudioTuner.Outcome) {
++        lastOutcome = o
++    }
++
+     MaterialTheme {
+         Column(
+             modifier = Modifier
+@@ -121,53 +148,105 @@ private fun AppUi(activity: MainActivity) {
+                 .padding(16.dp),
+             verticalArrangement = Arrangement.spacedBy(12.dp)
+         ) {
+-            Header(snap)
+-
+-            ServiceCard(running) {
+-                val i = Intent(ctx, MonitorService::class.java)
+-                if (running) {
+-                    i.action = MonitorService.ACTION_STOP
+-                    ctx.startService(i)
+-                } else {
+-                    ContextCompat.startForegroundService(ctx, i)
+-                }
+-            }
++            Header()
+ 
+-            AccessCard(
+-                overlayGranted, shellAccess, usageAccess, dndAccess
+-            ) { open(ctx, it) }
++            ProfileCard(
++                busy = busy,
++                lastProfileId = settings.lastProfileId,
++                onApply = { profile ->
++                    runTuner {
++                        val r = runner.run(profile)
++                        report = r
++                        probe = r.probe
++                    }
++                }
++            )
+ 
+-            MetricsCard(snap)
++            report?.let { ProfileReportCard(it) }
+ 
+-            FindingsCard(findings, busy, scope, fixer, detector) { lastOutcome = it }
++            RouteCard(
++                state = state,
++                busy = busy,
++                onDisableBt = { runTuner { showOutcome(tuner.disableBluetooth()) } },
++                onOpenAudio = { runTuner { showOutcome(openResult(tuner.openAudioSettings(), "Настройки звука")) } },
++                onOpenBt = { runTuner { showOutcome(openResult(tuner.openBluetoothSettings(), "Настройки Bluetooth")) } }
++            )
+ 
+-            ActionsCard(
++            NoiseCard(
++                state = state,
+                 busy = busy,
+-                onAction = { action ->
+-                    busy = true
+-                    scope.launch(Dispatchers.IO) {
+-                        lastOutcome = runAction(action, fixer, detector)
+-                        busy = false
+-                    }
+-                },
+-                onProbe = { probe ->
+-                    busy = true
+-                    scope.launch(Dispatchers.IO) {
+-                        probeResult = probe()
+-                        busy = false
++                onDnd = { enable -> runTuner { showOutcome(tuner.setDnd(enable)) } },
++                onGrantDnd = { runTuner { showOutcome(openResult(tuner.openDndSettings(), "Доступ «Не беспокоить»")) } },
++                onKillBackground = { runTuner { showOutcome(tuner.killHeavyBackground()) } },
++                onSelfTest = {
++                    runTuner {
++                        val r = tuner.audioSelfTest()
++                        probe = r
++                        showOutcome(
++                            AudioTuner.Outcome(
++                                ok = !r.starved,
++                                title = "Самотест аудиобуфера",
++                                detail = r.verdict
++                            )
++                        )
+                     }
+                 }
+             )
+ 
+-            OverlaySettingsCard(settings)
++            probe?.let { ProbeCard(it) }
++
++            MicCard(
++                state = state,
++                busy = busy,
++                onToggle = { enable -> runTuner { showOutcome(tuner.setMicDenoise(enable)) } }
++            )
++
++            HeatCard(
++                state = state,
++                busy = busy,
++                onBrightness = { level -> runTuner { showOutcome(tuner.setBrightness(level)) } },
++                onAutoBrightness = { enable -> runTuner { showOutcome(tuner.setAutoBrightness(enable)) } },
++                onOpenBattery = { runTuner { showOutcome(openResult(tuner.openBatterySaverSettings(), "Экономия заряда")) } },
++                onIgnoreOptimizations = { runTuner { showOutcome(tuner.requestIgnoreBatteryOptimizations()) } },
++                onClearCache = { runTuner { showOutcome(tuner.clearOwnCache()) } }
++            )
++
++            HudCard(
++                settings = settings,
++                running = running,
++                overlayGranted = overlayGranted,
++                state = state,
++                busy = busy,
++                onGrantOverlay = { open(ctx, overlayPermissionIntent(ctx)) },
++                onStartHud = {
++                    settings.overlayMode = Settings.OverlayMode.FULL
++                    ContextCompat.startForegroundService(ctx, Intent(ctx, MonitorService::class.java))
++                },
++                onStopHud = {
++                    settings.overlayMode = Settings.OverlayMode.OFF
++                    ctx.startService(
++                        Intent(ctx, MonitorService::class.java).setAction(MonitorService.ACTION_STOP)
++                    )
++                },
++                onStartOnBoot = { enable -> settings.startOnBoot = enable }
++            )
++
++            DiagnosticsCard(
++                open = showDiagnostics,
++                snap = snap,
++                findings = findings,
++                running = running,
++                usageAccess = usageAccess,
++                onToggle = { showDiagnostics = !showDiagnostics }
++            )
+ 
+-            probeResult?.let { ProbeCard(it) }
+             lastOutcome?.let { OutcomeCard(it) }
+ 
+             Spacer(Modifier.height(24.dp))
+             Text(
+-                "N/A означает, что источник закрыт для обычных приложений. " +
+-                    "Приложение не подставляет вымышленные значения метрик.",
++                "Тюнер работает только через публичный API Android: без root и без внешних сервисов. " +
++                    "Всё, что защищено системными правами (глобальные анимации, системный DSP, " +
++                    "игровой режим), приложение не меняет — оно честно пишет «N/A».",
+                 fontSize = 11.sp,
+                 color = Color(0xFF8FA3B0)
+             )
+@@ -183,9 +262,13 @@ private fun overlayPermissionIntent(ctx: Context) =
+     Intent(AndroidSettings.ACTION_MANAGE_OVERLAY_PERMISSION)
+         .setData(Uri.parse("package:${ctx.packageName}"))
+ 
+-private fun shizukuIntent() =
+-    Intent("android.settings.MANAGE_UNKNOWN_APP_SOURCES")
+-        .setData(Uri.parse("package:dev.rikka.shizuku"))
++/** Открытие экрана настроек — тоже результат: об отсутствии экрана тоже честно. */
++private fun openResult(opened: Boolean, what: String) = AudioTuner.Outcome(
++    ok = opened,
++    title = what,
++    detail = if (opened) "Открыт системный экран настроек"
++    else "Система не открыла экран «$what» на этой прошивке"
++)
+ 
+ @Composable
+ private fun darkCard(content: @Composable () -> Unit) {
+@@ -195,368 +278,424 @@ private fun darkCard(content: @Composable () -> Unit) {
+ }
+ 
+ @Composable
+-private fun Header(s: Snapshot) {
++private fun Header() {
+     val platform = remember { GpuReader.platform() }
+     val soc = remember { GpuReader.gpuModelName() }
+     Column {
+         Text("SnapBoost", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+-        Text("$platform · ${soc ?: "GPU не определён"}", fontSize = 12.sp, color = Color(0xFF8FA3B0))
+         Text(
+-            "Права: ${s.privilegeSource} · " +
+-                if (s.hasShell) "дампы SurfaceFlinger/AudioFlinger доступны"
+-                else "только sysfs и procfs",
++            "Тюнер звука и системы · $platform · ${soc ?: "GPU не определён"}",
+             fontSize = 12.sp,
+-            color = if (s.hasShell) Color(0xFF7BE495) else Color(0xFFF2C14E)
++            color = Color(0xFF8FA3B0)
+         )
+     }
+ }
+ 
++// ----------------------------------------------------------------- пресеты
++
+ @Composable
+-private fun ServiceCard(running: Boolean, onToggle: () -> Unit) {
++private fun ProfileCard(
++    busy: Boolean,
++    lastProfileId: String?,
++    onApply: (TuningProfiles.Profile) -> Unit
++) {
+     darkCard {
+-        Text("Мониторинг", fontWeight = FontWeight.Bold)
++        Text("Профиль в один тап", fontWeight = FontWeight.Bold)
+         Text(
+-            if (running) "Сервис работает" else "Сервис остановлен",
+-            fontSize = 13.sp
++            "Набор изменений, применяемых по порядку. Каждый шаг подтверждается чтением " +
++                "значения обратно из системы — зелёная галочка означает «система приняла», " +
++                "а не «приложение попросило».",
++            fontSize = 11.sp,
++            color = Color(0xFF8FA3B0)
+         )
+-        Spacer(Modifier.height(6.dp))
+-        Button(
+-            onClick = onToggle,
+-            colors = if (running) {
+-                ButtonDefaults.buttonColors(containerColor = Color(0xFF7A2E2E))
+-            } else {
+-                ButtonDefaults.buttonColors()
++        Spacer(Modifier.height(8.dp))
++        for (p in TuningProfiles.all) {
++            Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
++                Row(verticalAlignment = Alignment.CenterVertically) {
++                    Column(Modifier.weight(1f)) {
++                        Text(
++                            p.title + if (p.id == lastProfileId) "  · применён" else "",
++                            fontSize = 14.sp,
++                            fontWeight = FontWeight.Medium,
++                            color = if (p.id == lastProfileId) Color(0xFF7BE495) else Color(0xFFE8EEF2)
++                        )
++                        Text(p.summary, fontSize = 11.sp, color = Color(0xFF8FA3B0))
++                    }
++                    Spacer(Modifier.width(8.dp))
++                    Button(
++                        enabled = !busy,
++                        onClick = { onApply(p) },
++                        colors = if (p.id == TuningProfiles.RESET.id) {
++                            ButtonDefaults.buttonColors(containerColor = Color(0xFF7A2E2E))
++                        } else {
++                            ButtonDefaults.buttonColors()
++                        }
++                    ) { Text(if (busy) "…" else "Применить", fontSize = 12.sp) }
++                }
+             }
+-        ) { Text(if (running) "Остановить" else "Запустить") }
++        }
+     }
+ }
+ 
+ @Composable
+-private fun AccessCard(
+-    overlay: Boolean,
+-    shell: Boolean,
+-    usage: Boolean,
+-    dnd: Boolean,
+-    open: (Intent) -> Unit
+-) {
+-    val ctx = androidx.compose.ui.platform.LocalContext.current
++private fun ProfileReportCard(r: TuningRunner.Report) {
+     darkCard {
+-        Text("Источники данных", fontWeight = FontWeight.Bold)
++        Text("Отчёт: ${r.profile.title}", fontWeight = FontWeight.Bold)
++        Text(
++            r.headline(),
++            fontSize = 12.sp,
++            color = if (r.failed == 0) Color(0xFF7BE495) else Color(0xFFF2C14E)
++        )
+         Spacer(Modifier.height(4.dp))
+-        AccessRow(
+-            "Оверлей поверх игр",
+-            if (overlay) "разрешён" else "нужно разрешение",
+-            overlay
+-        ) { open(overlayPermissionIntent(ctx)) }
+-        AccessRow(
+-            "Права shell (Shizuku)",
+-            if (shell) "активны: настоящие FPS, jank и счётчик потерь"
+-            else "нет: FPS, jank и underrun недоступны",
+-            shell
+-        ) { open(shizukuIntent()) }
+-        AccessRow(
+-            "Доступ к использованию",
+-            if (usage) "игра в фокусе определяется" else "нужен для определения игры",
+-            usage
+-        ) { open(Intent(AndroidSettings.ACTION_USAGE_ACCESS_SETTINGS)) }
+-        AccessRow(
+-            "Не беспокоить",
+-            if (dnd) "разрешён" else "нужен для приглушения уведомлений",
+-            dnd
+-        ) { open(Intent(AndroidSettings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)) }
+-    }
+-}
+-
+-@Composable
+-private fun AccessRow(title: String, state: String, ok: Boolean, onClick: () -> Unit) {
+-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+-        Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
+-            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+-            Text(
+-                state,
+-                fontSize = 11.sp,
+-                color = if (ok) Color(0xFF7BE495) else Color(0xFFF2C14E)
+-            )
++        r.results.forEach { s ->
++            val color = when {
++                s.outcome.ok -> Color(0xFF7BE495)
++                s.outcome.manual -> Color(0xFFF2C14E)
++                else -> Color(0xFFF16A5A)
++            }
++            Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
++                Text(
++                    (if (s.outcome.ok) "✓ " else if (s.outcome.manual) "? " else "✗ ") + s.step.title,
++                    fontSize = 13.sp,
++                    fontWeight = FontWeight.SemiBold,
++                    color = color
++                )
++                Text(s.outcome.detail, fontSize = 11.sp, color = Color(0xFFC8D4DC))
++            }
+         }
+-        Spacer(Modifier.width(8.dp))
+-        OutlinedButton(onClick = onClick) { Text(if (ok) "Есть" else "Выдать") }
+     }
+ }
+ 
+-@Composable
+-private fun Metric(label: String, value: String, color: Color) {
+-    Column(Modifier.padding(vertical = 3.dp)) {
+-        Text(label, fontSize = 11.sp, color = Color(0xFF8FA3B0))
+-        Text(value, fontSize = 14.sp, fontFamily = FontFamily.Monospace, color = color)
+-    }
+-}
++// ------------------------------------------------------------------ секции
+ 
+ @Composable
+-private fun MetricsCard(s: Snapshot) {
+-    val u = s.audio.underrunsPerSec
++private fun RouteCard(
++    state: AudioTuner.State,
++    busy: Boolean,
++    onDisableBt: () -> Unit,
++    onOpenAudio: () -> Unit,
++    onOpenBt: () -> Unit
++) {
+     darkCard {
+-        Text("Живые данные", fontWeight = FontWeight.Bold)
++        Text("Маршрут вывода", fontWeight = FontWeight.Bold)
+         Spacer(Modifier.height(4.dp))
+-        Row {
+-            Metric(
+-                "FPS",
+-                if (s.fps.valid && s.fps.fps != null) "%.0f".format(s.fps.fps) else "N/A",
+-                if (s.fps.valid) Color(0xFF7BE495) else Color(0xFF8FA3B0)
+-            )
+-            Spacer(Modifier.width(18.dp))
+-            Metric("Jank", s.fps.jankPct?.let { "$it%" } ?: "N/A", Color(0xFFE8EEF2))
+-            Spacer(Modifier.width(18.dp))
+-            Metric("Дисплей", s.fps.displayHz?.let { "$it Гц" } ?: "N/A", Color(0xFFE8EEF2))
+-        }
+-        Row {
+-            Metric("CPU", s.cpu.curMhz?.let { "$it МГц" } ?: "N/A", Color(0xFFE8EEF2))
+-            Spacer(Modifier.width(18.dp))
+-            Metric(
+-                "Троттлинг CPU",
+-                when (s.cpu.throttled) {
+-                    true -> "ДА"
+-                    false -> "нет"
+-                    null -> "N/A"
+-                },
+-                when (s.cpu.throttled) {
+-                    true -> Color(0xFFF16A5A)
+-                    false -> Color(0xFF7BE495)
+-                    null -> Color(0xFF8FA3B0)
+-                }
+-            )
+-        }
+-        Row {
+-            Metric("GPU", s.gpu.busyPct?.let { "$it%" } ?: "N/A", Color(0xFFE8EEF2))
+-            Spacer(Modifier.width(18.dp))
+-            Metric("Темп.", s.thermal.hottest?.let { "%.1f °C".format(it) } ?: "N/A", Color(0xFFE8EEF2))
+-            Spacer(Modifier.width(18.dp))
+-            Metric(
+-                "Простои CPU",
+-                s.pressure.cpuSomeAvg10?.let { "%.0f%%".format(it) } ?: "N/A",
+-                Color(0xFFE8EEF2)
+-            )
+-        }
+-        Row {
+-            Metric(
+-                "Аудио",
+-                when {
+-                    u != null && u >= 2f -> "%.1f/с потерь".format(u)
+-                    u != null && u >= 0.5f -> "%.1f/с потерь".format(u)
+-                    u != null -> "OK"
+-                    else -> "нет счётчика"
+-                },
+-                when {
+-                    u != null && u >= 2f -> Color(0xFFF16A5A)
+-                    u != null && u >= 0.5f -> Color(0xFFF2C14E)
+-                    s.audio.underrunsTotal != null -> Color(0xFF7BE495)
+-                    else -> Color(0xFF8FA3B0)
+-                }
+-            )
+-            Spacer(Modifier.width(18.dp))
+-            Metric("Выход", s.audio.routeName, Color(0xFFE8EEF2))
+-        }
+-        s.audio.dspEvidence?.let {
+-            Text("DSP: $it", fontSize = 10.sp, color = Color(0xFFF2C14E), fontFamily = FontFamily.Monospace)
+-        }
+-        if (s.audio.focusHolders.isNotEmpty()) {
+-            Text("Фокус: ${s.audio.focusHolders.joinToString()}", fontSize = 10.sp, color = Color(0xFFF2C14E))
++        InfoRow("Сейчас вывод:", state.routeName, Color(0xFFE8EEF2))
++        state.routeDetail?.let { InfoRow("Устройств:", it, Color(0xFFF2C14E)) }
++        ToggleRow(
++            title = "Bluetooth",
++            subtitle = when {
++                state.btAudioConnected ->
++                    "A2DP-маршрут активен: поток перепаковывается по воздуху, запас на просадку нулевой"
++                state.btEnabled -> "Включён, аудио не используется — нажмите, чтобы выключить"
++                else -> "Выключен: аудио идёт напрямую, без перепаковки"
++            },
++            checked = !state.btEnabled,
++            enabled = state.btEnabled && !busy,
++            danger = state.btAudioConnected
++        ) { onDisableBt() }
++        Spacer(Modifier.height(6.dp))
++        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++            OutlinedButton(onClick = onOpenAudio) { Text("Настройки звука", fontSize = 12.sp) }
++            OutlinedButton(onClick = onOpenBt) { Text("Bluetooth", fontSize = 12.sp) }
+         }
++        Spacer(Modifier.height(4.dp))
++        Text(
++            "Маршрут вывода чужой игры обычному приложению неподвластен: единственный честный " +
++                "способ убрать A2DP из тракта — выключить Bluetooth или снять наушники.",
++            fontSize = 11.sp,
++            color = Color(0xFF8FA3B0)
++        )
+     }
+ }
+ 
+ @Composable
+-private fun FindingsCard(
+-    findings: List<Diagnoser.Finding>,
++private fun NoiseCard(
++    state: AudioTuner.State,
+     busy: Boolean,
+-    scope: CoroutineScope,
+-    fixer: SoundFixer,
+-    detector: ForegroundGameDetector,
+-    onOutcome: (SoundFixer.Outcome) -> Unit
++    onDnd: (Boolean) -> Unit,
++    onGrantDnd: () -> Unit,
++    onKillBackground: () -> Unit,
++    onSelfTest: () -> Unit
+ ) {
+     darkCard {
+-        Text("Диагноз", fontWeight = FontWeight.Bold)
++        Text("Помехи и проверка", fontWeight = FontWeight.Bold)
+         Spacer(Modifier.height(4.dp))
+-        if (findings.isEmpty()) {
+-            Text("Данных пока недостаточно — запустите сервис в игре.", fontSize = 12.sp)
++        ToggleRow(
++            title = "Не беспокоить",
++            subtitle = when {
++                state.dndOn -> "Активно: уведомления не перебивают игру"
++                state.dndGranted -> "Выключено"
++                else -> "Нужен доступ к политике уведомлений"
++            },
++            checked = state.dndOn,
++            enabled = state.dndGranted && !busy
++        ) { onDnd(it) }
++        if (!state.dndGranted) {
++            Spacer(Modifier.height(4.dp))
++            OutlinedButton(onClick = onGrantDnd) { Text("Выдать доступ", fontSize = 12.sp) }
+         }
+-        findings.forEach { f ->
+-            val color = when (f.severity) {
+-                Diagnoser.Severity.CRITICAL -> Color(0xFFF16A5A)
+-                Diagnoser.Severity.WARN -> Color(0xFFF2C14E)
+-                Diagnoser.Severity.INFO -> Color(0xFF8FA3B0)
++        Spacer(Modifier.height(6.dp))
++        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++            OutlinedButton(enabled = !busy, onClick = onKillBackground) {
++                Text("Освободить фон", fontSize = 12.sp)
+             }
+-            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+-                Text(f.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = color)
+-                Text(f.detail, fontSize = 12.sp, color = Color(0xFFC8D4DC))
+-                f.action?.let { action ->
+-                    Spacer(Modifier.height(4.dp))
+-                    OutlinedButton(
+-                        enabled = !busy,
+-                        onClick = {
+-                            scope.launch(Dispatchers.IO) {
+-                                onOutcome(runAction(action, fixer, detector))
+-                            }
+-                        }
+-                    ) { Text(actionLabel(action)) }
+-                }
++            OutlinedButton(enabled = !busy, onClick = onSelfTest) {
++                Text("Самотест буфера", fontSize = 12.sp)
+             }
+         }
++        Spacer(Modifier.height(4.dp))
++        Text(
++            "Самотест создаёт AudioTrack с минимальным буфером и смотрит, успевает ли HAL его " +
++                "наполнять. Это единственная честная замена счётчику underrun из AudioFlinger, " +
++                "который закрыт android.permission.DUMP.",
++            fontSize = 11.sp,
++            color = Color(0xFF8FA3B0)
++        )
+     }
+ }
+ 
+-private fun actionLabel(a: Diagnoser.Action): String = when (a) {
+-    Diagnoser.Action.DISABLE_BT, Diagnoser.Action.WIRED_AUDIO -> "Выключить Bluetooth"
+-    Diagnoser.Action.DISABLE_SURROUND -> "Выключить объёмный звук"
+-    Diagnoser.Action.SILENCE_NOTIFICATIONS -> "Приглушить уведомления"
+-    Diagnoser.Action.KILL_BACKGROUND -> "Освободить фоновые процессы"
+-    Diagnoser.Action.DISABLE_ANIMATIONS -> "Выключить анимации"
+-    Diagnoser.Action.PERF_MODE -> "Запросить игровой режим"
+-    Diagnoser.Action.COOL_DOWN -> "Что делать с нагревом"
+-    Diagnoser.Action.SHIZUKU -> "Как получить права shell"
+-    Diagnoser.Action.RESTART_APP -> "Перезапустить"
++@Composable
++private fun MicCard(
++    state: AudioTuner.State,
++    busy: Boolean,
++    onToggle: (Boolean) -> Unit
++) {
++    val ns = state.noiseSuppressor
++    val aec = state.echoCanceler
++    val agc = state.gainControl
++    val any = ns != AudioTuner.Tri.UNKNOWN || aec != AudioTuner.Tri.UNKNOWN || agc != AudioTuner.Tri.UNKNOWN
++    val allOn = ns == AudioTuner.Tri.ON && aec == AudioTuner.Tri.ON && agc == AudioTuner.Tri.ON
++
++    darkCard {
++        Text("Микрофон", fontWeight = FontWeight.Bold)
++        Spacer(Modifier.height(4.dp))
++        ToggleRow(
++            title = "Шумоподавление и эхоподавление",
++            subtitle = when {
++                !any ->
++                    "Аудиопроцессор не отдал сессию: эффекты действуют только пока активна запись " +
++                        "(голосовой чат). Сейчас тумблер недоступен."
++                allOn -> "Включено: шумоподавление, эхоподавление, автоусиление"
++                else -> "Частично включено — состояние каждого эффекта показано ниже"
++            },
++            checked = allOn,
++            enabled = any && !busy
++        ) { onToggle(it) }
++        Spacer(Modifier.height(4.dp))
++        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
++            EffectChip("Шум", ns)
++            EffectChip("Эхо", aec)
++            EffectChip("Усиление", agc)
++        }
++    }
+ }
+ 
+-private fun runAction(
+-    a: Diagnoser.Action,
+-    fixer: SoundFixer,
+-    detector: ForegroundGameDetector
+-): SoundFixer.Outcome = when (a) {
+-    Diagnoser.Action.DISABLE_BT, Diagnoser.Action.WIRED_AUDIO -> fixer.disableBluetooth()
+-    Diagnoser.Action.DISABLE_SURROUND -> fixer.disableSurround()
+-    Diagnoser.Action.SILENCE_NOTIFICATIONS -> fixer.silenceNotifications(true)
+-    Diagnoser.Action.KILL_BACKGROUND -> fixer.killHeavyBackground()
+-    Diagnoser.Action.DISABLE_ANIMATIONS -> fixer.disableAnimations(true)
+-    Diagnoser.Action.PERF_MODE -> fixer.setPerformanceMode(detector.detect())
+-    Diagnoser.Action.COOL_DOWN -> SoundFixer.Outcome(
+-        false,
+-        "Нагрев",
+-        "Снять тепловое ограничение программно нельзя: это защита от деградации SoC. " +
+-            "Что реально помогает: снять чехол, отключить зарядку на время игры, дать корпусу остыть, снизить яркость."
+-    )
+-    Diagnoser.Action.SHIZUKU -> SoundFixer.Outcome(
+-        false,
+-        "Права shell",
+-        "Установите Shizuku, запустите его через adb, затем вернитесь сюда и включите сервис. " +
+-            "Появятся настоящие FPS, jank и счётчик underrun."
+-    )
+-    Diagnoser.Action.RESTART_APP -> SoundFixer.Outcome(false, "Перезапуск", "Не требуется")
++@Composable
++private fun EffectChip(name: String, tri: AudioTuner.Tri) {
++    val (label, color) = when (tri) {
++        AudioTuner.Tri.ON -> "вкл" to Color(0xFF7BE495)
++        AudioTuner.Tri.OFF -> "выкл" to Color(0xFFE8EEF2)
++        AudioTuner.Tri.UNKNOWN -> "N/A" to Color(0xFF8FA3B0)
++    }
++    Text("$name: $label", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = color)
+ }
+ 
+ @Composable
+-private fun ActionsCard(
++private fun HeatCard(
++    state: AudioTuner.State,
+     busy: Boolean,
+-    onAction: (Diagnoser.Action) -> Unit,
+-    onProbe: (() -> AudioProbe.Result) -> Unit
++    onBrightness: (Float) -> Unit,
++    onAutoBrightness: (Boolean) -> Unit,
++    onOpenBattery: () -> Unit,
++    onIgnoreOptimizations: () -> Unit,
++    onClearCache: () -> Unit
+ ) {
++    val level = if (state.brightness >= 0) state.brightness.toFloat() / AudioTuner.MAX_BRIGHTNESS else -1f
+     darkCard {
+-        Text("Действия", fontWeight = FontWeight.Bold)
++        Text("Нагрев и ресурсы", fontWeight = FontWeight.Bold)
+         Text(
+-            "Только штатные средства Android. Снятие тепловых лимитов и запись в cpufreq/KGSL " +
+-                "намеренно не реализованы: это не буст, а ускоренный износ процессора.",
++            "Троттлинг поднимает frametime, а от frametime страдает и аудиобуфер. " +
++                "Чем холоднее корпус, тем выше потолок частот CPU.",
+             fontSize = 11.sp,
+             color = Color(0xFF8FA3B0)
+         )
+-        Spacer(Modifier.height(8.dp))
+-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-            OutlinedButton(enabled = !busy, onClick = { onAction(Diagnoser.Action.WIRED_AUDIO) }) {
+-                Text("Выкл. Bluetooth")
+-            }
+-            OutlinedButton(enabled = !busy, onClick = { onAction(Diagnoser.Action.DISABLE_SURROUND) }) {
+-                Text("Выкл. surround")
+-            }
++        Spacer(Modifier.height(6.dp))
++        Text(
++            if (level >= 0) "Яркость: ${"%.0f".format(level * 100)}%" else "Яркость: N/A",
++            fontSize = 12.sp
++        )
++        if (level >= 0f) {
++            Slider(
++                value = level,
++                onValueChange = { onBrightness(it) },
++                valueRange = 0.05f..1f,
++                enabled = !busy
++            )
+         }
++        ToggleRow(
++            title = "Автояркость",
++            subtitle = if (state.autoBrightness)
++                "Включена: яркость плавает, нагрев и батарея страдают"
++            else
++                "Выключена: яркость держится на выбранном уровне",
++            checked = state.autoBrightness,
++            enabled = !busy
++        ) { onAutoBrightness(it) }
++        InfoRow(
++            "Экономия заряда:",
++            if (state.powerSaveMode) "включена — частоты урезаны системой" else "выключена",
++            if (state.powerSaveMode) Color(0xFFF2C14E) else Color(0xFF7BE495)
++        )
++        InfoRow(
++            "Память:",
++            "${state.memUsedPct}% занято (свободно ${state.memAvailMb} из ${state.memTotalMb} МБ)" +
++                if (state.memLow) " · системе не хватает" else "",
++            if (state.memLow) Color(0xFFF16A5A) else Color(0xFFE8EEF2)
++        )
++        InfoRow(
++            "Выгрузка в фоне:",
++            if (state.ignorBatteryOptimizations) "разрешена" else "система может усыпить сервис",
++            if (state.ignorBatteryOptimizations) Color(0xFF7BE495) else Color(0xFFF2C14E)
++        )
+         Spacer(Modifier.height(6.dp))
+         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-            OutlinedButton(enabled = !busy, onClick = { onAction(Diagnoser.Action.KILL_BACKGROUND) }) {
+-                Text("Фоновые")
++            OutlinedButton(enabled = !busy, onClick = onOpenBattery) {
++                Text("Экономия заряда", fontSize = 12.sp)
+             }
+-            OutlinedButton(enabled = !busy, onClick = { onAction(Diagnoser.Action.PERF_MODE) }) {
+-                Text("Игровой режим")
++            OutlinedButton(enabled = !busy, onClick = onIgnoreOptimizations) {
++                Text("Не выгружать", fontSize = 12.sp)
+             }
+         }
+         Spacer(Modifier.height(6.dp))
+-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-            OutlinedButton(enabled = !busy, onClick = { onAction(Diagnoser.Action.DISABLE_ANIMATIONS) }) {
+-                Text("Анимации")
+-            }
+-            Button(enabled = !busy, onClick = { onProbe({ AudioProbe.run(4000L) }) }) {
+-                Text("Самотест аудио")
+-            }
++        OutlinedButton(enabled = !busy, onClick = onClearCache) {
++            Text("Очистить свой кэш", fontSize = 12.sp)
+         }
+     }
+ }
+ 
++// ------------------------------------------------------- оверлей и диагностика
++
+ @Composable
+-private fun OverlaySettingsCard(settings: Settings) {
++private fun HudCard(
++    settings: Settings,
++    running: Boolean,
++    overlayGranted: Boolean,
++    state: AudioTuner.State,
++    busy: Boolean,
++    onGrantOverlay: () -> Unit,
++    onStartHud: () -> Unit,
++    onStopHud: () -> Unit,
++    onStartOnBoot: (Boolean) -> Unit
++) {
++    val on = settings.overlayMode != Settings.OverlayMode.OFF
+     var mode by remember { mutableStateOf(settings.overlayMode) }
+     var alpha by remember { mutableStateOf(settings.opacity) }
+-    var keepOn by remember { mutableStateOf(settings.keepScreenOn) }
+     var interval by remember { mutableStateOf(settings.sampleIntervalMs) }
++    var boot by remember { mutableStateOf(settings.startOnBoot) }
+ 
+     darkCard {
+-        Text("Оверлей", fontWeight = FontWeight.Bold)
+-        Spacer(Modifier.height(4.dp))
+-        Text("Режим: ${modeLabel(mode)}", fontSize = 12.sp)
+-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-            for (m in Settings.OverlayMode.entries) {
+-                OutlinedButton(
+-                    onClick = {
+-                        mode = m
+-                        settings.overlayMode = m
+-                    }
+-                ) { Text(modeLabel(m), fontSize = 12.sp) }
+-            }
+-        }
+-        Spacer(Modifier.height(6.dp))
+-        Text("Интервал измерений: ${interval / 1000} с", fontSize = 12.sp)
+-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-            for (ms in listOf(1000, 2000, 3000, 5000)) {
+-                OutlinedButton(
+-                    onClick = {
+-                        interval = ms
+-                        settings.sampleIntervalMs = ms
+-                    }
+-                ) { Text("${ms / 1000} с", fontSize = 12.sp) }
+-            }
+-        }
++        Text("Оверлей с метриками", fontWeight = FontWeight.Bold)
+         Text(
+-            "HUD обновляется раз в цикл измерений. Чаще опрашивать бессмысленно: " +
+-                "пробуждения сами отнимают кадры у игры.",
++            "По умолчанию выключен: приложение начинает с тюнера, а измерения включаются " +
++                "явно. Оверлей считает реальные частоты, температуру, PSI и нагрузку GPU " +
++                "из sysfs и procfs.",
+             fontSize = 11.sp,
+             color = Color(0xFF8FA3B0)
+         )
+-        Spacer(Modifier.height(6.dp))
+-        Text("Прозрачность: ${"%.0f".format(alpha * 100)}%", fontSize = 12.sp)
+-        Slider(
+-            value = alpha,
+-            onValueChange = { alpha = it },
+-            onValueChangeFinished = { settings.opacity = alpha },
+-            valueRange = 0.2f..1f
+-        )
++        Spacer(Modifier.height(8.dp))
+         Row(verticalAlignment = Alignment.CenterVertically) {
+             Column(Modifier.weight(1f)) {
+-                Text("Не гасить экран", fontSize = 13.sp)
+                 Text(
+-                    "Пригодится для замеров, но расходует батарею",
++                    when {
++                        on && running -> "Оверлей работает"
++                        on && !running -> "Включён, сервис не запущен"
++                        else -> "Выключен"
++                    },
++                    fontSize = 13.sp,
++                    color = if (on && running) Color(0xFF7BE495) else Color(0xFFE8EEF2)
++                )
++                Text(
++                    if (on) "Панель можно перетащить: тап — режим, долгий тап — открыть приложение"
++                    else "Метрики появляются поверх игры только после включения",
+                     fontSize = 11.sp,
+                     color = Color(0xFF8FA3B0)
+                 )
+             }
+-            Switch(
+-                checked = keepOn,
+-                onCheckedChange = {
+-                    keepOn = it
+-                    settings.keepScreenOn = it
++            Spacer(Modifier.width(8.dp))
++            if (on) {
++                Button(
++                    enabled = !busy,
++                    onClick = onStopHud,
++                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7A2E2E))
++                ) { Text("Выключить", fontSize = 12.sp) }
++            } else {
++                Button(enabled = !busy && overlayGranted, onClick = onStartHud) {
++                    Text("Включить", fontSize = 12.sp)
+                 }
++            }
++        }
++        if (!overlayGranted) {
++            Spacer(Modifier.height(6.dp))
++            Text(
++                "Нужно разрешение «Отображение поверх других приложений» — без него оверлей " +
++                    "не появится.",
++                fontSize = 11.sp,
++                color = Color(0xFFF2C14E)
+             )
++            OutlinedButton(onClick = onGrantOverlay) { Text("Выдать", fontSize = 12.sp) }
++        }
++        if (on) {
++            Spacer(Modifier.height(8.dp))
++            Text("Режим: ${modeLabel(mode)}", fontSize = 12.sp)
++            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                for (m in Settings.OverlayMode.entries) {
++                    OutlinedButton(onClick = {
++                        mode = m
++                        settings.overlayMode = m
++                    }) { Text(modeLabel(m), fontSize = 12.sp) }
++                }
++            }
++            Spacer(Modifier.height(6.dp))
++            Text("Частота замеров: ${interval / 1000} с", fontSize = 12.sp)
++            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                for (ms in listOf(1000, 2000, 3000, 5000)) {
++                    OutlinedButton(onClick = {
++                        interval = ms
++                        settings.sampleIntervalMs = ms
++                    }) { Text("${ms / 1000} с", fontSize = 12.sp) }
++                }
++            }
++            Text(
++                "Чаще опрашивать бессмысленно: пробуждения сами отнимают кадры у игры.",
++                fontSize = 11.sp,
++                color = Color(0xFF8FA3B0)
++            )
++            Spacer(Modifier.height(4.dp))
++            Text("Прозрачность: ${"%.0f".format(alpha * 100)}%", fontSize = 12.sp)
++            Slider(
++                value = alpha,
++                onValueChange = { alpha = it },
++                onValueChangeFinished = { settings.opacity = alpha },
++                valueRange = 0.2f..1f
++            )
++            Row(verticalAlignment = Alignment.CenterVertically) {
++                Column(Modifier.weight(1f)) {
++                    Text("Запускать оверлей после перезагрузки", fontSize = 13.sp)
++                    Text(
++                        if (state.ignorBatteryOptimizations)
++                            "Система разрешает фоновую работу — автозапуск сработает"
++                        else
++                            "Без разрешения на выгрузку в фоне автозапуск может не разрешиться",
++                        fontSize = 11.sp,
++                        color = Color(0xFF8FA3B0)
++                    )
++                }
++                Switch(checked = boot, onCheckedChange = {
++                    boot = it
++                    onStartOnBoot(it)
++                })
++            }
+         }
+-        Spacer(Modifier.height(4.dp))
+-        Text(
+-            "Оверлей можно перетащить мышью/пальцем. Короткое нажатие меняет режим, " +
+-                "долгое открывает эту панель.",
+-            fontSize = 11.sp,
+-            color = Color(0xFF8FA3B0)
+-        )
+     }
+ }
+ 
+@@ -566,11 +705,173 @@ private fun modeLabel(m: Settings.OverlayMode) = when (m) {
+     Settings.OverlayMode.FULL -> "Полный"
+ }
+ 
++@Composable
++private fun DiagnosticsCard(
++    open: Boolean,
++    snap: com.sj0404.snapboost.core.Snapshot,
++    findings: List<Diagnoser.Finding>,
++    running: Boolean,
++    usageAccess: Boolean,
++    onToggle: () -> Unit
++) {
++    darkCard {
++        Row(verticalAlignment = Alignment.CenterVertically) {
++            Column(Modifier.weight(1f)) {
++                Text("Диагностика", fontWeight = FontWeight.Bold)
++                Text(
++                    if (running) "Сервис измерений запущен" else "Сервис измерений остановлен",
++                    fontSize = 12.sp,
++                    color = Color(0xFFC8D4DC)
++                )
++                Text(
++                    "Живые метрики и разбор причин. Реальный FPS, jank и счётчик underrun " +
++                        "закрыты android.permission.DUMP и показываются как N/A — это ожидаемо.",
++                    fontSize = 11.sp,
++                    color = Color(0xFF8FA3B0)
++                )
++            }
++            Spacer(Modifier.width(8.dp))
++            OutlinedButton(onClick = onToggle) {
++                Text(if (open) "Скрыть" else "Показать", fontSize = 12.sp)
++            }
++        }
++        if (open) {
++            Spacer(Modifier.height(8.dp))
++            if (!usageAccess) {
++                Text(
++                    "Без «Доступа к использованию» игра не определяется, но частоты, температуры " +
++                        "и PSI всё равно читаются.",
++                    fontSize = 11.sp,
++                    color = Color(0xFFF2C14E)
++                )
++                Spacer(Modifier.height(4.dp))
++            }
++            MetricsBlock(snap)
++            Spacer(Modifier.height(8.dp))
++            if (findings.isEmpty()) {
++                Text("Данных пока недостаточно — включите оверлей и запустите игру.", fontSize = 12.sp)
++            }
++            findings.forEach { f ->
++                val color = when (f.severity) {
++                    Diagnoser.Severity.CRITICAL -> Color(0xFFF16A5A)
++                    Diagnoser.Severity.WARN -> Color(0xFFF2C14E)
++                    Diagnoser.Severity.INFO -> Color(0xFF8FA3B0)
++                }
++                Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
++                    Text(f.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = color)
++                    Text(f.detail, fontSize = 11.sp, color = Color(0xFFC8D4DC))
++                    f.action?.let { action ->
++                        Text(
++                            "Что можно сделать: ${actionHint(action)}",
++                            fontSize = 11.sp,
++                            color = Color(0xFF7BE495)
++                        )
++                    }
++                }
++            }
++        }
++    }
++}
++
++private fun actionHint(a: Diagnoser.Action): String = when (a) {
++    Diagnoser.Action.DISABLE_BT, Diagnoser.Action.WIRED_AUDIO -> "выключить Bluetooth в тюнере"
++    Diagnoser.Action.SILENCE_NOTIFICATIONS -> "включить «Не беспокоить»"
++    Diagnoser.Action.KILL_BACKGROUND -> "освободить фоновые процессы"
++    Diagnoser.Action.COOL_DOWN -> "приглушить экран, снять чехол, отключить зарядку"
++    Diagnoser.Action.OPEN_AUDIO_SETTINGS -> "отключить объёмный звук в настройках звука"
++    Diagnoser.Action.OPEN_DISPLAY_SETTINGS -> "проверить настройки экрана"
++}
++
++@Composable
++private fun MetricsBlock(s: Snapshot) {
++    Column(Modifier.fillMaxWidth()) {
++        Row {
++            Metric("FPS", metric(s.fps.valid && s.fps.fps != null) { "%.0f".format(s.fps.fps) }, s.fps.valid)
++            Spacer(Modifier.width(18.dp))
++            Metric("Jank", s.fps.jankPct?.let { "$it%" } ?: "N/A")
++            Spacer(Modifier.width(18.dp))
++            Metric("Дисплей", s.fps.displayHz?.let { "$it Гц" } ?: "N/A")
++        }
++        Row {
++            Metric("CPU", s.cpu.curMhz?.let { "$it МГц" } ?: "N/A")
++            Spacer(Modifier.width(18.dp))
++            Metric(
++                "Троттлинг",
++                when (s.cpu.throttled) {
++                    true -> "ДА"
++                    false -> "нет"
++                    null -> "N/A"
++                }
++            )
++            Spacer(Modifier.width(18.dp))
++            Metric("GPU", s.gpu.busyPct?.let { "$it%" } ?: "N/A")
++        }
++        Row {
++            Metric("Темп.", s.thermal.hottest?.let { "%.1f °C".format(it) } ?: "N/A")
++            Spacer(Modifier.width(18.dp))
++            Metric("Простои CPU", s.pressure.cpuSomeAvg10?.let { "%.0f%%".format(it) } ?: "N/A")
++            Spacer(Modifier.width(18.dp))
++            Metric("Выход", s.audio.routeName)
++        }
++    }
++}
++
++@Composable
++private fun Metric(
++    label: String,
++    value: String,
++    valid: Boolean = true,
++    color: Color = if (valid) Color(0xFFE8EEF2) else Color(0xFF8FA3B0)
++) {
++    Column(Modifier.padding(vertical = 3.dp)) {
++        Text(label, fontSize = 11.sp, color = Color(0xFF8FA3B0))
++        Text(value, fontSize = 14.sp, fontFamily = FontFamily.Monospace, color = color)
++    }
++}
++
++private inline fun metric(valid: Boolean, block: () -> String): String = if (valid) block() else "N/A"
++
++@Composable
++private fun InfoRow(label: String, value: String, valueColor: Color) {
++    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
++        Text(label, fontSize = 12.sp, color = Color(0xFF8FA3B0), modifier = Modifier.width(120.dp))
++        Text(value, fontSize = 12.sp, color = valueColor)
++    }
++}
++
++/**
++ * Тумблер с честным состоянием. Если систему нельзя изменить (нет доступа,
++ * эффект недоступен), переключатель не просто гаснет, а подписан причиной:
++ * иначе человек решит, что настройка уже применена.
++ */
++@Composable
++private fun ToggleRow(
++    title: String,
++    subtitle: String,
++    checked: Boolean,
++    enabled: Boolean,
++    danger: Boolean = false,
++    onChange: (Boolean) -> Unit
++) {
++    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
++        Column(Modifier.weight(1f)) {
++            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium)
++            Text(
++                subtitle,
++                fontSize = 11.sp,
++                color = if (!enabled) Color(0xFF8FA3B0) else if (danger) Color(0xFFF16A5A) else Color(0xFFC8D4DC)
++            )
++        }
++        Spacer(Modifier.width(8.dp))
++        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
++    }
++}
++
+ @Composable
+ private fun ProbeCard(r: AudioProbe.Result) {
+     Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF101820))) {
+         Column(Modifier.padding(14.dp)) {
+-            Text("Результат самотеста", fontWeight = FontWeight.Bold)
++            Text("Самотест аудиобуфера", fontWeight = FontWeight.Bold)
+             Text(
+                 "${r.sampleRate} Гц · буфер ${r.bufferBytes} Б (${"%.1f".format(r.bufferMs)} мс) · " +
+                     "минимум в буфере ${r.minInFlightFrames} из ${r.bufferFrames} кадров",
+@@ -587,13 +888,17 @@ private fun ProbeCard(r: AudioProbe.Result) {
+ }
+ 
+ @Composable
+-private fun OutcomeCard(o: SoundFixer.Outcome) {
++private fun OutcomeCard(o: AudioTuner.Outcome) {
+     Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF101820))) {
+         Column(Modifier.padding(14.dp)) {
+             Text(
+                 o.title,
+                 fontWeight = FontWeight.Bold,
+-                color = if (o.ok) Color(0xFF7BE495) else Color(0xFFF2C14E)
++                color = when {
++                    o.ok -> Color(0xFF7BE495)
++                    o.manual -> Color(0xFFF2C14E)
++                    else -> Color(0xFFF16A5A)
++                }
+             )
+             Text(o.detail, fontSize = 12.sp)
+         }
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index a8f96b1..e1870a9 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -5,7 +5,6 @@ coreKtx = "1.15.0"
+ lifecycle = "2.8.7"
+ activityCompose = "1.9.3"
+ composeBom = "2024.12.01"
+-shizuku = "13.1.5"
+ coroutines = "1.9.0"
+ junit = "4.13.2"
+ 
+@@ -20,7 +19,6 @@ androidx-ui = { group = "androidx.compose.ui", name = "ui" }
+ androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+ androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+ androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
+-shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
+ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+ junit = { group = "junit", name = "junit", version.ref = "junit" }
+ 
