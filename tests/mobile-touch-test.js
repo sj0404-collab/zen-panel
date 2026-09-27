@@ -639,7 +639,7 @@ check('q80 terminal virtual mouse', [mob, desk, term].every(x =>
   /fireWheel\(dy\s*\*\s*7\)/.test(x) &&
   /scrollStep\(tapUp\s*\?\s*'up'\s*:\s*'down'\)/.test(x)) &&
   [mobHtml, deskHtml, fs.readFileSync(termHtmlPath, 'utf8')].every(x =>
-    x.includes('.term-mouse-pad{') && x.includes('left:8px;top:8px') &&
+    x.includes('.term-mouse-pad{') && x.includes('right:8px;top:8px;left:auto') &&
     !x.includes('left:6px;top:50%')));
 
 // q81: the session relay end to end. The runner must SAVE FIRST and only then
