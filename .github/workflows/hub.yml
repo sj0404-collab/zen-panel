@@ -64,6 +64,14 @@ on:
         description: "runId of the runner that handed the session over"
         type: string
         default: ""
+      rescue_ssh:
+        description: "tmate rescue shell published to session-state control/rescue.json (lifeline when the hub+web die)"
+        type: boolean
+        default: true
+      command_queue:
+        description: "safe command queue on session-state control/queue.json (whitelisted ops only)"
+        type: boolean
+        default: true
 
 concurrency:
   group: zen-panel-session-${{ github.repository }}
@@ -271,6 +279,22 @@ jobs:
           nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" WORK_BACKUP_ROOT="$HOME" WORK_BACKUP_INTERVAL=300 bash "$GITHUB_WORKSPACE/fork/tools/backup-work.sh" >> "$HUB_LOGS/work-backup.log" 2>&1 &
           echo $! > "$HUB_LOGS/work-backup.pid"
           echo "work-backup daemon: HOME snapshot every 300s -> work-backup branch"
+          # Rescue channels (they outlive the hub web stack): a tmate SSH/web
+          # shell and a whitelisted command queue on the session-state branch -
+          # so a runner with a dead hub and a dead tunnel stays steerable from
+          # GitHub alone instead of being a closed box until the 6h cap.
+          if [ "${{ inputs.rescue_ssh }}" = "true" ]; then
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              nohup bash "$GITHUB_WORKSPACE/fork/tools/rescue_ssh.sh" >> "$HUB_LOGS/rescue-ssh.log" 2>&1 &
+            echo $! > "$HUB_LOGS/rescue-ssh.pid"
+            echo "rescue ssh daemon: tmate shell published -> control/rescue.json"
+          fi
+          if [ "${{ inputs.command_queue }}" = "true" ]; then
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              nohup bash "$GITHUB_WORKSPACE/fork/tools/hub_control.sh" >> "$HUB_LOGS/hub-control.log" 2>&1 &
+            echo $! > "$HUB_LOGS/hub-control.pid"
+            echo "control daemon: commands from control/queue.json: ping, backup-now, restart-hub, restart-tunnel, handoff-save"
+          fi
 
           URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 $HUB_LOGS/tunnel.log)
           if [ -z "$URL" ]; then
@@ -352,6 +376,11 @@ jobs:
             # patterns: a plain one matches this shell's own command line.
             pkill -f "[s]napshot-audit-code.sh" 2>/dev/null || true
             pkill -f "[b]ackup-work.sh" 2>/dev/null || true
+            # The rescue daemons below are detached background loops too - same
+            # "Complete job" hang trap, same bracket-pattern kill.
+            pkill -f "[h]ub_control.sh" 2>/dev/null || true
+            pkill -f "[r]escue_ssh.sh" 2>/dev/null || true
+            tmate -S "$HUB_LOGS/tmate.sock" kill-session >/dev/null 2>&1 || true
             if [ -n "${HUB_PID:-}" ]; then kill "$HUB_PID" 2>/dev/null || true; fi
             if [ -f "$PIDFILE" ]; then
               local pid; pid="$(tr -dc '0-9' < "$PIDFILE" 2>/dev/null || true)"
