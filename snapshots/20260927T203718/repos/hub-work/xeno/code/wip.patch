@@ -1,0 +1,315 @@
+diff --git a/android/armsx3-ui/app/src/main/java/com/xeno/data/library/GameLibraryRepository.kt b/android/armsx3-ui/app/src/main/java/com/xeno/data/library/GameLibraryRepository.kt
+index a68cca8..3137f5d 100644
+--- a/android/armsx3-ui/app/src/main/java/com/xeno/data/library/GameLibraryRepository.kt
++++ b/android/armsx3-ui/app/src/main/java/com/xeno/data/library/GameLibraryRepository.kt
+@@ -416,31 +416,120 @@ class GameLibraryRepository(private val context: Context) {
+      *     RPCS3's own games directory holds, and the shape prototypes that never
+      *     got a retail master ship in.
+      *
++     * Having the shape is NOT enough to be listed. A folder qualifies only if the
++     * emulator can actually boot it -- see [isBootableTitle] -- which is what keeps
++     * the library free of the folders that merely LOOK like titles.
++     *
+      * Case-insensitive: these come off FAT/exFAT cards and out of archives, so
+      * "PS3_GAME" is as likely to be "ps3_game".
+      */
+     private fun isPs3GameFolder(directory: File): Boolean {
+-        fun child(vararg path: String): File? {
+-            var current: File = directory
+-            for (segment in path) {
+-                current = current.listFiles()
+-                    ?.firstOrNull { it.name.equals(segment, ignoreCase = true) }
+-                    ?: return null
+-            }
+-            return current
++        val sfo = child(directory, "PS3_GAME", "PARAM.SFO")?.takeIf { it.isFile }
++            ?: child(directory, "PARAM.SFO")?.takeIf { it.isFile }
++
++        // A disc rip whose SFO is missing or unreadable: the PS3_DISC.SFB marker is all that is
++        // left to go on, so the EBOOT is the only thing here that can still be checked.
++        if (sfo == null) {
++            if (child(directory, "PS3_DISC.SFB")?.isFile != true) return false
++            return hasBootableEboot(directory)
+         }
+-        if (child("PS3_GAME", "PARAM.SFO")?.isFile == true) return true
+-        if (child("PS3_DISC.SFB")?.isFile == true) return true
+-        val sfo = child("PARAM.SFO")?.takeIf { it.isFile } ?: return false
+-        if (child("USRDIR")?.isDirectory != true) return false
++
+         // A game data install has this exact shape too, a PARAM.SFO next to USRDIR, so the
+         // layout alone cannot tell it apart from an HDD game. It holds no EBOOT, so listing it
+         // gave every title that installs data a second tile that cannot boot (Skate 3's 1.1 GB
+         // BLUS30464_INSTALL, sitting next to the disc it belongs to). CATEGORY is what
+         // separates them: GD is data, HG and DG are games. The native scanner already rejects
+         // these because fetchGameInfo requires BOOTABLE and game data does not set it. This
+-        // applies the same rule to the folder path, which never opens the SFO at all.
+-        return sfoCategory(sfo) != "GD"
++        // applies the same rule to the folder path, which never opened the SFO at all.
++        if (sfoCategory(sfo) == "GD") return false
++
++        // The payload check is left entirely to [hasBootableEboot], which mirrors the core.
++        // Asking for USRDIR here as well used to be a second, stricter rule that hid games the
++        // emulator boots perfectly well -- locateEbootPath also accepts an EBOOT.BIN sitting
++        // beside the SFO -- so the two answers could disagree about the same folder.
++        return isBootableTitle(directory, sfo)
++    }
++
++    /**
++     * True when the emulator can boot this folder, which is the bar for listing it.
++     *
++     * The folder tests above only asked whether a title's SHAPE was on disk. That accepts a
++     * lot of folders which are not games the user can play, and every one of them is a tile
++     * that fails on tap: _rpcsx_boot resolves a directory to its EBOOT (locateEbootPath) and,
++     * finding none, hands the bare directory to Emu.BootGame, which answers
++     * invalid_file_or_folder. So the two symptoms are the same bug -- junk in the list, and
++     * "Game failed to start: InvalidFileOrFolder" on the entries that got there.
++     *
++     * A user's shared folder holds whole trees of this: the app's own emulator directory with
++     * a dev_hdd0 full of homebrew (Cheat Engine's CEFramework / CEHtmlApi / CEHtmlUI / CEPhWeb
++     * are four separate PS3 titles, not four games), the log directory, PS1 ROM sets, and every
++     * other app's leftovers -- all sitting in the same folder as the real disc images.
++     *
++     * The bar is deliberately the same one the core already applies in fetchGameInfo
++     * (rpcsx-android.cpp): BOOTABLE set, a TITLE_ID, and an EBOOT the core can open. Listing
++     * less than the core can boot is the failure that costs the user the most time, because a
++     * tile that cannot boot looks like a broken emulator rather than a folder that was never
++     * a game.
++     *
++     * An SFO that cannot be read proves nothing, so a parse failure falls back to the old
++     * structural answer instead of hiding a real game over a truncated PARAM.SFO.
++     */
++    private fun isBootableTitle(directory: File, sfo: File): Boolean {
++        if (!hasBootableEboot(directory)) {
++            android.util.Log.i(
++                ScanTag,
++                "  '${directory.name}': not listed, no EBOOT.BIN/ISO.BIN.EDAT (tried ${EBOOT_PATHS.joinToString()})",
++            )
++            return false
++        }
++        val titleId = ParamSfo.string(sfo, "TITLE_ID")
++        val bootable = ParamSfo.int(sfo, "BOOTABLE")
++        // Unreadable SFO: keep the structural answer rather than hide a real game.
++        if (titleId == null && bootable == null) {
++            android.util.Log.w(
++                ScanTag,
++                "  '${directory.name}': PARAM.SFO unparseable, accepting on structure alone",
++            )
++            return true
++        }
++        if (titleId.isNullOrBlank()) {
++            android.util.Log.i(ScanTag, "  '${directory.name}': not listed, PARAM.SFO has no TITLE_ID")
++            return false
++        }
++        if (bootable == 0) {
++            android.util.Log.i(
++                ScanTag,
++                "  '${directory.name}': not listed, PARAM.SFO BOOTABLE=0 (title $titleId)",
++            )
++            return false
++        }
++        return true
++    }
++
++    /**
++     * The EBOOT the core would boot this folder through, in the order it looks for them.
++     *
++     * Must stay in step with locateEbootPath in android/src/rpcsx-android.cpp: a folder the
++     * scanner accepts but the core cannot resolve is exactly the tile that fails to start.
++     */
++    private fun hasBootableEboot(directory: File): Boolean =
++        EBOOT_PATHS.any { path -> child(directory, *path.split('/').toTypedArray())?.isFile == true }
++
++    /**
++     * Case-insensitive path lookup inside a directory, or null when any segment is missing.
++     *
++     * One [File.listFiles] per segment rather than a constructed [File] probe, because these
++     * names come off FAT/exFAT cards where the real casing is arbitrary.
++     */
++    private fun child(directory: File, vararg path: String): File? {
++        var current = directory
++        for (segment in path) {
++            current = runCatching { current.listFiles() }
++                .getOrNull()
++                ?.firstOrNull { it.name.equals(segment, ignoreCase = true) }
++                ?: return null
++        }
++        return current
+     }
+ 
+     /**
+@@ -455,12 +544,31 @@ class GameLibraryRepository(private val context: Context) {
+     private fun isPs3GameDocument(directory: DocumentFile): Boolean {
+         val children = runCatching { directory.listFiles() }.getOrNull() ?: return false
+         fun find(name: String) = children.firstOrNull { it.name.equals(name, ignoreCase = true) }
+-        if (find("PS3_DISC.SFB")?.isFile == true) return true
+-        find("PS3_GAME")?.takeIf { it.isDirectory }?.let { gameDir ->
+-            val inner = runCatching { gameDir.listFiles() }.getOrNull().orEmpty()
+-            if (inner.any { it.isFile && it.name.equals("PARAM.SFO", ignoreCase = true) }) return true
++
++        // The same bar as the raw scan, reduced to what a document tree can answer: an EBOOT the
++        // core could actually open. BOOTABLE and TITLE_ID are not read here -- a SAF listing has
++        // no path to open the SFO with, and the raw scan is the one that runs whenever all-files
++        // access is granted, which the emulator needs at boot anyway.
++        fun hasEboot(levels: List<DocumentFile>, segments: List<String>): Boolean {
++            val matches = levels.filter { it.name.equals(segments.first(), ignoreCase = true) }
++            if (segments.size == 1) return matches.any { it.isFile }
++            return matches.filter { it.isDirectory }.any { dir ->
++                hasEboot(runCatching { dir.listFiles() }.getOrNull().orEmpty(), segments.drop(1))
++            }
+         }
+-        return find("PARAM.SFO")?.isFile == true && find("USRDIR")?.isDirectory == true
++        fun hasBootableEboot() = EBOOT_PATHS.any { hasEboot(children, it.split('/')) }
++
++        if (find("PS3_DISC.SFB")?.isFile == true) return true
++        // Same shape test as the raw scan, in the same order, so a folder is not listed by one
++        // path and hidden by the other. CATEGORY and BOOTABLE are deliberately not read: a
++        // document tree has no path to open the SFO with, and the raw scan is the one that runs
++        // whenever all-files access is granted, which the emulator needs at boot anyway.
++        val sfo = find("PS3_GAME")?.takeIf { it.isDirectory }?.let { gameDir ->
++            runCatching { gameDir.listFiles() }.getOrNull().orEmpty()
++                .firstOrNull { it.isFile && it.name.equals("PARAM.SFO", ignoreCase = true) }
++        } ?: find("PARAM.SFO")?.takeIf { it.isFile }
++        if (sfo == null) return false
++        return hasBootableEboot()
+     }
+ 
+     /**
+@@ -784,11 +892,26 @@ class GameLibraryRepository(private val context: Context) {
+          *      extract a NEW field here, it changes the VALUE of one it already stored, which
+          *      has the same staleness signature: without a bump an existing install keeps
+          *      serving the cached hyphenated ids and never rescans, so the repair never
+-         *      reaches the libraries that need it. */
++         *      reaches the libraries that need it.
++         *  v9: folder games must be BOOTABLE and expose an EBOOT. Drops the non-game folders
++         *      that only had a title's shape, and with them the tiles that could only ever fail
++         *      with InvalidFileOrFolder. Bumped for the same reason: an existing cache still
++         *      lists them and would never rescan otherwise, so the fix would reach nobody. */
+         /** PS3 disc ids are B***, PSN ids N***, both four letters and five digits. */
+         val ps3SerialRegex = Regex("^[BN][A-Z]{3}[0-9]{5}$")
+ 
+-        const val ScanSchemaVersion = 8
++        /**
++         * Where a game folder keeps the EBOOT the core boots it through, in lookup order.
++         * Mirrors locateEbootPath() in android/src/rpcsx-android.cpp.
++         */
++        val EBOOT_PATHS = listOf(
++            "EBOOT.BIN",
++            "USRDIR/EBOOT.BIN",
++            "USRDIR/ISO.BIN.EDAT",
++            "PS3_GAME/USRDIR/EBOOT.BIN",
++        )
++
++        const val ScanSchemaVersion = 9
+         const val ScanTag = "XENO-Scan"
+         /** Staging name for an extracted icon, renamed once the title ID is known. */
+         const val PendingIcon = "__pending"
+@@ -813,7 +936,41 @@ internal object ParamSfo {
+     fun string(sfo: File, key: String): String? =
+         runCatching { string(sfo.readBytes(), key) }.getOrNull()
+ 
++    fun int(sfo: File, key: String): Int? =
++        runCatching { int(sfo.readBytes(), key) }.getOrNull()
++
+     fun string(bytes: ByteArray, key: String): String? {
++        val entry = entry(bytes, key) ?: return null
++        // Values are UTF-8 and padded with NULs to their declared maximum length.
++        return String(bytes, entry.offset, entry.length, Charsets.UTF_8).trimEnd('\u0000', ' ')
++    }
++
++    /**
++     * A PARAM.SFO integer (BOOTABLE, VERSION, ...), stored as a little-endian int32.
++     *
++     * Added beside [string] rather than as a second parser because the 16-byte index
++     * entry layout -- two u16 offsets, a u16 format, a u32 length and a u32 data offset
++     * -- is the part that is easy to get subtly wrong, and the scanner now has to read
++     * both a string and an integer out of the same file to decide what a folder is.
++     */
++    fun int(bytes: ByteArray, key: String): Int? {
++        val entry = entry(bytes, key) ?: return null
++        if (entry.length < 4) return null
++        return java.nio.ByteBuffer.wrap(bytes, entry.offset, 4)
++            .order(java.nio.ByteOrder.LITTLE_ENDIAN).int
++    }
++
++    private class Entry(val offset: Int, val length: Int)
++
++    /**
++     * The byte range a key's value occupies, or null when the file is not a PARAM.SFO
++     * or has no such key.
++     *
++     * Every failure answers null rather than throwing, for the reason documented on
++     * the object: a truncated or hand-edited SFO must never take a caller down, because
++     * the callers use the answer to decide whether to LIST a game.
++     */
++    private fun entry(bytes: ByteArray, key: String): Entry? {
+         val buffer = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+         // "\0PSF", then key-table start, data-table start, entry count.
+         if (bytes.size < 20 || buffer.getInt(0) != 0x46535000) return null
+@@ -830,8 +987,7 @@ internal object ParamSfo {
+             val dataStart = dataTable + buffer.getInt(entry + 12)
+             val dataLength = buffer.getInt(entry + 4)
+             if (dataStart < 0 || dataLength < 0 || dataStart + dataLength > bytes.size) break
+-            // Values are UTF-8 and padded with NULs to their declared maximum length.
+-            return String(bytes, dataStart, dataLength, Charsets.UTF_8).trimEnd('\u0000', ' ')
++            return Entry(dataStart, dataLength)
+         }
+         return null
+     }
+diff --git a/android/armsx3-ui/app/src/main/java/com/xeno/runtime/MainActivityRuntime.kt b/android/armsx3-ui/app/src/main/java/com/xeno/runtime/MainActivityRuntime.kt
+index 8980445..19b6168 100644
+--- a/android/armsx3-ui/app/src/main/java/com/xeno/runtime/MainActivityRuntime.kt
++++ b/android/armsx3-ui/app/src/main/java/com/xeno/runtime/MainActivityRuntime.kt
+@@ -724,9 +724,26 @@ open class MainActivityRuntime : ComponentActivity() {
+                         // (HomeViewModel.launch), so reaching here means the lock state was
+                         // stale — a licence deleted outside the app, say. Point at the per-game
+                         // action that fixes it, which a rescan will also surface as a badge.
+-                        val hint = if (reason == "DecryptionError")
+-                            " — it needs a .rap licence. Long-press the game and choose Install licence."
+-                        else ""
++                        val hint = when (reason) {
++                            "DecryptionError" ->
++                                " — it needs a .rap licence. Long-press the game and choose Install licence."
++                            // Three very different causes, one opaque answer, and the folder
++                            // case used to be invisible in the log entirely. Say which one it
++                            // is: the fix is a permissions toggle, a different file, or nothing
++                            // at all (a folder that is not a title), and the user cannot tell
++                            // them apart from "InvalidFileOrFolder".
++                            "InvalidFileOrFolder" -> when {
++                                m_szGamefile.isEmpty() -> " — no game was selected."
++                                File(m_szGamefile).isDirectory ->
++                                    " — this folder has no EBOOT.BIN inside it, so it is not a " +
++                                    "game the emulator can boot."
++                                !File(m_szGamefile).canRead() ->
++                                    " — the file cannot be read. Grant All files access, or move " +
++                                    "the game into the games directory."
++                                else -> " — the file could not be read as a disc."
++                            }
++                            else -> ""
++                        }
+                         instance?.let { act ->
+                             act.runOnUiThread {
+                                 android.widget.Toast.makeText(
+diff --git a/android/src/rpcsx-android.cpp b/android/src/rpcsx-android.cpp
+index dc7b22d..a3fdfad 100644
+--- a/android/src/rpcsx-android.cpp
++++ b/android/src/rpcsx-android.cpp
+@@ -3635,6 +3635,19 @@ extern "C" int _rpcsx_boot(std::string_view path_) {
+     if (auto eboot = locateEbootPath(path); !eboot.empty() && fs::is_file(eboot)) {
+       rpcsx_android.notice("boot: resolved directory '%s' to '%s'", path, eboot);
+       path = eboot;
++    } else {
++      // Previously silent. A directory with no EBOOT is a folder that only had a title's
++      // SHAPE -- which used to be enough for the library to list it, so this was the path
++      // behind every "Game failed to start: InvalidFileOrFolder" on a folder tile: the
++      // fallback below hands BootGame a directory, which answers invalid_file_or_folder
++      // with nothing to say why. Name the folder and the files that were looked for, so
++      // the next report can be acted on instead of re-derived.
++      rpcsx_android.error(
++          "boot: '%s' is a directory with no bootable EBOOT. Tried EBOOT.BIN, USRDIR/EBOOT.BIN, "
++          "USRDIR/ISO.BIN.EDAT and PS3_GAME/USRDIR/EBOOT.BIN. A folder is only a game if it has one "
++          "of those; this one is not a title the emulator can boot, and BootGame below will "
++          "reject the bare directory.",
++          path);
+     }
+   }
+ 
