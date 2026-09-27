@@ -990,7 +990,12 @@ async function openSlot(slot, btn) {
     const zt = lastOriginToken().zt;
     location.href = zt ? (base + (base.includes('?') ? '&' : '?') + 'zt=' + encodeURIComponent(zt)) : base;
   } catch (e) {
-    const msg = (e && e.message) || String(e);
+    let msg = (e && e.message) || String(e);
+    // Голое «Failed to fetch» ни о чём не говорит: обычно это мёртвый туннель
+    // от прошлого запуска, поэтому подсказываем живые кнопки.
+    if (/failed to fetch|networkerror|load failed|err_internet|err_connection/i.test(msg)) {
+      msg = 'Адрес не отвечает — адрес прошлого запуска уже мёртв. Если хаб жив — «Запустить хаб» подберёт доступ, иначе жми «Остановить и перезапустить ранер».';
+    }
     log('Открыть не вышло: ' + msg, 'err');
     progStart('Не открывается', { cancellable: false });
     progFinish(false, msg);
