@@ -11,12 +11,12 @@ document.addEventListener('DOMContentLoaded', init);
 
 window.addEventListener('orientationchange', () => {
   setTimeout(() => {
-    if (activeTab) activeTab.fitAddon?.fit();
-    tabs.forEach(t => t.fitAddon?.fit());
+    if (activeTab) fitTerm(activeTab);
+    tabs.forEach(fitTerm);
   }, 300);
 });
 window.addEventListener('resize', () => {
-  if (activeTab) activeTab.fitAddon?.fit();
+  if (activeTab) fitTerm(activeTab);
 });
 
 // Мгновенный переподъём вкладок после фонизации / потери сети.
@@ -1549,7 +1549,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
   document.getElementById('term-container').appendChild(panel);
 
   term.open(termEl);
-  fitAddon.fit();
+  fitTerm(tab);
   tab.scroll = attachTermScroll(id, panel, term);
   tab.touchHandler = setupTermTouch(termEl, term);
 
@@ -1573,6 +1573,7 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
       tab.retry = 0;
       tab.disconnected = false;
       hideCountdown(id);
+      if (activeTab?.id === id) fitTerm(tab);
       socket.send(JSON.stringify({ type: 'open', toolId: isPlain ? '_terminal' : effectiveToolId, sessionId: id, cwd,
         repoPath: (resume && resume.repoPath) || null, emulator: (resume && resume.emulator) || null,
         phoneRunner: (resume && resume.phoneRunner) || null, cols: term.cols, rows: term.rows }));
@@ -1652,10 +1653,14 @@ document.addEventListener('visibilitychange', () => {
   });
 
   term.onResize(({ cols, rows }) => {
+    // Дегенеративный размер (fit нулевой/скрытой ширины) в tmux не шлём:
+    // раньше он реально сужал сессию до узкой щели, которая так в ней
+    // и оставалась после восстановления связи.
+    if (cols < 20 || rows < 3) return;
     if (tab.socket && tab.socket.readyState === WebSocket.OPEN) tab.socket.send(JSON.stringify({ type: 'resize', cols, rows }));
   });
 
-  tab.resizeObs = new ResizeObserver(() => { if (activeTab?.id === id) fitAddon.fit(); });
+  tab.resizeObs = new ResizeObserver(() => { if (activeTab?.id === id) fitTerm(tab); });
   tab.resizeObs.observe(panel);
 
   switchTab(id);
@@ -1671,6 +1676,13 @@ function renderTabs() {
   `).join('') + `<div class="tab-add" onclick="showNewTermModal()">+</div>`;
 }
 
+function fitTerm(tab) {
+  if (!tab || !tab.fitAddon || !tab.term) return;
+  const panel = document.getElementById('panel-' + tab.id);
+  if (panel && panel.offsetParent === null) return; // скрыта — fit сожмёт в щелочку
+  tab.fitAddon.fit();
+}
+
 function switchTab(id) {
   activeTab = tabs.find(t => t.id === id);
   document.querySelectorAll('.tab').forEach((el, i) => el.classList.toggle('on', tabs[i]?.id === id));
@@ -1678,7 +1690,7 @@ function switchTab(id) {
   const panel = document.getElementById('panel-' + id);
   if (panel) panel.classList.add('on');
   if (activeTab) setTimeout(() => {
-    activeTab.fitAddon?.fit();
+    fitTerm(activeTab);
     if (!isTouch) activeTab.term?.focus();
     activeTab.scroll?.upd?.();
   }, 50);
@@ -1731,14 +1743,14 @@ function zoomTerm(dir) {
   document.getElementById('zoom-label').textContent = zoomLevel + '%';
   tabs.forEach(t => {
     t.term.options.fontSize = Math.round(14 * zoomLevel / 100);
-    t.fitAddon?.fit();
+    fitTerm(t);
   });
 }
 
 function toggleFullscreen() {
   if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
   else document.exitFullscreen?.();
-  setTimeout(() => tabs.forEach(t => t.fitAddon?.fit()), 100);
+  setTimeout(() => tabs.forEach(fitTerm), 100);
 }
 
 function killTerm() {
