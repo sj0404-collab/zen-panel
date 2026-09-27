@@ -4236,26 +4236,43 @@ async function snapLoad(force) {
     note.textContent = 'Нет связи: ' + (e && e.message || e);
   }
 }
+function snapDay(s) { return s.replace(/^\d+$|\D/g, '').slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'); }
 function renderSnapList() {
   const list = document.getElementById('snap-list');
   if (!snapData.snapshots.length) { list.innerHTML = ''; return; }
-  list.innerHTML = snapData.snapshots.map(s => {
+  // По дням — всегда самый новый снапшот дня; внутри дня не показываем хвосты.
+  const byDay = new Map();
+  for (const s of snapData.snapshots) {
+    const d = snapDay(s.stamp);
+    if (!byDay.has(d)) byDay.set(d, s); // список уже по убыванию: первый = новейший
+  }
+  const shown = [...byDay.values()];
+  if (!snapData.snapshots.some(s => s.active)) snapSelected = ''; // отмечать нечего — честно
+  list.innerHTML = shown.map(s => {
     const sel = s.stamp === snapSelected;
-    const whole = s.repos.length > 0;
-    const mark = [s.stamp === snapData.recommended ? '⭐ последний целый' : '', whole ? '' : '⚠ репозиториев нет'].filter(Boolean).join(' · ');
-    const det = s.repos.map(r => '· ' + snapEsc(r.rel) + ' (' + r.kind + ', ' + snapMb(r.bytes) + ')').join('<br>');
+    const act = !!s.active;
+    const marks = [];
+    if (s.stamp === snapData.recommended) marks.push('<span style="color:var(--acc);font-weight:600">⭐ последний, где что-то делали</span>');
+    if (!act) marks.push('<span style="color:var(--warn,#e0a642);font-weight:600">⚠ ничего не делали (пусто)</span>');
+    const what = [];
+    if (s.repos.length) what.push('репо: ' + s.repos.map(r => snapEsc(r.rel) + ' (' + r.kind + ', ' + snapMb(r.bytes) + ')').join(' | '));
+    if (s.extrasMb > 0) what.push('дифы/новое: ' + s.extrasMb + ' МБ');
+    if (s.chats) what.push('чаты opencode: ' + s.chats);
+    if (s.settings) what.push('настройки opencode');
+    if (!what.length) what.push('только файлы/аудит');
     return `<label class="snap-row ${sel ? 'sel' : ''}" data-stamp="${snapEsc(s.stamp)}" onclick="snapPick('${snapEsc(s.stamp)}')">
       <input type="radio" name="snap" ${sel ? 'checked' : ''}>
       <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:700;color:var(--t1)">📅 ${snapEsc(s.stamp.replace('T', ' ').replace(/-/g, '/', 3))} ${mark ? `<span style="color:${whole ? 'var(--acc)' : 'var(--warn,#e0a642)'};font-weight:600">· ${mark}</span>` : ''}</div>
-        <div style="font-size:11px;color:var(--t3);margin-top:3px">${det || '<span style="color:var(--t3)">только файлы/аудит</span>'}</div>
+        <div style="font-size:12px;font-weight:700;color:var(--t1)">📅 ${snapEsc(snapDay(s.stamp))} · ${snapEsc(s.stamp.slice(-6).replace(/(\d{2})(\d{2})(\d{2})/, '$1:$2:$3'))}</div>
+        <div style="font-size:11px;margin-top:2px">${marks.join(' ')}</div>
+        <div style="font-size:11px;color:var(--t3);margin-top:3px">${what.join(' · ')}</div>
       </div>
       <div style="font-size:11px;color:var(--t3)">${s.totalMb} МБ</div>
     </label>`;
   }).join('');
   const btn = document.getElementById('snap-restore');
   const s = snapData.snapshots.find(x => x.stamp === snapSelected);
-  btn.disabled = !(s && s.repos.length);
+  btn.disabled = !(s && s.active);
 }
 function snapPick(stamp) {
   snapSelected = stamp;

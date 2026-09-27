@@ -141,8 +141,10 @@ check "newer run backup survives old runner" "$(grep -q 'newer-run-marker' "$TMP
 check "older run cannot overwrite backup" "$(! grep -q 'older-run-marker' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
 check "session descriptor restored" "$([ -f "$TMP/home/.npm-hub/sessions/npmhub-term_1.meta.json" ] && echo 1 || echo 0)"
 check "ignored file not restored" "$([ ! -f "$TMP/home/proj/build/out.o" ] && echo 1 || echo 0)"
-check "loose file restored" "$([ -f "$TMP/home/loose/note.txt" ] && echo 1 || echo 0)"
-check "chunked big file restored byte for byte" "$([ "$(sha256sum "$TMP/home/loose/big.bin" 2>/dev/null | cut -d' ' -f1)" = "$BIG_SHA" ] && echo 1 || echo 0)"
+# Loose $HOME files are out of the snapshot scope by design now (user rule:
+# only the repo folder + opencode sessions/settings ride the snapshot). The
+# old loose files stay absent after the restore.
+check "loose files out of scope (not restored)" "$([ ! -f "$TMP/home/loose/note.txt" ] && echo 1 || echo 0)"
 
 # A build product in the tree is not the user's work: the APK, the Gradle
 # build directories and the tool's own payload stay out of the snapshot, and
@@ -187,8 +189,14 @@ check "shallow repo ships an archive, not a bundle" "$(git --git-dir="$TMP/remot
 # files.tar.gz and a big repo.bundle outgrew GitHub's 100 MB blob limit, so the
 # whole snapshot was refused and the branch collected nothing but latest.json
 # for two days. Everything over WORK_BACKUP_MAX_BLOB_MB is now split into
-# blobs/<n>/part.NNN with a manifest, and restore glues it back.
-dd if=/dev/urandom of="$TMP/home/loose/blob.bin" bs=1M count=3 status=none
+# blobs/<n>/part.NNN with a manifest, and restore glues it back. Oversized
+# LOOSE files no longer ride the backup - the oversize scenario is exercised
+# with a tracked big file inside a repo, so the bundle itself needs splitting.
+dd if=/dev/urandom of="$TMP/home/proj/blob.bin" bs=1M count=3 status=none
+# After the rebuild test proj is a fresh bundle clone and has no local
+# user.name/email - set them again or this commit fails (suite caught it).
+git -C "$TMP/home/proj" config user.email t@t; git -C "$TMP/home/proj" config user.name t
+( cd "$TMP/home/proj" && git add blob.bin && git commit -qm 'oversized tracked blob' )
 sleep 1
 WORK_BACKUP_MAX_BLOB_MB=1 WORK_BACKUP_CHUNK_MB=1 GITHUB_RUN_ID=700 GITHUB_RUN_NUMBER=700000 WORK_BACKUP_KEEP=4 \
   bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
@@ -220,13 +228,17 @@ after_refuse="$(git --git-dir="$TMP/refuse.git" rev-parse --verify work-backup 2
 check "a refused publish is not reported as success" "$([ "$refuse_rc" -ne 0 ] && echo 1 || echo 0)"
 check "a refused publish leaves latest.json alone" "$([ "$before_refuse" = "$after_refuse" ] && echo 1 || echo 0)"
 
-# Wipe and rebuild: the split loose-file archive must come back byte for byte.
+# Wipe and rebuild: the repo whose bundle had to be split must come back with
+# its tracked big file byte for byte.
 cd /
 rm -rf "$TMP/home"; mkdir -p "$TMP/home"
 bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
 restore_rc=$?
 check "a complete restore exits cleanly" "$([ "$restore_rc" -eq 0 ] && echo 1 || echo 0)"
-check "split snapshot restored and rebuilt" "$([ -f "$TMP/home/loose/blob.bin" ] && echo 1 || echo 0)"
+SPLIT_REBUILT_BLOB="$(git -C "$TMP/home/proj" cat-file blob HEAD:blob.bin 2>/dev/null | head -c 4)"
+check "split snapshot restored and rebuilt" "$([ -d "$TMP/home/proj/.git" ] && [ -n "$SPLIT_REBUILT_BLOB" ] && echo 1 || echo 0)"
+SPLIT_REBUILT_SIZE="$(stat -c%s "$TMP/home/proj/blob.bin" 2>/dev/null || echo 0)"
+check "split blob restored whole on disk" "$([ "$SPLIT_REBUILT_SIZE" -ge 3145728 ] && echo 1 || echo 0)"
 check "shallow repo restored from its archive" "$([ -d "$TMP/home/shallow-code/.git" ] && echo 1 || echo 0)"
 check "shallow repo restored as a real repository" "$([ -n "$(git -C "$TMP/home/shallow-code" log --oneline -1 2>/dev/null)" ] && echo 1 || echo 0)"
 check "shallow repo committed content restored" "$(grep -q '^line 3$' "$TMP/home/shallow-code/history.txt" 2>/dev/null && echo 1 || echo 0)"
