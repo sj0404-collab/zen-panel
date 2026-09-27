@@ -293,6 +293,7 @@ function showPage(p) {
   }
   if (p === 'files') initFM();
   if (p === 'git') loadGit();
+  if (p === 'snapshots') initSnapshots();
   if (p === 'linux') { linuxStatus(); setTimeout(()=>{ try{ linuxConnect(); }catch{} }, 400); }
   document.body.classList.toggle('pg-linux', p === 'linux');
 }
@@ -4200,3 +4201,106 @@ _keepAliveInterval = setInterval(() => {
   });
   requestWake();
 })();
+
+// ===== SNAPSHOT TAB — выборочное восстановление локальных репозиториев =====
+// Вход в хаб не ждёт скачивание бэкапов; снапшот выбирается здесь, после входа.
+// Сервер читает только «дерево» ветки work-backup (список+размеры), поэтому
+// список открывается быстро даже если в ветке сотни мегабайт.
+let snapData = { snapshots: [], recommended: '' }, snapSelected = '', snapPoll = null;
+function snapEsc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function snapMb(n) { const v = Math.round((n || 0) / 104857.6) / 10; return v >= 1 ? (v + ' МБ') : ((Math.round((n || 0) / 1048.576)) + ' КБ'); }
+async function initSnapshots() {
+  // Висящий рестарт хаба не теряет уже работающее восстановление — подхватываем.
+  try {
+    const j = await fetch('/api/work-snapshots/restore/status').then(r => r.json());
+    if (j && j.running) { showSnapProgress(); pollSnap(); return; }
+  } catch (e) {}
+  if (!snapData.snapshots.length) snapLoad();
+}
+async function snapLoad(force) {
+  const note = document.getElementById('snap-note'), list = document.getElementById('snap-list');
+  if (force) note.textContent = 'Читаю ветку work-backup…';
+  try {
+    const j = await fetch('/api/work-snapshots').then(r => r.json());
+    if (!j || j.success !== true) { note.textContent = 'Не прочиталось: ' + (j && j.error || '?'); return; }
+    snapData = { snapshots: j.snapshots || [], recommended: j.recommended || '' };
+    snapSelected = snapSelected || snapData.recommended || (snapData.snapshots[0] || {}).stamp || '';
+    renderSnapList();
+    if (snapData.snapshots.length) {
+      note.textContent = j.note || ('Снапшотов: ' + snapData.snapshots.length + '. По умолчанию — последний с целыми репозиториями.');
+    } else {
+      note.textContent = j.note || 'Снапшотов пока нет — раннер ещё не сохранял репозитории.';
+      list.innerHTML = '';
+    }
+  } catch (e) {
+    note.textContent = 'Нет связи: ' + (e && e.message || e);
+  }
+}
+function renderSnapList() {
+  const list = document.getElementById('snap-list');
+  if (!snapData.snapshots.length) { list.innerHTML = ''; return; }
+  list.innerHTML = snapData.snapshots.map(s => {
+    const sel = s.stamp === snapSelected;
+    const whole = s.repos.length > 0;
+    const mark = [s.stamp === snapData.recommended ? '⭐ последний целый' : '', whole ? '' : '⚠ репозиториев нет'].filter(Boolean).join(' · ');
+    const det = s.repos.map(r => '· ' + snapEsc(r.rel) + ' (' + r.kind + ', ' + snapMb(r.bytes) + ')').join('<br>');
+    return `<label class="snap-row ${sel ? 'sel' : ''}" data-stamp="${snapEsc(s.stamp)}" onclick="snapPick('${snapEsc(s.stamp)}')">
+      <input type="radio" name="snap" ${sel ? 'checked' : ''}>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:700;color:var(--t1)">📅 ${snapEsc(s.stamp.replace('T', ' ').replace(/-/g, '/', 3))} ${mark ? `<span style="color:${whole ? 'var(--acc)' : 'var(--warn,#e0a642)'};font-weight:600">· ${mark}</span>` : ''}</div>
+        <div style="font-size:11px;color:var(--t3);margin-top:3px">${det || '<span style="color:var(--t3)">только файлы/аудит</span>'}</div>
+      </div>
+      <div style="font-size:11px;color:var(--t3)">${s.totalMb} МБ</div>
+    </label>`;
+  }).join('');
+  const btn = document.getElementById('snap-restore');
+  const s = snapData.snapshots.find(x => x.stamp === snapSelected);
+  btn.disabled = !(s && s.repos.length);
+}
+function snapPick(stamp) {
+  snapSelected = stamp;
+  renderSnapList();
+}
+async function snapRestore() {
+  const s = snapData.snapshots.find(x => x.stamp === snapSelected);
+  if (!s) return;
+  const ok = await fmConfirm('Восстановить локальные репозитории из снапшота ' + s.stamp + '? Существующие git-репозитории не трогаются, дополняются только отсутствующие.', 'Восстановить');
+  if (!ok) return;
+  try {
+    const r = await fetch('/api/work-snapshots/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snapshot: s.stamp }) });
+    const j = await r.json();
+    if (!j || j.success !== true) { fmInfo('Не запустилось: ' + (j && j.error || '?')); return; }
+    showSnapProgress();
+    pollSnap();
+  } catch (e) {
+    fmInfo('Нет связи: ' + (e && e.message || e));
+  }
+}
+function showSnapProgress() {
+  document.getElementById('snap-prog-wrap').style.display = '';
+  document.getElementById('snap-spin').style.display = '';
+  document.getElementById('snap-prog-title').textContent = 'Восстановление…';
+  document.getElementById('snap-restore').disabled = true;
+}
+function pollSnap() {
+  if (snapPoll) clearInterval(snapPoll);
+  snapPoll = setInterval(async () => {
+    let j = null;
+    try { j = await fetch('/api/work-snapshots/restore/status').then(r => r.json()); } catch (e) { return; }
+    if (!j) return;
+    const el = document.getElementById('snap-prog');
+    el.textContent = (j.tail || []).join('\n');
+    el.scrollTop = el.scrollHeight;
+    const sec = j.elapsed || 0;
+    document.getElementById('snap-prog-time').textContent = Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+    if (!j.running) {
+      clearInterval(snapPoll); snapPoll = null;
+      document.getElementById('snap-spin').style.display = 'none';
+      const good = j.code === 0;
+      document.getElementById('snap-prog-title').textContent = good ? '✅ Готово' : ('❌ Завершилось с кодом ' + j.code);
+      document.getElementById('snap-prog-title').style.color = good ? 'var(--ok,#3fbf6f)' : 'var(--err,#e05a5a)';
+      if (good) fmInfo('Локальные репозитории восстановлены. Обнови «Файлы» и смотри свои папки.');
+    }
+  }, 2000);
+}
+
