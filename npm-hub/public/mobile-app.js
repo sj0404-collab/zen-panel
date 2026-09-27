@@ -1394,10 +1394,18 @@ function termSelectWordAt(term, x, y) {
 function setupTermTouch(termEl, term) {
   if (!isTouch) return null;
   let startY = 0, startX = 0, startT = 0;
+  let lastY = 0;
   let scrolled = false, selecting = false, anchorRow = 0, holdTimer = null;
+  // Свайпы скроллят как колесо мыши: xterm сам сдвигает scrollback на обычном
+  // буфере и отдаёт событие приложению (less, vim, top) на alternate.
+  const fireWheel = (dy) => {
+    const scr = termEl.querySelector('.xterm-screen') || termEl;
+    try { scr.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, deltaMode: 0, bubbles: true, cancelable: true, composed: true })); } catch (_) {}
+  };
   const onStart = (e) => {
     const t = e.touches[0];
     startY = t.clientY; startX = t.clientX; startT = Date.now();
+    lastY = startY;
     scrolled = false; selecting = false;
     clearTimeout(holdTimer);
     // Клавиатуру НЕ прячем: тап по терминалу должен её открывать (печатать),
@@ -1429,6 +1437,15 @@ function setupTermTouch(termEl, term) {
       clearTimeout(holdTimer);
       // Прокрутка с открытой клавиатурой неудобна — прячем её только здесь.
       try { if (term.textarea === document.activeElement) term.blur(); } catch {}
+      lastY = t.clientY;
+    }
+    if (scrolled) {
+      // Перехватываем жест полностью: иначе WebView ещё и сам тащил бы
+      // переполненный viewport, и прокрутка была бы двойной/рваной.
+      e.preventDefault();
+      const dy = lastY - t.clientY;
+      lastY = t.clientY;
+      if (dy) fireWheel(dy * 2);
     }
   };
   const onEnd = (e) => {
