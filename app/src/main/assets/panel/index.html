@@ -1906,12 +1906,13 @@ async function launchDesks() {
     alert('Другая сессия уже использует раннер. Остановите её перед запуском стола.');
     return;
   }
+  let stoppedOld = false;
   if (already.length) {
     if (!confirm(`Стол уже поднят (${mins(already[0].created_at)} мин).\n\n` +
                  'ОК — остановить и поднять заново.\nОтмена — оставить как есть.')) {
       await refresh(); return;
     }
-    try { await cancelRunsAndWait(already); }
+    try { await cancelRunsAndWait(already); stoppedOld = true; }
     catch (e) { alert('Не вышло: ' + e.message); return; }
   }
 
@@ -1957,7 +1958,11 @@ async function launchDesks() {
     }
     await refresh();
   } catch (e) {
-    alert('Не вышло: ' + e.message);
+    // See launchAgent: the old desk was stopped by hand, so a failed dispatch
+    // leaves nothing running. Say that, instead of only the status code.
+    alert('Не вышло: ' + e.message + (stoppedOld
+      ? '\n\nПрежний запуск уже остановлен, активной сессии сейчас нет. Нажмите кнопку ещё раз.'
+      : ''));
   } finally {
     for (const b of ['btn-windows']) {
       if ($(b)) { $(b).disabled = false; $(b).textContent = $(b).dataset.label || $(b).textContent; }
@@ -1979,12 +1984,13 @@ async function launchAgent() {
     alert('Другая сессия уже использует раннер. Остановите её перед запуском CLI-агента.');
     return;
   }
+  let stoppedOld = false;
   if (running.length) {
     if (!confirm(`CLI-агент уже идёт (${mins(running[0].created_at)} мин).\n\n` +
                  'ОК — остановить его и поднять заново.\nОтмена — открыть текущий чат.')) {
       await refresh(); openDeskInPanel(liveSlotOf('agent')); return;
     }
-    try { await cancelRunsAndWait(running); }
+    try { await cancelRunsAndWait(running); stoppedOld = true; }
     catch (e) { alert('Не вышло: ' + e.message); return; }
   }
 
@@ -1999,7 +2005,13 @@ async function launchAgent() {
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
     await waitAndOpen('agent-' + where, launchSince);
   } catch (e) {
-    alert('Не вышло: ' + e.message);
+    // agent.yml keeps cancel-in-progress: false, so the old run really has to
+    // be stopped by hand first - which means a failed dispatch leaves nothing
+    // running. Say so, instead of a bare error that reads like "try again" and
+    // hides the fact that the previous session is already gone.
+    alert('Не вышло: ' + e.message + (stoppedOld
+      ? '\n\nПрежний запуск уже остановлен, активной сессии сейчас нет. Нажмите кнопку ещё раз.'
+      : ''));
   } finally {
     busyButtons(false, 'btn-agent');
     btn.textContent = btn.dataset.label;
@@ -2019,12 +2031,13 @@ async function launchOpencode() {
     alert('Другая сессия уже использует раннер. Остановите её перед запуском OpenCode.');
     return;
   }
+  let stoppedOld = false;
   if (running.length) {
     if (!confirm(`OpenCode уже идёт (${mins(running[0].created_at)} мин).\n\n` +
                  'ОК — остановить и поднять заново.\nОтмена — открыть текущий чат.')) {
       await refresh(); openDeskInPanel(liveSlotOf('opencode')); return;
     }
-    try { await cancelRunsAndWait(running); }
+    try { await cancelRunsAndWait(running); stoppedOld = true; }
     catch (e) { alert('Не вышло: ' + e.message); return; }
   }
 
@@ -2039,7 +2052,11 @@ async function launchOpencode() {
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
     await waitAndOpen('opencode-' + where, launchSince);
   } catch (e) {
-    alert('Не вышло: ' + e.message);
+    // See launchAgent: the old run was stopped by hand, so a failed dispatch
+    // leaves no session at all. Say that rather than only the status code.
+    alert('Не вышло: ' + e.message + (stoppedOld
+      ? '\n\nПрежний запуск уже остановлен, активной сессии сейчас нет. Нажмите кнопку ещё раз.'
+      : ''));
   } finally {
     busyButtons(false, 'btn-opencode');
     btn.textContent = btn.dataset.label;
@@ -2070,8 +2087,17 @@ async function launchHubInternal(preferOs) {
                  'ОК — остановить и поднять заново.\nОтмена — открыть текущий.')) {
       await refresh(); openDeskInPanel(liveSlotOf('hub')); return;
     }
-    try { await cancelRunsAndWait(running); }
-    catch (e) { alert('Не вышло: ' + e.message); return; }
+    // The old run is deliberately NOT stopped here.
+    //
+    // hub.yml already carries
+    //   cancel-in-progress: ${{ inputs.replace && !inputs.handoff }}
+    // and the dispatch below passes replace, so GitHub cancels the old run
+    // itself. Cancelling first and dispatching second left a window with
+    // nothing in it at all: if the dispatch then failed - a dropped
+    // connection, a 403 from the API throttle, a closed tab - the old hub was
+    // already dead and no new one had been created. Measured 2026-09-27: run
+    // 139 was cancelled at 06:53 and no new run ever appeared, so the panel
+    // showed a dead slot and no hub at all until a manual relaunch.
   }
 
   const btn = $('btn-hub');
@@ -2089,7 +2115,9 @@ async function launchHubInternal(preferOs) {
     if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
     await waitAndOpen('hub-' + where, launchSince);
   } catch (e) {
-    alert('Не вышло: ' + e.message);
+    alert('Не вышло: ' + e.message + (running.length
+      ? '\n\nПрежний NPM-Hub не тронут и продолжает работать.'
+      : ''));
   } finally {
     busyButtons(false, 'btn-hub');
     btn.textContent = btn.dataset.label;
