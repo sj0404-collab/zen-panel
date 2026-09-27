@@ -903,6 +903,10 @@ async function ghRefresh() {
   runs.innerHTML = '<div class="muted">Загружаю…</div>';
   try {
     const active = await listActiveRuns(token, isSessionRun);
+    // Кеш для openSlot: «сессия завершена» в файле почти всегда означает
+    // «файл от прошлого запуска, новый ещё раскладывается» — отличаем по
+    // активному рану из этого списка.
+    try { window.__ghActiveRuns = active; window.__ghActiveRunsAt = Date.now(); } catch (e) {}
     if (!active.length) {
       box.innerHTML = '<div class="muted">Активных сессий нет.</div>';
     } else {
@@ -971,11 +975,23 @@ async function openSlot(slot, btn) {
   try {
     const s = await readSlotRaw(slot);
     if (!s || s.state !== 'live' || !(s.hubUrl || s.agentUrl || s.url || s.deskUrl)) {
-      const why = !s ? 'сессия не опубликована'
+      let why = !s ? 'сессия не опубликована'
         : (s.state === 'ended' ? 'сессия завершена' : 'адрес ещё не опубликован');
+      // Файл «завершена» — от предыдущего запуска: если список сессий минуту
+      // назад видел ИДУЩИЙ ран этого слота, хаб просто ещё загружается
+      // (репозитории/VNC — это минуты), а не «завершён».
+      const cachedRuns = window.__ghActiveRuns;
+      const cachedAt = window.__ghActiveRunsAt || 0;
+      if (s && s.state === 'ended' && cachedRuns && (Date.now() - cachedAt) < 60000) {
+        const run = cachedRuns.find(r => isHubRun(r) || (typeof SLOT_OF_RUN !== 'undefined' && SLOT_OF_RUN[r.path] === slot));
+        if (run) {
+          const ageMin = Math.max(1, Math.round((Date.now() - new Date(run.created_at).getTime()) / 60000));
+          why = 'запуск ещё идёт (' + ageMin + ' мин) — адрес сам появится, дождись и нажми «Открыть» снова';
+        }
+      }
       log('Открыть нельзя: ' + why + '.', 'err');
       progStart('Не открывается', { cancellable: false });
-      progFinish(false, why + '. Обновите список.');
+      progFinish(false, why + '.');
       return;
     }
     const base = String(s.hubUrl || s.agentUrl || s.url || s.deskUrl).replace(/\/+$/, '');
