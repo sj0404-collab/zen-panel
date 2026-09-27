@@ -32,12 +32,97 @@
   .link { display:block; text-align:center; font-size:13px; color:#58a6ff;
           margin:6px 0 0; text-decoration:none; }
   .spacer { height:8px; }
+
+  /* ── tabs ── */
+  .tabs { display:flex; gap:8px; margin:0 0 14px; }
+  .tab { flex:1; display:block; width:auto; margin:0; padding:11px; min-height:44px;
+         font-size:14px; background:#16161f; color:#8a8a9e; border:1px solid #262633; }
+  .tab.on { background:#58a6ff; color:#0d0d12; border-color:#58a6ff; }
+
+  /* ── the run indicator: seconds, on purpose ──
+     A dispatch is accepted in under a second and then the hub needs one to
+     seven minutes. A button that just goes grey for that long is
+     indistinguishable from a dead app, so the wait is its own panel with a
+     running clock, a bar, and the name of the step GitHub is actually on. */
+  .prog { margin:0 0 14px; padding:12px 14px; background:#16161f; border:1px solid #262633;
+          border-radius:10px; }
+  .prog-top { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+  .prog-top .lbl { font-size:14px; font-weight:700; }
+  .prog-time { font:700 15px/1 ui-monospace,monospace; color:#58a6ff; font-variant-numeric:tabular-nums; }
+  .prog.done .prog-time { color:#3fb950; }
+  .prog.done { border-color:#1d4429; }
+  .prog.fail { border-color:#5c2222; }
+  .prog.fail .prog-time { color:#ff7b72; }
+  .prog-bar { margin-top:10px; height:5px; border-radius:3px; background:#262633; overflow:hidden; }
+  .prog-bar > i { display:block; height:100%; width:0%; background:#58a6ff; transition:width .4s ease; }
+  .prog.done .prog-bar > i { background:#3fb950; }
+  .prog.fail .prog-bar > i { background:#ff7b72; }
+  .prog-stage { margin-top:8px; font-size:12px; color:#8a8a9e; min-height:16px; }
+  .prog-act { display:flex; gap:8px; margin-top:10px; }
+  .prog-act button { width:auto; flex:0 0 auto; margin:0; padding:8px 12px; min-height:0;
+                     font-size:12px; font-weight:600; }
+
+  /* ── cards on the GitHub tab ── */
+  .card { margin:0 0 14px; padding:12px 14px; background:#16161f; border:1px solid #262633;
+          border-radius:10px; }
+  .card-h { display:flex; justify-content:space-between; align-items:center; gap:10px;
+            font-size:13px; font-weight:700; color:#e8e8f0; margin-bottom:10px; }
+  .card-h button { width:auto; margin:0; padding:7px 11px; min-height:0; font-size:12px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .grid2 button { margin:0; padding:12px 8px; min-height:46px; font-size:13px; }
+  .rows { display:flex; flex-direction:column; gap:8px; }
+  .row { padding:10px 12px; background:#0f0f16; border:1px solid #262633; border-radius:8px; }
+  .row .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .row .nm { font-size:14px; font-weight:700; }
+  .row .meta { font-size:11px; color:#8a8a9e; margin-top:3px; font-variant-numeric:tabular-nums; }
+  .row .acts { display:flex; gap:6px; margin-top:9px; }
+  .row .acts button { width:auto; flex:1; margin:0; padding:9px 6px; min-height:0; font-size:12px; }
+  .pill { font-size:10px; padding:2px 7px; border-radius:20px; font-weight:700;
+          background:#262633; color:#8a8a9e; }
+  .pill.live { background:#1d4429; color:#3fb950; }
+  .pill.queue { background:#3d2f0b; color:#d29922; }
+  .muted { font-size:12px; color:#55555f; padding:4px 0; }
+
+  /* ── the journal ── */
+  .logbar { display:flex; gap:8px; margin-top:16px; }
+  .logbar button { width:auto; flex:0 0 auto; margin:0; padding:7px 12px; min-height:0; font-size:12px; }
+  .log { margin-top:8px; padding:10px 12px; background:#0f0f16; border:1px solid #262633;
+         border-radius:10px; font-size:12px; line-height:1.45; min-height:70px;
+         max-height:42vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+  .log div { padding:1px 0; word-break:break-word; }
+  .log .ts { color:#55555f; font-family:ui-monospace,monospace; margin-right:6px;
+             font-variant-numeric:tabular-nums; }
+  .log .step { color:#bc8cff; }
+  .log .err { color:#ff7b72; }
+  .log .ok { color:#3fb950; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="logo">◆ NPM Hub</div>
   <div class="sub">Запуск хаба на GitHub Actions</div>
+
+  <div class="tabs">
+    <button class="tab on" data-pane="hub">Хаб</button>
+    <button class="tab" data-pane="gh">GitHub</button>
+  </div>
+
+  <!-- The run indicator. A dispatch is accepted in under a second and the hub
+       then needs one to seven minutes; without a clock on screen that is the
+       same as a frozen app. -->
+  <div id="prog" class="prog" style="display:none">
+    <div class="prog-top">
+      <span class="lbl" id="prog-label">Запуск…</span>
+      <span class="prog-time" id="prog-time">0:00</span>
+    </div>
+    <div class="prog-bar"><i id="prog-fill"></i></div>
+    <div class="prog-stage" id="prog-stage"></div>
+    <div class="prog-act" id="prog-act" style="display:none">
+      <button class="ghost" id="prog-stop">Прервать ожидание</button>
+    </div>
+  </div>
+
+  <div id="pane-hub">
   <div id="lockscreen" class="lock" style="display:none">
     <div class="age" id="lockage"></div>
     <button class="ghost" id="lock-open">Подключиться</button>
@@ -56,6 +141,46 @@
   <button id="restart" class="ghost">Остановить и перезапустить ранер</button>
   <button id="reopen" class="ghost" style="display:none">Открыть последний</button>
   <button id="vault" class="ghost">Внешняя память</button>
+  </div>
+
+  <!-- The GitHub tab: the same controls the panel has, for the things that
+       are started from a phone. Everything here goes through the same
+       dispatches the panel uses, so a session started here is indistinguishable
+       from one started there. -->
+  <div id="pane-gh" style="display:none">
+    <div class="card">
+      <div class="card-h"><span>Активные сессии</span>
+        <button class="ghost" id="gh-refresh">Обновить</button></div>
+      <div class="rows" id="gh-sessions"><div class="muted">Нажмите «Обновить».</div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><span>Запустить</span></div>
+      <div class="grid2">
+        <button id="run-desks">Стол Windows</button>
+        <button id="run-agent" class="ghost">CLI-агент</button>
+        <button id="run-opencode" class="ghost">OpenCode</button>
+        <button id="run-hub" class="ghost">NPM Hub</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h"><span>Сборки и тесты</span></div>
+      <div class="grid2">
+        <button id="wf-panel-apk" class="ghost">APK панели</button>
+        <button id="wf-hub-apk" class="ghost">APK хаба</button>
+        <button id="wf-build" class="ghost">Сборка</button>
+        <button id="wf-tests" class="ghost">Тесты</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h"><span>Последние запуски</span></div>
+      <div class="rows" id="gh-runs"><div class="muted">Нажмите «Обновить».</div></div>
+    </div>
+  </div>
+
+  <div class="logbar">
+    <button class="ghost" id="log-clear">Очистить журнал</button>
+    <button class="ghost" id="log-copy">Копировать</button>
+  </div>
   <div id="log" class="log"></div>
   <div class="note">Токен хранится только на этом устройстве.</div>
 </div>
@@ -65,11 +190,96 @@ const GH = 'https://api.github.com';
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+// ── the journal ──
+// Timestamped, and capped. A log without a clock makes "it has been stuck for
+// four minutes" indistinguishable from "it did nothing at all", and a log that
+// only grows is a log nobody scrolls. The last few hundred lines are the ones
+// that describe what is happening right now.
+const LOG_MAX = 500;
+function hhmmss(d) {
+  return [d.getHours(), d.getMinutes(), d.getSeconds()]
+    .map(n => String(n).padStart(2, '0')).join(':');
+}
 function log(m, cls) {
   const el = $('log');
-  el.insertAdjacentHTML('beforeend', `<div class="${cls || ''}">${esc(m)}</div>`);
+  if (!el) return;
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  const ts = document.createElement('span');
+  ts.className = 'ts';
+  ts.textContent = hhmmss(new Date());
+  line.appendChild(ts);
+  line.appendChild(document.createTextNode(String(m == null ? '' : m)));
+  el.appendChild(line);
+  while (el.childElementCount > LOG_MAX) el.removeChild(el.firstChild);
   el.scrollTop = el.scrollHeight;
 }
+function logStep(m) { log(m, 'step'); }
+function journalText() {
+  const el = $('log');
+  if (!el) return '';
+  return [...el.children].map(l => l.textContent).join('\n');
+}
+
+// ── the run indicator ──
+// Every long action gets a clock, a bar and a stage line, so the wait is
+// visible and countable instead of a button that quietly greys out.
+let progTimer = null;
+let progAbort = null;
+function mmss(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+function progStart(label, opts) {
+  const o = opts || {};
+  const el = $('prog');
+  el.className = 'prog';
+  el.style.display = '';
+  $('prog-label').textContent = label;
+  $('prog-stage').textContent = o.stage || 'Отправляю запрос…';
+  $('prog-time').textContent = '0:00';
+  $('prog-fill').style.width = '4%';
+  $('prog-act').style.display = o.cancellable === false ? 'none' : '';
+  if (progTimer) clearInterval(progTimer);
+  const t0 = Date.now();
+  progTimer = setInterval(() => {
+    $('prog-time').textContent = mmss((Date.now() - t0) / 1000);
+  }, 500);
+  return { startedAt: t0, abort: o.cancellable === false ? null : (progAbort = new AbortController()) };
+}
+function progStage(text) {
+  const el = $('prog-stage');
+  if (el) el.textContent = text || '';
+}
+function progFinish(ok, text) {
+  const el = $('prog');
+  if (progTimer) { clearInterval(progTimer); progTimer = null; }
+  if (progAbort) { progAbort = null; }
+  el.className = 'prog ' + (ok ? 'done' : 'fail');
+  $('prog-fill').style.width = '100%';
+  if (text) progStage(text);
+  $('prog-act').style.display = 'none';
+  setTimeout(() => { if (el.className.indexOf('fail') >= 0) el.style.display = 'none'; }, 6000);
+}
+
+// A button has to answer the finger immediately and say what it is doing:
+// pressed, working, done, or failed. Anything else reads as "the app is stuck".
+const busyLabels = new WeakMap();
+function busy(btn, on, text) {
+  if (!btn) return;
+  if (on) {
+    if (!busyLabels.has(btn)) busyLabels.set(btn, btn.textContent);
+    btn.disabled = true;
+    btn.dataset.busy = '1';
+    if (text) btn.textContent = text;
+  } else {
+    btn.disabled = false;
+    delete btn.dataset.busy;
+    const back = busyLabels.get(btn);
+    if (back != null) btn.textContent = back;
+  }
+}
+function isBusy(btn) { return !!(btn && btn.dataset && btn.dataset.busy); }
 function genZt() {
   try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, ''); } catch (e) {}
   const h = '0123456789abcdef';
@@ -107,6 +317,122 @@ async function dispatchHub(token, zt, runner, replace) {
     body: JSON.stringify({ ref: 'main', inputs })
   });
 }
+// Dispatch any workflow in the repo, with the inputs the panel uses for the
+// same thing. A session started from this tab and one started from the panel
+// are then the same run - the panel picks it up by workflow name, not by who
+// pressed the button.
+async function dispatchWorkflow(token, file, inputs) {
+  await api(`/repos/${REPO}/actions/workflows/${file}/dispatches`, token, {
+    method: 'POST',
+    body: JSON.stringify({ ref: 'main', inputs: inputs || {} })
+  });
+}
+
+const RUN_STAGE = {
+  queued: 'в очереди GitHub Actions', waiting: 'ждёт раннер', requested: 'запрошен раннер',
+  pending: 'ожидает раннера', in_progress: 'идёт'
+};
+const JOB_STAGE = {
+  queued: 'ожидание раннера', waiting: 'ожидание раннера', pending: 'ожидание раннера',
+  in_progress: 'выполняется', completed: 'завершён'
+};
+// The steps GitHub knows about, in a language a person can read. These are the
+// same names the panel shows, so the journal reads the same wherever it was
+// started from.
+const STEP_RU = {
+  'Set up job': 'подготовка',
+  'Run actions/checkout@v4': 'получение кода',
+  'Mask the gate token in logs': 'маскирование токена',
+  'Run actions/setup-node@v4': 'установка Node',
+  'Restore the npm/pip caches': 'кэш пакетов',
+  'Install the CLI agents': 'установка агентов',
+  'Install the hub dependencies': 'зависимости хаба',
+  'Install OpenCode for session recovery': 'установка OpenCode',
+  'Put zen-agent on PATH': 'установка zen-agent',
+  'Create the work folder and restore repositories': 'восстановление репозиториев',
+  'Start the hub and open the tunnel': 'запуск хаба и туннеля',
+  'Keep the session alive': 'сессия работает',
+  'Keep the VNC session alive': 'VNC работает',
+  'Start the Linux desktop and open the tunnel': 'запуск рабочего стола',
+  'Install the desktop + VNC stack': 'установка рабочего стола',
+  'Final durable repository and session backup': 'финальное сохранение',
+  'Clear the published session': 'снятие публикации',
+  'Snapshot audit/code on exit': 'снимок кода и чата',
+  'Save the models snapshot': 'снимок моделей',
+  'Record the run in the history': 'запись в историю',
+  'Build release APK': 'сборка APK',
+  'Package APK': 'упаковка APK',
+  'Publish GitHub Release': 'публикация релиза',
+  'Restore repositories': 'восстановление репозиториев'
+};
+function stepRu(name) {
+  if (!name) return '';
+  if (STEP_RU[name]) return STEP_RU[name];
+  // Anything this build has never heard of still gets shown, just trimmed:
+  // an unknown step is information, a blank line is not.
+  return String(name).replace(/^Run\s+/i, '').replace(/@v\d+$/, '').toLowerCase();
+}
+let stopWaiting = false;
+// A top-level `let` is not a property of window, and this one flag is the piece
+// of run state worth being able to see and to poke from the outside - the test
+// suite uses it, and so does anyone debugging a stuck wait from a console.
+Object.defineProperty(window, 'stopWaiting', {
+  get: () => stopWaiting,
+  set: (v) => { stopWaiting = !!v; }
+});
+// Follow a run until it stops being interesting, narrating every change into
+// the journal and onto the indicator. Returns the run, or null if the user
+// pressed "stop waiting" - which is a normal outcome, not an error.
+async function followRun(token, runId, opts) {
+  const o = opts || {};
+  const untilLive = o.untilLive === true;
+  let lastStep = '';
+  for (let i = 0; i < (o.attempts || 240); i++) {
+    if (stopWaiting) return null;
+    const runs = await api(`/repos/${REPO}/actions/runs?per_page=50`, token);
+    const run = runs && (runs.workflow_runs || []).find(r => String(r.id) === String(runId));
+    if (!run) {
+      if (i > 2) { logStep('Прогон исчез из списка GitHub.'); return null; }
+    } else {
+      const stage = RUN_STAGE[run.status] || run.status;
+      progStage('Прогон #' + run.run_number + ': ' + stage);
+      if (untilLive && run.status === 'completed') {
+        if (run.conclusion === 'success') return run;
+        return run;
+      }
+      if (!untilLive && run.status === 'completed') return run;
+      // The step is what makes a wait legible: "restoring repositories · 42s"
+      // says far more than "in progress".
+      try {
+        const j = await api(`/repos/${REPO}/actions/runs/${runId}/jobs`, token);
+        for (const job of (j && j.jobs) || []) {
+          const cur = (job.steps || []).find(s => s.status === 'in_progress')
+            || (job.steps || [])[(job.steps || []).length - 1];
+          if (cur && cur.name && cur.name !== lastStep) {
+            lastStep = cur.name;
+            const took = cur.started_at
+              ? Math.round((Date.now() - new Date(cur.started_at).getTime()) / 1000) : 0;
+            logStep('→ ' + (job.name || 'job') + ': ' + stepRu(cur.name) +
+              (took ? ' · ' + mmss(took) : ''));
+          }
+        }
+      } catch (e) { /* the run matters more than its steps */ }
+    }
+    await new Promise(r => setTimeout(r, o.sleepMs || 5000));
+  }
+  return null;
+}
+async function findFreshRun(token, sinceMs, name) {
+  const runs = await api(`/repos/${REPO}/actions/runs?per_page=50`, token);
+  const list = (runs && runs.workflow_runs) || [];
+  for (const r of list) {
+    if (name && r.name !== name) continue;
+    const born = Date.parse(r.created_at || '') || 0;
+    if (born >= sinceMs - 20000) return r;
+  }
+  return null;
+}
+
 const ACTIVE_RUN_STATUSES = ['queued', 'requested', 'waiting', 'in_progress', 'pending'];
 const SESSION_WORKFLOWS = new Set([
   '.github/workflows/hub.yml',
@@ -247,12 +573,19 @@ async function readHubSession(token) {
   }
   return null;
 }
-async function waitForHub(token, sinceMs, sleepMs) {
+async function waitForHub(token, sinceMs, sleepMs, cancelled) {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   for (let i = 0; i < 240; i++) {
+    // Stopping the wait is a normal thing to want, not a failure: a phone that
+    // cannot leave a seven-minute wait running is a phone you use once.
+    if (typeof cancelled === 'function' && cancelled()) return null;
     const s = await readHubSession(token);
     const born = s && s.startedAt ? new Date(s.startedAt).getTime() : 0;
     if (s && s.state === 'live' && born >= sinceMs - 15000 && (s.hubUrl || s.url)) return s;
+    if (s && s.state === 'ended') {
+      log('Сессия хаба помечена завершённой — раннер не сообщил адрес.', 'err');
+      return null;
+    }
     await sleep(sleepMs || 5000);
   }
   throw new Error('Таймаут: хаб не сообщил адрес за 20 минут.');
@@ -352,67 +685,380 @@ $('lock-open').onclick = () => { clearInterval(lockTimer); openLast(); };
 $('lock-settings').onclick = (e) => { e.preventDefault(); clearInterval(lockTimer); $('lockscreen').style.display = 'none'; };
 $('lock-vault').onclick = () => openVault();
 $('vault').onclick = () => openVault();
-$('launch').onclick = async () => {
+// Growing bar: six minutes is a normal hub start, so that is a full bar. It is
+// not a promise - it only says "this is as long as it usually takes".
+const PROG_FULL_MS = 6 * 60 * 1000;
+let progFillTimer = null;
+function progFill() {
+  if (progFillTimer) clearInterval(progFillTimer);
+  progFillTimer = setInterval(() => {
+    const el = $('prog');
+    if (!el || el.className.indexOf('done') >= 0 || el.className.indexOf('fail') >= 0) return;
+    const fill = $('prog-fill');
+    if (!fill) return;
+    const pct = 4 + 96 * Math.min(1, (Date.now() - (progT0 || Date.now())) / PROG_FULL_MS);
+    fill.style.width = pct.toFixed(1) + '%';
+  }, 1000);
+}
+let progT0 = 0;
+
+async function afterDispatch(token, zt, since, label) {
+  // Two watches at once: the run's own steps, which say what GitHub is doing,
+  // and the session branch, which is where the address actually appears. The
+  // run can go on for hours afterwards; the address is what we are waiting for.
+  const run = await findFreshRun(token, since, 'NPM Hub');
+  log('Ран принят. Жду адрес (обычно 1–3 мин)…', 'ok');
+  if (run) {
+    logStep('Прогон #' + run.run_number + ' — ' + (RUN_STAGE[run.status] || run.status));
+    followRun(token, run.id, { attempts: 90 }).catch(() => {});
+  }
+  progStage(run ? ('Прогон #' + run.run_number + ' — жду адрес хаба') : 'Жду адрес хаба');
+  const s = await waitForHub(token, since, 5000, () => stopWaiting);
+  if (!s) {
+    progFinish(false, 'Ожидание прервано. Раннер, возможно, ещё поднимается — обновите вкладку GitHub.');
+    return false;
+  }
+  const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
+  progStage('Проверяю доступ…');
+  log('Адрес получен: ' + base);
+  await preflightHub(base, zt, s.runId);
+  const url = buildOpenUrl(s, zt);
+  saveLast(url);
+  clearPending();
+  progFinish(true, label + ' завершён, хаб отвечает. Открываю…');
+  log('Хаб жив. Открываю…', 'ok');
+  setTimeout(() => { location.href = url; }, 250);
+  return true;
+}
+
+async function runHubFlow(kind) {
   const token = ($('token').value || '').trim();
-  if (!token) { log('Вставьте GitHub-токен.', 'err'); return; }
+  if (!token) {
+    log('Вставьте GitHub-токен.', 'err');
+    progStart('Нужен токен', { cancellable: false });
+    progFinish(false, 'Вставьте GitHub-токен и повторите.');
+    return;
+  }
   try { localStorage.setItem('hub_gh_token', token); } catch (e) {}
   const runner = ($('runner').value || '').trim();
   try { localStorage.setItem('hub_runner', runner); } catch (e) {}
-  const btn = $('launch');
-  btn.disabled = true;
+
+  const btn = $(kind === 'restart' ? 'restart' : 'launch');
+  busy(btn, true, 'Отправляю…');
+  stopWaiting = false;
+  const p = progStart(kind === 'restart' ? 'Перезапуск раннера' : 'Запуск хаба');
+  progT0 = p.startedAt;
+  progFill();
   try {
-    const conflict = await detectSessionConflict(token);
-    if (conflict === 'other') throw new Error('Другая сессия уже использует раннер. Остановите её перед запуском NPM Hub.');
-    if (conflict === 'hub') { await tryOpenLive(token); return; }
-    const zt = genZt();
-    const since = Date.now();
-    log('Отправляю запуск…');
-    await dispatchHub(token, zt, runner);
-    savePending(zt);
-    log('Ран принят. Жду адрес (обычно 1–3 мин)…', 'ok');
-    const s = await waitForHub(token, since);
-    const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
-    log('Проверяю доступ…');
-    await preflightHub(base, zt, s.runId);
-    const url = buildOpenUrl(s, zt);
-    saveLast(url);
-    clearPending();
-    log('Хаб жив. Открываю…', 'ok');
-    location.href = url;
+    if (kind === 'restart') {
+      progStage('Проверяю, не занял ли кто-то раннер…');
+      const active = await listActiveRuns(token, isSessionRun);
+      if (active.some(run => !isHubRun(run))) {
+        throw new Error('Другая сессия уже использует раннер. Остановите её перед перезапуском NPM Hub.');
+      }
+      const zt = genZt();
+      log('Останавливаю текущий запуск…');
+      const n = await cancelAndWait(token);
+      if (n > 0) log('Остановлено активных ранов: ' + n, 'ok');
+      else log('Активных ранов hub.yml не найдено.');
+      const since = Date.now();
+      log('Отправляю запуск…');
+      await dispatchHub(token, zt, runner, true);
+      savePending(zt);
+      await afterDispatch(token, zt, since, 'Перезапуск');
+    } else {
+      progStage('Проверяю, не занял ли кто-то раннер…');
+      const conflict = await detectSessionConflict(token);
+      if (conflict === 'other') {
+        throw new Error('Другая сессия уже использует раннер. Остановите её перед запуском NPM Hub.');
+      }
+      if (conflict === 'hub') {
+        progStage('Хаб уже идёт — подбираю доступ…');
+        const opened = await tryOpenLive(token);
+        if (opened) progFinish(true, 'Подключился к уже запущенному хабу.');
+        return;
+      }
+      const zt = genZt();
+      const since = Date.now();
+      log('Отправляю запуск…');
+      await dispatchHub(token, zt, runner);
+      savePending(zt);
+      await afterDispatch(token, zt, since, 'Запуск');
+    }
   } catch (e) {
-    log('Не вышло: ' + (e && e.message || e), 'err');
+    const msg = (e && e.message) || String(e);
+    log('Не вышло: ' + msg, 'err');
+    progFinish(false, msg);
   } finally {
-    btn.disabled = false;
+    busy(btn, false);
+  }
+}
+$('launch').onclick = () => runHubFlow('launch');
+$('restart').onclick = () => runHubFlow('restart');
+$('prog-stop').onclick = () => {
+  stopWaiting = true;
+  progStage('Останавливаю ожидание…');
+  log('Ожидание прервано пользователем.', 'err');
+  progFinish(false, 'Ожидание прервано. Раннер, возможно, ещё поднимается.');
+  for (const id of ['launch', 'restart']) busy($(id), false);
+};
+// ── tabs ──
+for (const t of document.querySelectorAll('.tab')) {
+  t.onclick = () => {
+    for (const o of document.querySelectorAll('.tab')) o.className = 'tab' + (o === t ? ' on' : '');
+    $('pane-hub').style.display = t.dataset.pane === 'hub' ? '' : 'none';
+    $('pane-gh').style.display = t.dataset.pane === 'gh' ? '' : 'none';
+    if (t.dataset.pane === 'gh') ghRefresh();
+  };
+}
+$('log-clear').onclick = () => { $('log').innerHTML = ''; log('Журнал очищен.'); };
+$('log-copy').onclick = () => {
+  const text = journalText();
+  const done = () => { log('Журнал скопирован в буфер.', 'ok'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => {
+      // A WebView without clipboard permission still has a textarea.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { log('Скопировать не вышло.', 'err'); }
+      document.body.removeChild(ta);
+    });
+  } else {
+    log('Буфер обмена недоступен.', 'err');
   }
 };
-$('restart').onclick = async () => {
-  const token = ($('token').value || '').trim();
-  if (!token) { log('Вставьте GitHub-токен.', 'err'); return; }
-  try { localStorage.setItem('hub_gh_token', token); } catch (e) {}
-  const runner = ($('runner').value || '').trim();
-  try { localStorage.setItem('hub_runner', runner); } catch (e) {}
-  const btn = $('restart');
-  btn.disabled = true;
-  try {
-    const zt = genZt();
-    await restartRunner(token, zt, runner);
-    savePending(zt);
-    log('Ран принят. Жду адрес (обычно 1–3 мин)…', 'ok');
-    const s = await waitForHub(token, Date.now());
-    const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
-    log('Проверяю доступ…');
-    await preflightHub(base, zt, s.runId);
-    const url = buildOpenUrl(s, zt);
-    saveLast(url);
-    clearPending();
-    log('Хаб жив. Открываю…', 'ok');
-    location.href = url;
-  } catch (e) {
-    log('Не вышло: ' + (e && e.message || e), 'err');
-  } finally {
-    btn.disabled = false;
-  }
+
+// ── the GitHub tab ──
+// The same dispatches the panel makes, so a run started here is a run the
+// panel recognises. Sessions are read from the branch over raw (no token
+// quota), and every action answers on screen instead of leaving a button grey
+// with no explanation.
+const SLOT_OF_RUN = {
+  '.github/workflows/hub.yml': 'hub-linux',
+  '.github/workflows/agent.yml': 'agent-linux',
+  '.github/workflows/opencode.yml': 'opencode-linux',
+  '.github/workflows/desks.yml': 'windows'
 };
+const NAME_OF_RUN = {
+  '.github/workflows/hub.yml': 'NPM Hub',
+  '.github/workflows/agent.yml': 'CLI-агент',
+  '.github/workflows/opencode.yml': 'OpenCode',
+  '.github/workflows/desks.yml': 'Столы'
+};
+const START_OF_RUN = {
+  '.github/workflows/hub.yml': 'hub.yml',
+  '.github/workflows/agent.yml': 'agent.yml',
+  '.github/workflows/opencode.yml': 'opencode.yml',
+  '.github/workflows/desks.yml': 'desks.yml'
+};
+async function readSlotRaw(slot) {
+  for (const path of ['live/session-' + slot + '.json', 'session-' + slot + '.json']) {
+    try {
+      const r = await fetch(`https://raw.githubusercontent.com/${REPO}/session-state/${path}?t=${Date.now()}`,
+        { cache: 'no-store' });
+      if (r.ok) return JSON.parse(await r.text());
+    } catch (e) { /* try the next name */ }
+  }
+  return null;
+}
+function minsAgo(iso) {
+  const t = Date.parse(iso || '');
+  if (!Number.isFinite(t)) return '';
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  return m < 1 ? 'только что' : (m + ' мин назад');
+}
+function runStatusPill(run) {
+  if (!run) return '<span class="pill">—</span>';
+  if (run.status === 'completed') {
+    const ok = run.conclusion === 'success';
+    return '<span class="pill ' + (ok ? 'live' : 'queue') + '">' +
+      (ok ? 'успешно' : (run.conclusion || 'завершён')) + '</span>';
+  }
+  return '<span class="pill queue">' + (RUN_STAGE[run.status] || run.status) + '</span>';
+}
+function tokenNow() { return ($('token').value || '').trim(); }
+function needToken(btn) {
+  if (tokenNow()) return true;
+  if (btn) busy(btn, true, 'Нужен токен');
+  log('Вставьте GitHub-токен на вкладке «Хаб».', 'err');
+  progStart('Нужен токен', { cancellable: false });
+  progFinish(false, 'Вставьте GitHub-токен на вкладке «Хаб».');
+  if (btn) busy(btn, false);
+  return false;
+}
+async function ghRefresh() {
+  const token = tokenNow();
+  const box = $('gh-sessions');
+  if (!token) { box.innerHTML = '<div class="muted">Вставьте GitHub-токен на вкладке «Хаб».</div>'; return; }
+  box.innerHTML = '<div class="muted">Загружаю…</div>';
+  const runs = $('gh-runs');
+  runs.innerHTML = '<div class="muted">Загружаю…</div>';
+  try {
+    const active = await listActiveRuns(token, isSessionRun);
+    if (!active.length) {
+      box.innerHTML = '<div class="muted">Активных сессий нет.</div>';
+    } else {
+      box.innerHTML = active.map(r => {
+        const slot = SLOT_OF_RUN[r.path] || '';
+        const nm = NAME_OF_RUN[r.path] || r.name || 'сессия';
+        return `<div class="row" data-run="${r.id}" data-slot="${esc(slot)}">
+          <div class="top"><span class="nm">${esc(nm)}</span>${runStatusPill(r)}</div>
+          <div class="meta">#${r.run_number} · ${esc(minsAgo(r.created_at))}</div>
+          <div class="acts">
+            ${slot ? '<button class="ghost" data-act="open">Открыть</button>' : ''}
+            <button class="ghost" data-act="stop">Остановить</button>
+          </div>
+        </div>`;
+      }).join('');
+      for (const row of box.querySelectorAll('.row')) wireRunRow(row, token);
+    }
+    const recent = await api(`/repos/${REPO}/actions/runs?per_page=12`, token);
+    const list = ((recent && recent.workflow_runs) || [])
+      .filter(r => SESSION_WORKFLOWS.has(r.path) || /APK|Tests|Build|Syntax/.test(r.name || ''));
+    runs.innerHTML = list.length ? list.map(r => `<div class="row">
+        <div class="top"><span class="nm">${esc(r.name || 'workflow')}</span>${runStatusPill(r)}</div>
+        <div class="meta">#${r.run_number} · ${esc(minsAgo(r.created_at))}</div>
+      </div>`).join('') : '<div class="muted">Пусто.</div>';
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    box.innerHTML = '<div class="muted">Не загрузилось: ' + esc(msg) + '</div>';
+    runs.innerHTML = '<div class="muted">—</div>';
+    log('Список сессий: ' + msg, 'err');
+  }
+}
+function wireRunRow(row, token) {
+  const id = row.dataset.run;
+  const slot = row.dataset.slot;
+  const acts = row.querySelectorAll('button[data-act]');
+  for (const b of acts) {
+    b.onclick = async () => {
+      const act = b.dataset.act;
+      if (act === 'stop') {
+        if (!confirm('Остановить этот запуск?')) return;
+        busy(b, true, 'Останавливаю…');
+        const p = progStart('Остановка запуска #' + id);
+        progT0 = p.startedAt; progFill();
+        try {
+          await api(`/repos/${REPO}/actions/runs/${id}/cancel`, token, { method: 'POST' });
+          log('Запрошена остановка #' + id + '. Жду, пока GitHub закроет…', 'ok');
+          const done = await waitForRunsToStop(token, [id], 3000, 40);
+          progFinish(true, 'Запуск #' + id + ' остановлен.');
+          log('Запуск #' + id + ' остановлен.', 'ok');
+          if (done) await ghRefresh();
+        } catch (e) {
+          const msg = (e && e.message) || String(e);
+          log('Остановка: ' + msg, 'err');
+          progFinish(false, msg);
+        } finally {
+          busy(b, false);
+        }
+        return;
+      }
+      if (act === 'open') { await openSlot(slot, b); return; }
+    };
+  }
+}
+async function openSlot(slot, btn) {
+  if (btn) busy(btn, true, 'Открываю…');
+  try {
+    const s = await readSlotRaw(slot);
+    if (!s || s.state !== 'live' || !(s.hubUrl || s.agentUrl || s.url || s.deskUrl)) {
+      const why = !s ? 'сессия не опубликована'
+        : (s.state === 'ended' ? 'сессия завершена' : 'адрес ещё не опубликован');
+      log('Открыть нельзя: ' + why + '.', 'err');
+      progStart('Не открывается', { cancellable: false });
+      progFinish(false, why + '. Обновите список.');
+      return;
+    }
+    const base = String(s.hubUrl || s.agentUrl || s.url || s.deskUrl).replace(/\/+$/, '');
+    if (slot === 'hub-linux') {
+      // A hub is gated: the token that opened it has to be the one the launch
+      // used, or it answers 401 to a page that looks perfectly fine.
+      const zt = (readPending() && readPending().zt) || lastOriginToken().zt || '';
+      await preflightHub(base, zt, s.runId);
+      location.href = buildOpenUrl(s, zt);
+      return;
+    }
+    const zt = lastOriginToken().zt;
+    location.href = zt ? (base + (base.includes('?') ? '&' : '?') + 'zt=' + encodeURIComponent(zt)) : base;
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    log('Открыть не вышло: ' + msg, 'err');
+    progStart('Не открывается', { cancellable: false });
+    progFinish(false, msg);
+  } finally {
+    if (btn) busy(btn, false);
+  }
+}
+// Start anything from the panel's own button set, and narrate it.
+async function startSession(file, inputs, btn, label) {
+  if (!needToken(btn)) return;
+  busy(btn, true, 'Отправляю…');
+  stopWaiting = false;
+  const p = progStart(label);
+  progT0 = p.startedAt; progFill();
+  const since = Date.now();
+  try {
+    await dispatchWorkflow(tokenNow(), file, inputs);
+    log(label + ': запрос отправлен.', 'ok');
+    const run = await findFreshRun(tokenNow(), since, null);
+    if (run) logStep('Прогон #' + run.run_number + ' — ' + (RUN_STAGE[run.status] || run.status));
+    progStage('Жду завершения…');
+    const end = await followRun(tokenNow(), run ? run.id : 0, { attempts: 90, untilLive: true });
+    if (!end) {
+      if (stopWaiting) { progFinish(false, 'Ожидание прервано.'); return; }
+      throw new Error('Прогон не найден в списке GitHub.');
+    }
+    if (end.conclusion === 'success') {
+      progFinish(true, label + ' — успешно.');
+      log(label + ' завершён успешно.', 'ok');
+    } else {
+      progFinish(false, label + ' — ' + (end.conclusion || 'с ошибкой'));
+      log(label + ' завершён: ' + (end.conclusion || 'с ошибкой'), 'err');
+    }
+    await ghRefresh();
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    log(label + ': ' + msg, 'err');
+    progFinish(false, msg);
+  } finally {
+    busy(btn, false);
+  }
+}
+$('gh-refresh').onclick = () => ghRefresh();
+$('run-desks').onclick = () => {
+  if (!needToken($('run-desks'))) return;
+  const r = ($('runner').value || '').trim();
+  const inputs = { label: 'desks' };
+  if (r) inputs.runner_windows = r;
+  startSession('desks.yml', inputs, $('run-desks'), 'Стол Windows');
+};
+$('run-agent').onclick = () => {
+  if (!needToken($('run-agent'))) return;
+  startSession('agent.yml', { os: 'linux', label: 'agent', branch: 'agent-work', autosave_minutes: '2' },
+    $('run-agent'), 'CLI-агент');
+};
+$('run-opencode').onclick = () => {
+  if (!needToken($('run-opencode'))) return;
+  startSession('opencode.yml', { os: 'linux', label: 'opencode', branch: 'opencode-work' },
+    $('run-opencode'), 'OpenCode');
+};
+$('run-hub').onclick = () => {
+  if (!needToken($('run-hub'))) return;
+  const r = ($('runner').value || '').trim();
+  const inputs = { os: 'linux', label: 'hub-apk', token: genZt(), gh_token: tokenNow(), replace: true };
+  if (r) inputs.runner_linux = r;
+  // The hub gets its own gate token saved here, exactly as the launch button
+  // on the other tab does, so "Открыть" can authenticate afterwards.
+  savePending(inputs.token);
+  startSession('hub.yml', inputs, $('run-hub'), 'NPM Hub');
+};
+$('wf-panel-apk').onclick = () => startSession('panel-apk.yml', {}, $('wf-panel-apk'), 'Сборка APK панели');
+$('wf-hub-apk').onclick = () => startSession('hub-apk.yml', {}, $('wf-hub-apk'), 'Сборка APK хаба');
+$('wf-build').onclick = () => startSession('build-win.yml', {}, $('wf-build'), 'Сборка Windows');
+$('wf-tests').onclick = () => startSession('tests.yml', {}, $('wf-tests'), 'Тесты');
 // A dispatch whose connect got interrupted (reload, crash): try to open it.
 (function autoPending() {
   const p = readPending();
