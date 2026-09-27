@@ -582,7 +582,10 @@ async function waitForHub(token, sinceMs, sleepMs, cancelled) {
     const s = await readHubSession(token);
     const born = s && s.startedAt ? new Date(s.startedAt).getTime() : 0;
     if (s && s.state === 'live' && born >= sinceMs - 15000 && (s.hubUrl || s.url)) return s;
-    if (s && s.state === 'ended') {
+    // An 'ended' state only means OUR run died if it was BORN after we
+    // dispatched. Otherwise it is yesterday's corpse, and the file simply
+    // has not been republished yet — keep waiting like it is not there.
+    if (s && s.state === 'ended' && born >= sinceMs - 15000) {
       log('Сессия хаба помечена завершённой — раннер не сообщил адрес.', 'err');
       return null;
     }
