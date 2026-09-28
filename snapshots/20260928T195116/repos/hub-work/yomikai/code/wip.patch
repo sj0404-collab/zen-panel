@@ -1,0 +1,41 @@
+diff --git a/MANIFEST.md b/MANIFEST.md
+index cfc8afe..3e27208 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -15,9 +15,3 @@
+ 4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи
+    и не логируй его значение.
+ 5. Готовые сборки/артефакты клади в /home/runner/hub-work/yomikai/tmp — их видно вкладкой «Файлы».
+-6. Историю текущего агента храни в этом репозитории (/home/runner/hub-work/yomikai/code), а не во временных папках.
+-7. После внесения исправлений автоматически создавай коммит и отправляй его в текущую ветку репозитория.
+-8. Все сборки запускай через GitHub Actions/workflows; не запускай сборки внутри локального окружения.
+-9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
+-10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
+-11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt
+index 5d6dbe8..99ff663 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt
+@@ -643,7 +643,12 @@ class OcrOverlayService : Service() {
+         // ===== Развёрнутая панель =====
+         val content = LinearLayout(this)
+         content.orientation = LinearLayout.VERTICAL
+-        content.setBackgroundColor(0xF214101B.toInt())
++        // Панель лежит поверх чужого приложения, и её фон обязан быть
++        // непрозрачным: раньше он был 0xF2 (95%), и сквозь него отлично
++        // читался текст игры — надписи панели сливались с чужими, и
++        // разобрать, где чьё, было невозможно. Светлый текст даже 5%
++        // просвечивания давали читаемую картинку.
++        content.setBackgroundColor(0xFF14101B.toInt())
+         content.setPadding(dp(6f), dp(4f), dp(6f), dp(6f))
+ 
+         val header = LinearLayout(this)
+@@ -672,7 +677,7 @@ class OcrOverlayService : Service() {
+         bubble.maxLines = 6
+         val bubbleBg = GradientDrawable()
+         bubbleBg.cornerRadius = dp(10f).toFloat()
+-        bubbleBg.setColor(0x33234A6F.toInt())
++        bubbleBg.setColor(0xFF232A3A.toInt())
+         bubbleBg.setStroke(dp(1f), 0xFF4A7EAF.toInt())
+         bubble.background = bubbleBg
+         content.addView(
