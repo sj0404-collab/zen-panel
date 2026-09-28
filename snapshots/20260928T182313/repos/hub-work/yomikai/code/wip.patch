@@ -1,0 +1,632 @@
+diff --git a/MANIFEST.md b/MANIFEST.md
+index cfc8afe..3e27208 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -15,9 +15,3 @@
+ 4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи
+    и не логируй его значение.
+ 5. Готовые сборки/артефакты клади в /home/runner/hub-work/yomikai/tmp — их видно вкладкой «Файлы».
+-6. Историю текущего агента храни в этом репозитории (/home/runner/hub-work/yomikai/code), а не во временных папках.
+-7. После внесения исправлений автоматически создавай коммит и отправляй его в текущую ветку репозитория.
+-8. Все сборки запускай через GitHub Actions/workflows; не запускай сборки внутри локального окружения.
+-9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
+-10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
+-11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrResultBottomSheet.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrResultBottomSheet.kt
+index 5f7907f..9c7b8b6 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrResultBottomSheet.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrResultBottomSheet.kt
+@@ -34,6 +34,7 @@ fun OcrResultBottomSheet(
+     onSearch: (String) -> Unit,
+     onTermGroupClick: (List<DictionaryTerm>) -> Unit,
+     onPlayAudioClick: (List<DictionaryTerm>) -> Unit,
++    actions: (@Composable () -> Unit)? = null,
+ ) {
+     // Use BoxWithConstraints to measure the actual available space for the sheet content
+     BoxWithConstraints(
+@@ -91,6 +92,11 @@ fun OcrResultBottomSheet(
+                     onCopyText = onCopyText,
+                     contentPadding = PaddingValues(bottom = 8.dp),
+                 )
++
++                if (actions != null) {
++                    HorizontalDivider()
++                    actions()
++                }
+             }
+         }
+     }
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
+index 60fe532..248c201 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
+@@ -3,19 +3,35 @@ package eu.kanade.presentation.reader
+ import android.graphics.RectF
+ import androidx.activity.compose.BackHandler
+ import androidx.compose.foundation.background
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.interaction.MutableInteractionSource
+ import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.BoxWithConstraints
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
+ import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.heightIn
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.outlined.Close
++import androidx.compose.material3.HorizontalDivider
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
+ import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.remember
++import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+-import androidx.compose.foundation.layout.height
+-import androidx.compose.foundation.layout.fillMaxWidth
+-import androidx.compose.foundation.layout.heightIn
+-import androidx.compose.foundation.verticalScroll
+-import androidx.compose.foundation.layout.padding
+ import androidx.compose.ui.unit.dp
+-import tachiyomi.presentation.core.i18n.stringResource
+ import eu.kanade.domain.dictionary.OcrResultPresentation
+ import eu.kanade.tachiyomi.ui.dictionary.DictionarySearchScreenModel
+ import mihon.domain.dictionary.model.DictionaryTerm
+@@ -23,6 +39,7 @@ import mihon.domain.ocr.model.OcrTextSource
+ import mihon.feature.ocr.selectedOcrModel
+ import mihon.feature.ocr.titleRes
+ import tachiyomi.i18n.MR
++import tachiyomi.presentation.core.i18n.stringResource
+ 
+ data class OcrResultPopupSettings(
+     val widthDp: Int,
+@@ -73,65 +90,109 @@ fun OcrResultOverlay(
+         }
+     }
+ 
+-    Box(modifier = Modifier.fillMaxSize()) {
+-        if (false) {
+-            Box(
+-                modifier = Modifier
+-                    .fillMaxSize()
+-                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f)),
++    when {
++        noDictionaries -> {
++            OcrPlainTextCard(
++                text = queryText,
++                source = source,
++                dimBackground = dimBackground,
++                onDismissRequest = onDismissRequest,
++                onCopyText = onCopyText,
++                onSpeak = onSpeak,
++                onChooseVoice = onChooseVoice,
++                onSpeakRole = onSpeakRole,
++                onAddToDictionary = onAddToDictionary,
++                onHidePageOverlay = onHidePageOverlay,
+             )
+         }
+-
+-        when {
+-            noDictionaries -> {
+-                OcrPlainTextCard(
+-                    text = queryText,
+-                    source = source,
+-                    onDismissRequest = onDismissRequest,
+-                    onCopyText = onCopyText,
+-                    onSpeak = onSpeak,
+-                    onChooseVoice = onChooseVoice,
+-                    onSpeakRole = onSpeakRole,
+-                    onAddToDictionary = onAddToDictionary,
+-                    onHidePageOverlay = onHidePageOverlay,
+-                )
+-            }
+-            presentation == OcrResultPresentation.POPUP && anchorRect != null -> {
+-                OcrResultPopup(
+-                    onDismissRequest = onDismissRequest,
+-                    anchorRect = anchorRect,
+-                    settings = popupSettings,
+-                    onCopyText = onCopyText,
+-                    searchState = searchState,
+-                    onQueryChange = onQueryChange,
+-                    onSearch = onSearch,
+-                    onTermGroupClick = onTermGroupClick,
+-                    onPlayAudioClick = onPlayAudioClick,
+-                )
+-            }
+-            else -> {
+-                OcrResultBottomSheet(
+-                    onDismissRequest = onDismissRequest,
+-                    onCopyText = onCopyText,
+-                    searchState = searchState,
+-                    onQueryChange = onQueryChange,
+-                    onSearch = onSearch,
+-                    onTermGroupClick = onTermGroupClick,
+-                    onPlayAudioClick = onPlayAudioClick,
+-                )
+-            }
++        presentation == OcrResultPresentation.POPUP && anchorRect != null -> {
++            OcrResultPopup(
++                onDismissRequest = onDismissRequest,
++                anchorRect = anchorRect,
++                settings = popupSettings,
++                onCopyText = onCopyText,
++                searchState = searchState,
++                onQueryChange = onQueryChange,
++                onSearch = onSearch,
++                onTermGroupClick = onTermGroupClick,
++                onPlayAudioClick = onPlayAudioClick,
++                onSpeak = onSpeak,
++                onChooseVoice = onChooseVoice,
++                onSpeakRole = onSpeakRole,
++                onAddToDictionary = onAddToDictionary,
++                onHidePageOverlay = onHidePageOverlay,
++            )
++        }
++        else -> {
++            OcrResultBottomSheet(
++                onDismissRequest = onDismissRequest,
++                onCopyText = onCopyText,
++                searchState = searchState,
++                onQueryChange = onQueryChange,
++                onSearch = onSearch,
++                onTermGroupClick = onTermGroupClick,
++                onPlayAudioClick = onPlayAudioClick,
++                actions = {
++                    OcrResultActionBar(
++                        onSpeak = onSpeak,
++                        onCopyText = onCopyText,
++                        onChooseVoice = onChooseVoice,
++                        onSpeakRole = onSpeakRole,
++                        onAddToDictionary = onAddToDictionary,
++                        onHidePageOverlay = onHidePageOverlay,
++                    )
++                },
++            )
+         }
+     }
+ }
+ 
+ /**
+- * Карточка распознанного текста без словарной части: текст можно выделить
+- * и скопировать, лишних сообщений «словари не найдены» нет.
++ * Затемнение, тап по которому закрывает результат.
++ *
++ * Раньше блок был написан, но завёрнут в `if (false)`: карточка висела
++ * поверх страницы, и закрыть её можно было только кнопкой в самой карточке
++ * или аппаратной «назад». Теперь тап мимо карточки и по затемнению гасит
++ * результат — то самое, чего не хватало.
++ */
++@Composable
++private fun OcrDismissScrim(
++    dim: Boolean,
++    onDismissRequest: () -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    Box(
++        modifier = modifier
++            .fillMaxSize()
++            .then(
++                if (dim) {
++                    Modifier.background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f))
++                } else {
++                    Modifier
++                },
++            )
++            .clickable(
++                indication = null,
++                interactionSource = remember { MutableInteractionSource() },
++                onClick = onDismissRequest,
++            ),
++    )
++}
++
++/**
++ * Карточка распознанного текста без словарной части: текст можно скопировать
++ * и озвучить, лишних сообщений «словари не найдены» нет.
++ *
++ * Карточка намеренно небольшая: текст ограничен по высоте и прокручивается
++ * внутри, а действия собраны в одну строку иконок под ним. Раньше здесь были
++ * два ряда подписей и отдельные плавающие кнопки — вместе они закрывали
++ * половину экрана.
+  */
+ @Composable
+ private fun OcrPlainTextCard(
+     text: String,
+     source: OcrTextSource?,
++    dimBackground: Boolean,
+     onDismissRequest: () -> Unit,
+     onCopyText: () -> Unit,
+     onSpeak: () -> Unit = {},
+@@ -140,75 +201,62 @@ private fun OcrPlainTextCard(
+     onAddToDictionary: () -> Unit = {},
+     onHidePageOverlay: (() -> Unit)? = null,
+ ) {
+-    Box(
+-        modifier = Modifier.fillMaxSize(),
+-        contentAlignment = androidx.compose.ui.Alignment.BottomCenter,
+-    ) {
+-        androidx.compose.material3.Surface(
+-            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
++    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
++        // Не больше трети экрана: карточка не должна закрывать рисунок.
++        val maxTextHeight = (maxHeight * 0.3f).coerceAtLeast(96.dp)
++
++        OcrDismissScrim(dim = dimBackground, onDismissRequest = onDismissRequest)
++
++        Surface(
++            shape = RoundedCornerShape(16.dp),
+             color = MaterialTheme.colorScheme.surfaceContainerHigh,
+             tonalElevation = 6.dp,
+             modifier = Modifier
++                .align(Alignment.BottomCenter)
+                 .fillMaxWidth()
+-                .heightIn(max = 520.dp)
+-                .padding(24.dp),
++                .padding(horizontal = 12.dp, vertical = 24.dp)
++                // Гасим тап мимо текста, иначе тап по пустому месту карточки
++                // закрывал бы результат вместо выделения текста.
++                .clickable(
++                    indication = null,
++                    interactionSource = remember { MutableInteractionSource() },
++                    onClick = {},
++                ),
+         ) {
+-            androidx.compose.foundation.layout.Column(
+-                modifier = Modifier.padding(16.dp),
+-            ) {
+-                OcrEngineCaption(source)
+-                androidx.compose.material3.Text(
++            Column(modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
++                Row(verticalAlignment = Alignment.CenterVertically) {
++                    Box(modifier = Modifier.weight(1f)) {
++                        OcrEngineCaption(source)
++                    }
++                    IconButton(onClick = onDismissRequest) {
++                        Icon(Icons.Outlined.Close, contentDescription = "Закрыть")
++                    }
++                }
++
++                Text(
+                     text = text,
+-                    style = MaterialTheme.typography.bodyLarge,
++                    style = MaterialTheme.typography.bodyMedium,
+                     color = MaterialTheme.colorScheme.onSurface,
+                     modifier = Modifier
+-                        .verticalScroll(androidx.compose.foundation.rememberScrollState())
+-                        .heightIn(max = 380.dp),
++                        .fillMaxWidth()
++                        .heightIn(max = maxTextHeight)
++                        .verticalScroll(rememberScrollState())
++                        .padding(end = 8.dp),
+                 )
+-                androidx.compose.foundation.layout.Spacer(
+-                    modifier = Modifier.height(12.dp),
++
++                Spacer(modifier = Modifier.height(4.dp))
++                HorizontalDivider()
++                Spacer(modifier = Modifier.height(4.dp))
++
++                OcrResultActionBar(
++                    onSpeak = onSpeak,
++                    onCopyText = onCopyText,
++                    onChooseVoice = onChooseVoice,
++                    onSpeakRole = onSpeakRole,
++                    onAddToDictionary = onAddToDictionary,
++                    onHidePageOverlay = onHidePageOverlay,
++                    modifier = Modifier.fillMaxWidth(),
+                 )
+-                androidx.compose.foundation.layout.Column {
+-                    androidx.compose.foundation.layout.Row(
+-                        modifier = Modifier.fillMaxWidth(),
+-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
+-                    ) {
+-                        androidx.compose.material3.TextButton(onClick = onSpeak) {
+-                            androidx.compose.material3.Text("▶ Голос")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("female") }) {
+-                            androidx.compose.material3.Text("♀")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("male") }) {
+-                            androidx.compose.material3.Text("♂")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("narrator") }) {
+-                            androidx.compose.material3.Text("🎙")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = onChooseVoice) {
+-                            androidx.compose.material3.Text("Выбрать")
+-                        }
+-                    }
+-                    androidx.compose.foundation.layout.Row(
+-                        modifier = Modifier.fillMaxWidth(),
+-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
+-                    ) {
+-                        if (onHidePageOverlay != null) {
+-                            androidx.compose.material3.TextButton(onClick = onHidePageOverlay) {
+-                                androidx.compose.material3.Text("👁 Скрыть текст")
+-                            }
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = onCopyText) {
+-                            androidx.compose.material3.Text("Копировать")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = onAddToDictionary) {
+-                            androidx.compose.material3.Text("＋ Словарь")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = onDismissRequest) {
+-                            androidx.compose.material3.Text("Закрыть")
+-                        }
+-                    }
+-                }
+             }
+         }
+     }
+@@ -232,12 +280,9 @@ private fun OcrEngineCaption(source: OcrTextSource?) {
+     } else {
+         stringResource(MR.strings.ocr_recognized_by, engineName)
+     }
+-    androidx.compose.material3.Text(
++    Text(
+         text = text,
+         style = MaterialTheme.typography.labelSmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant,
+     )
+-    androidx.compose.foundation.layout.Spacer(
+-        modifier = Modifier.height(6.dp),
+-    )
+ }
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
+index fe62c1c..603508f 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
+@@ -6,16 +6,25 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.BoxWithConstraints
+ import androidx.compose.foundation.layout.PaddingValues
++import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.height
+ import androidx.compose.foundation.layout.offset
+ import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
+ import androidx.compose.foundation.layout.width
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.outlined.Close
++import androidx.compose.material3.HorizontalDivider
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
+ import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.Surface
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.CompositionLocalProvider
+ import androidx.compose.runtime.remember
++import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clipToBounds
+ import androidx.compose.ui.platform.LocalDensity
+@@ -40,6 +49,11 @@ fun OcrResultPopup(
+     onSearch: (String) -> Unit,
+     onTermGroupClick: (List<DictionaryTerm>) -> Unit,
+     onPlayAudioClick: (List<DictionaryTerm>) -> Unit,
++    onSpeak: () -> Unit = {},
++    onChooseVoice: () -> Unit = {},
++    onSpeakRole: (String) -> Unit = {},
++    onAddToDictionary: () -> Unit = {},
++    onHidePageOverlay: (() -> Unit)? = null,
+ ) {
+     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+         val density = LocalDensity.current
+@@ -94,6 +108,17 @@ fun OcrResultPopup(
+                 onPlayAudioClick = onPlayAudioClick,
+             )
+         } else {
++            // Тап мимо всплывающего окна закрывает результат: раньше окно
++            // глотало тапы только внутри себя, а снаружи нечего было нажать.
++            Box(
++                modifier = Modifier
++                    .fillMaxSize()
++                    .clickable(
++                        indication = null,
++                        interactionSource = remember { MutableInteractionSource() },
++                        onClick = onDismissRequest,
++                    ),
++            )
+             Surface(
+                 modifier = Modifier
+                     .width(with(density) { placement.width.toDp() })
+@@ -124,6 +149,23 @@ fun OcrResultPopup(
+                         androidx.compose.foundation.layout.Column(
+                             modifier = Modifier.fillMaxSize(),
+                         ) {
++                            Row(
++                                modifier = Modifier.fillMaxWidth(),
++                                verticalAlignment = Alignment.CenterVertically,
++                            ) {
++                                Box(modifier = Modifier.weight(1f))
++                                IconButton(
++                                    onClick = onDismissRequest,
++                                    modifier = Modifier.size(28.dp),
++                                ) {
++                                    Icon(
++                                        Icons.Outlined.Close,
++                                        contentDescription = "Закрыть",
++                                        modifier = Modifier.size(18.dp),
++                                    )
++                                }
++                            }
++
+                             if (searchState.query.isNotBlank()) {
+                                 TranslationCard(
+                                     originalText = searchState.query,
+@@ -152,6 +194,19 @@ fun OcrResultPopup(
+                                 onCopyText = null,
+                                 contentPadding = PaddingValues(8.dp),
+                             )
++
++                            HorizontalDivider()
++                            OcrResultActionBar(
++                                onSpeak = onSpeak,
++                                onCopyText = onCopyText,
++                                onChooseVoice = onChooseVoice,
++                                onSpeakRole = onSpeakRole,
++                                onAddToDictionary = onAddToDictionary,
++                                onHidePageOverlay = onHidePageOverlay,
++                                modifier = Modifier
++                                    .fillMaxWidth()
++                                    .padding(horizontal = 4.dp, vertical = 2.dp),
++                            )
+                         }
+                     }
+                 }
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrVoiceFloatingControls.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrVoiceFloatingControls.kt
+deleted file mode 100644
+index 1b9fc12..0000000
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrVoiceFloatingControls.kt
++++ /dev/null
+@@ -1,104 +0,0 @@
+-package eu.kanade.presentation.reader
+-
+-import androidx.compose.foundation.horizontalScroll
+-import androidx.compose.foundation.layout.Arrangement
+-import androidx.compose.foundation.layout.Column
+-import androidx.compose.foundation.layout.Row
+-import androidx.compose.foundation.layout.padding
+-import androidx.compose.foundation.rememberScrollState
+-import androidx.compose.material.icons.Icons
+-import androidx.compose.material.icons.outlined.RecordVoiceOver
+-import androidx.compose.material.icons.outlined.Tune
+-import androidx.compose.material.icons.outlined.VisibilityOff
+-import androidx.compose.material3.ExtendedFloatingActionButton
+-import androidx.compose.material3.Icon
+-import androidx.compose.material3.MaterialTheme
+-import androidx.compose.material3.Text
+-import androidx.compose.runtime.Composable
+-import androidx.compose.runtime.LaunchedEffect
+-import androidx.compose.runtime.getValue
+-import androidx.compose.runtime.mutableStateOf
+-import androidx.compose.runtime.remember
+-import androidx.compose.runtime.setValue
+-import androidx.compose.ui.Modifier
+-import androidx.compose.ui.platform.LocalContext
+-import androidx.compose.ui.unit.dp
+-import eu.kanade.tachiyomi.data.ui.UiActionRegistry
+-import eu.kanade.tachiyomi.util.system.toast
+-import kotlinx.coroutines.Dispatchers
+-import kotlinx.coroutines.withContext
+-import mihon.data.ui.UiActionSpec
+-import mihon.data.ui.UiPlacement
+-
+-/**
+- * OCR voice actions intentionally live outside the result card. The reader keeps
+- * the recognized text uncluttered while both speech and voice selection remain
+- * available next to the active OCR dialog.
+- */
+-@Composable
+-fun OcrVoiceFloatingControls(
+-    enabled: Boolean,
+-    onSpeak: () -> Unit,
+-    onChooseVoice: () -> Unit,
+-    onHidePageOverlay: (() -> Unit)? = null,
+-    modifier: Modifier = Modifier,
+-) {
+-    // Пользовательские действия реестра UiActions для карточки OCR.
+-    val context = LocalContext.current
+-    var userActions by remember { mutableStateOf<List<UiActionSpec>>(emptyList()) }
+-    LaunchedEffect(Unit) {
+-        userActions = withContext(Dispatchers.IO) {
+-            UiActionRegistry.list(context).filter { it.placement == UiPlacement.OCR_CARD }
+-        }
+-    }
+-
+-    Column(modifier = modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-            ExtendedFloatingActionButton(
+-                onClick = { if (enabled) onSpeak() },
+-                icon = { Icon(Icons.Outlined.RecordVoiceOver, contentDescription = null) },
+-                containerColor = MaterialTheme.colorScheme.primaryContainer,
+-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+-                text = { Text("Голос") },
+-            )
+-            ExtendedFloatingActionButton(
+-                onClick = onChooseVoice,
+-                icon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
+-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+-                text = { Text("Выбрать голос") },
+-            )
+-            // Убрать текст со страницы, не закрывая результат: на светлых
+-            // страницах оверлей всё равно перекрывал рисунок.
+-            if (onHidePageOverlay != null) {
+-                ExtendedFloatingActionButton(
+-                    onClick = onHidePageOverlay,
+-                    icon = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
+-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+-                    text = { Text("Скрыть текст") },
+-                )
+-            }
+-        }
+-        // Свои действия — отдельной прокручиваемой строкой, чтобы длинный
+-        // список не уезжал за экран и не ломал основные кнопки озвучки.
+-        if (userActions.isNotEmpty()) {
+-            Row(
+-                modifier = Modifier
+-                    .padding(top = 8.dp)
+-                    .horizontalScroll(rememberScrollState()),
+-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+-            ) {
+-                userActions.forEach { action ->
+-                    ExtendedFloatingActionButton(
+-                        onClick = { context.toast(UiActionRegistry.apply(context, action)) },
+-                        icon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
+-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+-                        text = { Text(action.title) },
+-                    )
+-                }
+-            }
+-        }
+-    }
+-}
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index 71a42f6..a9a32f5 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -72,7 +72,6 @@ import eu.kanade.domain.dictionary.OcrResultPresentation
+ import eu.kanade.presentation.reader.DisplayRefreshHost
+ import eu.kanade.presentation.reader.OcrLoadingIndicator
+ import eu.kanade.presentation.reader.OcrResultOverlay
+-import eu.kanade.presentation.reader.OcrVoiceFloatingControls
+ import eu.kanade.presentation.reader.OcrResultPopupSettings
+ import eu.kanade.presentation.reader.OcrSelectionOverlay
+ import eu.kanade.presentation.reader.OrientationSelectDialog
+@@ -1279,20 +1278,6 @@ class ReaderActivity : BaseActivity() {
+                                 )
+                             },
+                             )
+-                            if (searchState.dictionaries.isNotEmpty()) OcrVoiceFloatingControls(
+-                                enabled = dialog.queryText.isNotBlank(),
+-                                onSpeak = {
+-                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
+-                                        this@ReaderActivity,
+-                                        dialog.queryText,
+-                                    )
+-                                },
+-                                onChooseVoice = { showVoicePicker = true },
+-                                onHidePageOverlay = ::hideActiveOcrOverlayText,
+-                                modifier = Modifier
+-                                    .align(Alignment.BottomCenter)
+-                                    .navigationBarsPadding(),
+-                            )
+                             if (showVoicePicker) {
+                                 eu.kanade.presentation.reader.TtsVoicePickerDialog(
+                                     onDismissRequest = { showVoicePicker = false },
