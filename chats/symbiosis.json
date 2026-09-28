@@ -4,7 +4,7 @@
   "repo": "sj0404-collab/zen-panel",
   "repoName": "symbiosis",
   "workdir": "/home/runner/hub-work/symbiosis/code",
-  "updatedAt": "2026-09-28T18:03:24Z",
+  "updatedAt": "2026-09-28T18:30:18Z",
   "count": 2,
   "sessions": [
     {
@@ -12,7 +12,7 @@
       "title": "Symbiosis APK: сайт или GitHub",
       "slug": "kind-engine",
       "directory": "/home/runner/hub-work/symbiosis/code",
-      "timeUpdated": 1790618518736,
+      "timeUpdated": 1790619636627,
       "export": {
         "info": {
           "id": "ses_f16f72b92ffe8J9SfGCTEP7asI",
@@ -35,7 +35,7 @@
           "cost": 0,
           "time": {
             "created": 1790616065133,
-            "updated": 1790618518736
+            "updated": 1790619636627
           }
         },
         "messages": [
@@ -10535,8 +10535,10 @@
               "modelID": "big-pickle",
               "providerID": "opencode",
               "time": {
-                "created": 1790618518694
+                "created": 1790618518694,
+                "completed": 1790618645545
               },
+              "finish": "tool-calls",
               "id": "msg_0e92e44a6001p5NJroyPIGqvhY",
               "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
             },
@@ -10564,20 +10566,1267 @@
                 "tool": "bash",
                 "callID": "call_function_9yxzzx92izwx_1",
                 "state": {
-                  "metadata": {
-                    "output": "started pid 535861\n"
-                  },
-                  "status": "running",
+                  "status": "completed",
                   "input": {
                     "command": "cd /home/runner/hub-work/symbiosis/code && nohup bash /home/runner/hub-work/symbiosis/tmp/kt/run_kt.sh > /home/runner/hub-work/symbiosis/tmp/kt/final_run.log 2>&1 &\necho \"started pid $!\""
                   },
+                  "output": "started pid 535861\n\n\n<shell_metadata>\nshell tool terminated command after exceeding timeout 120000 ms. If this command is expected to take longer and is not waiting for interactive input, retry with a larger timeout value in milliseconds.\n</shell_metadata>",
+                  "metadata": {
+                    "output": "started pid 535861\n",
+                    "exit": null,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && nohup bash /home/runner/hub-work/symbiosis/tmp/kt/run_kt.sh > /home/runner/hub-work/symbiosis/tmp/kt/final_run.log 2>&1 &\necho \"started pid $!\"",
                   "time": {
-                    "start": 1790618525348
+                    "start": 1790618525348,
+                    "end": 1790618645467
                   }
                 },
                 "id": "prt_0e92e5e0b001MD2KvL9rxU7MM0",
                 "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
                 "messageID": "msg_0e92e44a6001p5NJroyPIGqvhY"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e9303409001egDW7fiiBXu9Vd",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e92e44a6001p5NJroyPIGqvhY"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618645561,
+                "completed": 1790618647828
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e9303438001McwBgVP3cfek2K",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e93038cf001iR7hwYl7QvTo1M",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9303438001McwBgVP3cfek2K"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_ocwzjheuxq1s_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && git tag --sort=-creatordate | head -15; echo \"=== last 12 commits:\"; git log --oneline -12; echo \"=== gh:\"; command -v gh && gh auth status 2>&1 | sed 's/token.*/token: [set]/' | head -5"
+                  },
+                  "output": "=== last 12 commits:\nd767d66 APK из хаб-снапшота 20260928T122041 (workflow build-hub-snapshot)\n=== gh:\n/usr/bin/gh\ngithub.com\n  ✓ Logged in to github.com account sj0404-collab (GH_TOKEN)\n  - Active account: true\n  - Git operations protocol: https\n  - Token: ghp_************************************\n",
+                  "metadata": {
+                    "output": "=== last 12 commits:\nd767d66 APK из хаб-снапшота 20260928T122041 (workflow build-hub-snapshot)\n=== gh:\n/usr/bin/gh\ngithub.com\n  ✓ Logged in to github.com account sj0404-collab (GH_TOKEN)\n  - Active account: true\n  - Git operations protocol: https\n  - Token: ghp_************************************\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && git tag --sort=-creatordate | head -15; echo \"=== last 12 commits:\"; git log --oneline -12; echo \"=== gh:\"; command -v gh && gh auth status 2>&1 | sed 's/token.*/token: [set]/' | head -5",
+                  "time": {
+                    "start": 1790618647267,
+                    "end": 1790618647780
+                  }
+                },
+                "id": "prt_0e93038d1001Vh44zsZLhTiM3I",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9303438001McwBgVP3cfek2K"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e9303cf1001V3vgJ5bgJfVnEY",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9303438001McwBgVP3cfek2K"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618647843,
+                "completed": 1790618651364
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e9303d23001IzT36mjyxrVZqn",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e930427e0017UgcUJERfCCRXG",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9303d23001IzT36mjyxrVZqn"
+              },
+              {
+                "type": "reasoning",
+                "text": "Important findings:\n1. **No tags exist in this repo at all** (`git tag` returned nothing). Only 1 commit in history: `d767d66 APK из хаб-снапшота 20260928T122041 (workflow build-hub-snapshot)`. So the repo history is shallow/squashed — it was created by the hub snapshot workflow. Commit message style: Russian, describes what the workflow did.\n\n2. `gh` is authenticated as `sj0404-collab` via GH_TOKEN. (I printed a redacted token — `sed` masked it. Good, but I should be careful. The token is shown masked as ghp_***.)\n\nSince there are no tags, \"сборка в гитхаб с тегом\" needs interpretation. Let me check MANIFEST.md for the release procedure, and check how build.yml names the APK version (does it use a tag or a timestamp?).\n\nLet me read MANIFEST.md and grep build.yml for version naming.",
+                "time": {
+                  "start": 1790618649216,
+                  "end": 1790618651285
+                },
+                "id": "prt_0e9304280001VSYua3pKBwPlbo",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9303d23001IzT36mjyxrVZqn"
+              },
+              {
+                "type": "tool",
+                "tool": "read",
+                "callID": "call_function_4jm37u6vty4i_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "filePath": "/home/runner/hub-work/symbiosis/code/MANIFEST.md"
+                  },
+                  "output": "<path>/home/runner/hub-work/symbiosis/code/MANIFEST.md</path>\n<type>file</type>\n<content>\n1: # Репозиторий: sj0404-collab/symbiosis\n2: \n3: Рабочая папка этого репозитория на раннере. Всё лежит на виду —\n4: никакие файлы не прячутся в системном /tmp.\n5: \n6: - **Клон (работай здесь):** /home/runner/hub-work/symbiosis/code\n7: - **Ветка:** main\n8: - **Только твои временные файлы (сборки, кеши, артефакты):** /home/runner/hub-work/symbiosis/tmp\n9: - **Манифест:** /home/runner/hub-work/symbiosis/code/MANIFEST.md\n10: \n11: ## Правила для CLI-агентов\n12: 1. НИКОГДА не создавай файлы в /tmp или os.tmpdir() — это не твоя папка.\n13: 2. Временные файлы создавай ТОЛЬКО в /home/runner/hub-work/symbiosis/tmp.\n14: 3. Исходники и изменения делай в /home/runner/hub-work/symbiosis/code; пуши в git оттуда.\n15: 4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи\n16:    и не логируй его значение.\n17: 5. Готовые сборки/артефакты клади в /home/runner/hub-work/symbiosis/tmp — их видно вкладкой «Файлы».\n\n(End of file - total 17 lines)\n</content>",
+                  "metadata": {
+                    "preview": "# Репозиторий: sj0404-collab/symbiosis\n\nРабочая папка этого репозитория на раннере. Всё лежит на виду —\nникакие файлы не прячутся в системном /tmp.\n\n- **Клон (работай здесь):** /home/runner/hub-work/symbiosis/code\n- **Ветка:** main\n- **Только твои временные файлы (сборки, кеши, артефакты):** /home/runner/hub-work/symbiosis/tmp\n- **Манифест:** /home/runner/hub-work/symbiosis/code/MANIFEST.md\n\n## Правила для CLI-агентов\n1. НИКОГДА не создавай файлы в /tmp или os.tmpdir() — это не твоя папка.\n2. Временные файлы создавай ТОЛЬКО в /home/runner/hub-work/symbiosis/tmp.\n3. Исходники и изменения делай в /home/runner/hub-work/symbiosis/code; пуши в git оттуда.\n4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи\n   и не логируй его значение.\n5. Готовые сборки/артефакты клади в /home/runner/hub-work/symbiosis/tmp — их видно вкладкой «Файлы».",
+                    "truncated": false,
+                    "loaded": [],
+                    "display": {
+                      "type": "file",
+                      "path": "/home/runner/hub-work/symbiosis/code/MANIFEST.md",
+                      "text": "# Репозиторий: sj0404-collab/symbiosis\n\nРабочая папка этого репозитория на раннере. Всё лежит на виду —\nникакие файлы не прячутся в системном /tmp.\n\n- **Клон (работай здесь):** /home/runner/hub-work/symbiosis/code\n- **Ветка:** main\n- **Только твои временные файлы (сборки, кеши, артефакты):** /home/runner/hub-work/symbiosis/tmp\n- **Манифест:** /home/runner/hub-work/symbiosis/code/MANIFEST.md\n\n## Правила для CLI-агентов\n1. НИКОГДА не создавай файлы в /tmp или os.tmpdir() — это не твоя папка.\n2. Временные файлы создавай ТОЛЬКО в /home/runner/hub-work/symbiosis/tmp.\n3. Исходники и изменения делай в /home/runner/hub-work/symbiosis/code; пуши в git оттуда.\n4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи\n   и не логируй его значение.\n5. Готовые сборки/артефакты клади в /home/runner/hub-work/symbiosis/tmp — их видно вкладкой «Файлы».",
+                      "lineStart": 1,
+                      "lineEnd": 17,
+                      "totalLines": 17,
+                      "truncated": false
+                    }
+                  },
+                  "title": "MANIFEST.md",
+                  "time": {
+                    "start": 1790618651294,
+                    "end": 1790618651302
+                  }
+                },
+                "id": "prt_0e9304a990016FUofNy5TPVZZS",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9303d23001IzT36mjyxrVZqn"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e9304ad0001oB96RNGA5Brv7p",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9303d23001IzT36mjyxrVZqn"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618651384,
+                "completed": 1790618653121
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e9304af8001gfvsG2HsEnrgYL",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e9304ff40010WIu30Y4PLOlPT",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9304af8001gfvsG2HsEnrgYL"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_bevrf39x7t2m_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && grep -n \"versionName\\|VERSION_NAME\\|tag\\|TAG\\|artifact\\|APK_\\|symbiosis.*apk\" .github/workflows/build.yml | head -30"
+                  },
+                  "output": "69:            # AT THE TAG. Cloning the mirror's default branch pulls a\n324:        uses: actions/upload-artifact@v4\n333:        # no download link - the APK existed only as an artifact, which needs a\n",
+                  "metadata": {
+                    "output": "69:            # AT THE TAG. Cloning the mirror's default branch pulls a\n324:        uses: actions/upload-artifact@v4\n333:        # no download link - the APK existed only as an artifact, which needs a\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && grep -n \"versionName\\|VERSION_NAME\\|tag\\|TAG\\|artifact\\|APK_\\|symbiosis.*apk\" .github/workflows/build.yml | head -30",
+                  "time": {
+                    "start": 1790618653059,
+                    "end": 1790618653075
+                  }
+                },
+                "id": "prt_0e9304ff8001LQoWgpfIXS445Q",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9304af8001gfvsG2HsEnrgYL"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e93051ad001iMOSdvs10AdvdZ",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9304af8001gfvsG2HsEnrgYL"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618653138,
+                "completed": 1790618654647
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e93051d2001Nh2ZccLiSYaHsW",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e93056c4001gvnsbqyTHkI6ZN",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93051d2001Nh2ZccLiSYaHsW"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_emqa8rllwpax_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && sed -n '290,340p' .github/workflows/build.yml"
+                  },
+                  "output": "          done\n          for sym in debug_break setRenderingThread setCurrentTransform; do\n            if \"$NM\" -D lib/arm64-v8a/libkenjinxjni.so | grep -q \" $sym$\"; then\n              echo \"  ok   $sym exported for the core\"\n            else echo \"  MISSING $sym in libkenjinxjni.so\"; fail=1; fi\n          done\n\n          # What the 25 MB budget is actually about.\n          python3 - \"$GITHUB_WORKSPACE/$APK\" <<'SIZEPY' | tee -a \"$GITHUB_STEP_SUMMARY\"\n          import sys, zipfile, os\n          apk = sys.argv[1]\n          z = zipfile.ZipFile(apk)\n          total = os.path.getsize(apk)\n          dex = sum(i.compress_size for i in z.infolist() if i.filename.endswith('.dex'))\n          dex_raw = sum(i.file_size for i in z.infolist() if i.filename.endswith('.dex'))\n          so = sum(i.compress_size for i in z.infolist() if i.filename.endswith('.so'))\n          stored = sum(i.file_size for i in z.infolist() if i.compress_type == 0)\n          mb = lambda b: b / 1048576\n          print(\"## APK size\")\n          print()\n          print(\"| | |\")\n          print(\"|---|---|\")\n          print(f\"| APK | **{mb(total):.1f} MB** |\")\n          print(f\"| dex | {mb(dex):.1f} MB packed (from {mb(dex_raw):.1f} MB) |\")\n          print(f\"| native libraries | {mb(so):.1f} MB packed |\")\n          print(f\"| stored uncompressed | {mb(stored):.1f} MB |\")\n          print()\n          print((\"Under the 25 MB target.\" if mb(total) <= 25\n                 else f\"Over the 25 MB target by {mb(total) - 25:.1f} MB.\"))\n          SIZEPY\n\n          exit $fail\n\n      - name: Upload the APK as an artefact\n        uses: actions/upload-artifact@v4\n        with:\n          name: Eden-Symbiosis-Legacy-debug\n          path: eden/src/android/app/build/outputs/apk/**/*.apk\n          retention-days: 30\n\n      - name: Upload to gofile.io\n        # Default to uploading. inputs.* is empty for a push-triggered run, so\n        # the plain condition silently skipped the step and the summary carried\n        # no download link - the APK existed only as an artifact, which needs a\n        # signed-in browser and expires. Only an explicit false opts out.\n        if: github.event_name != 'workflow_dispatch' || inputs.upload_to_gofile\n        run: |\n          APK=$(find eden -name \"*legacy-release.apk\" -o -name \"*legacy-debug.apk\" | head -1)\n          SRV=$(curl -s https://api.gofile.io/servers | python3 -c \"import sys,json;print(json.load(sys.stdin)['data']['servers'][0]['name'])\")\n          curl -s -F \"file=@$APK\" \"https://$SRV.gofile.io/contents/uploadfile\" -o /tmp/up.json\n          python3 - <<'PY' >> \"$GITHUB_STEP_SUMMARY\"\n",
+                  "metadata": {
+                    "output": "          done\n          for sym in debug_break setRenderingThread setCurrentTransform; do\n            if \"$NM\" -D lib/arm64-v8a/libkenjinxjni.so | grep -q \" $sym$\"; then\n              echo \"  ok   $sym exported for the core\"\n            else echo \"  MISSING $sym in libkenjinxjni.so\"; fail=1; fi\n          done\n\n          # What the 25 MB budget is actually about.\n          python3 - \"$GITHUB_WORKSPACE/$APK\" <<'SIZEPY' | tee -a \"$GITHUB_STEP_SUMMARY\"\n          import sys, zipfile, os\n          apk = sys.argv[1]\n          z = zipfile.ZipFile(apk)\n          total = os.path.getsize(apk)\n          dex = sum(i.compress_size for i in z.infolist() if i.filename.endswith('.dex'))\n          dex_raw = sum(i.file_size for i in z.infolist() if i.filename.endswith('.dex'))\n          so = sum(i.compress_size for i in z.infolist() if i.filename.endswith('.so'))\n          stored = sum(i.file_size for i in z.infolist() if i.compress_type == 0)\n          mb = lambda b: b / 1048576\n          print(\"## APK size\")\n          print()\n          print(\"| | |\")\n          print(\"|---|---|\")\n          print(f\"| APK | **{mb(total):.1f} MB** |\")\n          print(f\"| dex | {mb(dex):.1f} MB packed (from {mb(dex_raw):.1f} MB) |\")\n          print(f\"| native libraries | {mb(so):.1f} MB packed |\")\n          print(f\"| stored uncompressed | {mb(stored):.1f} MB |\")\n          print()\n          print((\"Under the 25 MB target.\" if mb(total) <= 25\n                 else f\"Over the 25 MB target by {mb(total) - 25:.1f} MB.\"))\n          SIZEPY\n\n          exit $fail\n\n      - name: Upload the APK as an artefact\n        uses: actions/upload-artifact@v4\n        with:\n          name: Eden-Symbiosis-Legacy-debug\n          path: eden/src/android/app/build/outputs/apk/**/*.apk\n          retention-days: 30\n\n      - name: Upload to gofile.io\n        # Default to uploading. inputs.* is empty for a push-triggered run, so\n        # the plain condition silently skipped the step and the summary carried\n        # no download link - the APK existed only as an artifact, which needs a\n        # signed-in browser and expires. Only an explicit false opts out.\n        if: github.event_name != 'workflow_dispatch' || inputs.upload_to_gofile\n        run: |\n          APK=$(find eden -name \"*legacy-release.apk\" -o -name \"*legacy-debug.apk\" | head -1)\n          SRV=$(curl -s https://api.gofile.io/servers | python3 -c \"import sys,json;print(json.load(sys.stdin)['data']['servers'][0]['name'])\")\n          curl -s -F \"file=@$APK\" \"https://$SRV.gofile.io/contents/uploadfile\" -o /tmp/up.json\n          python3 - <<'PY' >> \"$GITHUB_STEP_SUMMARY\"\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && sed -n '290,340p' .github/workflows/build.yml",
+                  "time": {
+                    "start": 1790618654567,
+                    "end": 1790618654580
+                  }
+                },
+                "id": "prt_0e93056c7001JmBxqmjUyZwEM2",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93051d2001Nh2ZccLiSYaHsW"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e930579d001lDFnR7QtolfX7S",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93051d2001Nh2ZccLiSYaHsW"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618654664,
+                "completed": 1790618663600
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e93057c8001Pq3VEgrErX8wlF",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e9305c12001han7J5WQk3S1Sv",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93057c8001Pq3VEgrErX8wlF"
+              },
+              {
+                "type": "reasoning",
+                "text": "So build.yml:\n- Triggers: `workflow_dispatch` (with inputs build_type, upload_to_gofile) or push to main touching `patch/**`.\n- Builds `*legacy-debug.apk` / `*legacy-release.apk` — **legacy flavour**! That's the one that crashed on the user's device (Mali-G57, per build2.yml's findings: \"Six builds crashed on the device. All six were assembleLegacy\").\n\nThis is a crucial point. The user runs the main build (`build.yml`), which produces `Eden-Symbiosis-Legacy-debug`. And the known device-crash cause in this project's own notes is that the **legacy** flavour doesn't start on that phone's Mali-G57. So if the user's device is a Mali device, the APK they're running may be a legacy build that crashes — but the user's report isn't a crash, it's \"sees one game and swipe doesn't work\", so the app runs. So their GPU is presumably fine (or the crash is intermittent). Not my call to change the flavour — out of scope, but worth a one-line mention at the end? It was already recorded in build2.yml. I'll mention it briefly since it directly affects whether they'll see the fix working on their phone.\n\nHmm, actually — I should be careful not to derail. The user asked: run tests, commit, push, and build in GitHub with a tag.\n\nNow \"с тегом\" (with a tag). There are no tags in the repo. The natural reading: create a version tag for this build, e.g. `v22` (matching the BUGS.md version) or something like `panel-20260928`. Since there are zero existing tags, I can't follow an existing convention. The BUGS.md has versions v1..v22 which are *bug entry* versions, not releases. Using \"v22\" as a release tag could be confusing but is a real anchor.\n\nLet me check if the *other* repo (zen-panel) has tags I should match, and check what the last APK was called (the user mentioned \"Symbiosis.apk 20.5 MB\"). Let me check the snapshot's latest.json for the last release naming, and look at the summary of previous workflow runs via gh to see how APKs were named/versioned.\n\nLet me ask the user about the tag name? The instruction says to use the question tool for ambiguous choices. But this is a small decision; a reasonable default exists. However a tag name is a permanent public artifact — worth one quick question. Given the user has been terse and wants speed, and there are no existing tags, I'll propose `v22` (matching BUGS.md) but... hmm. Actually, let me check gh runs to see if previous builds were labeled, and check the zen-panel repo for a tag convention first. Then decide, maybe asking one question if still ambiguous.\n\nLet me look at recent workflow runs and the snapshot naming.",
+                "time": {
+                  "start": 1790618655764,
+                  "end": 1790618661933
+                },
+                "id": "prt_0e9305c14001ffAI7O5qKdlXyl",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93057c8001Pq3VEgrErX8wlF"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_12iyuoxw4u8q_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && gh run list --limit 12 2>&1 | head -14; echo \"=== releases:\"; gh release list --limit 5 2>&1 | head -6"
+                  },
+                  "output": "completed\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36462154169\t45s\t2026-09-28T18:00:31Z\ncompleted\tfailure\tХаб-сессия 20260928T175654: состояние снапшота в main + подписание ре…\tTests\tmain\tpush\t36462109605\t3m42s\t2026-09-28T18:00:11Z\ncompleted\tcancelled\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36462108831\t26s\t2026-09-28T18:00:10Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36460653177\t48s\t2026-09-28T17:47:41Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36460559993\t49s\t2026-09-28T17:46:53Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36460004691\t45s\t2026-09-28T17:42:17Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36459099555\t49s\t2026-09-28T17:34:37Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36457713838\t47s\t2026-09-28T17:22:55Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36449492522\t55s\t2026-09-28T16:13:40Z\ncompleted\tsuccess\tBuild from the hub snapshot\tBuild from the hub snapshot\tmain\tworkflow_dispatch\t36440915589\t3m48s\t2026-09-28T15:05:23Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36440871906\t52s\t2026-09-28T15:05:03Z\ncompleted\tfailure\tBuild from the hub snapshot\tBuild from the hub snapshot\tmain\tworkflow_dispatch\t36440125394\t3m25s\t2026-09-28T14:59:17Z\n=== releases:\nSymbiosis panel (latest)\tLatest\tpanel-latest\t2026-09-28T12:13:04Z\nSymbiosis — два пространства\t\tsymbiosis-latest\t2026-08-16T15:50:08Z\nОбложка игры + итог по ключам\t\tthin-apk\t2026-08-13T10:54:04Z\nKenji-NX core\t\tengine-kenji\t2026-08-12T09:30:03Z\n",
+                  "metadata": {
+                    "output": "completed\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36462154169\t45s\t2026-09-28T18:00:31Z\ncompleted\tfailure\tХаб-сессия 20260928T175654: состояние снапшота в main + подписание ре…\tTests\tmain\tpush\t36462109605\t3m42s\t2026-09-28T18:00:11Z\ncompleted\tcancelled\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36462108831\t26s\t2026-09-28T18:00:10Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36460653177\t48s\t2026-09-28T17:47:41Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36460559993\t49s\t2026-09-28T17:46:53Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36460004691\t45s\t2026-09-28T17:42:17Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36459099555\t49s\t2026-09-28T17:34:37Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36457713838\t47s\t2026-09-28T17:22:55Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36449492522\t55s\t2026-09-28T16:13:40Z\ncompleted\tsuccess\tBuild from the hub snapshot\tBuild from the hub snapshot\tmain\tworkflow_dispatch\t36440915589\t3m48s\t2026-09-28T15:05:23Z\ncompleted\tsuccess\tpages build and deployment\tpages-build-deployment\tmain\tdynamic\t36440871906\t52s\t2026-09-28T15:05:03Z\ncompleted\tfailure\tBuild from the hub snapshot\tBuild from the hub snapshot\tmain\tworkflow_dispatch\t36440125394\t3m25s\t2026-09-28T14:59:17Z\n=== releases:\nSymbiosis panel (latest)\tLatest\tpanel-latest\t2026-09-28T12:13:04Z\nSymbiosis — два пространства\t\tsymbiosis-latest\t2026-08-16T15:50:08Z\nОбложка игры + итог по ключам\t\tthin-apk\t2026-08-13T10:54:04Z\nKenji-NX core\t\tengine-kenji\t2026-08-12T09:30:03Z\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && gh run list --limit 12 2>&1 | head -14; echo \"=== releases:\"; gh release list --limit 5 2>&1 | head -6",
+                  "time": {
+                    "start": 1790618662228,
+                    "end": 1790618663519
+                  }
+                },
+                "id": "prt_0e9307430001C4xIogC4DOdW7y",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93057c8001Pq3VEgrErX8wlF"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e9307a6e0011B6LKL7SGOPBih",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93057c8001Pq3VEgrErX8wlF"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618663621,
+                "completed": 1790618668307
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e9307ac5001vDPWo8aiyd3kUU",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e9307fa9001RLVoMGeR3hKyHp",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9307ac5001vDPWo8aiyd3kUU"
+              },
+              {
+                "type": "reasoning",
+                "text": "Now I see the release tag convention in this repo:\n\n- `panel-latest` — \"Symbiosis panel (latest)\"\n- `symbiosis-latest` — \"Symbiosis — два пространства\"\n- `thin-apk` — \"Обложка игры + итог по ключам\"\n- `engine-kenji` — \"Kenji-NX core\"\n\nSo tags are **descriptive slugs**, not semver. And the last APK the user installed (Symbiosis.apk 20.5 MB) — which release was that? `panel-latest` (2026-09-28T12:13) is the most recent release, matching the snapshot build at 15:05 today. The user said 20.5 MB, and the panel release is the panel APK.\n\nSo for \"сборка с тегом\", the natural choice following the convention: a new release tag describing this fix, e.g. `deep-library` or `library-depth`. And keep `panel-latest` pointing at the newest build.\n\nLet me check what `panel-latest` points at and how it was created (is there a release workflow? `panel-apk.yml` at line 38 triggers on `docs/library.html`). That's likely the workflow that builds the panel APK and creates releases. Let me read panel-apk.yml — it triggers on `docs/library.html`, which I modified! So pushing will auto-trigger it. That's important: pushing to main will fire panel-apk.yml, and possibly build.yml (patch/** modified).\n\nLet me read panel-apk.yml to understand what it does (release creation, tagging).",
+                "time": {
+                  "start": 1790618664875,
+                  "end": 1790618667992
+                },
+                "id": "prt_0e9307fab0012qHfTUJryj7Vvb",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9307ac5001vDPWo8aiyd3kUU"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_d3a4m84kwo99_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && sed -n '1,60p' .github/workflows/panel-apk.yml"
+                  },
+                  "output": "name: Panel APK\n\n# Builds the Symbiosis panel as one self-contained APK.\n#\n# WHAT CHANGED AND WHY\n#   The shell used to be a WebView pointed at GitHub Pages, so that editing\n#   docs/index.html updated every install with no reinstall. That traded away\n#   the thing the panel is for: with no connection it was a retry screen, and\n#   a phone offline is exactly when you want the panel open. The pages are now\n#   copied into assets/ by Gradle and served from inside the APK, so the app\n#   works with no network at all.\n#\n#   The cost is that a wording change in docs/ no longer reaches an installed\n#   app on its own - the APK has to be rebuilt. That is why this workflow also\n#   triggers on docs/, and why the run summary prints the MD5: so it is obvious\n#   when the installed build is behind.\n#\n#   Signed with the debug key. It is sideloaded from a link and never goes to\n#   Play; a release build with no signing config produces an APK that cannot be\n#   installed at all, which is worse than a well-understood debug signature.\n#\n# The emulator fork is not touched by any of this - see build.yml for that.\n\non:\n  workflow_dispatch:\n    inputs:\n      upload_to_gofile:\n        description: \"Also upload the APK to gofile.io\"\n        type: boolean\n        default: true\n  push:\n    branches: [main]\n    paths:\n      - 'panel-app/**'\n      # The pages are packaged into the APK now, so a change to them is a\n      # change to the app.\n      - 'docs/index.html'\n      - 'docs/library.html'\n      - 'docs/desks.html'\n      - 'docs/panel.html'\n      - 'docs/icon.svg'\n      - 'docs/manifest.webmanifest'\n      - '.github/workflows/panel-apk.yml'\n\n# A release is written, so read alone is not enough.\npermissions:\n  contents: write\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          # Full history: versionCode is the commit count, and the default\n          # shallow clone has exactly one commit - so every build would call\n          # itself version 1 and Android would refuse to install it over an\n          # earlier APK.\n",
+                  "metadata": {
+                    "output": "name: Panel APK\n\n# Builds the Symbiosis panel as one self-contained APK.\n#\n# WHAT CHANGED AND WHY\n#   The shell used to be a WebView pointed at GitHub Pages, so that editing\n#   docs/index.html updated every install with no reinstall. That traded away\n#   the thing the panel is for: with no connection it was a retry screen, and\n#   a phone offline is exactly when you want the panel open. The pages are now\n#   copied into assets/ by Gradle and served from inside the APK, so the app\n#   works with no network at all.\n#\n#   The cost is that a wording change in docs/ no longer reaches an installed\n#   app on its own - the APK has to be rebuilt. That is why this workflow also\n#   triggers on docs/, and why the run summary prints the MD5: so it is obvious\n#   when the installed build is behind.\n#\n#   Signed with the debug key. It is sideloaded from a link and never goes to\n#   Play; a release build with no signing config produces an APK that cannot be\n#   installed at all, which is worse than a well-understood debug signature.\n#\n# The emulator fork is not touched by any of this - see build.yml for that.\n\non:\n  workflow_dispatch:\n    inputs:\n      upload_to_gofile:\n        description: \"Also upload the APK to gofile.io\"\n        type: boolean\n        default: true\n  push:\n    branches: [main]\n    paths:\n      - 'panel-app/**'\n      # The pages are packaged into the APK now, so a change to them is a\n      # change to the app.\n      - 'docs/index.html'\n      - 'docs/library.html'\n      - 'docs/desks.html'\n      - 'docs/panel.html'\n      - 'docs/icon.svg'\n      - 'docs/manifest.webmanifest'\n      - '.github/workflows/panel-apk.yml'\n\n# A release is written, so read alone is not enough.\npermissions:\n  contents: write\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          # Full history: versionCode is the commit count, and the default\n          # shallow clone has exactly one commit - so every build would call\n          # itself version 1 and Android would refuse to install it over an\n          # earlier APK.\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && sed -n '1,60p' .github/workflows/panel-apk.yml",
+                  "time": {
+                    "start": 1790618668138,
+                    "end": 1790618668169
+                  }
+                },
+                "id": "prt_0e9308bdb001xoDUtQywSl5cXK",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9307ac5001vDPWo8aiyd3kUU"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e9308cde001hfRViTnFUPsswb",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9307ac5001vDPWo8aiyd3kUU"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618668340,
+                "completed": 1790618669678
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e9308d34001vNwXpA5dK1t220",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e930915e001ypcN0PRu3gcJtt",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9308d34001vNwXpA5dK1t220"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_rvxrgfq56pd7_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && sed -n '60,200p' .github/workflows/panel-apk.yml"
+                  },
+                  "output": "          # earlier APK.\n          fetch-depth: 0\n\n      - uses: actions/setup-java@v4\n        with:\n          distribution: temurin\n          java-version: '17'\n\n      - name: Cache Gradle\n        uses: actions/cache@v4\n        with:\n          path: |\n            ~/.gradle/caches\n            ~/.gradle/wrapper\n          key: panel-gradle-${{ hashFiles('panel-app/**/*.gradle.kts') }}\n          restore-keys: panel-gradle-\n\n      - name: Check the pages exist before building\n        # Gradle fails on a missing page too, but four minutes later and\n        # buried in a stack trace. Fail here, in one readable line.\n        run: |\n          missing=0\n          for f in index.html library.html desks.html panel.html icon.svg manifest.webmanifest; do\n            if [ -s \"docs/$f\" ]; then\n              printf '  %-22s %s bytes\\n' \"$f\" \"$(stat -c%s \"docs/$f\")\"\n            else\n              echo \"::error::docs/$f is missing or empty - the APK would ship a 404\"\n              missing=1\n            fi\n          done\n          [ \"$missing\" -eq 0 ]\n\n      - name: Type-check against the stubs first\n        # Ten seconds here against four minutes of Gradle. The first build of\n        # this app died on a name-resolution error that this catches, and the\n        # check on TextView.error keeps the harness from silently degrading\n        # into one that passes everything.\n        run: |\n          curl -sL -o /tmp/kc.zip \\\n            https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip\n          unzip -q /tmp/kc.zip -d /tmp\n          export PATH=\"/tmp/kotlinc/bin:$PATH\"\n\n          grep -q 'var error: CharSequence?' panel-app/stubs/android_widget.kt || {\n            echo \"::error::the stub lost TextView.error and can no longer catch the shadowing bug\"\n            exit 1\n          }\n          # The interceptor is the whole delivery mechanism now; without this\n          # in the stub the type check would not cover it at all.\n          grep -q 'shouldInterceptRequest' panel-app/stubs/android_webkit.kt || {\n            echo \"::error::the stub lost shouldInterceptRequest - the asset path is no longer type-checked\"\n            exit 1\n          }\n\n          kotlinc panel-app/stubs/*.kt \\\n                  panel-app/app/src/main/java/dev/symbiosis/panel/*.kt \\\n                  -d /tmp/stubout\n\n      - name: Show the build environment\n        # The runner image supplies the JDK, Gradle and the Android SDK. When\n        # one of them moves, the failure surfaces deep inside a Gradle stack\n        # trace; printing them first turns that into one obvious line.\n        run: |\n          echo \"JAVA_HOME=$JAVA_HOME\"\n          java -version\n          gradle --version | grep -E 'Gradle|JVM'\n          echo \"ANDROID_HOME=${ANDROID_HOME:-unset}\"\n          echo \"ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-unset}\"\n          SDK=\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}\"\n          if [ -z \"$SDK\" ] || [ ! -d \"$SDK/platforms\" ]; then\n            echo \"::error::no Android SDK on this runner - the build cannot resolve compileSdk 34\"\n            exit 1\n          fi\n          ls \"$SDK/platforms\"\n          echo \"android-34 present: $([ -d \"$SDK/platforms/android-34\" ] && echo yes || echo NO)\"\n\n      - name: Build\n        working-directory: panel-app\n        run: |\n          gradle wrapper --gradle-version 8.7 --no-daemon\n          ./gradlew assembleRelease --no-daemon --stacktrace\n\n      - name: Verify the panel is actually inside the APK\n        # The build succeeding proves nothing about packaging: an empty\n        # assets/ directory produces a perfectly valid APK that shows the\n        # \"not part of this build\" screen on the phone. Look inside.\n        run: |\n          APK=$(find panel-app -name '*.apk' -path '*release*' | head -1)\n          [ -n \"$APK\" ] || { echo \"::error::no APK was produced\"; exit 1; }\n          echo \"APK: $APK\"\n\n          LIST=$(unzip -l \"$APK\")\n          fail=0\n          for f in index.html library.html desks.html panel.html icon.svg manifest.webmanifest; do\n            if printf '%s' \"$LIST\" | grep -q \"assets/panel/$f\"; then\n              echo \"  ok      assets/panel/$f\"\n            else\n              echo \"::error::assets/panel/$f is not in the APK\"\n              fail=1\n            fi\n          done\n\n          # The index must be the real panel, not a stub or a truncated copy.\n          unzip -p \"$APK\" assets/panel/index.html > /tmp/index.html\n          SIZE=$(stat -c%s /tmp/index.html)\n          echo \"  index.html in APK: $SIZE bytes\"\n          [ \"$SIZE\" -gt 20000 ] || {\n            echo \"::error::assets/panel/index.html is only $SIZE bytes - not the real page\"\n            fail=1\n          }\n          grep -q 'api.github.com' /tmp/index.html || {\n            echo \"::error::the packaged index.html does not look like the panel\"\n            fail=1\n          }\n\n          # It must match what is in the repository, or the APK ships a stale\n          # page while docs/ has moved on.\n          if ! cmp -s /tmp/index.html docs/index.html; then\n            echo \"::error::the packaged index.html differs from docs/index.html\"\n            fail=1\n          fi\n\n          # The shell must not still be pointing at Pages.\n          if grep -rq 'github\\.io/symbiosis/\"' panel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt; then\n            echo \"::error::MainActivity still loads the panel from the network\"\n            fail=1\n          fi\n\n          # No emulator. This app is the panel alone: the 21 MB emulator APK\n          # carries libkenjinxjni.so and friends, and if any native library\n          # appears here something has pulled the fork's tree into the build.\n          if printf '%s' \"$LIST\" | grep -qE 'lib/.*\\.so'; then\n            echo \"::error::native libraries are in the panel APK - the emulator leaked into the build\"\n            printf '%s' \"$LIST\" | grep -E 'lib/.*\\.so' | head\n            fail=1\n          else\n            echo \"  ok      no native libraries (no emulator)\"\n          fi\n\n          # No stubs. panel-app/stubs/ exists only to type-check without the\n          # Android SDK; those files declare package android.webkit and friends,\n",
+                  "metadata": {
+                    "output": "          # earlier APK.\n          fetch-depth: 0\n\n      - uses: actions/setup-java@v4\n        with:\n          distribution: temurin\n          java-version: '17'\n\n      - name: Cache Gradle\n        uses: actions/cache@v4\n        with:\n          path: |\n            ~/.gradle/caches\n            ~/.gradle/wrapper\n          key: panel-gradle-${{ hashFiles('panel-app/**/*.gradle.kts') }}\n          restore-keys: panel-gradle-\n\n      - name: Check the pages exist before building\n        # Gradle fails on a missing page too, but four minutes later and\n        # buried in a stack trace. Fail here, in one readable line.\n        run: |\n          missing=0\n          for f in index.html library.html desks.html panel.html icon.svg manifest.webmanifest; do\n            if [ -s \"docs/$f\" ]; then\n              printf '  %-22s %s bytes\\n' \"$f\" \"$(stat -c%s \"docs/$f\")\"\n            else\n              echo \"::error::docs/$f is missing or empty - the APK would ship a 404\"\n              missing=1\n            fi\n          done\n          [ \"$missing\" -eq 0 ]\n\n      - name: Type-check against the stubs first\n        # Ten seconds here against four minutes of Gradle. The first build of\n        # this app died on a name-resolution error that this catches, and the\n        # check on TextView.error keeps the harness from silently degrading\n        # into one that passes everything.\n        run: |\n          curl -sL -o /tmp/kc.zip \\\n            https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip\n          unzip -q /tmp/kc.zip -d /tmp\n          export PATH=\"/tmp/kotlinc/bin:$PATH\"\n\n          grep -q 'var error: CharSequence?' panel-app/stubs/android_widget.kt || {\n            echo \"::error::the stub lost TextView.error and can no longer catch the shadowing bug\"\n            exit 1\n          }\n          # The interceptor is the whole delivery mechanism now; without this\n          # in the stub the type check would not cover it at all.\n          grep -q 'shouldInterceptRequest' panel-app/stubs/android_webkit.kt || {\n            echo \"::error::the stub lost shouldInterceptRequest - the asset path is no longer type-checked\"\n            exit 1\n          }\n\n          kotlinc panel-app/stubs/*.kt \\\n                  panel-app/app/src/main/java/dev/symbiosis/panel/*.kt \\\n                  -d /tmp/stubout\n\n      - name: Show the build environment\n        # The runner image supplies the JDK, Gradle and the Android SDK. When\n        # one of them moves, the failure surfaces deep inside a Gradle stack\n        # trace; printing them first turns that into one obvious line.\n        run: |\n          echo \"JAVA_HOME=$JAVA_HOME\"\n          java -version\n          gradle --version | grep -E 'Gradle|JVM'\n          echo \"ANDROID_HOME=${ANDROID_HOME:-unset}\"\n          echo \"ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-unset}\"\n          SDK=\"${ANDROID_HOME:-$ANDROID_SDK_ROOT}\"\n          if [ -z \"$SDK\" ] || [ ! -d \"$SDK/platforms\" ]; then\n            echo \"::error::no Android SDK on this runner - the build cannot resolve compileSdk 34\"\n            exit 1\n          fi\n          ls \"$SDK/platforms\"\n          echo \"android-34 present: $([ -d \"$SDK/platforms/android-34\" ] && echo yes || echo NO)\"\n\n      - name: Build\n        working-directory: panel-app\n        run: |\n          gradle wrapper --gradle-version 8.7 --no-daemon\n          ./gradlew assembleRelease --no-daemon --stacktrace\n\n      - name: Verify the panel is actually inside the APK\n        # The build succeeding proves nothing about packaging: an empty\n        # assets/ directory produces a perfectly valid APK that shows the\n        # \"not part of this build\" screen on the phone. Look inside.\n        run: |\n          APK=$(find panel-app -name '*.apk' -path '*release*' | head -1)\n          [ -n \"$APK\" ] || { echo \"::error::no APK was produced\"; exit 1; }\n          echo \"APK: $APK\"\n\n          LIST=$(unzip -l \"$APK\")\n          fail=0\n          for f in index.html library.html desks.html panel.html icon.svg manifest.webmanifest; do\n            if printf '%s' \"$LIST\" | grep -q \"assets/panel/$f\"; then\n              echo \"  ok      assets/panel/$f\"\n            else\n              echo \"::error::assets/panel/$f is not in the APK\"\n              fail=1\n            fi\n          done\n\n          # The index must be the real panel, not a stub or a truncated copy.\n          unzip -p \"$APK\" assets/panel/index.html > /tmp/index.html\n          SIZE=$(stat -c%s /tmp/index.html)\n          echo \"  index.html in APK: $SIZE bytes\"\n          [ \"$SIZE\" -gt 20000 ] || {\n            echo \"::error::assets/panel/index.html is only $SIZE bytes - not the real page\"\n            fail=1\n          }\n          grep -q 'api.github.com' /tmp/index.html || {\n            echo \"::error::the packaged index.html does not look like the panel\"\n            fail=1\n          }\n\n          # It must match what is in the repository, or the APK ships a stale\n          # page while docs/ has moved on.\n          if ! cmp -s /tmp/index.html docs/index.html; then\n            echo \"::error::the packaged index.html differs from docs/index.html\"\n            fail=1\n          fi\n\n          # The shell must not still be pointing at Pages.\n          if grep -rq 'github\\.io/symbiosis/\"' panel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt; then\n            echo \"::error::MainActivity still loads the panel from the network\"\n            fail=1\n          fi\n\n          # No emulator. This app is the panel alone: the 21 MB emulator APK\n          # carries libkenjinxjni.so and friends, and if any native library\n          # appears here something has pulled the fork's tree into the build.\n          if printf '%s' \"$LIST\" | grep -qE 'lib/.*\\.so'; then\n            echo \"::error::native libraries are in the panel APK - the emulator leaked into the build\"\n            printf '%s' \"$LIST\" | grep -E 'lib/.*\\.so' | head\n            fail=1\n          else\n            echo \"  ok      no native libraries (no emulator)\"\n          fi\n\n          # No stubs. panel-app/stubs/ exists only to type-check without the\n          # Android SDK; those files declare package android.webkit and friends,\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && sed -n '60,200p' .github/workflows/panel-apk.yml",
+                  "time": {
+                    "start": 1790618669566,
+                    "end": 1790618669588
+                  }
+                },
+                "id": "prt_0e9309161001OaBJ1m4tN7r0yZ",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9308d34001vNwXpA5dK1t220"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e9309246001CmxFwgLrfo73W4",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9308d34001vNwXpA5dK1t220"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618669704,
+                "completed": 1790618676424
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e9309288001O4elJLvMVB2w9T",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e9309aa2001tx3MxxxpMcREUU",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9309288001O4elJLvMVB2w9T"
+              },
+              {
+                "type": "reasoning",
+                "text": "So `panel-apk.yml` builds the **panel-only** APK (no emulator, `dev.symbiosis.panel`), triggered by `docs/library.html` changes. That's the \"Symbiosis.apk 20.5 MB\" the user has! It packages `docs/*.html` into assets.\n\nImportant: this workflow's verification step only compares `index.html` byte-for-byte (`cmp -s /tmp/index.html docs/index.html`) — it does NOT compare library.html against the APK. It only checks the other 5 pages exist in the APK. Fine, my library.html changes will be packaged.\n\nAlso: this panel APK is the panel only — it has no emulator, no GameHelper. So my Kotlin changes (patch/android/**) are for `build.yml` (the full emulator APK), while `docs/library.html` is for `panel-apk.yml`.\n\nNow — where does the panel get its game list? The panel APK (`panel-app`) has a `MainActivity` with a WebView and probably a bridge too. But `docs/library.html` calls `bridge.games()` → `LivePanel.gamesJson()` which lives in `patch/android/utils/LivePanel.kt` (the emulator APK). In the panel-only APK, is there an equivalent bridge? Let me check `panel-app/app/src/main/java/dev/symbiosis/panel/` for its own games source. If the panel APK has its own game scanning, then my `GameHelper`/`LivePanel` changes do NOT affect the panel APK, and the user's \"sees one game\" problem in the panel APK might be in `panel-app` code instead!\n\nThis is crucial. Let me check what the panel APK's bridge does for `games()`.",
+                "time": {
+                  "start": 1790618671780,
+                  "end": 1790618675624
+                },
+                "id": "prt_0e9309aa4001gCsi6A8kdn7IsA",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9309288001O4elJLvMVB2w9T"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_xav7orbhlghe_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && ls -la panel-app/app/src/main/java/dev/symbiosis/panel/; echo \"=== games/gamesJson in panel-app:\"; grep -rn \"fun games\\|gamesJson\\|depth\\|maxDepth\\|walk\\|listFiles\" panel-app/app/src/main/java/dev/symbiosis/panel/*.kt | head -30"
+                  },
+                  "output": "total 32\ndrwxr-xr-x 2 runner runner  4096 Sep 28 17:20 .\ndrwxr-xr-x 3 runner runner  4096 Sep 28 17:20 ..\n-rw-r--r-- 1 runner runner 13514 Sep 28 17:20 MainActivity.kt\n-rw-r--r-- 1 runner runner  4913 Sep 28 17:20 PanelAssets.kt\n=== games/gamesJson in panel-app:\npanel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt:242:                // Back walks the panel's own history first; only then leaves.\n",
+                  "metadata": {
+                    "output": "total 32\ndrwxr-xr-x 2 runner runner  4096 Sep 28 17:20 .\ndrwxr-xr-x 3 runner runner  4096 Sep 28 17:20 ..\n-rw-r--r-- 1 runner runner 13514 Sep 28 17:20 MainActivity.kt\n-rw-r--r-- 1 runner runner  4913 Sep 28 17:20 PanelAssets.kt\n=== games/gamesJson in panel-app:\npanel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt:242:                // Back walks the panel's own history first; only then leaves.\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && ls -la panel-app/app/src/main/java/dev/symbiosis/panel/; echo \"=== games/gamesJson in panel-app:\"; grep -rn \"fun games\\|gamesJson\\|depth\\|maxDepth\\|walk\\|listFiles\" panel-app/app/src/main/java/dev/symbiosis/panel/*.kt | head -30",
+                  "time": {
+                    "start": 1790618676320,
+                    "end": 1790618676359
+                  }
+                },
+                "id": "prt_0e930a9aa001ZzpfRLu07uEGGn",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9309288001O4elJLvMVB2w9T"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e930acab001rEUitOT2nHIO5p",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e9309288001O4elJLvMVB2w9T"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618676443,
+                "completed": 1790618678479
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e930acdb001VizhUavxNJI7xY",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e930b209001JY54kjgimQQUqT",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930acdb001VizhUavxNJI7xY"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_4wlzvqrro61l_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && grep -n \"addJavascriptInterface\\|@JavascriptInterface\" -A 3 panel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt | head -40; echo \"=== how does the panel get the game list?\"; grep -n \"games\\b\" panel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt | head -20"
+                  },
+                  "output": "=== how does the panel get the game list?\n",
+                  "metadata": {
+                    "output": "=== how does the panel get the game list?\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && grep -n \"addJavascriptInterface\\|@JavascriptInterface\" -A 3 panel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt | head -40; echo \"=== how does the panel get the game list?\"; grep -n \"games\\b\" panel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt | head -20",
+                  "time": {
+                    "start": 1790618678405,
+                    "end": 1790618678421
+                  }
+                },
+                "id": "prt_0e930b20c001vkL7m3S6X6dHbW",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930acdb001VizhUavxNJI7xY"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e930b4ae001yzEucx9H7t68m2",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930acdb001VizhUavxNJI7xY"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618678498,
+                "completed": 1790618683554
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e930b4e20013IczcCTDdgcbKm",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e930bae8001oTugwE2jUtOla4",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930b4e20013IczcCTDdgcbKm"
+              },
+              {
+                "type": "reasoning",
+                "text": "The panel-only APK has **no JavaScript bridge at all** — no `@JavascriptInterface`. So `docs/library.html`'s `bridge.games()` cannot work in the panel APK.\n\nSo how does the panel APK show games? Let me check what `docs/library.html` does when there's no bridge — probably a fallback. And check `PanelAssets.kt`. And how the user launches games from the panel APK (there's no emulator in it...).\n\nWait. Let me reconsider. The user said \"Symbiosis.apk 20.5 MB\". The panel APK is small (no emulator). The full emulator APK from build.yml is ~25 MB. Earlier the assistant noted \"20.5 MB\" as the size. The panel-apk release is named \"Symbiosis panel (latest)\" tag `panel-latest`.\n\nHmm, but the user's report involves launching games from a console dump — that needs the emulator. Unless the panel APK links to the emulator APK.\n\nLet me check the library.html fallback path and how it obtains games without a bridge, and check the release asset names/sizes for `panel-latest`.\n\nThis matters a lot: if the panel APK is what the user runs and it has no bridge, then my `library.html` rail fixes still apply (pure JS), but the *scan depth* fix in `patch/android/utils/GameHelper.kt` only applies to the full APK (build.yml). If the panel gets its game list some other way (e.g. from the full app via intents, or from a file), the depth fix may not reach the user's symptom.\n\nLet me look at library.html's data loading and the bridge detection.",
+                "time": {
+                  "start": 1790618680042,
+                  "end": 1790618683088
+                },
+                "id": "prt_0e930baea0014ofA3S1Q6KN8iJ",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930b4e20013IczcCTDdgcbKm"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_q4piw0meiull_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && grep -n \"Symbiosis\\|AndroidBridge\\|typeof bridge\\|function loadGames\\|async function loadGames\" -A 8 docs/library.html | head -60"
+                  },
+                  "output": "8:<title>Symbiosis</title>\n9-<style>\n10-  :root {\n11-    --bg:#101014; --card:#16161c; --line:#2a2a36; --text:#ececf4;\n12-    --dim:#8b8b9c; --pink:#ff2d78; --cyan:#3ee0d4; --on:#1c1c24;\n13-  }\n14-  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }\n15-  html, body { height:100%; margin:0; }\n16-  body {\n--\n384:  <p>Symbiosis</p>\n385-</div>\n386-<header>\n387-  <h1>\n388-    <svg viewBox=\"0 0 108 108\" aria-hidden=\"true\">\n389-      <circle cx=\"54\" cy=\"54\" r=\"22\" fill=\"none\" stroke=\"#3EE0D4\" stroke-width=\"4.5\"/>\n390-      <path fill=\"#FF2D78\" d=\"M54 32l12 38-12-8-12 8z\"/>\n391-      <circle cx=\"54\" cy=\"54\" r=\"5\" fill=\"#ececf4\"/>\n392-    </svg>\n393:    Symbiosis\n394-  </h1>\n395-  <button class=\"iconbtn\" id=\"btn-engines\">Ядра</button>\n396-  <button class=\"iconbtn\" id=\"btn-plugins\">Плагины</button>\n397-  <button class=\"iconbtn\" id=\"btn-reload\" title=\"Обновить интерфейс\">↻</button>\n398-  <button class=\"iconbtn\" id=\"btn-tools\">Утилиты</button>\n399-  <button class=\"iconbtn\" id=\"btn-settings\">Настройки</button>\n400-</header>\n401-<div class=\"spaces\" id=\"spaces\">\n--\n403:    <b>Symbiosis</b><span>основное ядро · наша оболочка</span>\n404-  </button>\n405-  <button class=\"space\" id=\"sp-kenji\" data-id=\"kenji\" type=\"button\">\n406-    <b>Kenji-NX</b><span>их оболочка · ядро или их APK</span>\n407-  </button>\n408-</div>\n409-<div class=\"tabs\">\n410-  <button class=\"tab on\" id=\"tab-launch\">Лаунчер</button>\n411-  <button class=\"tab\" id=\"tab-games\">Список</button>\n--\n486:const N = () => window.Symbiosis || null;\n487-function call(name, ...a) {\n488-  try { const n=N(); return n && n[name] ? n[name](...a) : null; } catch(e) { return null; }\n489-}\n490-function parse(s, fb) { try { return s ? JSON.parse(s) : fb; } catch(e) { return fb; } }\n491-\n492-let GAMES = [];\n493-let HOLD = null;\n494-let SAVES = { path:'', titles:0, name:'', size:'' };\n--\n1131:function loadGames() {\n1132-  GAMES = (parse(call('games'), { games: [] }).games) || [];\n1133-  render();\n1134-  renderLauncher();\n1135-  if (SPACE === 'kenji') renderKenjiGrid();\n1136-}\n1137-\n1138-function loadStatus() {\n1139-  const st = parse(call('status'), null);\n",
+                  "metadata": {
+                    "output": "8:<title>Symbiosis</title>\n9-<style>\n10-  :root {\n11-    --bg:#101014; --card:#16161c; --line:#2a2a36; --text:#ececf4;\n12-    --dim:#8b8b9c; --pink:#ff2d78; --cyan:#3ee0d4; --on:#1c1c24;\n13-  }\n14-  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }\n15-  html, body { height:100%; margin:0; }\n16-  body {\n--\n384:  <p>Symbiosis</p>\n385-</div>\n386-<header>\n387-  <h1>\n388-    <svg viewBox=\"0 0 108 108\" aria-hidden=\"true\">\n389-      <circle cx=\"54\" cy=\"54\" r=\"22\" fill=\"none\" stroke=\"#3EE0D4\" stroke-width=\"4.5\"/>\n390-      <path fill=\"#FF2D78\" d=\"M54 32l12 38-12-8-12 8z\"/>\n391-      <circle cx=\"54\" cy=\"54\" r=\"5\" fill=\"#ececf4\"/>\n392-    </svg>\n393:    Symbiosis\n394-  </h1>\n395-  <button class=\"iconbtn\" id=\"btn-engines\">Ядра</button>\n396-  <button class=\"iconbtn\" id=\"btn-plugins\">Плагины</button>\n397-  <button class=\"iconbtn\" id=\"btn-reload\" title=\"Обновить интерфейс\">↻</button>\n398-  <button class=\"iconbtn\" id=\"btn-tools\">Утилиты</button>\n399-  <button class=\"iconbtn\" id=\"btn-settings\">Настройки</button>\n400-</header>\n401-<div class=\"spaces\" id=\"spaces\">\n--\n403:    <b>Symbiosis</b><span>основное ядро · наша оболочка</span>\n404-  </button>\n405-  <button class=\"space\" id=\"sp-kenji\" data-id=\"kenji\" type=\"button\">\n406-    <b>Kenji-NX</b><span>их оболочка · ядро или их APK</span>\n407-  </button>\n408-</div>\n409-<div class=\"tabs\">\n410-  <button class=\"tab on\" id=\"tab-launch\">Лаунчер</button>\n411-  <button class=\"tab\" id=\"tab-games\">Список</button>\n--\n486:const N = () => window.Symbiosis || null;\n487-function call(name, ...a) {\n488-  try { const n=N(); return n && n[name] ? n[name](...a) : null; } catch(e) { return null; }\n489-}\n490-function parse(s, fb) { try { return s ? JSON.parse(s) : fb; } catch(e) { return fb; } }\n491-\n492-let GAMES = [];\n493-let HOLD = null;\n494-let SAVES = { path:'', titles:0, name:'', size:'' };\n--\n1131:function loadGames() {\n1132-  GAMES = (parse(call('games'), { games: [] }).games) || [];\n1133-  render();\n1134-  renderLauncher();\n1135-  if (SPACE === 'kenji') renderKenjiGrid();\n1136-}\n1137-\n1138-function loadStatus() {\n1139-  const st = parse(call('status'), null);\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && grep -n \"Symbiosis\\|AndroidBridge\\|typeof bridge\\|function loadGames\\|async function loadGames\" -A 8 docs/library.html | head -60",
+                  "time": {
+                    "start": 1790618683479,
+                    "end": 1790618683494
+                  }
+                },
+                "id": "prt_0e930c6d3001dmSDlRvIZNllN8",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930b4e20013IczcCTDdgcbKm"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e930c87e001d2Rf95QH7xaqew",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930b4e20013IczcCTDdgcbKm"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618683572,
+                "completed": 1790618691710
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e930c8b40013YbEBEsLa46NA3",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e930cdae001wEtRLW9lASiW0T",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930c8b40013YbEBEsLa46NA3"
+              },
+              {
+                "type": "reasoning",
+                "text": "Confirmed: `loadGames()` depends entirely on `window.Symbiosis.games()` — the bridge. The panel-only APK (`panel-app`) has **no** bridge, so the panel APK's launcher would show zero games.\n\nTherefore the user's running app must be the **full emulator APK** from `build.yml` (which has `LivePanel`/`LivePanelFragment` and the `Symbiosis` bridge). The \"20.5 MB\" figure — let me not over-index on it; `build.yml`'s size check targets 25 MB and the last full build could well be ~20.5 MB. Also the user said \"Symbiosis.apk\" and the panel release is literally \"Symbiosis panel\".\n\nSo: pushing to main will trigger BOTH workflows:\n- `build.yml` (patch/** changed) → full emulator APK, ~25-30 min.\n- `panel-apk.yml` (docs/library.html changed) → panel-only APK, ~4 min.\n- Also `tests.yml`? It triggers on `tests/**` (DeepLibraryTest.kt is new) — yes! Tests will run automatically. \n- And the hub-session workflow \"Хаб-сессия\" (Tests) already runs on push.\n\nSo the push alone triggers the build. But the user explicitly asked for a build \"с тегом\" (with a tag) — so a release tag. Following the repo convention of descriptive slug tags + a GitHub release, I should:\n1. Commit.\n2. Push.\n3. Create a release with a descriptive tag (e.g. `deep-library`) so there's a named artifact.\n\nShould I also update `panel-latest`? The convention shows `panel-latest` as \"Latest\". A new release would supersede it. I could create the new tag as `panel-latest`... but that would move an existing tag/release, which is destructive to the previous artifact reference. Better: create a new descriptive tag (e.g. `deep-library`) and leave `panel-latest` alone — or ask the user.\n\nThis is a genuine ambiguity worth one question, since tags/releases are public and effectively irreversible (moving `panel-latest` would rewrite an existing release). Let me ask a single question with sensible options, while the tests finish.\n\nAlso I should decide build type: `build.yml` has `build_type` debug|release (default debug) and `upload_to_gofile` (default true). The push-triggered run uses defaults → debug + gofile upload. The user probably wants the one they can install. Historically the user installed a debug-signed build. I'll go with defaults (debug + gofile), which matches previous runs.\n\nLet me check the test log first, then ask the question about the tag while tests run. Actually the test run is in the background — let me check on it.\n\nLet me check the log now.",
+                "time": {
+                  "start": 1790618684848,
+                  "end": 1790618691414
+                },
+                "id": "prt_0e930cdb0001ZPFdydCxFjkcwb",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930c8b40013YbEBEsLa46NA3"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_z9p9l7o7ub15_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && tail -8 /home/runner/hub-work/symbiosis/tmp/kt/final_run.log 2>/dev/null; echo \"--- still running?\"; pgrep -f run_kt.sh >/dev/null && echo yes || echo no"
+                  },
+                  "output": "  PASS  GameCountTest — 8 passed, 0 failed\n  PASS  GameFormatsTest — 13 passed, 0 failed\n  PASS  HomeExtrasTest — 13 passed, 0 failed\n  PASS  LauncherRailTest — all checks passed\n  PASS  LauncherUiTest — 22 passed, 0 failed\n  PASS  LazyScanTest — 17 passed, 0 failed\n  PASS  PanelAssetsTest — all checks passed\n  PASS  PluginPackTest — 15 passed, 0 failed\n--- still running?\nyes\n",
+                  "metadata": {
+                    "output": "  PASS  GameCountTest — 8 passed, 0 failed\n  PASS  GameFormatsTest — 13 passed, 0 failed\n  PASS  HomeExtrasTest — 13 passed, 0 failed\n  PASS  LauncherRailTest — all checks passed\n  PASS  LauncherUiTest — 22 passed, 0 failed\n  PASS  LazyScanTest — 17 passed, 0 failed\n  PASS  PanelAssetsTest — all checks passed\n  PASS  PluginPackTest — 15 passed, 0 failed\n--- still running?\nyes\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && tail -8 /home/runner/hub-work/symbiosis/tmp/kt/final_run.log 2>/dev/null; echo \"--- still running?\"; pgrep -f run_kt.sh >/dev/null && echo yes || echo no",
+                  "time": {
+                    "start": 1790618691596,
+                    "end": 1790618691639
+                  }
+                },
+                "id": "prt_0e930e75e001WPUq2uLxdcM1HP",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930c8b40013YbEBEsLa46NA3"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e930e85a001nycBdJk02YriIY",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930c8b40013YbEBEsLa46NA3"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790618691732,
+                "completed": 1790619012618
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e930e894001puEw73q3ILgu9C",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e930ed5c001jhr8wgGhim9qvy",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930e894001puEw73q3ILgu9C"
+              },
+              {
+                "type": "reasoning",
+                "text": "Tests are progressing, all PASS so far. Let me ask the user the tag question while it finishes.\n\nThe question: which tag for the release?\n- New descriptive tag (e.g. `deep-library`) + keep `panel-latest` as is — recommended.\n- Move `panel-latest` to the new build (overwrites the previous release reference).\n- Just a plain tag without a GitHub release.\n\nI'll ask one concise question.",
+                "time": {
+                  "start": 1790618692959,
+                  "end": 1790618693961
+                },
+                "id": "prt_0e930ed5f001VHqfWJKqngXVAF",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930e894001puEw73q3ILgu9C"
+              },
+              {
+                "type": "tool",
+                "tool": "question",
+                "callID": "call_function_etuxqbkktvs9_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "questions": [
+                      {
+                        "header": "Тег релиза",
+                        "question": "В репозитории тегов пока нет, а последние релизы помечены слэгами: panel-latest, symbiosis-latest, thin-apk, engine-kenji. Как пометить эту сборку?",
+                        "multiple": false,
+                        "options": [
+                          {
+                            "label": "Новый тег deep-library (рекомендую)",
+                            "description": "Создать GitHub-релиз с тегом deep-library, panel-latest не трогать. История артефактов сохраняется."
+                          },
+                          {
+                            "label": "Перевесить panel-latest на новую сборку",
+                            "description": "Тег panel-latest будет указывать на новый APK; предыдущий артефакт останется, но ссылка «latest» переедет."
+                          },
+                          {
+                            "label": "Только тег, без релиза",
+                            "description": "git tag + push тега, без GitHub-релиза и без загрузки APK как assets."
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "output": "User has answered your questions: \"В репозитории тегов пока нет, а последние релизы помечены слэгами: panel-latest, symbiosis-latest, thin-apk, engine-kenji. Как пометить эту сборку?\"=\"названием апк с автообновляемым тегами\". You can now continue with the user's answers in mind.",
+                  "metadata": {
+                    "answers": [
+                      [
+                        "названием апк с автообновляемым тегами"
+                      ]
+                    ],
+                    "truncated": false
+                  },
+                  "title": "Asked 1 question",
+                  "time": {
+                    "start": 1790618696823,
+                    "end": 1790619012528
+                  }
+                },
+                "id": "prt_0e930f14c001fMzcqQa44XyVjT",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930e894001puEw73q3ILgu9C"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e935cdd4001yfkCWIvC5RwcaF",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e930e894001puEw73q3ILgu9C"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790619012636,
+                "completed": 1790619018573
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e935ce1c001YyitZ64whinfna",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e935d30b001HlR7B5ZaHPrSvg",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e935ce1c001YyitZ64whinfna"
+              },
+              {
+                "type": "reasoning",
+                "text": "The user says: \"названием апк с автообновляемым тегами\" — \"by the APK name with auto-updating tags\". \n\nInterpretation: they want the release/tag named after the APK, with a *moving* (auto-updating) tag — i.e. a \"latest\"-style pointer that gets re-pointed to each new build. That's exactly what `panel-latest` and `symbiosis-latest` are: fixed tag names that get moved forward (\"auto-updating\"). That matches my option 2 essentially, but done as their existing convention: a stable tag name that always points at the newest build.\n\nSo: the tag should be named after the APK, and be a rolling/moving tag. Existing names: `panel-latest`, `symbiosis-latest`. The APK the user cares about — the full emulator APK — its \"latest\" pointer would be `symbiosis-latest` (the release \"Symbiosis — два пространства\" is the full app; `panel-latest` is the panel-only APK).\n\nGiven the user installed \"Symbiosis.apk\" (the full app with the emulator and the Symbiosis bridge — that's the only one where games appear at all), the right target is `symbiosis-latest`.\n\nHmm, but the user said \"названием апк\" = \"named after the APK\". The APK name for build.yml's artifact is `Eden-Symbiosis-Legacy-debug` (artifact name) and the file is `*-legacy-debug.apk`. For the panel workflow, let me check what the APK is named there. Earlier the panel release is \"Symbiosis panel\". Let me check the panel-apk release assets to see the actual APK filename the user got as \"Symbiosis.apk\".\n\nLet me look at the releases' asset names to map \"название APK\" to the tag convention.\n\nLet me check both releases' assets.",
+                "time": {
+                  "start": 1790619013901,
+                  "end": 1790619017275
+                },
+                "id": "prt_0e935d30d001Z1MAYzDrvI23NL",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e935ce1c001YyitZ64whinfna"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_frws9tyv78jh_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && for t in panel-latest symbiosis-latest; do echo \"=== $t\"; gh release view \"$t\" --json name,tagName,createdAt,assets 2>/dev/null | python3 -c \"\nimport json,sys\nd=json.load(sys.stdin)\nprint(' name:',d.get('name'),'| tag:',d.get('tagName'),'|',d.get('createdAt'))\nfor a in d.get('assets',[]):\n    print('  asset:',a['name'], round(a['size']/1048576,1),'MB', '| downloads',a.get('downloadCount'))\n\"; done"
+                  },
+                  "output": "=== panel-latest\n name: Symbiosis panel (latest) | tag: panel-latest | 2026-09-28T12:09:35Z\n  asset: symbiosis-panel.apk 1.6 MB | downloads 0\n=== symbiosis-latest\n name: Symbiosis — два пространства | tag: symbiosis-latest | 2026-08-16T15:34:13Z\n  asset: Symbiosis.apk 20.5 MB | downloads 24\n",
+                  "metadata": {
+                    "output": "=== panel-latest\n name: Symbiosis panel (latest) | tag: panel-latest | 2026-09-28T12:09:35Z\n  asset: symbiosis-panel.apk 1.6 MB | downloads 0\n=== symbiosis-latest\n name: Symbiosis — два пространства | tag: symbiosis-latest | 2026-08-16T15:34:13Z\n  asset: Symbiosis.apk 20.5 MB | downloads 24\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && for t in panel-latest symbiosis-latest; do echo \"=== $t\"; gh release view \"$t\" --json name,tagName,createdAt,assets 2>/dev/null | python3 -c \"\nimport json,sys\nd=json.load(sys.stdin)\nprint(' name:',d.get('name'),'| tag:',d.get('tagName'),'|',d.get('createdAt'))\nfor a in d.get('assets',[]):\n    print('  asset:',a['name'], round(a['size']/1048576,1),'MB', '| downloads',a.get('downloadCount'))\n\"; done",
+                  "time": {
+                    "start": 1790619017791,
+                    "end": 1790619018514
+                  }
+                },
+                "id": "prt_0e935e03e001dipbMNtOhYAYWF",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e935ce1c001YyitZ64whinfna"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e935e520001MWZEz2lAPPm2hM",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e935ce1c001YyitZ64whinfna"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790619018593,
+                "completed": 1790619024892
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e935e561001msIiFvf2W1QPZL",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e935ea840018R4UjR3hHRYJcE",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e935e561001msIiFvf2W1QPZL"
+              },
+              {
+                "type": "reasoning",
+                "text": "Now it's clear:\n- `symbiosis-latest` → asset `Symbiosis.apk` (20.5 MB, 24 downloads) — **this is exactly the file the user has** (\"Symbiosis.apk 20.5 MB\"). So the user runs the **full emulator APK** released under the rolling tag `symbiosis-latest`.\n- `panel-latest` → `symbiosis-panel.apk` (1.6 MB, 0 downloads) — the panel-only APK, which the user isn't using.\n\nThe user's answer: \"названием апк с автообновляемым тегами\" = name it after the APK, with auto-updating tags. So: keep the rolling tag `symbiosis-latest` pointing at the newest `Symbiosis.apk`. The tag name is the APK name, and it auto-updates (moves) on each release.\n\nSo the plan:\n1. Wait for tests to finish.\n2. Commit all changes (not MANIFEST.md — it was untracked before my changes... but wait, should MANIFEST.md be committed? Rule 3 says \"исходники и изменения делай в code; пуши в git оттуда\". MANIFEST.md is a session manifest for earlyre, not project source. It was untracked before I started, so I'll leave it untracked to avoid mixing session infrastructure into the repo. Hmm — but it says \"Манифест: /home/runner/hub-work/symbiosis/code/MANIFEST.md\" and it's a repo file by design. Still: not my change, and committing it would add noise. I'll leave it and mention it.)\n3. Push to main.\n4. Push triggers: tests.yml (tests/**), panel-apk.yml (docs/library.html), build.yml (patch/**).\n5. After the build.yml (or whichever produces Symbiosis.apk) finishes, create/update the release `symbiosis-latest` with the new `Symbiosis.apk` asset.\n\nBut which workflow produces the rolling `symbiosis-latest` release? Neither build.yml nor panel-apk.yml creates a release (build.yml has `permissions: contents: write` and uploads to gofile; panel-apk.yml has `contents: write` — let me check if panel-apk.yml creates a release). Earlier I saw panel-apk.yml line 153 has another `for f in ...` loop (a second verification for a different build type). Let me check if panel-apk.yml has a `gh release create` step. If the releases are created manually, then after the build I download the APK from the run artifacts and publish the release myself.\n\nLet me check both workflows for release creation, and confirm which workflow builds the full `Symbiosis.apk`.\n\nNote build.yml artifact is `Eden-Symbiosis-Legacy-debug` and it uploads to gofile. So the full APK comes from build.yml; the `symbiosis-latest` release was presumably created manually from that artifact and renamed `Symbiosis.apk`.\n\nLet me verify: does any workflow create releases?",
+                "time": {
+                  "start": 1790619019910,
+                  "end": 1790619024503
+                },
+                "id": "prt_0e935ea86001MtWe9MFsrmXDVC",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e935e561001msIiFvf2W1QPZL"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_owbfteu8jniw_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && grep -rn \"gh release\\|softprops\\|create-release\\|gh api.*releases\" .github/workflows/*.yml | head; echo \"=== test run:\"; tail -4 /home/runner/hub-work/symbiosis/tmp/kt/final_run.log; pgrep -f run_kt.sh >/dev/null && echo \"(running)\" || echo \"(done)\""
+                  },
+                  "output": ".github/workflows/panel-apk.yml:264:          gh release delete panel-latest --yes --cleanup-tag 2>/dev/null || true\n.github/workflows/panel-apk.yml:265:          gh release create panel-latest symbiosis-panel.apk \\\n=== test run:\n  PASS  LauncherUiTest — 22 passed, 0 failed\n  PASS  LazyScanTest — 17 passed, 0 failed\n  PASS  PanelAssetsTest — all checks passed\n  PASS  PluginPackTest — 15 passed, 0 failed\n(running)\n",
+                  "metadata": {
+                    "output": ".github/workflows/panel-apk.yml:264:          gh release delete panel-latest --yes --cleanup-tag 2>/dev/null || true\n.github/workflows/panel-apk.yml:265:          gh release create panel-latest symbiosis-panel.apk \\\n=== test run:\n  PASS  LauncherUiTest — 22 passed, 0 failed\n  PASS  LazyScanTest — 17 passed, 0 failed\n  PASS  PanelAssetsTest — all checks passed\n  PASS  PluginPackTest — 15 passed, 0 failed\n(running)\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && grep -rn \"gh release\\|softprops\\|create-release\\|gh api.*releases\" .github/workflows/*.yml | head; echo \"=== test run:\"; tail -4 /home/runner/hub-work/symbiosis/tmp/kt/final_run.log; pgrep -f run_kt.sh >/dev/null && echo \"(running)\" || echo \"(done)\"",
+                  "time": {
+                    "start": 1790619024802,
+                    "end": 1790619024840
+                  }
+                },
+                "id": "prt_0e935fc7a001HMODEjKwOc7pW9",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e935e561001msIiFvf2W1QPZL"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e935fde60011Nq5LOf9PWEtV3",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e935e561001msIiFvf2W1QPZL"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790619024911,
+                "completed": 1790619026634
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e935fe0f001pkoT3jYiKI1XK9",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e936029e0013RoPdpKNwDWgpL",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e935fe0f001pkoT3jYiKI1XK9"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_bo81f07jhqfb_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && sed -n '240,280p' .github/workflows/panel-apk.yml"
+                  },
+                  "output": "          cp \"$APK\" symbiosis-panel.apk\n          echo \"APK: $APK ($((SIZE/1024)) KB)\"\n          echo \"MD5: $MD5\"\n\n          # gofile is convenient because it needs no GitHub login, but it is a\n          # third party that fails quietly; the first run produced no link at\n          # all and the summary simply omitted the row. Report what happened\n          # and always fall back to the release, which cannot disappear.\n          LINK=\"\"\n          if [ \"$UPLOAD\" != \"false\" ]; then\n            SERVER=$(curl -s -m 20 https://api.gofile.io/servers \\\n              | python3 -c \"import sys,json;d=json.load(sys.stdin);print(d['data']['servers'][0]['name'])\" 2>/dev/null || true)\n            if [ -n \"$SERVER\" ]; then\n              echo \"gofile server: $SERVER\"\n              LINK=$(curl -s -m 300 -F \"file=@symbiosis-panel.apk\" \\\n                \"https://$SERVER.gofile.io/contents/uploadfile\" \\\n                | python3 -c \"import sys,json;d=json.load(sys.stdin);print(d.get('data',{}).get('downloadPage',''))\" 2>/dev/null || true)\n            fi\n            [ -n \"$LINK\" ] && echo \"gofile: $LINK\" || echo \"gofile upload produced no link\"\n          fi\n\n          # A rolling release tag, so there is one permanent address for the\n          # current app instead of an artifact that expires in 90 days and\n          # needs a signed-in browser to fetch.\n          gh release delete panel-latest --yes --cleanup-tag 2>/dev/null || true\n          gh release create panel-latest symbiosis-panel.apk \\\n            --title \"Symbiosis panel (latest)\" \\\n            --notes \"Панель целиком внутри APK — открывается без интернета. Сеть нужна только для GitHub API. MD5 \\`$MD5\\`.\" \\\n            && DIRECT=\"https://github.com/${GITHUB_REPOSITORY}/releases/download/panel-latest/symbiosis-panel.apk\" \\\n            || DIRECT=\"\"\n\n          {\n            echo \"## Symbiosis panel APK\"\n            echo \"\"\n            echo \"| | |\"\n            echo \"|---|---|\"\n            echo \"| Размер | $((SIZE/1024)) KB |\"\n            echo \"| MD5 | \\`$MD5\\` |\"\n            [ -n \"$DIRECT\" ] && echo \"| Скачать | $DIRECT |\"\n            [ -n \"$LINK\" ] && echo \"| Зеркало | $LINK |\"\n            echo \"\"\n",
+                  "metadata": {
+                    "output": "          cp \"$APK\" symbiosis-panel.apk\n          echo \"APK: $APK ($((SIZE/1024)) KB)\"\n          echo \"MD5: $MD5\"\n\n          # gofile is convenient because it needs no GitHub login, but it is a\n          # third party that fails quietly; the first run produced no link at\n          # all and the summary simply omitted the row. Report what happened\n          # and always fall back to the release, which cannot disappear.\n          LINK=\"\"\n          if [ \"$UPLOAD\" != \"false\" ]; then\n            SERVER=$(curl -s -m 20 https://api.gofile.io/servers \\\n              | python3 -c \"import sys,json;d=json.load(sys.stdin);print(d['data']['servers'][0]['name'])\" 2>/dev/null || true)\n            if [ -n \"$SERVER\" ]; then\n              echo \"gofile server: $SERVER\"\n              LINK=$(curl -s -m 300 -F \"file=@symbiosis-panel.apk\" \\\n                \"https://$SERVER.gofile.io/contents/uploadfile\" \\\n                | python3 -c \"import sys,json;d=json.load(sys.stdin);print(d.get('data',{}).get('downloadPage',''))\" 2>/dev/null || true)\n            fi\n            [ -n \"$LINK\" ] && echo \"gofile: $LINK\" || echo \"gofile upload produced no link\"\n          fi\n\n          # A rolling release tag, so there is one permanent address for the\n          # current app instead of an artifact that expires in 90 days and\n          # needs a signed-in browser to fetch.\n          gh release delete panel-latest --yes --cleanup-tag 2>/dev/null || true\n          gh release create panel-latest symbiosis-panel.apk \\\n            --title \"Symbiosis panel (latest)\" \\\n            --notes \"Панель целиком внутри APK — открывается без интернета. Сеть нужна только для GitHub API. MD5 \\`$MD5\\`.\" \\\n            && DIRECT=\"https://github.com/${GITHUB_REPOSITORY}/releases/download/panel-latest/symbiosis-panel.apk\" \\\n            || DIRECT=\"\"\n\n          {\n            echo \"## Symbiosis panel APK\"\n            echo \"\"\n            echo \"| | |\"\n            echo \"|---|---|\"\n            echo \"| Размер | $((SIZE/1024)) KB |\"\n            echo \"| MD5 | \\`$MD5\\` |\"\n            [ -n \"$DIRECT\" ] && echo \"| Скачать | $DIRECT |\"\n            [ -n \"$LINK\" ] && echo \"| Зеркало | $LINK |\"\n            echo \"\"\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && sed -n '240,280p' .github/workflows/panel-apk.yml",
+                  "time": {
+                    "start": 1790619026282,
+                    "end": 1790619026314
+                  }
+                },
+                "id": "prt_0e93602aa001HcUWmAl4Z9GJvm",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e935fe0f001pkoT3jYiKI1XK9"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e936040c0016Aw37yc1itn6gV",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e935fe0f001pkoT3jYiKI1XK9"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790619026654,
+                "completed": 1790619636604
+              },
+              "finish": "tool-calls",
+              "id": "msg_0e93604de001OluPYY7RX0FbGf",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e9360d03001tZWB3bWRbLvI01",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93604de001OluPYY7RX0FbGf"
+              },
+              {
+                "type": "reasoning",
+                "text": "Now it's fully clear. `panel-apk.yml` has the **rolling tag** pattern the user described:\n```\ngh release delete panel-latest --yes --cleanup-tag 2>/dev/null || true\ngh release create panel-latest symbiosis-panel.apk --title \"Symbiosis panel (latest)\" ...\n```\n\"Названием апк с автообновляемым тегами\" = the tag is named after the APK (`panel-latest` for `symbiosis-panel.apk`), and it auto-updates (delete + recreate on every build).\n\nBut that's the **panel** APK (1.6 MB, 0 downloads) — the one the user does NOT use. The user's app is `Symbiosis.apk` (20.5 MB) under `symbiosis-latest`, which is the full emulator build from `build.yml` — and `build.yml` does **not** create a rolling release; it only uploads a gofile link + artifact.\n\nSo the user wants: build the full APK and put it under the rolling `symbiosis-latest` tag with the asset named `Symbiosis.apk` — i.e. reproduce the same rolling-tag pattern for the main APK.\n\nConcretely my plan:\n1. Commit + push → triggers `build.yml` (patch/**) which builds the full emulator APK (~25-30 min), plus `panel-apk.yml` and `tests.yml`.\n2. Wait for `build.yml` to finish, download its artifact.\n3. Republish the rolling release: `gh release delete symbiosis-latest --cleanup-tag` + `gh release create symbiosis-latest Symbiosis.apk --title \"Symbiosis (latest)\" --notes ...` with MD5.\n\nNote: deleting the existing release removes the old 20.5 MB asset and the download URL stays the same (that's the point of a rolling tag — \"one permanent address\"). The user explicitly chose this. It also loses the previous asset, which the panel workflow accepts as normal.\n\nWait — but is `build.yml`'s APK really the one the user has? `build.yml` builds \"legacy\" flavour → `*legacy-debug.apk`, artifact name `Eden-Symbiosis-Legacy-debug`. The `symbiosis-latest` release from 2026-08-16 (20.5 MB) is older than today's changes. The release title \"Symbiosis — два пространства\" matches the two-spaces feature in the panel (main + Kenji). So yes, `build.yml`'s output is what gets published as `Symbiosis.apk`.\n\nOne risk: `build.yml` builds **Legacy** flavour, and the repo's own notes say legacy crashes on the user's Mali-G57 device... but the user has a 20.5 MB `Symbiosis.apk` installed and reports UI issues, not crashes, so their device runs it. I'll build with the workflow default (debug + gofile) and mention the flavour note.\n\nLet me now:\n1. Wait for tests.\n2. Commit.\n3. Push.\n4. Monitor build.yml.\n\nLet me check test status and prepare the commit message. Commit message style in this repo: Russian, one line, descriptive. The single existing commit is \"APK из хаб-снапшота 20260928T122041 (workflow build-hub-snapshot)\".\n\nA good message:\n\"Библиотека: глубина обхода 3 вместо 1, кэш не гаснет без ключей, рельс не сбрасывает свайп\"\n\nMaybe multi-line with a short body explaining. Given repo style (single line for the only commit, but BUGS.md is verbose and the workflows have detailed comments), a short body is appropriate. Let me write a message with a subject line + brief bullets.\n\nLet me wait for the tests to finish first.",
+                "time": {
+                  "start": 1790619028743,
+                  "end": 1790619035437
+                },
+                "id": "prt_0e9360d07001BaqVZCs84hNYOs",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93604de001OluPYY7RX0FbGf"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_ucqc9o788itz_1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && for i in $(seq 1 40); do pgrep -f run_kt.sh >/dev/null || break; sleep 15; done; tail -12 /home/runner/hub-work/symbiosis/tmp/kt/final_run.log",
+                    "timeout": 660000
+                  },
+                  "output": "  PASS  ConverterTest — 6 passed, 0 failed\n  PASS  DeepLibraryTest — all checks passed\n  PASS  FolderScanTest — 9 passed, 0 failed\n  PASS  GameCountTest — 8 passed, 0 failed\n  PASS  GameFormatsTest — 13 passed, 0 failed\n  PASS  HomeExtrasTest — 13 passed, 0 failed\n  PASS  LauncherRailTest — all checks passed\n  PASS  LauncherUiTest — 22 passed, 0 failed\n  PASS  LazyScanTest — 17 passed, 0 failed\n  PASS  PanelAssetsTest — all checks passed\n  PASS  PluginPackTest — 15 passed, 0 failed\n",
+                  "metadata": {
+                    "output": "  PASS  ConverterTest — 6 passed, 0 failed\n  PASS  DeepLibraryTest — all checks passed\n  PASS  FolderScanTest — 9 passed, 0 failed\n  PASS  GameCountTest — 8 passed, 0 failed\n  PASS  GameFormatsTest — 13 passed, 0 failed\n  PASS  HomeExtrasTest — 13 passed, 0 failed\n  PASS  LauncherRailTest — all checks passed\n  PASS  LauncherUiTest — 22 passed, 0 failed\n  PASS  LazyScanTest — 17 passed, 0 failed\n  PASS  PanelAssetsTest — all checks passed\n  PASS  PluginPackTest — 15 passed, 0 failed\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/symbiosis/code && for i in $(seq 1 40); do pgrep -f run_kt.sh >/dev/null || break; sleep 15; done; tail -12 /home/runner/hub-work/symbiosis/tmp/kt/final_run.log",
+                  "time": {
+                    "start": 1790619035512,
+                    "end": 1790619636526
+                  }
+                },
+                "id": "prt_0e9362731001XxHoxE00q2NP0y",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93604de001OluPYY7RX0FbGf"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0e93f5354001rsoNVblQShvQMY",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93604de001OluPYY7RX0FbGf"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0e92e448b001lMfnqN4VOqKkws",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/symbiosis/code",
+                "root": "/home/runner/hub-work/symbiosis/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790619636624
+              },
+              "id": "msg_0e93f5390001DWsIV40249Vfnu",
+              "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI"
+            },
+            "parts": [
+              {
+                "snapshot": "8bbca0988d505c7f68efd5980e3725dd006ce882",
+                "type": "step-start",
+                "id": "prt_0e93f593a001lnFyySMN7T5PfO",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93f5390001DWsIV40249Vfnu"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_function_ij5dwlukfkiw_1",
+                "state": {
+                  "metadata": {
+                    "output": ""
+                  },
+                  "status": "running",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/symbiosis/code && for i in $(seq 1 40); do pgrep -f run_kt.sh >/dev/null || break; sleep 15; done; echo \"=== final:\"; tail -5 /home/runner/hub-work/symbiosis/tmp/kt/final_run.log; grep -c \"FAIL\" /home/runner/hub-work/symbiosis/tmp/kt/final_run.log || true",
+                    "timeout": 660000
+                  },
+                  "time": {
+                    "start": 1790619638432
+                  }
+                },
+                "id": "prt_0e93f593d001FHnJRb8B8rN9JP",
+                "sessionID": "ses_f16f72b92ffe8J9SfGCTEP7asI",
+                "messageID": "msg_0e93f5390001DWsIV40249Vfnu"
               }
             ]
           }
@@ -15398,8 +16647,8 @@
     }
   ],
   "state": "updated",
-  "stamp": "20260928T180324",
-  "startedAt": "2026-09-28T18:03:30Z",
+  "stamp": "20260928T183018",
+  "startedAt": "2026-09-28T18:30:22Z",
   "runId": "36456236601",
   "runNumber": "176"
 }
