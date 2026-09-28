@@ -521,16 +521,20 @@ async function tryOpenLive(token) {
     const k = String(v || '');
     if (seen[k]) continue; seen[k] = 1; candidates.push(k);
   }
-  for (const zk of candidates) {
-    try {
-      await preflightHub(String(s.hubUrl || s.url).replace(/\/+$/, ''), zk, s.runId);
-      const url = buildOpenUrl(s, zk);
-      saveLast(url);
-      clearPending();
-      log('Подключился к уже запущенному хабу. Открываю…', 'ok');
-      location.href = url;
-      return true;
-    } catch (e) { /* следующий кандидат */ }
+  const bases = sessionBases(s);
+  for (const base of bases) {
+    if (bases.indexOf(base) > 0) log('Основной адрес молчит — пробую резервный…');
+    for (const zk of candidates) {
+      try {
+        await preflightHub(base, zk, s.runId);
+        const url = buildOpenUrl(s, zk, base);
+        saveLast(url, bases.filter(b => b !== base)[0] || '');
+        clearPending();
+        log(bases.indexOf(base) > 0 ? 'Перешёл на резервный адрес. Открываю…' : 'Подключился к уже запущенному хабу. Открываю…', 'ok');
+        location.href = url;
+        return true;
+      } catch (e) { /* следующий кандидат */ }
+    }
   }
   log('Хаб запущен, но закрыт токеном запуска, которого на этом устройстве уже нет. Нажми «Остановить и перезапустить ранер».', 'err');
   return false;
@@ -615,12 +619,12 @@ async function preflightHub(base, zt, expectedRunId) {
   }
   return true;
 }
-function buildOpenUrl(s, zt) {
-  const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
+function buildOpenUrl(s, zt, baseOpt) {
+  const base = String(baseOpt || s.hubUrl || s.url || '').replace(/\/+$/, '');
   return base + '/m?zt=' + encodeURIComponent(zt);
 }
-function saveLast(url) {
-  try { localStorage.setItem('hub_last', JSON.stringify({ url, at: Date.now() })); } catch (e) {}
+function saveLast(url, reserve) {
+  try { localStorage.setItem('hub_last', JSON.stringify({ url, reserve: reserve || '', at: Date.now() })); } catch (e) {}
 }
 function readLast() {
   try { return JSON.parse(localStorage.getItem('hub_last') || 'null'); } catch (e) { return null; }
@@ -649,6 +653,14 @@ function lastOriginToken() {
     return { base: p.origin, zt: p.searchParams.get('zt') || '' };
   } catch (e) { return { base: '', zt: '' }; }
 }
+function sessionBases(s) {
+  const out = []; const seen = {};
+  for (const v of [String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || '')]) {
+    const k = v.replace(/\/+$/, '');
+    if (k && !seen[k]) { seen[k] = 1; out.push(k); }
+  }
+  return out;
+}
 function vaultUrl() {
   const { base, zt } = lastOriginToken();
   if (!base) return '';
@@ -662,6 +674,18 @@ async function openLast() {
     await preflightHub(base, zt);
     location.href = last.url;
   } catch (e) {
+    if (last && last.reserve) {
+      try {
+        const base2 = String(last.reserve).replace(/\/+$/, '');
+        log('Основной адрес молчит — пробую резервный…');
+        await preflightHub(base2, zt);
+        const u2 = base2 + '/m?zt=' + encodeURIComponent(zt);
+        saveLast(u2, base);
+        log('Перешёл на резервный адрес.', 'ok');
+        location.href = u2;
+        return;
+      } catch (e2) { /* доложим ниже */ }
+    }
     log('Последний хаб недоступен: ' + (e && e.message || e), 'err');
   }
 }
@@ -733,12 +757,17 @@ async function afterDispatch(token, zt, since, label) {
     progFinish(false, 'Ожидание прервано. Раннер, возможно, ещё поднимается — обновите вкладку GitHub.');
     return false;
   }
-  const base = String(s.hubUrl || s.url || '').replace(/\/+$/, '');
+  const bases = sessionBases(s);
+  let base = '';
   progStage('Проверяю доступ…');
-  log('Адрес получен: ' + base);
-  await preflightHub(base, zt, s.runId);
-  const url = buildOpenUrl(s, zt);
-  saveLast(url);
+  log('Адрес получен: ' + (bases[0] || ''));
+  for (const b of bases) {
+    if (bases.indexOf(b) > 0) log('Основной адрес молчит — пробую резервный…');
+    try { await preflightHub(b, zt, s.runId); base = b; break; } catch (e) { /* резерв дальше */ }
+  }
+  if (!base) throw new Error('Ни основной, ни резервный адрес не отвечает.');
+  const url = buildOpenUrl(s, zt, base);
+  saveLast(url, bases.filter(b => b !== base)[0] || '');
   clearPending();
   progFinish(true, label + ' завершён, хаб отвечает. Открываю…');
   log('Хаб жив. Открываю…', 'ok');
@@ -1006,15 +1035,24 @@ async function openSlot(slot, btn) {
       progFinish(false, why + '.');
       return;
     }
-    const base = String(s.hubUrl || s.agentUrl || s.url || s.deskUrl).replace(/\/+$/, '');
     if (slot === 'hub-linux') {
       // A hub is gated: the token that opened it has to be the one the launch
-      // used, or it answers 401 to a page that looks perfectly fine.
+      // used, or it answers 401 to a page that looks perfectly fine. Main
+      // address first, warm reserve (url2) second.
       const zt = (readPending() && readPending().zt) || lastOriginToken().zt || '';
-      await preflightHub(base, zt, s.runId);
-      location.href = buildOpenUrl(s, zt);
+      const bases = sessionBases(s);
+      let got = '';
+      for (const b of bases) {
+        if (bases.indexOf(b) > 0) log('Основной адрес молчит — пробую резервный…');
+        try { const base = b; await preflightHub(base, zt, s.runId); got = base; break; } catch (e) { /* дальше */ }
+      }
+      if (!got) throw new Error('Ни основной, ни резервный адрес не отвечает.');
+      saveLast(buildOpenUrl(s, zt, got), bases.filter(b => b !== got)[0] || '');
+      if (bases.indexOf(got) > 0) log('Перешёл на резервный адрес.', 'ok');
+      location.href = buildOpenUrl(s, zt, got);
       return;
     }
+    const base = String(s.hubUrl || s.agentUrl || s.url || s.deskUrl).replace(/\/+$/, '');
     const zt = lastOriginToken().zt;
     location.href = zt ? (base + (base.includes('?') ? '&' : '?') + 'zt=' + encodeURIComponent(zt)) : base;
   } catch (e) {

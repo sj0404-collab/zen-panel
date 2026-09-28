@@ -771,5 +771,23 @@ check('q97 runner rescue channels: tmate ssh + command queue',
   !hubControl.includes('eval ') &&
   rescueSsh.includes("#{tmate_ssh}") && rescueSsh.includes('control/rescue-$VM.json'));
 
+// q98: with the main address dead the app must walk over to the warm reserve
+// (Z11 dual tunnels). Keeper owns the second cloudflared (TUNNEL_TAG=reserve),
+// publishes url2, both jobs carry it, and the hub APK probes main then reserve
+// in every open flow instead of showing the dead-address banner.
+const tunnelKeeper = fs.readFileSync(path.join(__dirname, '..', 'tools/tunnel_keeper.sh'), 'utf8');
+const openTunnel = fs.readFileSync(path.join(__dirname, '..', 'tools/open_tunnel.sh'), 'utf8');
+const hubApkIdx = fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub/index.html'), 'utf8');
+check('q98 dual tunnels with automatic reserve failover',
+  tunnelKeeper.includes('TUNNEL_TAG=reserve') && tunnelKeeper.includes('url2=') &&
+  tunnelKeeper.includes('MAIN_FAILS') && tunnelKeeper.includes('publish_pair') &&
+  openTunnel.includes('TUNNEL_TAG') && openTunnel.includes('${TAG:+-$TAG}') &&
+  hubWorkflow.includes('tools/tunnel_keeper.sh') &&
+  hubWorkflow.includes('hub-url2') && hubWorkflow.includes('vnc-url2') &&
+  hubWorkflow.includes('\u0022[t]unnel_keeper.sh\u0022'.replace(/\\u0022/g, '"')) &&
+  hubControl.includes('url2=') && hubControl.includes('tunnel_keeper') &&
+  hubApkIdx.includes('sessionBases') && hubApkIdx.includes('s.url2') &&
+  hubApkIdx.includes('резервным адресом') === false && hubApkIdx.includes('резервный адрес'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

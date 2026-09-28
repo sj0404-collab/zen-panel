@@ -350,8 +350,17 @@ jobs:
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
               "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
               "url=$URL" "hubUrl=$URL" "desktop=$URL/d" "mobile=$URL/m" \
+              $([ -s "$HUB_LOGS/hub-url2" ] && echo "url2=$(cat "$HUB_LOGS/hub-url2")") \
               "auth=без пароля" "tools=$TOOLS" \
               "label=${{ inputs.label }}"
+
+          # Z11 dual tunnel: a warm reserve address per endpoint + main-tunnel
+          # resurrection that does not depend on the keep-alive step staying
+          # alive (measured on run 175: hub VM wedged, watchdog with it).
+          nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
+            bash "$GITHUB_WORKSPACE/fork/tools/tunnel_keeper.sh" hub >> "$HUB_LOGS/tunnel-keeper.log" 2>&1 &
+          echo $! > "$HUB_LOGS/tunnel-keeper.pid"
+          echo "tunnel keeper: hub endpoint now carries main + reserve addresses"
 
       - name: Keep the session alive
         run: |
@@ -381,6 +390,8 @@ jobs:
             # "Complete job" hang trap, same bracket-pattern kill.
             pkill -f "[h]ub_control.sh" 2>/dev/null || true
             pkill -f "[r]escue_ssh.sh" 2>/dev/null || true
+            pkill -f "[t]unnel_keeper.sh" 2>/dev/null || true
+            rm -f "$HUB_LOGS/cloudflared-8090-reserve.pid" 2>/dev/null || true
             tmate -S "$HUB_LOGS/tmate.sock" kill-session >/dev/null 2>&1 || true
             if [ -n "${HUB_PID:-}" ]; then kill "$HUB_PID" 2>/dev/null || true; fi
             if [ -f "$PIDFILE" ]; then
@@ -488,6 +499,7 @@ jobs:
               bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
                 "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
                 "url=$URL" "hubUrl=$URL" "desktop=$URL/d" "mobile=$URL/m" \
+                $([ -s "$HUB_LOGS/hub-url2" ] && echo "url2=$(cat "$HUB_LOGS/hub-url2")") \
                 "auth=без пароля" "label=${{ inputs.label }}"
           done
           cleanup_watchdog 0
@@ -1034,7 +1046,14 @@ jobs:
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
               "slot=vnc" "kind=Linux-VNC" "os=linux" \
               "url=$URL/vnc.html" "novncUrl=$URL/vnc.html" \
+              $([ -s "$HUB_LOGS/vnc-url2" ] && echo "url2=$(cat "$HUB_LOGS/vnc-url2")") \
               "label=${{ inputs.label }}"
+
+          # Z11 dual tunnel on the desktop VM as well.
+          nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
+            bash "$GITHUB_WORKSPACE/fork/tools/tunnel_keeper.sh" vnc >> "$HUB_LOGS/tunnel-keeper.log" 2>&1 &
+          echo $! > "$HUB_LOGS/tunnel-keeper.pid"
+          echo "tunnel keeper: vnc endpoint now carries main + reserve addresses"
 
           # Same lifelines as the hub job (Z10): this VM holds the desktop the
           # user actually watches - when the hub VM wedges, the queue + tmate
@@ -1069,6 +1088,8 @@ jobs:
             # Background lifelines started above: same "Complete job" hang rule.
             pkill -f "[h]ub_control.sh" 2>/dev/null || true
             pkill -f "[r]escue_ssh.sh" 2>/dev/null || true
+            pkill -f "[t]unnel_keeper.sh" 2>/dev/null || true
+            rm -f "$HUB_LOGS/cloudflared-6081-reserve.pid" 2>/dev/null || true
             tmate -S "$HUB_LOGS/tmate.sock" kill-session >/dev/null 2>&1 || true
             # The X stack is started detached by start_desktop.sh and the
             # runner waits for it too - leaving Xvfb/openbox/x11vnc running
@@ -1136,6 +1157,7 @@ jobs:
               bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
                 "slot=vnc" "kind=Linux-VNC" "os=linux" \
                 "url=$URL/vnc.html" "novncUrl=$URL/vnc.html" \
+                $([ -s "$HUB_LOGS/vnc-url2" ] && echo "url2=$(cat "$HUB_LOGS/vnc-url2")") \
                 "label=${{ inputs.label }}"
           done
           cleanup_vnc 0
