@@ -27,13 +27,15 @@ set -uo pipefail
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
 mkdir -p "$HUB_LOGS" 2>/dev/null || true
 SOCK="$HUB_LOGS/tmate.sock"
-log() { echo "[rescue-ssh $(date -u '+%H:%M:%S')] $*" | tee -a "$HUB_LOGS/rescue-ssh.log"; }
+VM="${CONTROL_TARGET:-hub}"
+log() { echo "[rescue-ssh:$VM $(date -u '+%H:%M:%S')] $*" | tee -a "$HUB_LOGS/rescue-ssh-$VM.log"; }
 
 TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 REPO="${GITHUB_REPOSITORY:-sj0404-collab/zen-panel}"
 BRANCH="${CONTROL_BRANCH:-session-state}"
 BEACON="${RESCUE_BEACON_SEC:-60}"
 API="https://api.github.com/repos/$REPO/contents"
+RESCUE_PATH="control/rescue-$VM.json"
 
 if ! command -v tmate >/dev/null 2>&1; then
   log "tmate missing - installing"
@@ -76,6 +78,7 @@ publish() {
 import json, sys, datetime
 print(json.dumps({
     "kind": "rescue-ssh",
+    "vm": sys.argv[5],
     "state": sys.argv[1],
     "ssh": sys.argv[2],
     "web_ro": sys.argv[3],
@@ -88,13 +91,13 @@ PY
   [ -n "$TOKEN" ] || return 0
   local b64 sha
   b64="$(printf '%s' "$payload" | base64 -w0)"
-  sha="$(curl -sf -m 20 -H "Authorization: token $TOKEN" "$API/control/rescue.json?ref=$BRANCH" 2>/dev/null \
+  sha="$(curl -sf -m 20 -H "Authorization: token $TOKEN" "$API/control/rescue-$VM.json?ref=$BRANCH" 2>/dev/null \
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sha",""))' 2>/dev/null || echo)"
   if [ -n "$sha" ]; then
-    curl -sf -m 20 -X PUT -H "Authorization: token $TOKEN" "$API/control/rescue.json" \
+    curl -sf -m 20 -X PUT -H "Authorization: token $TOKEN" "$API/control/rescue-$VM.json" \
       -d "{\"message\":\"rescue beacon\",\"content\":\"$b64\",\"branch\":\"$BRANCH\",\"sha\":\"$sha\"}" >/dev/null
   else
-    curl -sf -m 20 -X PUT -H "Authorization: token $TOKEN" "$API/control/rescue.json" \
+    curl -sf -m 20 -X PUT -H "Authorization: token $TOKEN" "$API/control/rescue-$VM.json" \
       -d "{\"message\":\"rescue beacon\",\"content\":\"$b64\",\"branch\":\"$BRANCH\"}" >/dev/null
   fi
 }
@@ -103,12 +106,12 @@ cleanup() {
   trap - TERM INT
   log "closing tmate"
   tmate -S "$SOCK" kill-session >/dev/null 2>&1 || true
-  publish ended "" "" "${GITHUB_RUN_ID:-local}" >/dev/null 2>&1 || true
+  publish ended "" "" "${GITHUB_RUN_ID:-local}" "$VM" >/dev/null 2>&1 || true
   exit 0
 }
 trap cleanup TERM INT
 
-publish live "$SSH" "${WEB:-}" "${GITHUB_RUN_ID:-local}" || log "publish failed (beacon will retry)"
+publish live "$SSH" "${WEB:-}" "${GITHUB_RUN_ID:-local}" "$VM" || log "publish failed (beacon will retry)"
 while true; do
   sleep "$BEACON"
   if ! tmate -S "$SOCK" ls >/dev/null 2>&1; then
@@ -120,5 +123,5 @@ while true; do
       sleep 1
     done
   fi
-  publish live "${SSH:-}" "${WEB:-}" "${GITHUB_RUN_ID:-local}" || true
+  publish live "${SSH:-}" "${WEB:-}" "${GITHUB_RUN_ID:-local}" "$VM" || true
 done
