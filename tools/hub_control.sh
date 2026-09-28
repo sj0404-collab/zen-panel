@@ -66,16 +66,20 @@ api_put() {
 }
 
 publish_url() {  # $1 = slot, $2 = new tunnel base url (no trailing slash)
-  local slot="$1" base="$2"
+  local slot="$1" base="$2" rv
   if [ "$slot" = "hub-linux" ]; then
+    rv="$(cat "$HUB_LOGS/hub-url2" 2>/dev/null || true)"
     GH_TOKEN="$TOKEN" bash "$TOOLS_DIR/publish_session.sh" \
       "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
       "url=$base" "hubUrl=$base" "desktop=$base/d" "mobile=$base/m" \
+      ${rv:+"url2=$rv"} \
       "auth=без пароля" "label=${HUB_LABEL:-hub}" 2>&1 | tail -1
   else
+    rv="$(cat "$HUB_LOGS/vnc-url2" 2>/dev/null || true)"
     GH_TOKEN="$TOKEN" bash "$TOOLS_DIR/publish_session.sh" \
       "slot=vnc" "kind=Linux-VNC" "os=linux" \
       "url=$base/vnc.html" "novncUrl=$base/vnc.html" \
+      ${rv:+"url2=$rv"} \
       "label=${HUB_LABEL:-hub}" 2>&1 | tail -1
   fi
 }
@@ -156,6 +160,7 @@ print(json.dumps({
         "snapshot_daemon": pc("[s]napshot-audit-code.sh"),
         "control_daemon": pc("[h]ub_control.sh"),
         "rescue_ssh": pc("[r]escue_ssh.sh"),
+        "tunnel_keeper": pc("[t]unnel_keeper.sh"),
     },
 }, ensure_ascii=False))
 PYH

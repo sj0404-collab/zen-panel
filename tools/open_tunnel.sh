@@ -23,10 +23,14 @@ fi
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
 HUB_TMP="${HUB_TMP:-$HOME/.npm-hub/tmp}"
 mkdir -p "$HUB_LOGS" "$HUB_TMP"
-LOG="${2:-$HUB_LOGS/cloudflared-$PORT.log}"
+# A second tunnel on the SAME local port (the Z11 reserve address) passes
+# TUNNEL_TAG=reserve: it gets its own pid/url/log files and skips the shared
+# port-wide pkill, so maintaining the reserve never shoots the main tunnel.
+TAG="${TUNNEL_TAG:-}"
+LOG="${2:-$HUB_LOGS/cloudflared-$PORT${TAG:+-$TAG}.log}"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
-PIDFILE="$HUB_LOGS/cloudflared-$PORT.pid"
-URLFILE="$HUB_LOGS/cloudflared-$PORT.url"
+PIDFILE="$HUB_LOGS/cloudflared-$PORT${TAG:+-$TAG}.pid"
+URLFILE="$HUB_LOGS/cloudflared-$PORT${TAG:+-$TAG}.url"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Kill only the connector for this origin. The bracket in the pattern keeps
@@ -43,8 +47,10 @@ kill_old() {
     done
   fi
   rm -f "$PIDFILE" "$URLFILE"
-  pkill -f "cloudflared [t]unnel --url http://localhost:$PORT" 2>/dev/null || true
-  pkill -f "cloudflared [t]unnel --url http://127[.]0[.]0[.]1:$PORT" 2>/dev/null || true
+  if [ -z "$TAG" ]; then
+    pkill -f "cloudflared [t]unnel --url http://localhost:$PORT" 2>/dev/null || true
+    pkill -f "cloudflared [t]unnel --url http://127[.]0[.]0[.]1:$PORT" 2>/dev/null || true
+  fi
 }
 kill_old
 
