@@ -1,0 +1,868 @@
+diff --git a/docs/BUGS.md b/docs/BUGS.md
+index 87847f1..26d95b6 100644
+--- a/docs/BUGS.md
++++ b/docs/BUGS.md
+@@ -286,6 +286,123 @@ first would never reach the phone.
+ 
+ ---
+ 
++## v22 — the launcher sees one game out of a console dump
++
++**Reported:** «почини чтобы видел игры все от приставки а то то ли свайп
++влево-вправо не работает то ли игр видит только одну и всё».
++
++Both halves were true, and they were two separate bugs that look identical
++from the outside: with a single tile on screen, "the rail does not scroll" and
++"the library has one game" cannot be told apart.
++
++### Cause 1 — the importer looked one level down (mine)
++
++`GameHelper` walked the selected folder at **depth 1** unless the folder
++dialog's "recursive search" switch was ticked, and the switch is off by
++default:
++
++```kotlin
++val scanDepth = if (gameDir.deepScan) 3 else 1
++```
++
++A console dump is normally kept one folder per game — `Games/Blade Chimera/game.nsp`,
++or `Switch/Blade Chimera [0100B7B00F2E800]/Exefs/main`. At depth 1 the walk
++sees only the files lying loose in the chosen root, so a library of twenty
++games contributes however many happen to sit in the top directory. On a
++device where exactly one did, that is the report verbatim.
++
++The same number was written twice. `GameFolderScanner.depthFor()` had its own
++`if (deepScan) 3 else 1`, and `listGames()` defaulted to `maxDepth = 1` — the
++folder screen and the library were three separate copies of a rule, which is
++how the counter came to promise games the importer then refused.
++
++### Fix
++
++`depthFor()` is the single answer, and its shallow answer is **3**: the folder
++itself plus two levels, which is `Games/Title/game.nsp` and
++`Switch/Title [id]/Exefs/main` alike. The switch still buys the two deeper
++levels. `GameHelper` asks the scanner instead of computing its own; the
++importer now also refuses to enter the data root's layout directories
++(`nand`, `load`, `cache`, …), which the previous fix had only guaranteed for
++the one-level walk. `MAX_DIRECTORIES` was always the real bound.
++
++### Cause 2 — the rail fought the finger (mine)
++
++Three things, all visible only in the shipped page:
++
++- **The cover was draggable.** `.slide img` had no `draggable="false"`, no
++  `-webkit-user-drag:none` and no `user-select:none`, so on Android a long
++  press on a cover started a native image drag that pre-empted the swipe.
++- **Positioning used `scrollIntoView`**, which scrolls *every* scrollable
++  ancestor. The page is the document; the rail is a `div`. Now `railCentre()`
++  computes `offsetLeft` and calls `rail.scrollTo`.
++- **The rail was rebuilt 20 times a minute.** `findGames()` polls
++  `loadGames()` every 700 ms, and each call replaced `rail.innerHTML` and
++  re-centred on the selected tile — a rebuild landing mid-flick threw the
++  carousel back to where it started. The rail is now only rebuilt when the
++  set of paths changes (`RAIL_SIG`), the selection survives a rebuild by
++  path, and the scroll listener cannot override a programmatic scroll
++  (`RAIL_BUSY_UNTIL`). Arrow keys step the rail, since it has no focusable
++  field of its own.
++
++### Also fixed on the way
++
++- **No keys no longer means "no games".** `getGames()` used to answer
++  `emptyList()` and clear `cachedGameList` when keys were absent, and the
++  panel's `rememberedGames()` did the same — so a library scanned yesterday
++  became "no games" today. Both now return the remembered list; the status
++  strip still says «Клюки ✕», which is the true part.
++- **An empty scan clears the list.** `GamesFragment` collected
++  `if (it.isNotEmpty()) setAdapter(it)`, so a scan that found nothing left the
++  *previous* list on screen under a "no games" notice.
++- **The importer honours the layout rule v19 promised.** v19 fixed the
++  hang by refusing to descend into `nand` / `load` / `cache` — but it only
++  taught `GameFolderScanner` that, not `addGamesRecursive`. At depth 1 that
++  was invisible, because the data root's own children are already one level
++  down. The moment the importer goes deeper it walks the same tree v19 called
++  a hang, so it now checks the directory name too. The invariant now lives in
++  one place and both walkers read it.
++
++### Why a deeper walk is not what crashed the device
++
++patch2's `GameHelper` raises the depth and `build2.yml` records why they
++stopped: the scan was tried at 24, then 8, and a build at the native 3
++crashed exactly the same. The crash that mattered was the build flavour —
++six device crashes, all `assembleLegacy`, all `-DYUZU_LEGACY=ON` on a Mali-G57,
++where upstream's own mainline APK runs on the same phone. Raising the depth
++was never the variable, so it was abandoned for a reason that has since been
++answered. Note also that `build2.yml` triggers on `patch2/**`: it builds a
++different tree from the one here, and nothing in this fix touches it.
++
++### Proof — `tests/DeepLibraryTest.kt`, `tests/LauncherRailTest.kt`
++
++Both fail on the old tree and pass on the new one:
++
++```
++DeepLibraryTest    on HEAD: 11 checks failed   after the fix: all checks passed
++LauncherRailTest   on HEAD: 10 checks failed   after the fix: all checks passed
++```
++
++`DeepLibraryTest` models the two walks over an in-memory tree and pins the
++property that actually broke — the counter and the importer must agree, and
++neither may enter a layout directory — then reads the shipped sources, which
++is what catches the two copies of the depth rule drifting apart again.
++`LauncherRailTest` already checked the data (v21); it now also checks the
++gesture, which nothing was asserting.
++
++**Files:** `patch/android/utils/GameFolderScanner.kt`,
++`patch/android/utils/GameHelper.kt`, `patch/android/utils/LivePanel.kt`,
++`patch/android/ui/GamesFragment.kt`, `docs/library.html`,
++`patch/android/assets/library.html`, `tests/DeepLibraryTest.kt`,
++`tests/LauncherRailTest.kt`, `tests/GameCountTest.kt`
++
++**Unproven:** no Android device was available to measure a real swipe. The
++gesture fixes are argued from the page and from how a WebView handles image
++drag; they are not a measurement. `CarouselRecyclerView` — the native
++landscape list — is upstream and was not touched.
++
++---
++
+ ## Open / unproven
+ 
+ - **Crash a few seconds into Blade Chimera (NSP).** Not reproduced; no device logs. The
+diff --git a/docs/library.html b/docs/library.html
+index b5909fc..cdfa068 100644
+--- a/docs/library.html
++++ b/docs/library.html
+@@ -225,6 +225,13 @@
+     -webkit-overflow-scrolling:touch;
+     padding:8px 18vw;
+     scrollbar-width:none;
++    /* Рельс владеет горизонталью сам.
++       Без touch-action WebView решает, кому отдать жест, и на 8 ГБ
++       с Mali это решал родительский скролл: свайп влево-вправо уходил
++       мимо карусели. overscroll-behavior не даёт доскакать до края и
++       утянуть за собой всю страницу. */
++    touch-action:pan-x;
++    overscroll-behavior-x:contain;
+   }
+   .rail::-webkit-scrollbar { display:none; }
+   .slide {
+@@ -237,9 +244,16 @@
+     color:var(--pink); font-size:42px; font-weight:700;
+     transform:scale(.88); opacity:.55;
+     transition:transform .18s ease, opacity .18s ease, box-shadow .18s ease;
++    /* Обложка - картинка, а картинка в WebView тянется пальцем сама.
++       Именно из-за этого свайп по карусели не сдвигал её, хотя полоса
++       прокрутки была на месте. */
++    user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+   }
+   .slide.on { transform:scale(1); opacity:1; box-shadow:0 12px 40px rgba(0,0,0,.45); }
+-  .slide img { width:100%; height:100%; object-fit:cover; display:block; }
++  .slide img {
++    width:100%; height:100%; object-fit:cover; display:block;
++    pointer-events:none; -webkit-user-drag:none; -webkit-touch-callout:none;
++  }
+   .navb {
+     position:absolute; top:50%; transform:translateY(-50%);
+     z-index:3; width:40px; height:40px; border-radius:20px;
+@@ -483,6 +497,8 @@ let FILTER = localStorage.getItem('eden-filter') || 'all';
+ 
+ let LAUNCH_I = 0;
+ let RAIL_LIST = [];
++// Состав плиток последней сборки: пустая строка - «ещё не собирали».
++let RAIL_SIG = '';
+ 
+ function sortGames(list) {
+   return list.sort((a,b) => {
+@@ -764,17 +780,56 @@ function openShots(g) {
+ }
+ 
+ 
++// Полосы прокрутки у рельса нет, а прокручивать его приходится жестом или
++// кнопками. Позицию считаем сами: scrollIntoView прокручивает всех предков
++// подряд, и страница уезжала вбок вместе с каруселью.
++function railCentre(el, smooth) {
++  const rail = $('rail');
++  if (!rail || !el) return;
++  const left = Math.max(0, el.offsetLeft - (rail.clientWidth - el.offsetWidth) / 2);
++  if (typeof rail.scrollTo === 'function') {
++    rail.scrollTo({ left: left, behavior: smooth ? 'smooth' : 'auto' });
++  } else {
++    rail.scrollLeft = left;
++  }
++}
++
++// Пока карусель едет сама, её события прокрутки не выбирают новую плитку:
++// плавная прокрутка на 8 ГБ идёт дольше, чем кажется, и слушатель
++// успевал поставить выделение на предыдущую.
++let RAIL_BUSY_UNTIL = 0;
++
+ function renderLauncher() {
+   const rail = $('rail'), dock = $('dock');
+   if (!rail || !dock) return;
++  const keepPath = RAIL_LIST[LAUNCH_I] ? RAIL_LIST[LAUNCH_I].path : '';
+   RAIL_LIST = railGames();
++  if (keepPath) {
++    const same = RAIL_LIST.findIndex(g => g.path === keepPath);
++    LAUNCH_I = same >= 0 ? same : 0;
++  }
+   if (!RAIL_LIST.length) {
+     rail.innerHTML = '';
++    RAIL_SIG = '';
+     dock.innerHTML = '<div class="empty">нет игр — откройте Список и добавьте папку</div>';
+     return;
+   }
+   if (LAUNCH_I >= RAIL_LIST.length) LAUNCH_I = 0;
+   if (LAUNCH_I < 0) LAUNCH_I = RAIL_LIST.length - 1;
++
++  // Тот же набор игр - не пересобирать рельс заново.
++  //
++  // loadGames() зовётся из опроса findGames() каждые 700 мс, и каждый раз
++  // пересобирал innerHTML и возвращал карусель на выбранную плитку. Палец
++  // был на середине свайпа - рельс под ним менялся и возвращался назад.
++  // Пересобираем только когда изменился сам состав библиотеки.
++  const sig = RAIL_LIST.map(g => g.path).join('\n');
++  if (sig === RAIL_SIG && rail.children.length) {
++    paintDock();
++    return;
++  }
++  RAIL_SIG = sig;
++
+   rail.innerHTML = RAIL_LIST.map((g, i) => {
+     const gi = GAMES.indexOf(g);
+     return `<div class="slide${i===LAUNCH_I?' on':''}" data-ri="${i}" id="cvl-${gi}">▶</div>`;
+@@ -791,10 +846,7 @@ function renderLauncher() {
+     const gi = GAMES.indexOf(g);
+     setTimeout(() => fillCover(gi, g.path), 40 * i);
+   });
+-  requestAnimationFrame(() => {
+-    const el = rail.querySelector('.slide.on');
+-    if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
+-  });
++  requestAnimationFrame(() => railCentre(rail.querySelector('.slide.on'), false));
+ }
+ 
+ function fillCover(gi, path) {
+@@ -802,7 +854,9 @@ function fillCover(gi, path) {
+   if (!el || !path) return;
+   const fn = (N() && typeof N().cover === 'function') ? 'cover' : 'icon';
+   const b64 = call(fn, path);
+-  if (b64) el.innerHTML = '<img alt="" src="data:image/jpeg;base64,' + b64 + '">';
++  // draggable=false обязателен: без него WebView начинает тянуть картинку
++  // пальцем раньше, чем до неё дойдёт свайп, и карусель не едет.
++  if (b64) el.innerHTML = '<img alt="" draggable="false" src="data:image/jpeg;base64,' + b64 + '">';
+ }
+ 
+ function snapTo(i) {
+@@ -813,11 +867,15 @@ function snapTo(i) {
+   if (!rail) return;
+   rail.querySelectorAll('.slide').forEach(el => el.classList.toggle('on', +el.dataset.ri === LAUNCH_I));
+   const el = rail.querySelector('.slide.on');
+-  if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
++  if (el) {
++    RAIL_BUSY_UNTIL = Date.now() + 450;
++    railCentre(el, true);
++  }
+   paintDock();
+ }
+ 
+ function nearestSlide() {
++  if (Date.now() < RAIL_BUSY_UNTIL) return;
+   const rail = $('rail');
+   if (!rail) return;
+   const mid = rail.scrollLeft + rail.clientWidth / 2;
+@@ -1388,10 +1446,7 @@ function showTab(id) {
+   if (id === 'conv') loadConverter();
+   if (id === 'launch') {
+     if (!$('rail') || !$('rail').children.length) renderLauncher();
+-    else {
+-      const el = $('rail').querySelector('.slide.on');
+-      if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
+-    }
++    else railCentre($('rail').querySelector('.slide.on'), false);
+   }
+   try { localStorage.setItem('eden-tab', id); } catch (e) {}
+ }
+@@ -1489,10 +1544,7 @@ if (railEl) {
+ }
+ 
+ function keepLaunchFrame() {
+-  const rail = $('rail');
+-  if (!rail) return;
+-  const el = rail.querySelector('.slide.on');
+-  if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
++  railCentre($('rail') && $('rail').querySelector('.slide.on'), false);
+ }
+ let rotT = 0;
+ window.addEventListener('resize', () => {
+@@ -1507,6 +1559,19 @@ window.addEventListener('orientationchange', () => {
+ if ($('ln-prev')) $('ln-prev').onclick = () => snapTo(LAUNCH_I - 1);
+ if ($('ln-next')) $('ln-next').onclick = () => snapTo(LAUNCH_I + 1);
+ 
++// «Влево-вправо» с клавиатуры: у лаунчера нет сфокусированного поля, и без
++// этого стрелки на аппаратной клавиатуре или в Bluetooth-игре не двигали
++// карусель вообще.
++document.addEventListener('keydown', ev => {
++  if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
++  const view = $('view-launch');
++  if (!view || !view.classList.contains('on')) return;
++  const el = document.activeElement;
++  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
++  ev.preventDefault();
++  snapTo(LAUNCH_I + (ev.key === 'ArrowRight' ? 1 : -1));
++});
++
+ let SPACE = 'symbiosis';
+ 
+ function paintSpaces(info) {
+diff --git a/patch/android/assets/library.html b/patch/android/assets/library.html
+index b5909fc..cdfa068 100644
+--- a/patch/android/assets/library.html
++++ b/patch/android/assets/library.html
+@@ -225,6 +225,13 @@
+     -webkit-overflow-scrolling:touch;
+     padding:8px 18vw;
+     scrollbar-width:none;
++    /* Рельс владеет горизонталью сам.
++       Без touch-action WebView решает, кому отдать жест, и на 8 ГБ
++       с Mali это решал родительский скролл: свайп влево-вправо уходил
++       мимо карусели. overscroll-behavior не даёт доскакать до края и
++       утянуть за собой всю страницу. */
++    touch-action:pan-x;
++    overscroll-behavior-x:contain;
+   }
+   .rail::-webkit-scrollbar { display:none; }
+   .slide {
+@@ -237,9 +244,16 @@
+     color:var(--pink); font-size:42px; font-weight:700;
+     transform:scale(.88); opacity:.55;
+     transition:transform .18s ease, opacity .18s ease, box-shadow .18s ease;
++    /* Обложка - картинка, а картинка в WebView тянется пальцем сама.
++       Именно из-за этого свайп по карусели не сдвигал её, хотя полоса
++       прокрутки была на месте. */
++    user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+   }
+   .slide.on { transform:scale(1); opacity:1; box-shadow:0 12px 40px rgba(0,0,0,.45); }
+-  .slide img { width:100%; height:100%; object-fit:cover; display:block; }
++  .slide img {
++    width:100%; height:100%; object-fit:cover; display:block;
++    pointer-events:none; -webkit-user-drag:none; -webkit-touch-callout:none;
++  }
+   .navb {
+     position:absolute; top:50%; transform:translateY(-50%);
+     z-index:3; width:40px; height:40px; border-radius:20px;
+@@ -483,6 +497,8 @@ let FILTER = localStorage.getItem('eden-filter') || 'all';
+ 
+ let LAUNCH_I = 0;
+ let RAIL_LIST = [];
++// Состав плиток последней сборки: пустая строка - «ещё не собирали».
++let RAIL_SIG = '';
+ 
+ function sortGames(list) {
+   return list.sort((a,b) => {
+@@ -764,17 +780,56 @@ function openShots(g) {
+ }
+ 
+ 
++// Полосы прокрутки у рельса нет, а прокручивать его приходится жестом или
++// кнопками. Позицию считаем сами: scrollIntoView прокручивает всех предков
++// подряд, и страница уезжала вбок вместе с каруселью.
++function railCentre(el, smooth) {
++  const rail = $('rail');
++  if (!rail || !el) return;
++  const left = Math.max(0, el.offsetLeft - (rail.clientWidth - el.offsetWidth) / 2);
++  if (typeof rail.scrollTo === 'function') {
++    rail.scrollTo({ left: left, behavior: smooth ? 'smooth' : 'auto' });
++  } else {
++    rail.scrollLeft = left;
++  }
++}
++
++// Пока карусель едет сама, её события прокрутки не выбирают новую плитку:
++// плавная прокрутка на 8 ГБ идёт дольше, чем кажется, и слушатель
++// успевал поставить выделение на предыдущую.
++let RAIL_BUSY_UNTIL = 0;
++
+ function renderLauncher() {
+   const rail = $('rail'), dock = $('dock');
+   if (!rail || !dock) return;
++  const keepPath = RAIL_LIST[LAUNCH_I] ? RAIL_LIST[LAUNCH_I].path : '';
+   RAIL_LIST = railGames();
++  if (keepPath) {
++    const same = RAIL_LIST.findIndex(g => g.path === keepPath);
++    LAUNCH_I = same >= 0 ? same : 0;
++  }
+   if (!RAIL_LIST.length) {
+     rail.innerHTML = '';
++    RAIL_SIG = '';
+     dock.innerHTML = '<div class="empty">нет игр — откройте Список и добавьте папку</div>';
+     return;
+   }
+   if (LAUNCH_I >= RAIL_LIST.length) LAUNCH_I = 0;
+   if (LAUNCH_I < 0) LAUNCH_I = RAIL_LIST.length - 1;
++
++  // Тот же набор игр - не пересобирать рельс заново.
++  //
++  // loadGames() зовётся из опроса findGames() каждые 700 мс, и каждый раз
++  // пересобирал innerHTML и возвращал карусель на выбранную плитку. Палец
++  // был на середине свайпа - рельс под ним менялся и возвращался назад.
++  // Пересобираем только когда изменился сам состав библиотеки.
++  const sig = RAIL_LIST.map(g => g.path).join('\n');
++  if (sig === RAIL_SIG && rail.children.length) {
++    paintDock();
++    return;
++  }
++  RAIL_SIG = sig;
++
+   rail.innerHTML = RAIL_LIST.map((g, i) => {
+     const gi = GAMES.indexOf(g);
+     return `<div class="slide${i===LAUNCH_I?' on':''}" data-ri="${i}" id="cvl-${gi}">▶</div>`;
+@@ -791,10 +846,7 @@ function renderLauncher() {
+     const gi = GAMES.indexOf(g);
+     setTimeout(() => fillCover(gi, g.path), 40 * i);
+   });
+-  requestAnimationFrame(() => {
+-    const el = rail.querySelector('.slide.on');
+-    if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
+-  });
++  requestAnimationFrame(() => railCentre(rail.querySelector('.slide.on'), false));
+ }
+ 
+ function fillCover(gi, path) {
+@@ -802,7 +854,9 @@ function fillCover(gi, path) {
+   if (!el || !path) return;
+   const fn = (N() && typeof N().cover === 'function') ? 'cover' : 'icon';
+   const b64 = call(fn, path);
+-  if (b64) el.innerHTML = '<img alt="" src="data:image/jpeg;base64,' + b64 + '">';
++  // draggable=false обязателен: без него WebView начинает тянуть картинку
++  // пальцем раньше, чем до неё дойдёт свайп, и карусель не едет.
++  if (b64) el.innerHTML = '<img alt="" draggable="false" src="data:image/jpeg;base64,' + b64 + '">';
+ }
+ 
+ function snapTo(i) {
+@@ -813,11 +867,15 @@ function snapTo(i) {
+   if (!rail) return;
+   rail.querySelectorAll('.slide').forEach(el => el.classList.toggle('on', +el.dataset.ri === LAUNCH_I));
+   const el = rail.querySelector('.slide.on');
+-  if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
++  if (el) {
++    RAIL_BUSY_UNTIL = Date.now() + 450;
++    railCentre(el, true);
++  }
+   paintDock();
+ }
+ 
+ function nearestSlide() {
++  if (Date.now() < RAIL_BUSY_UNTIL) return;
+   const rail = $('rail');
+   if (!rail) return;
+   const mid = rail.scrollLeft + rail.clientWidth / 2;
+@@ -1388,10 +1446,7 @@ function showTab(id) {
+   if (id === 'conv') loadConverter();
+   if (id === 'launch') {
+     if (!$('rail') || !$('rail').children.length) renderLauncher();
+-    else {
+-      const el = $('rail').querySelector('.slide.on');
+-      if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
+-    }
++    else railCentre($('rail').querySelector('.slide.on'), false);
+   }
+   try { localStorage.setItem('eden-tab', id); } catch (e) {}
+ }
+@@ -1489,10 +1544,7 @@ if (railEl) {
+ }
+ 
+ function keepLaunchFrame() {
+-  const rail = $('rail');
+-  if (!rail) return;
+-  const el = rail.querySelector('.slide.on');
+-  if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
++  railCentre($('rail') && $('rail').querySelector('.slide.on'), false);
+ }
+ let rotT = 0;
+ window.addEventListener('resize', () => {
+@@ -1507,6 +1559,19 @@ window.addEventListener('orientationchange', () => {
+ if ($('ln-prev')) $('ln-prev').onclick = () => snapTo(LAUNCH_I - 1);
+ if ($('ln-next')) $('ln-next').onclick = () => snapTo(LAUNCH_I + 1);
+ 
++// «Влево-вправо» с клавиатуры: у лаунчера нет сфокусированного поля, и без
++// этого стрелки на аппаратной клавиатуре или в Bluetooth-игре не двигали
++// карусель вообще.
++document.addEventListener('keydown', ev => {
++  if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
++  const view = $('view-launch');
++  if (!view || !view.classList.contains('on')) return;
++  const el = document.activeElement;
++  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
++  ev.preventDefault();
++  snapTo(LAUNCH_I + (ev.key === 'ArrowRight' ? 1 : -1));
++});
++
+ let SPACE = 'symbiosis';
+ 
+ function paintSpaces(info) {
+diff --git a/patch/android/ui/GamesFragment.kt b/patch/android/ui/GamesFragment.kt
+index 4b5ccc9..6522867 100644
+--- a/patch/android/ui/GamesFragment.kt
++++ b/patch/android/ui/GamesFragment.kt
+@@ -221,15 +221,16 @@ class GamesFragment : Fragment() {
+ 
+         gamesViewModel.isReloading.collect(viewLifecycleOwner) {
+             (binding.swipeRefresh as? SwipeRefreshLayout)?.isRefreshing = it
+-            binding.noticeText.setVisible(
+-                visible = gamesViewModel.games.value.isEmpty() && !it,
+-                gone = false
+-            )
++            updateEmptyNotice()
+         }
+         gamesViewModel.games.collect(viewLifecycleOwner) {
+-            if (it.isNotEmpty()) {
+-                setAdapter(it)
+-            }
++            // Раньше здесь стояло `if (it.isNotEmpty())`, и пустой результат
++            // обхода оставлял на экране ПРЕЖНИЙ список: надпись «игр нет»
++            // рисовалась поверх игр, которые на диске уже удалены или
++            // недоступны, и выглядело это как «приложение не обновляет
++            // список». Список и надпись обязаны показывать одно и то же.
++            setAdapter(it)
++            updateEmptyNotice()
+         }
+         gamesViewModel.shouldSwapData.collect(
+             viewLifecycleOwner,
+@@ -400,6 +401,15 @@ class GamesFragment : Fragment() {
+     private var lastSearchText: String = ""
+     private var lastFilter: Int = preferences.getInt(PREF_SORT_TYPE, View.NO_ID)
+ 
++    /** The "no games" notice follows the list, not the spinner. */
++    private fun updateEmptyNotice() {
++        binding.noticeText.setVisible(
++            visible = gamesViewModel.games.value.isEmpty() &&
++                !gamesViewModel.isReloading.value,
++            gone = false
++        )
++    }
++
+     private fun setAdapter(games: List<Game>) {
+         val currentSearchText = binding.searchText.text.toString()
+         val currentFilter = binding.filterButton.id
+diff --git a/patch/android/utils/GameFolderScanner.kt b/patch/android/utils/GameFolderScanner.kt
+index dfd21d3..fd699af 100644
+--- a/patch/android/utils/GameFolderScanner.kt
++++ b/patch/android/utils/GameFolderScanner.kt
+@@ -125,13 +125,10 @@ object GameFolderScanner {
+     /**
+      * Scans every configured game folder.
+      *
+-     * Always descends into subdirectories, regardless of the folder's
+-     * `deep_scan` flag. That flag governs what the emulator's own library
+-     * importer does; using it here made the count depend on a setting the user
+-     * cannot see from this screen, and let the count disagree with the file
+-     * list beside it. A storage summary that says "14 games" must mean the same
+-     * fourteen files the list can show. [MAX_DIRECTORIES] keeps a pathological
+-     * tree from turning that into a hang.
++     * Descends into subdirectories up to [depthFor] and no further, and uses
++     * the same rule the library importer does, so the count and the list
++     * cannot disagree. [MAX_DIRECTORIES] keeps a pathological tree from
++     * turning that into a hang.
+      */
+     fun scan(context: Context, stillWanted: () -> Boolean = { true }): List<Folder> {
+         val dirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return emptyList()
+@@ -141,14 +138,30 @@ object GameFolderScanner {
+     }
+ 
+     /**
+-     * How deep the library looks: GameHelper uses 3 with deep scan on and 1
+-     * without, counting the folder itself as one level.
++     * How deep the library looks, counting the folder itself as one level.
+      *
+-     * Matching it matters. This used to walk the whole tree regardless, so a
+-     * game two directories down was counted here and ignored by the importer,
+-     * and the strip claimed a game the list could never show.
++     * Both this and the emulator's own importer ([GameHelper]) ask here, so
++     * the number cannot drift between the two again.
++     *
++     * It used to be 3 with deep scan on and **1** without, and 1 is what
++     * broke console dumps. A dump is normally kept one folder per game -
++     * `Games/Blade Chimera/game.nsp`, or `Switch/Blade Chimera
++     * [0100XXXXXXXX]/...` - so a folder picked at the top of such a library
++     * yielded exactly the files lying loose in its root, and on a device
++     * where one game sat in the root that is precisely "it sees one game and
++     * that is all". Three levels is the shallow layout of that dump; the
++     * switch still buys the two deeper ones.
++     *
++     * Depth is not the only bound: layout directories are never descended
++     * into, and [MAX_DIRECTORIES] caps the walk.
+      */
+-    fun depthFor(deepScan: Boolean): Int = if (deepScan) 3 else 1
++    fun depthFor(deepScan: Boolean): Int = if (deepScan) DEEP_SCAN_DEPTH else SHALLOW_SCAN_DEPTH
++
++    /** Enough for `Games/Title/game.nsp` and `Switch/Title [id]/Exefs/main`. */
++    const val SHALLOW_SCAN_DEPTH = 3
++
++    /** What the folder dialog's "recursive search" switch buys on top. */
++    const val DEEP_SCAN_DEPTH = 6
+ 
+     /**
+      * Subdirectories [SharedDataDirectory.ensureLayout] creates under the
+@@ -350,7 +363,7 @@ object GameFolderScanner {
+     fun listGames(
+         context: Context,
+         uriString: String,
+-        maxDepth: Int = 1,
++        maxDepth: Int = SHALLOW_SCAN_DEPTH,
+         stillWanted: () -> Boolean = { true }
+     ): List<Entry> {
+         val resolver = context.applicationContext.contentResolver
+diff --git a/patch/android/utils/GameHelper.kt b/patch/android/utils/GameHelper.kt
+index c3d291c..8bb8f25 100644
+--- a/patch/android/utils/GameHelper.kt
++++ b/patch/android/utils/GameHelper.kt
+@@ -40,6 +40,36 @@ object GameHelper {
+ 
+     private lateinit var preferences: SharedPreferences
+ 
++    /**
++     * The last list the emulator managed to read, from memory or from disk.
++     *
++     * Never walks a folder and never parses a ROM header: it is what the
++     * status strip, the panel and a start without keys may show without
++     * turning into a full scan. Returns an empty list only when there has
++     * never been a successful one.
++     */
++    fun rememberedGames(): List<Game> {
++        val live = runCatching { cachedGameList }.getOrDefault(emptyList())
++        if (live.isNotEmpty()) return live
++        // Локальная переменная, а не поле preferences: этот метод зовёт
++        // WebView с потока JavaScript, а getGames() - с фоновой корутины,
++        // и оба писали бы одно и то же поле. Значение у них всё равно
++        // одинаковое, но общий lateinit зачем-то трогать из двух потоков.
++        val stored = runCatching {
++            val prefs = PreferenceManager.getDefaultSharedPreferences(
++                YuzuApplication.appContext
++            )
++            prefs.getStringSet(KEY_GAMES, emptySet()) ?: emptySet()
++        }.getOrDefault(emptySet())
++        val games = stored.mapNotNull { raw ->
++            runCatching { Json.decodeFromString<Game>(raw) }.getOrNull()
++        }
++        if (games.isNotEmpty()) {
++            cachedGameList = games.toMutableList()
++        }
++        return games
++    }
++
+     fun getGames(): List<Game> {
+         val games = mutableListOf<Game>()
+         val context = YuzuApplication.appContext
+@@ -83,8 +113,17 @@ object GameHelper {
+         val keysOk = runCatching { NativeLibrary.areKeysPresent() }.getOrDefault(false)
+         if (!keysOk) {
+             hasScanned = true
+-            cachedGameList = mutableListOf()
+-            return emptyList()
++            // Раньше здесь стояло `cachedGameList = mutableListOf()` и
++            // `return emptyList()`. Это стирало ровно то, что нужно было
++            // показать: игры, найденные прошлым обходом, у которых уже есть
++            // название, путь и обложка. Ключи потом подкладывают за минуту,
++            // а список до этого - пустой: «приложение не видит мои игры»,
++            // хотя три запуска назад видело двадцать.
++            //
++            // Обход пропущен (ниже он и был бы), prefs не перезаписаны -
++            // `return` до записи кэша. Отдаём то, что уже известно, и
++            // оставляем полосу состояния говорить правду про ключи.
++            return rememberedGames()
+         }
+ 
+ 
+@@ -107,7 +146,13 @@ object GameHelper {
+             val gameDirUri = gameDir.uriString.toUri()
+             val isValid = FileUtil.isTreeUriValid(gameDirUri)
+             if (isValid) {
+-                val scanDepth = if (gameDir.deepScan) 3 else 1
++                // Глубина берётся у сканера, а не вычисляется здесь.
++                //
++                // Здесь стояло `if (deepScan) 3 else 1`, у GameFolderScanner -
++                // то же самое, написанное отдельно. Две копии одного числа
++                // разошлись, и счётчик папки рапортовал об одной игре там,
++                // где импортёр молчал о трёх. Теперь число одно.
++                val scanDepth = GameFolderScanner.depthFor(gameDir.deepScan)
+ 
+                 addGamesRecursive(
+                     games,
+@@ -195,12 +240,20 @@ object GameHelper {
+ 
+         files.forEach {
+             if (it.isDirectory) {
+-                addGamesRecursive(
+-                    games,
+-                    FileUtil.listFiles(it.uri),
+-                    depth - 1,
+-                    mountedContainerUris
+-                )
++                // Каталоги раскладки - не библиотека, сколько бы уровней
++                // обход в них ни зашёл. nand, load и cache создаёт сам
++                // SharedDataDirectory.ensureLayout, и если папка игр
++                // оказалась родителем корня данных, обход уходил в них и
++                // либо вяз, либо насчитывал себе тысячи игр. Счётчик папок
++                // их пропускал, импортёр - нет.
++                if (!GameFolderScanner.isLayoutName(GameFolderScanner.displayNameOf(it.uri.toString()))) {
++                    addGamesRecursive(
++                        games,
++                        FileUtil.listFiles(it.uri),
++                        depth - 1,
++                        mountedContainerUris
++                    )
++                }
+             } else {
+                 val extension = FileUtil.getExtension(it.uri).lowercase()
+                 val filePath = it.uri.toString()
+diff --git a/patch/android/utils/LivePanel.kt b/patch/android/utils/LivePanel.kt
+index df8e083..97a5546 100644
+--- a/patch/android/utils/LivePanel.kt
++++ b/patch/android/utils/LivePanel.kt
+@@ -82,28 +82,21 @@ object LivePanel {
+     fun keysPresent(): Boolean =
+         runCatching { NativeLibrary.areKeysPresent() }.getOrDefault(false)
+ 
+-    fun rememberedGames(): List<Game> {
+-        if (!keysPresent()) return emptyList()
+-
+-        val live = runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList())
+-        if (live.isNotEmpty()) return live
+-        val fromPrefs = runCatching {
+-            val ctx = org.yuzu.yuzu_emu.YuzuApplication.appContext
+-            val stored = androidx.preference.PreferenceManager
+-                .getDefaultSharedPreferences(ctx)
+-                .getStringSet(GameHelper.KEY_GAMES, emptySet())
+-                ?: emptySet()
+-            stored.mapNotNull { raw ->
+-                runCatching {
+-                    kotlinx.serialization.json.Json.decodeFromString<Game>(raw)
+-                }.getOrNull()
+-            }
+-        }.getOrDefault(emptyList())
+-        if (fromPrefs.isNotEmpty()) {
+-            GameHelper.cachedGameList = fromPrefs.toMutableList()
+-        }
+-        return fromPrefs
+-    }
++    /**
++     * The library as the last successful scan left it.
++     *
++     * Reads the cache and the persisted copy, never a folder - a page that
++     * asks for the list must not be able to start a walk of the disk.
++     *
++     * It used to answer an empty list whenever keys were missing, so a
++     * library that was scanned yesterday became "no games" today, and the
++     * one thing the panel can say about it is on the status strip: «Ключи
++     * ✕». Games whose title, path and cover are already known are shown;
++     * what cannot be done without keys is written next to them, not instead
++     * of them.
++     */
++    fun rememberedGames(): List<Game> =
++        runCatching { GameHelper.rememberedGames() }.getOrDefault(emptyList())
+ 
+     fun gamesJson(): String {
+         val arr = JSONArray()
+diff --git a/tests/GameCountTest.kt b/tests/GameCountTest.kt
+index b9e2afa..9a91e53 100644
+--- a/tests/GameCountTest.kt
++++ b/tests/GameCountTest.kt
+@@ -6,12 +6,16 @@
+ //
+ //   * the scanner accepted nso and kip; Game.extensions upstream is only
+ //     xci, nsp, nca, nro
+-//   * the scanner walked the whole tree; GameHelper uses depth 3 with deep
+-//     scan on and 1 without
++//   * the scanner and the importer walked the tree to different depths
+ //
+ // Either alone produces a count the library cannot reproduce, which sends the
+ // user hunting for a missing game that was never importable. These tests pin
+ // both rules against the upstream ones.
++//
++// The shallow depth is 3, not the upstream 1: a console dump is normally kept
++// one folder per game, and a library picked at the top of one yielded only
++// the files lying loose in its root - "it sees one game and that is all".
++// DeepLibraryTest owns that rule; here it is the counting contract.
+ 
+ 
+ import java.util.Locale
+@@ -53,17 +57,20 @@ fun main(){
+     val nszOnly = N.D("ed", mutableListOf(N.F("game.nsz", 100L)))
+     check("nsz is not launchable", count(nszOnly, LAUNCHABLE, 1).first == 0)
+ 
+-    // Depth: a game one level down, deep scan off.
++    // Depth: a game one folder down, shallow scan on (3) and deep scan off.
+     val nested = N.D("ed", mutableListOf(
+         N.D("Blade", mutableListOf(N.F("blade.nsp", 2_000_000_000L)))))
+-    check("depth 1 misses a nested game, as upstream does", count(nested, LAUNCHABLE, 1).first == 0)
+-    check("depth 3 finds it, as deep scan does",            count(nested, LAUNCHABLE, 3).first == 1)
++    check("depth 3 finds a game one folder down, which is what the library asks for",
++        count(nested, LAUNCHABLE, 3).first == 1)
++    check("depth 1 would still miss it, as upstream's shallow scan does",
++        count(nested, LAUNCHABLE, 1).first == 0)
+ 
+-    // Deeper than upstream ever looks.
++    // Deeper than the shallow walk looks, still inside the deep one.
+     val deep = N.D("ed", mutableListOf(
+         N.D("a", mutableListOf(N.D("b", mutableListOf(N.D("c",
+             mutableListOf(N.F("x.nsp", 1L)))))))))
+-    check("depth 3 stops where upstream stops", count(deep, LAUNCHABLE, 3).first == 0)
++    check("the shallow walk stops at its own three levels", count(deep, LAUNCHABLE, 3).first == 0)
++    check("the deep walk finds the same dump",                   count(deep, LAUNCHABLE, 6).first == 1)
+ 
+     // A normal library still works.
+     val ok = N.D("ed", mutableListOf(
+diff --git a/tests/LauncherRailTest.kt b/tests/LauncherRailTest.kt
+index 21c5e81..bc18e83 100644
+--- a/tests/LauncherRailTest.kt
++++ b/tests/LauncherRailTest.kt
+@@ -162,6 +162,51 @@ fun main() {
+             Regex("\\$\\{LAUNCH_I \\+ 1\\} / \\$\\{RAIL_LIST\\.length\\}").containsMatchIn(page),
+             "нет счётчика — одна плитки читается как «одна игра»")
+         check("счётчик подписан в стилях", page.contains(".dock .pos {"))
++
++        // ── вторая половина жалобы: «влево-вправо не работает» ────────
++        //
++        // Свайп по карусели не сдвигал её по трём причинам, и все три
++        // видны только в разметке: картинка обложки тянулась пальцем
++        // сама (drag), позиция ставилась scrollIntoView, который
++        // прокручивает всех предков подряд, и каждая пересборка
++        // возвращала карусель на выбранную плитку - а пересборку
++        // вызывал опрос findGames() каждые 700 мс, то есть прямо во
++        // время свайпа.
++        check("обложка не тянется пальцем", page.contains("draggable=\"false\""))
++        check("картинка обложки не перехватывает жест",
++            Regex("\\.slide img \\{[\\s\\S]*?-webkit-user-drag:none").containsMatchIn(page) &&
++                Regex("\\.slide img \\{[\\s\\S]*?pointer-events:none").containsMatchIn(page),
++            "WebView начнёт тянуть картинку раньше, чем дойдёт свайп")
++        check("выделение плитки нельзя выделить текстом",
++            Regex("\\.slide \\{[\\s\\S]*?user-select:none").containsMatchIn(page))
++        check("горизонталью владеет сам рельс",
++            Regex("\\.rail \\{[\\s\\S]*?touch-action:pan-x").containsMatchIn(page) &&
++                Regex("\\.rail \\{[\\s\\S]*?overscroll-behavior-x:contain").containsMatchIn(page),
++            "WebView отдаёт жест родителю, и карусель не едет")
++        check("позиция ставится прокруткой самого рельса",
++            Regex("function railCentre\\([\\s\\S]*?rail\\.scrollTo").containsMatchIn(page),
++            "scrollIntoView уезжает вбок вместе со страницей")
++        check("scrollIntoView на рельсе больше не остался",
++            !Regex("(function renderLauncher|function snapTo|function keepLaunchFrame)" +
++                "[\\s\\S]*?scrollIntoView\\(").containsMatchIn(page) ||
++                page.split("scrollIntoView").size == 2,
++            "один из вызовов прокручивает страницу, а не карусель")
++        check("рельс не пересобирается, когда библиотека не менялась",
++            Regex("RAIL_SIG").containsMatchIn(page) &&
++                Regex("if \\(sig === RAIL_SIG && rail\\.children\\.length\\)").containsMatchIn(page),
++            "опрос findGames() возвращает карусель назад каждые 700 мс")
++        check("выбор переживает пересборку",
++            Regex("const keepPath = RAIL_LIST\\[LAUNCH_I\\][\\s\\S]*?RAIL_LIST\\.findIndex")
++                .containsMatchIn(page))
++        check("своя прокрутка не выбирает плитку",
++            page.contains("RAIL_BUSY_UNTIL") &&
++                Regex("function nearestSlide\\(\\) \\{\\s*if \\(Date\\.now\\(\\) < RAIL_BUSY_UNTIL\\) return;")
++                    .containsMatchIn(page),
++            "плавная прокрутка ставит выделение на предыдущую плитку")
++        check("стрелки влево-вправо двигают карусель",
++            Regex("ev\\.key !== 'ArrowLeft' && ev\\.key !== 'ArrowRight'").containsMatchIn(page) &&
++                Regex("snapTo\\(LAUNCH_I \\+ \\(ev\\.key === 'ArrowRight' \\? 1 : -1\\)\\)")
++                    .containsMatchIn(page))
+     }
+ 
+     println()
