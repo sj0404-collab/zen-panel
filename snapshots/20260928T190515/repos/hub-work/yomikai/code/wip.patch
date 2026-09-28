@@ -50,7 +50,7 @@ index 664fa59..d0b1821 100644
                  TextPreferenceWidget(
                      title = stringResource(MR.strings.categories),
 diff --git a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsAiScreen.kt b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsAiScreen.kt
-index 9dd5917..d3f4925 100644
+index 9dd5917..106fa0b 100644
 --- a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsAiScreen.kt
 +++ b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsAiScreen.kt
 @@ -3,20 +3,27 @@ package eu.kanade.presentation.more.settings.screen
@@ -81,7 +81,7 @@ index 9dd5917..d3f4925 100644
  import mihon.domain.ocr.service.OcrPreferences
  import tachiyomi.i18n.MR
  import tachiyomi.presentation.core.i18n.stringResource
-@@ -50,34 +57,47 @@ object SettingsAiScreen : SearchableSettings {
+@@ -50,34 +57,48 @@ object SettingsAiScreen : SearchableSettings {
          val backend by prefs.aiBackend().collectPreferenceAsState()
          val provider by prefs.aiProvider().collectPreferenceAsState()
  
@@ -140,6 +140,7 @@ index 9dd5917..d3f4925 100644
          return listOf(
 -            getBackendsGroup(statuses = statuses, selected = backend),
 +            getBackendsGroup(
++                prefs = prefs,
 +                statuses = statuses,
 +                selected = backend,
 +                loading = snapshot == null,
@@ -151,14 +152,17 @@ index 9dd5917..d3f4925 100644
              getAccessGroup(prefs = prefs, context = context, navigator = navigator),
          )
      }
-@@ -138,8 +158,18 @@ object SettingsAiScreen : SearchableSettings {
+@@ -136,42 +157,73 @@ object SettingsAiScreen : SearchableSettings {
+ 
+     @Composable
      private fun getBackendsGroup(
++        prefs: OcrPreferences,
          statuses: Map<String, AiBackendStatus>,
          selected: String,
 +        loading: Boolean,
 +        online: Boolean,
      ): Preference.PreferenceGroup {
-         val current = AiBackends.byId(selected)
+-        val current = AiBackends.byId(selected)
 +        if (loading) {
 +            return Preference.PreferenceGroup(
 +                title = stringResource(MR.strings.pref_ai_backends_group),
@@ -169,8 +173,22 @@ index 9dd5917..d3f4925 100644
 +        }
          return Preference.PreferenceGroup(
              title = stringResource(MR.strings.pref_ai_backends_group),
-             preferenceItems = AiBackends.ALL.map { plugin ->
-@@ -149,7 +179,11 @@ object SettingsAiScreen : SearchableSettings {
+-            preferenceItems = AiBackends.ALL.map { plugin ->
++            preferenceItems = listOf(
++                // Сам выбор бэкенда. Раньше строки ниже были чисто
++                // информационными, а подсказка отправляла читателя в «⚙
++                // вкладки AI», которой не существует — переключить бэкенд
++                // было негде.
++                Preference.PreferenceItem.ListPreference(
++                    preference = prefs.aiBackend(),
++                    entries = AiBackends.SELECTABLE.associate { it.id to it.title },
++                    title = "Бэкенд чата",
++                    subtitle = "Бэкенд: %s",
++                ),
++            ) + AiBackends.ALL.map { plugin ->
+                 Preference.PreferenceItem.TextPreference(
+                     title = backendTitle(
+                         plugin = plugin,
                          isSelected = plugin.id == selected,
                          status = statuses[plugin.id],
                      ),
@@ -183,7 +201,15 @@ index 9dd5917..d3f4925 100644
                  )
              } + listOf(
                  Preference.PreferenceItem.InfoPreference(
-@@ -163,15 +197,23 @@ object SettingsAiScreen : SearchableSettings {
+-                    title = stringResource(MR.strings.pref_ai_backend_current).format(current.title),
+-                ),
+-                Preference.PreferenceItem.InfoPreference(
+-                    title = stringResource(MR.strings.pref_ai_backend_switch_hint),
++                    title = stringResource(MR.strings.pref_ai_backend_current)
++                        .format(AiBackends.byId(selected).title),
+                 ),
+             ),
+         )
      }
  
      @Composable
@@ -210,7 +236,7 @@ index 9dd5917..d3f4925 100644
                  ),
                  Preference.PreferenceItem.InfoPreference(
                      title = stringResource(MR.strings.pref_ai_workspace_hint),
-@@ -207,6 +249,21 @@ object SettingsAiScreen : SearchableSettings {
+@@ -207,6 +259,21 @@ object SettingsAiScreen : SearchableSettings {
                      title = stringResource(MR.strings.pref_ai_tab_visible),
                      subtitle = stringResource(MR.strings.pref_ai_tab_visible_summary),
                  ),
@@ -232,7 +258,7 @@ index 9dd5917..d3f4925 100644
                  Preference.PreferenceItem.SwitchPreference(
                      preference = prefs.aiHttpServer(),
                      title = stringResource(MR.strings.pref_ai_http_server),
-@@ -240,6 +297,7 @@ object SettingsAiScreen : SearchableSettings {
+@@ -240,6 +307,7 @@ object SettingsAiScreen : SearchableSettings {
      private fun backendSubtitle(
          plugin: AiBackends.Plugin,
          status: AiBackendStatus?,
@@ -240,16 +266,29 @@ index 9dd5917..d3f4925 100644
      ): String = buildString {
          append(plugin.summary)
          if (status == null) return@buildString
-@@ -253,6 +311,9 @@ object SettingsAiScreen : SearchableSettings {
+@@ -253,6 +321,9 @@ object SettingsAiScreen : SearchableSettings {
              append(stringResource(MR.strings.pref_ai_requires))
              append(": ")
              append(status.missing.joinToString(", ") { labels.getValue(it) })
-+        } else if (!online && plugin.requires.contains(AiRequirement.NETWORK)) {
++        } else if (!online && plugin.requirements.contains(AiRequirement.NETWORK)) {
 +            append('\n')
 +            append("Сети нет — бэкенд сейчас не ответит")
          }
      }
  
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/AiModelPickerDialog.kt b/app/src/main/java/eu/kanade/presentation/reader/AiModelPickerDialog.kt
+index cc978bd..ffeff16 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/AiModelPickerDialog.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/AiModelPickerDialog.kt
+@@ -261,7 +261,7 @@ fun AiModelPickerDialog(
+                         label = { Text("Как у чата") },
+                         modifier = Modifier.padding(end = 6.dp),
+                     )
+-                    eu.kanade.tachiyomi.data.ai.AiBackends.ALL.forEach { backend ->
++                    eu.kanade.tachiyomi.data.ai.AiBackends.SELECTABLE.forEach { backend ->
+                         FilterChip(
+                             selected = orchBackend == backend.id,
+                             onClick = { orchBackend = backend.id },
 diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrResultBottomSheet.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrResultBottomSheet.kt
 index 5f7907f..9c7b8b6 100644
 --- a/app/src/main/java/eu/kanade/presentation/reader/OcrResultBottomSheet.kt
@@ -622,7 +661,7 @@ index 60fe532..248c201 100644
 -    )
  }
 diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
-index fe62c1c..603508f 100644
+index fe62c1c..89e96ff 100644
 --- a/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
 +++ b/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
 @@ -6,16 +6,25 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -663,8 +702,23 @@ index fe62c1c..603508f 100644
  ) {
      BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
          val density = LocalDensity.current
-@@ -94,6 +108,17 @@ fun OcrResultPopup(
+@@ -92,8 +106,32 @@ fun OcrResultPopup(
+                 onSearch = onSearch,
+                 onTermGroupClick = onTermGroupClick,
                  onPlayAudioClick = onPlayAudioClick,
++                // Запасной путь: всплывающее окно не поместилось, панель
++                // действий всё равно нужна, иначе озвучка и словарь
++                // пропадали бы именно в этом сценарии.
++                actions = {
++                    OcrResultActionBar(
++                        onSpeak = onSpeak,
++                        onSpeakRole = onSpeakRole,
++                        onCopyText = onCopyText,
++                        onChooseVoice = onChooseVoice,
++                        onAddToDictionary = onAddToDictionary,
++                        onHidePageOverlay = onHidePageOverlay,
++                    )
++                },
              )
          } else {
 +            // Тап мимо всплывающего окна закрывает результат: раньше окно
@@ -681,7 +735,7 @@ index fe62c1c..603508f 100644
              Surface(
                  modifier = Modifier
                      .width(with(density) { placement.width.toDp() })
-@@ -124,6 +149,23 @@ fun OcrResultPopup(
+@@ -124,6 +162,23 @@ fun OcrResultPopup(
                          androidx.compose.foundation.layout.Column(
                              modifier = Modifier.fillMaxSize(),
                          ) {
@@ -705,7 +759,7 @@ index fe62c1c..603508f 100644
                              if (searchState.query.isNotBlank()) {
                                  TranslationCard(
                                      originalText = searchState.query,
-@@ -152,6 +194,19 @@ fun OcrResultPopup(
+@@ -152,6 +207,19 @@ fun OcrResultPopup(
                                  onCopyText = null,
                                  contentPadding = PaddingValues(8.dp),
                              )
@@ -924,12 +978,84 @@ index 7e0bcf9..33ecc2d 100644
                  toolResults = emptyList(),
                  images = emptyList(),
              )
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
+index e7b35fd..21f988c 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
+@@ -941,7 +941,7 @@ object AiAgent {
+                 val session = RunnerLlm.listSessions(context).firstOrNull { it.url != null }
+                 when {
+                     text.isBlank() -> ToolResult("runner_chat", "ОШИБКА: пустой text")
+-                    session == null -> ToolResult("runner_chat", "Нет живой ранер-сессии — запусти runner_start или вручную в ⚙")
++                    session == null -> ToolResult("runner_chat", "Нет живой ранер-сессии — запусти runner_start или вручную на вкладке «AI»")
+                     else -> {
+                         val answer = RunnerLlm.chat(context, session, text)
+                         ToolResult("runner_chat", answer ?: "Ранер не ответил (сессия могла умереть)")
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt
+index dececa0..36a9f9e 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt
+@@ -110,6 +110,14 @@ object AiBackends {
+          * ранер модель выбирают сами: там роль может выбрать только бэкенд.
+          */
+         val supportsModelChoice: Boolean = true,
++        /**
++         * Можно ли выбрать этот бэкенд в списках выбора.
++         *
++         * Локальная LLM — вечный стаб: движок не в сборке, `chat()` всегда
++         * бросает. Показывать его в выпадающих списках значило предлагать
++         * заведомо нерабочий вариант, который ломался на каждом ходу.
++         */
++        val selectable: Boolean = true,
+     )
+ 
+     val ONLINE = Plugin(
+@@ -130,6 +138,7 @@ object AiBackends {
+         offline = true,
+         requirements = listOf(AiRequirement.MODEL_DOWNLOAD),
+         supportsModelChoice = false,
++        selectable = false,
+     )
+ 
+     val RUNNER = Plugin(
+@@ -149,6 +158,12 @@ object AiBackends {
+ 
+     val ALL = listOf(ONLINE, LOCAL, RUNNER)
+ 
++    /**
++     * Бэкенды, которые имеет смысл предлагать выбрать. Всё, что не может
++     * ответить никогда (сейчас это локальная LLM), сюда не попадает.
++     */
++    val SELECTABLE = ALL.filter { it.selectable }
++
+     fun byId(id: String?): Plugin = ALL.firstOrNull { it.id == id } ?: ONLINE
+ 
+     /**
+@@ -263,7 +278,7 @@ object AiBackends {
+                     Route(
+                         plugin.id,
+                         ready = false,
+-                        message = "Нет живой ранер-сессии: запустите её в ⚙ → Полу-онлайн LLM",
++                        message = "Нет живой ранер-сессии: запустите её на вкладке «AI»",
+                     )
+                 }
+ 
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
-index e2b917f..fadc961 100644
+index e2b917f..2b7e0bd 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
-@@ -75,13 +75,16 @@ object AiHistoryManager {
+@@ -68,21 +68,57 @@ object AiHistoryManager {
+     fun historyFile(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): File {
+         val ws = aiWorkspaceDir(context)
+         ws.mkdirs()
+-        return when {
++        val target = when {
+             mangaId == null -> File(ws, FILE)
+             channel == CHANNEL_CHAT -> File(ws, "ai_history_${mangaId}.json")
+             else -> File(ws, "ai_history_${mangaId}_$channel.json")
          }
++        if (!target.exists()) migrateLegacyFile(context, target)
++        return target
      }
  
 -    private fun aiWorkspaceDir(context: Context): File {
@@ -938,7 +1064,37 @@ index e2b917f..fadc961 100644
 -        val candidate = if (ext != null) File(ext, "../../Yomikai/AI").canonicalFile else File(context.filesDir, "ai_workspace")
 -        // Fallback если нет разрешения на ext
 -        return if (candidate.exists() || candidate.mkdirs()) candidate else File(context.filesDir, "ai_workspace")
--    }
++    /**
++     * Старый каталог истории: `/sdcard/Android/Yomikai/AI`.
++     *
++     * Именно его вычисляла прежняя версия [aiWorkspaceDir]. Файлы назывались
++     * так же, поэтому достаточно перенести совпадение по имени — иначе после
++     * обновления переписка просто исчезла бы, хотя нигде не удалялась.
++     */
++    private fun legacyDir(context: Context): File? {
++        val external = context.getExternalFilesDir(null) ?: return null
++        val android = external.parentFile?.parentFile ?: return null
++        return File(android, "Yomikai/AI")
+     }
+ 
++    private fun migrateLegacyFile(context: Context, target: File) {
++        val legacy = legacyDir(context) ?: return
++        val old = File(legacy, target.name)
++        if (!old.exists() || old.length() == 0L) return
++        synchronized(saveLock) {
++            try {
++                // Файлы одного тома, rename атомарен; если система отказала
++                // (например, каталог назначения на другом mount), копируем.
++                if (!old.renameTo(target)) {
++                    target.writeText(old.readText())
++                    old.delete()
++                }
++            } catch (e: Exception) {
++                logcat(LogPriority.WARN, e) { "AiHistoryManager legacy move failed: ${target.name}" }
++            }
++        }
++    }
++
 +    /**
 +     * История лежит в корне workspace.
 +     *
@@ -949,9 +1105,10 @@ index e2b917f..fadc961 100644
 +     * оттуда, — и не попадала в `zip_workspace`.
 +     */
 +    private fun aiWorkspaceDir(context: Context): File = AiWorkspace.root(context)
- 
++
      fun load(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): MutableList<Msg> {
          val f = historyFile(context, mangaId, channel)
+         if (!f.exists()) return mutableListOf()
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiWorkspaceSurvey.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiWorkspaceSurvey.kt
 index 4376332..d047285 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiWorkspaceSurvey.kt
@@ -1332,7 +1489,7 @@ index 6b17cf6..1987b46 100644
              onClickStats = { navigator.push(StatsScreen()) },
              onClickDataAndStorage = { navigator.push(SettingsScreen(SettingsScreen.Destination.DataAndStorage)) },
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
-index 71a42f6..60e323a 100644
+index 71a42f6..3972074 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
 @@ -72,7 +72,6 @@ import eu.kanade.domain.dictionary.OcrResultPresentation
@@ -1355,27 +1512,133 @@ index 71a42f6..60e323a 100644
                      ReaderViewModel.Event.OcrMemoryError -> {
                          clearActiveOcrOverlaySession()
                          toast(MR.strings.ocr_memory_error)
-@@ -1279,20 +1283,6 @@ class ReaderActivity : BaseActivity() {
-                                 )
-                             },
+@@ -1199,6 +1203,16 @@ class ReaderActivity : BaseActivity() {
                              )
+                         }
+                         Box(modifier = Modifier.fillMaxSize()) {
++                            // Текст, над которым работают панельные действия
++                            // (озвучка, словарь, копирование). `queryText` у
++                            // результата долгого нажатия пустой — сам текст
++                            // лежит в selection, поэтому раньше кнопка Speak
++                            // в новой компактной панели молчала вслух.
++                            val ocrActionText = dialog.queryText.ifBlank {
++                                searchState.query.ifBlank {
++                                    activeOcrOverlaySession?.selection?.displayText.orEmpty()
++                                }
++                            }
+                             OcrResultOverlay(
+                             onDismissRequest = onDismissOcrResult,
+                             presentation = when (dialog.origin) {
+@@ -1219,17 +1233,12 @@ class ReaderActivity : BaseActivity() {
+                                 // Копируем РАСПОЗНАННЫЙ текст, а не строку поиска по
+                                 // словарям: searchState.query пуст, пока читатель ничего
+                                 // не искал, и в буфер уходила пустая строка.
+-                                val text = dialog.queryText.ifBlank {
+-                                    searchState.query.ifBlank {
+-                                        activeOcrOverlaySession?.selection?.displayText.orEmpty()
+-                                    }
+-                                }
+-                                if (text.isBlank()) {
++                                if (ocrActionText.isBlank()) {
+                                     toast("Нечего копировать")
+                                 } else {
+                                     val clipboard = getSystemService<ClipboardManager>()
+                                     clipboard?.setPrimaryClip(
+-                                        ClipData.newPlainText(null, text),
++                                        ClipData.newPlainText(null, ocrActionText),
+                                     )
+                                     toast(MR.strings.action_copy_to_clipboard)
+                                 }
+@@ -1255,43 +1264,41 @@ class ReaderActivity : BaseActivity() {
+                             },
+                             onPlayAudioClick = dictionarySearchScreenModel::fetchAndPlayAudio,
+                             onSpeak = {
+-                                eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
+-                                    this@ReaderActivity,
+-                                    dialog.queryText,
+-                                )
++                                if (ocrActionText.isBlank()) {
++                                    toast("Нечего озвучивать")
++                                } else {
++                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
++                                        this@ReaderActivity,
++                                        ocrActionText,
++                                    )
++                                }
+                             },
+                             onSpeakRole = { role ->
+-                                eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakRole(
+-                                    this@ReaderActivity,
+-                                    dialog.queryText,
+-                                    role,
+-                                )
++                                if (ocrActionText.isBlank()) {
++                                    toast("Нечего озвучивать")
++                                } else {
++                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakRole(
++                                        this@ReaderActivity,
++                                        ocrActionText,
++                                        role,
++                                    )
++                                }
+                             },
+                             onChooseVoice = { showVoicePicker = true },
+                             onHidePageOverlay = ::hideActiveOcrOverlayText,
+                             onAddToDictionary = {
+-                                val added = mihon.data.ocr.OcrVocabulary.addFromText(
+-                                    dialog.queryText,
+-                                )
+-                                toast(
+-                                    if (added > 0) "Словарь OCR: добавлено $added"
+-                                    else "Словарь OCR: ничего нового",
+-                                )
+-                            },
+-                            )
 -                            if (searchState.dictionaries.isNotEmpty()) OcrVoiceFloatingControls(
 -                                enabled = dialog.queryText.isNotBlank(),
 -                                onSpeak = {
 -                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
 -                                        this@ReaderActivity,
 -                                        dialog.queryText,
--                                    )
++                                if (ocrActionText.isBlank()) {
++                                    toast("Нечего добавлять")
++                                } else {
++                                    val added = mihon.data.ocr.OcrVocabulary.addFromText(
++                                        ocrActionText,
+                                     )
 -                                },
 -                                onChooseVoice = { showVoicePicker = true },
 -                                onHidePageOverlay = ::hideActiveOcrOverlayText,
 -                                modifier = Modifier
 -                                    .align(Alignment.BottomCenter)
 -                                    .navigationBarsPadding(),
--                            )
++                                    toast(
++                                        if (added > 0) "Словарь OCR: добавлено $added"
++                                        else "Словарь OCR: ничего нового",
++                                    )
++                                }
++                            },
+                             )
                              if (showVoicePicker) {
                                  eu.kanade.presentation.reader.TtsVoicePickerDialog(
-                                     onDismissRequest = { showVoicePicker = false },
+@@ -1300,7 +1307,7 @@ class ReaderActivity : BaseActivity() {
+                                         showVoicePicker = false
+                                         eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithVoice(
+                                             this@ReaderActivity,
+-                                            dialog.queryText,
++                                            ocrActionText,
+                                             spec,
+                                         )
+                                     },
+@@ -1308,7 +1315,7 @@ class ReaderActivity : BaseActivity() {
+                                         showVoicePicker = false
+                                         eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithEdgeVoice(
+                                             this@ReaderActivity,
+-                                            dialog.queryText,
++                                            ocrActionText,
+                                             voice,
+                                         )
+                                     },
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
 index 5bbe744..b0f886c 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
@@ -1557,3 +1820,16 @@ index e306d75..10d58fa 100644
 +    "viewport", "" , null -> "Кадр"
 +    else -> "Кадр"
 +}
+diff --git a/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt b/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt
+index f361399..bdbb84e 100644
+--- a/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt
++++ b/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt
+@@ -162,7 +162,7 @@ class AiBackendsTest {
+ 
+         val runner = AiBackends.route("runner", readyState.copy(runnerSessionAlive = false))
+         runner.ready shouldBe false
+-        runner.message shouldBe "Нет живой ранер-сессии: запустите её в ⚙ → Полу-онлайн LLM"
++        runner.message shouldBe "Нет живой ранер-сессии: запустите её на вкладке «AI»"
+ 
+         // Готовый бэкенд сообщений не выдаёт.
+         AiBackends.route("local", readyState).message shouldBe null
