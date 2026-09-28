@@ -1,0 +1,1834 @@
+diff --git a/MANIFEST.md b/MANIFEST.md
+index cfc8afe..3e27208 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -15,9 +15,3 @@
+ 4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи
+    и не логируй его значение.
+ 5. Готовые сборки/артефакты клади в /home/runner/hub-work/yomikai/tmp — их видно вкладкой «Файлы».
+-6. Историю текущего агента храни в этом репозитории (/home/runner/hub-work/yomikai/code), а не во временных папках.
+-7. После внесения исправлений автоматически создавай коммит и отправляй его в текущую ветку репозитория.
+-8. Все сборки запускай через GitHub Actions/workflows; не запускай сборки внутри локального окружения.
+-9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
+-10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
+-11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/src/main/java/eu/kanade/presentation/more/MoreScreen.kt b/app/src/main/java/eu/kanade/presentation/more/MoreScreen.kt
+index 664fa59..d0b1821 100644
+--- a/app/src/main/java/eu/kanade/presentation/more/MoreScreen.kt
++++ b/app/src/main/java/eu/kanade/presentation/more/MoreScreen.kt
+@@ -10,6 +10,7 @@ import androidx.compose.material.icons.outlined.CloudOff
+ import androidx.compose.material.icons.outlined.DocumentScanner
+ import androidx.compose.material.icons.outlined.GetApp
+ import androidx.compose.material.icons.outlined.Info
++import androidx.compose.material.icons.outlined.Layers
+ import androidx.compose.material.icons.outlined.QueryStats
+ import androidx.compose.material.icons.outlined.Settings
+ import androidx.compose.material.icons.outlined.Storage
+@@ -41,6 +42,7 @@ fun MoreScreen(
+     onIncognitoModeChange: (Boolean) -> Unit,
+     onClickDownloadQueue: () -> Unit,
+     onClickOcrQueue: () -> Unit,
++    onClickOcrOverlay: () -> Unit,
+     onClickCategories: () -> Unit,
+     onClickStats: () -> Unit,
+     onClickDataAndStorage: () -> Unit,
+@@ -137,6 +139,16 @@ fun MoreScreen(
+                     onPreferenceClick = onClickOcrQueue,
+                 )
+             }
++            // Оверлей поверх экрана — отдельная сущность и отдельный пункт:
++            // он ничего не знает про очередь распознавания страниц.
++            item {
++                TextPreferenceWidget(
++                    title = "Оверлей поверх экрана",
++                    subtitle = "Плавающая кнопка поверх других приложений",
++                    icon = Icons.Outlined.Layers,
++                    onPreferenceClick = onClickOcrOverlay,
++                )
++            }
+             item {
+                 TextPreferenceWidget(
+                     title = stringResource(MR.strings.categories),
+diff --git a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsAiScreen.kt b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsAiScreen.kt
+index 9dd5917..106fa0b 100644
+--- a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsAiScreen.kt
++++ b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsAiScreen.kt
+@@ -3,20 +3,27 @@ package eu.kanade.presentation.more.settings.screen
+ import android.content.Context
+ import android.content.Intent
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.runtime.ReadOnlyComposable
+ import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
+ import androidx.compose.ui.platform.LocalContext
+ import cafe.adriel.voyager.navigator.LocalNavigator
+ import cafe.adriel.voyager.navigator.Navigator
+ import cafe.adriel.voyager.navigator.currentOrThrow
+ import eu.kanade.presentation.more.settings.Preference
++import eu.kanade.tachiyomi.data.ai.AiBackendState
+ import eu.kanade.tachiyomi.data.ai.AiBackendStatus
+ import eu.kanade.tachiyomi.data.ai.AiBackends
+ import eu.kanade.tachiyomi.data.ai.AiPlugins
++import eu.kanade.tachiyomi.data.ai.AiProviders
+ import eu.kanade.tachiyomi.data.ai.AiRequirement
+ import eu.kanade.tachiyomi.data.ai.AiWorkspace
+ import eu.kanade.tachiyomi.ui.main.MainActivity
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.withContext
+ import mihon.domain.ocr.service.OcrPreferences
+ import tachiyomi.i18n.MR
+ import tachiyomi.presentation.core.i18n.stringResource
+@@ -50,34 +57,48 @@ object SettingsAiScreen : SearchableSettings {
+         val backend by prefs.aiBackend().collectPreferenceAsState()
+         val provider by prefs.aiProvider().collectPreferenceAsState()
+ 
+-        // Снимок состояния: настройки, установленные .task-модели, сессия ранера.
+-        // Сеть берём из общего наблюдателя, чтобы статус пересчитывался при её
+-        // пропаже без перечитывания всех настроек.
+-        val state = remember(online, prefs, context) {
+-            AiBackends.state(context, prefs).copy(networkAvailable = online)
+-        }
+-        val statuses = remember(state, provider) {
+-            AiBackends.ALL.associate { it.id to AiBackends.statusOf(it, state, provider) }
+-        }
+-
+-        // Рабочая область и плагины разработчика — это файлы на диске, поэтому
+-        // считаем их один раз на вход в экран, а не на каждую рекомпозицию.
+-        val workspace = remember(context) {
+-            runCatching {
+-                AiPlugins.list(context).size to AiWorkspace.listAll(context).size
+-            }.getOrDefault(0 to 0)
++        // Снимок состояния бэкендов читает сеть и файлы (сессии ранера,
++        // установленные .task-модели), а список плагинов и workspace — это
++        // обход дерева каталогов. Раньше всё это выполнялось прямо в
++        // recomposition, то есть на главном потоке, и на большом workspace
++        // экран подвисал. Теперь считаем в фоне, а до готовности показываем
++        // заглушку.
++        var snapshot by remember { mutableStateOf<AiBackendState?>(null) }
++        var disk by remember { mutableStateOf<Pair<Int, Int>?>(null) }
++        var userProviders by remember { mutableStateOf<List<AiProviders.Spec>>(emptyList()) }
++        LaunchedEffect(context) {
++            val loaded = withContext(Dispatchers.IO) {
++                Triple(
++                    AiBackends.state(context, prefs),
++                    runCatching { AiPlugins.list(context).size to AiWorkspace.listAll(context).size }
++                        .getOrDefault(0 to 0),
++                    AiProviders.list(context),
++                )
++            }
++            snapshot = loaded.first
++            disk = loaded.second
++            userProviders = loaded.third
+         }
+ 
+-        // Свои провайдеры из реестра AiProviders (файлы в workspace/providers):
+-        // добавляются в список выбора провайдера в группе «Модели и ключи».
+-        val userProviders = remember(context) {
+-            eu.kanade.tachiyomi.data.ai.AiProviders.list(context)
++        val statuses = remember(snapshot, provider, online) {
++            // Сеть меняется отдельно от файлового снимка, поэтому статус
++            // пересчитываем с её актуальным значением.
++            snapshot?.let { state ->
++                val effective = state.copy(networkAvailable = online)
++                AiBackends.ALL.associate { it.id to AiBackends.statusOf(it, effective, provider) }
++            }.orEmpty()
+         }
+ 
+         return listOf(
+-            getBackendsGroup(statuses = statuses, selected = backend),
++            getBackendsGroup(
++                prefs = prefs,
++                statuses = statuses,
++                selected = backend,
++                loading = snapshot == null,
++                online = online,
++            ),
+             getModelKeyGroup(prefs = prefs, userProviders = userProviders),
+-            getWorkspaceGroup(plugins = workspace.first, files = workspace.second),
++            getWorkspaceGroup(plugins = disk?.first, files = disk?.second),
+             getAccessGroup(prefs = prefs, context = context, navigator = navigator),
+         )
+     }
+@@ -136,42 +157,73 @@ object SettingsAiScreen : SearchableSettings {
+ 
+     @Composable
+     private fun getBackendsGroup(
++        prefs: OcrPreferences,
+         statuses: Map<String, AiBackendStatus>,
+         selected: String,
++        loading: Boolean,
++        online: Boolean,
+     ): Preference.PreferenceGroup {
+-        val current = AiBackends.byId(selected)
++        if (loading) {
++            return Preference.PreferenceGroup(
++                title = stringResource(MR.strings.pref_ai_backends_group),
++                preferenceItems = listOf(
++                    Preference.PreferenceItem.InfoPreference(title = "Проверяю бэкенды…"),
++                ),
++            )
++        }
+         return Preference.PreferenceGroup(
+             title = stringResource(MR.strings.pref_ai_backends_group),
+-            preferenceItems = AiBackends.ALL.map { plugin ->
++            preferenceItems = listOf(
++                // Сам выбор бэкенда. Раньше строки ниже были чисто
++                // информационными, а подсказка отправляла читателя в «⚙
++                // вкладки AI», которой не существует — переключить бэкенд
++                // было негде.
++                Preference.PreferenceItem.ListPreference(
++                    preference = prefs.aiBackend(),
++                    entries = AiBackends.SELECTABLE.associate { it.id to it.title },
++                    title = "Бэкенд чата",
++                    subtitle = "Бэкенд: %s",
++                ),
++            ) + AiBackends.ALL.map { plugin ->
+                 Preference.PreferenceItem.TextPreference(
+                     title = backendTitle(
+                         plugin = plugin,
+                         isSelected = plugin.id == selected,
+                         status = statuses[plugin.id],
+                     ),
+-                    subtitle = backendSubtitle(plugin = plugin, status = statuses[plugin.id]),
++                    subtitle = backendSubtitle(
++                        plugin = plugin,
++                        status = statuses[plugin.id],
++                        online = online,
++                    ),
+                 )
+             } + listOf(
+                 Preference.PreferenceItem.InfoPreference(
+-                    title = stringResource(MR.strings.pref_ai_backend_current).format(current.title),
+-                ),
+-                Preference.PreferenceItem.InfoPreference(
+-                    title = stringResource(MR.strings.pref_ai_backend_switch_hint),
++                    title = stringResource(MR.strings.pref_ai_backend_current)
++                        .format(AiBackends.byId(selected).title),
+                 ),
+             ),
+         )
+     }
+ 
+     @Composable
+-    private fun getWorkspaceGroup(plugins: Int, files: Int): Preference.PreferenceGroup =
++    private fun getWorkspaceGroup(plugins: Int?, files: Int?): Preference.PreferenceGroup =
+         Preference.PreferenceGroup(
+             title = stringResource(MR.strings.pref_ai_workspace_group),
+             preferenceItems = listOf(
+                 Preference.PreferenceItem.InfoPreference(
+-                    title = stringResource(MR.strings.pref_ai_workspace_files).format(files),
++                    title = if (files == null) {
++                        "Считаю файлы рабочей области…"
++                    } else {
++                        stringResource(MR.strings.pref_ai_workspace_files).format(files)
++                    },
+                 ),
+                 Preference.PreferenceItem.InfoPreference(
+-                    title = stringResource(MR.strings.pref_ai_workspace_plugins).format(plugins),
++                    title = if (plugins == null) {
++                        "Считаю плагины…"
++                    } else {
++                        stringResource(MR.strings.pref_ai_workspace_plugins).format(plugins)
++                    },
+                 ),
+                 Preference.PreferenceItem.InfoPreference(
+                     title = stringResource(MR.strings.pref_ai_workspace_hint),
+@@ -207,6 +259,21 @@ object SettingsAiScreen : SearchableSettings {
+                     title = stringResource(MR.strings.pref_ai_tab_visible),
+                     subtitle = stringResource(MR.strings.pref_ai_tab_visible_summary),
+                 ),
++                // Разрешения, которые проверяет агент. Раньше переключателей не
++                // было нигде, поэтому `runner_*` и `github_api` были мёртвыми
++                // инструментами: агент видел их в промпте и получал отказ на
++                // каждом вызове, а требование «ранер разрешён» нечем было
++                // выполнить.
++                Preference.PreferenceItem.SwitchPreference(
++                    preference = prefs.aiAllowRunner(),
++                    title = "Разрешить ранер",
++                    subtitle = "Агент сможет запускать OpenCode-сессии (широкий доступ к репозиториям)",
++                ),
++                Preference.PreferenceItem.SwitchPreference(
++                    preference = prefs.aiAllowGithub(),
++                    title = "Разрешить GitHub",
++                    subtitle = "Агент сможет читать воркфлоу и запускать их через привязанный токен",
++                ),
+                 Preference.PreferenceItem.SwitchPreference(
+                     preference = prefs.aiHttpServer(),
+                     title = stringResource(MR.strings.pref_ai_http_server),
+@@ -240,6 +307,7 @@ object SettingsAiScreen : SearchableSettings {
+     private fun backendSubtitle(
+         plugin: AiBackends.Plugin,
+         status: AiBackendStatus?,
++        online: Boolean,
+     ): String = buildString {
+         append(plugin.summary)
+         if (status == null) return@buildString
+@@ -253,6 +321,9 @@ object SettingsAiScreen : SearchableSettings {
+             append(stringResource(MR.strings.pref_ai_requires))
+             append(": ")
+             append(status.missing.joinToString(", ") { labels.getValue(it) })
++        } else if (!online && plugin.requirements.contains(AiRequirement.NETWORK)) {
++            append('\n')
++            append("Сети нет — бэкенд сейчас не ответит")
+         }
+     }
+ 
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/AiModelPickerDialog.kt b/app/src/main/java/eu/kanade/presentation/reader/AiModelPickerDialog.kt
+index cc978bd..ffeff16 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/AiModelPickerDialog.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/AiModelPickerDialog.kt
+@@ -261,7 +261,7 @@ fun AiModelPickerDialog(
+                         label = { Text("Как у чата") },
+                         modifier = Modifier.padding(end = 6.dp),
+                     )
+-                    eu.kanade.tachiyomi.data.ai.AiBackends.ALL.forEach { backend ->
++                    eu.kanade.tachiyomi.data.ai.AiBackends.SELECTABLE.forEach { backend ->
+                         FilterChip(
+                             selected = orchBackend == backend.id,
+                             onClick = { orchBackend = backend.id },
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrResultBottomSheet.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrResultBottomSheet.kt
+index 5f7907f..9c7b8b6 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrResultBottomSheet.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrResultBottomSheet.kt
+@@ -34,6 +34,7 @@ fun OcrResultBottomSheet(
+     onSearch: (String) -> Unit,
+     onTermGroupClick: (List<DictionaryTerm>) -> Unit,
+     onPlayAudioClick: (List<DictionaryTerm>) -> Unit,
++    actions: (@Composable () -> Unit)? = null,
+ ) {
+     // Use BoxWithConstraints to measure the actual available space for the sheet content
+     BoxWithConstraints(
+@@ -91,6 +92,11 @@ fun OcrResultBottomSheet(
+                     onCopyText = onCopyText,
+                     contentPadding = PaddingValues(bottom = 8.dp),
+                 )
++
++                if (actions != null) {
++                    HorizontalDivider()
++                    actions()
++                }
+             }
+         }
+     }
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
+index 60fe532..248c201 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
+@@ -3,19 +3,35 @@ package eu.kanade.presentation.reader
+ import android.graphics.RectF
+ import androidx.activity.compose.BackHandler
+ import androidx.compose.foundation.background
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.interaction.MutableInteractionSource
+ import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.BoxWithConstraints
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
+ import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.heightIn
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.outlined.Close
++import androidx.compose.material3.HorizontalDivider
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
+ import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.remember
++import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+-import androidx.compose.foundation.layout.height
+-import androidx.compose.foundation.layout.fillMaxWidth
+-import androidx.compose.foundation.layout.heightIn
+-import androidx.compose.foundation.verticalScroll
+-import androidx.compose.foundation.layout.padding
+ import androidx.compose.ui.unit.dp
+-import tachiyomi.presentation.core.i18n.stringResource
+ import eu.kanade.domain.dictionary.OcrResultPresentation
+ import eu.kanade.tachiyomi.ui.dictionary.DictionarySearchScreenModel
+ import mihon.domain.dictionary.model.DictionaryTerm
+@@ -23,6 +39,7 @@ import mihon.domain.ocr.model.OcrTextSource
+ import mihon.feature.ocr.selectedOcrModel
+ import mihon.feature.ocr.titleRes
+ import tachiyomi.i18n.MR
++import tachiyomi.presentation.core.i18n.stringResource
+ 
+ data class OcrResultPopupSettings(
+     val widthDp: Int,
+@@ -73,65 +90,109 @@ fun OcrResultOverlay(
+         }
+     }
+ 
+-    Box(modifier = Modifier.fillMaxSize()) {
+-        if (false) {
+-            Box(
+-                modifier = Modifier
+-                    .fillMaxSize()
+-                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f)),
++    when {
++        noDictionaries -> {
++            OcrPlainTextCard(
++                text = queryText,
++                source = source,
++                dimBackground = dimBackground,
++                onDismissRequest = onDismissRequest,
++                onCopyText = onCopyText,
++                onSpeak = onSpeak,
++                onChooseVoice = onChooseVoice,
++                onSpeakRole = onSpeakRole,
++                onAddToDictionary = onAddToDictionary,
++                onHidePageOverlay = onHidePageOverlay,
+             )
+         }
+-
+-        when {
+-            noDictionaries -> {
+-                OcrPlainTextCard(
+-                    text = queryText,
+-                    source = source,
+-                    onDismissRequest = onDismissRequest,
+-                    onCopyText = onCopyText,
+-                    onSpeak = onSpeak,
+-                    onChooseVoice = onChooseVoice,
+-                    onSpeakRole = onSpeakRole,
+-                    onAddToDictionary = onAddToDictionary,
+-                    onHidePageOverlay = onHidePageOverlay,
+-                )
+-            }
+-            presentation == OcrResultPresentation.POPUP && anchorRect != null -> {
+-                OcrResultPopup(
+-                    onDismissRequest = onDismissRequest,
+-                    anchorRect = anchorRect,
+-                    settings = popupSettings,
+-                    onCopyText = onCopyText,
+-                    searchState = searchState,
+-                    onQueryChange = onQueryChange,
+-                    onSearch = onSearch,
+-                    onTermGroupClick = onTermGroupClick,
+-                    onPlayAudioClick = onPlayAudioClick,
+-                )
+-            }
+-            else -> {
+-                OcrResultBottomSheet(
+-                    onDismissRequest = onDismissRequest,
+-                    onCopyText = onCopyText,
+-                    searchState = searchState,
+-                    onQueryChange = onQueryChange,
+-                    onSearch = onSearch,
+-                    onTermGroupClick = onTermGroupClick,
+-                    onPlayAudioClick = onPlayAudioClick,
+-                )
+-            }
++        presentation == OcrResultPresentation.POPUP && anchorRect != null -> {
++            OcrResultPopup(
++                onDismissRequest = onDismissRequest,
++                anchorRect = anchorRect,
++                settings = popupSettings,
++                onCopyText = onCopyText,
++                searchState = searchState,
++                onQueryChange = onQueryChange,
++                onSearch = onSearch,
++                onTermGroupClick = onTermGroupClick,
++                onPlayAudioClick = onPlayAudioClick,
++                onSpeak = onSpeak,
++                onChooseVoice = onChooseVoice,
++                onSpeakRole = onSpeakRole,
++                onAddToDictionary = onAddToDictionary,
++                onHidePageOverlay = onHidePageOverlay,
++            )
++        }
++        else -> {
++            OcrResultBottomSheet(
++                onDismissRequest = onDismissRequest,
++                onCopyText = onCopyText,
++                searchState = searchState,
++                onQueryChange = onQueryChange,
++                onSearch = onSearch,
++                onTermGroupClick = onTermGroupClick,
++                onPlayAudioClick = onPlayAudioClick,
++                actions = {
++                    OcrResultActionBar(
++                        onSpeak = onSpeak,
++                        onCopyText = onCopyText,
++                        onChooseVoice = onChooseVoice,
++                        onSpeakRole = onSpeakRole,
++                        onAddToDictionary = onAddToDictionary,
++                        onHidePageOverlay = onHidePageOverlay,
++                    )
++                },
++            )
+         }
+     }
+ }
+ 
+ /**
+- * Карточка распознанного текста без словарной части: текст можно выделить
+- * и скопировать, лишних сообщений «словари не найдены» нет.
++ * Затемнение, тап по которому закрывает результат.
++ *
++ * Раньше блок был написан, но завёрнут в `if (false)`: карточка висела
++ * поверх страницы, и закрыть её можно было только кнопкой в самой карточке
++ * или аппаратной «назад». Теперь тап мимо карточки и по затемнению гасит
++ * результат — то самое, чего не хватало.
++ */
++@Composable
++private fun OcrDismissScrim(
++    dim: Boolean,
++    onDismissRequest: () -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    Box(
++        modifier = modifier
++            .fillMaxSize()
++            .then(
++                if (dim) {
++                    Modifier.background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f))
++                } else {
++                    Modifier
++                },
++            )
++            .clickable(
++                indication = null,
++                interactionSource = remember { MutableInteractionSource() },
++                onClick = onDismissRequest,
++            ),
++    )
++}
++
++/**
++ * Карточка распознанного текста без словарной части: текст можно скопировать
++ * и озвучить, лишних сообщений «словари не найдены» нет.
++ *
++ * Карточка намеренно небольшая: текст ограничен по высоте и прокручивается
++ * внутри, а действия собраны в одну строку иконок под ним. Раньше здесь были
++ * два ряда подписей и отдельные плавающие кнопки — вместе они закрывали
++ * половину экрана.
+  */
+ @Composable
+ private fun OcrPlainTextCard(
+     text: String,
+     source: OcrTextSource?,
++    dimBackground: Boolean,
+     onDismissRequest: () -> Unit,
+     onCopyText: () -> Unit,
+     onSpeak: () -> Unit = {},
+@@ -140,75 +201,62 @@ private fun OcrPlainTextCard(
+     onAddToDictionary: () -> Unit = {},
+     onHidePageOverlay: (() -> Unit)? = null,
+ ) {
+-    Box(
+-        modifier = Modifier.fillMaxSize(),
+-        contentAlignment = androidx.compose.ui.Alignment.BottomCenter,
+-    ) {
+-        androidx.compose.material3.Surface(
+-            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
++    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
++        // Не больше трети экрана: карточка не должна закрывать рисунок.
++        val maxTextHeight = (maxHeight * 0.3f).coerceAtLeast(96.dp)
++
++        OcrDismissScrim(dim = dimBackground, onDismissRequest = onDismissRequest)
++
++        Surface(
++            shape = RoundedCornerShape(16.dp),
+             color = MaterialTheme.colorScheme.surfaceContainerHigh,
+             tonalElevation = 6.dp,
+             modifier = Modifier
++                .align(Alignment.BottomCenter)
+                 .fillMaxWidth()
+-                .heightIn(max = 520.dp)
+-                .padding(24.dp),
++                .padding(horizontal = 12.dp, vertical = 24.dp)
++                // Гасим тап мимо текста, иначе тап по пустому месту карточки
++                // закрывал бы результат вместо выделения текста.
++                .clickable(
++                    indication = null,
++                    interactionSource = remember { MutableInteractionSource() },
++                    onClick = {},
++                ),
+         ) {
+-            androidx.compose.foundation.layout.Column(
+-                modifier = Modifier.padding(16.dp),
+-            ) {
+-                OcrEngineCaption(source)
+-                androidx.compose.material3.Text(
++            Column(modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
++                Row(verticalAlignment = Alignment.CenterVertically) {
++                    Box(modifier = Modifier.weight(1f)) {
++                        OcrEngineCaption(source)
++                    }
++                    IconButton(onClick = onDismissRequest) {
++                        Icon(Icons.Outlined.Close, contentDescription = "Закрыть")
++                    }
++                }
++
++                Text(
+                     text = text,
+-                    style = MaterialTheme.typography.bodyLarge,
++                    style = MaterialTheme.typography.bodyMedium,
+                     color = MaterialTheme.colorScheme.onSurface,
+                     modifier = Modifier
+-                        .verticalScroll(androidx.compose.foundation.rememberScrollState())
+-                        .heightIn(max = 380.dp),
++                        .fillMaxWidth()
++                        .heightIn(max = maxTextHeight)
++                        .verticalScroll(rememberScrollState())
++                        .padding(end = 8.dp),
+                 )
+-                androidx.compose.foundation.layout.Spacer(
+-                    modifier = Modifier.height(12.dp),
++
++                Spacer(modifier = Modifier.height(4.dp))
++                HorizontalDivider()
++                Spacer(modifier = Modifier.height(4.dp))
++
++                OcrResultActionBar(
++                    onSpeak = onSpeak,
++                    onCopyText = onCopyText,
++                    onChooseVoice = onChooseVoice,
++                    onSpeakRole = onSpeakRole,
++                    onAddToDictionary = onAddToDictionary,
++                    onHidePageOverlay = onHidePageOverlay,
++                    modifier = Modifier.fillMaxWidth(),
+                 )
+-                androidx.compose.foundation.layout.Column {
+-                    androidx.compose.foundation.layout.Row(
+-                        modifier = Modifier.fillMaxWidth(),
+-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
+-                    ) {
+-                        androidx.compose.material3.TextButton(onClick = onSpeak) {
+-                            androidx.compose.material3.Text("▶ Голос")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("female") }) {
+-                            androidx.compose.material3.Text("♀")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("male") }) {
+-                            androidx.compose.material3.Text("♂")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("narrator") }) {
+-                            androidx.compose.material3.Text("🎙")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = onChooseVoice) {
+-                            androidx.compose.material3.Text("Выбрать")
+-                        }
+-                    }
+-                    androidx.compose.foundation.layout.Row(
+-                        modifier = Modifier.fillMaxWidth(),
+-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
+-                    ) {
+-                        if (onHidePageOverlay != null) {
+-                            androidx.compose.material3.TextButton(onClick = onHidePageOverlay) {
+-                                androidx.compose.material3.Text("👁 Скрыть текст")
+-                            }
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = onCopyText) {
+-                            androidx.compose.material3.Text("Копировать")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = onAddToDictionary) {
+-                            androidx.compose.material3.Text("＋ Словарь")
+-                        }
+-                        androidx.compose.material3.TextButton(onClick = onDismissRequest) {
+-                            androidx.compose.material3.Text("Закрыть")
+-                        }
+-                    }
+-                }
+             }
+         }
+     }
+@@ -232,12 +280,9 @@ private fun OcrEngineCaption(source: OcrTextSource?) {
+     } else {
+         stringResource(MR.strings.ocr_recognized_by, engineName)
+     }
+-    androidx.compose.material3.Text(
++    Text(
+         text = text,
+         style = MaterialTheme.typography.labelSmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant,
+     )
+-    androidx.compose.foundation.layout.Spacer(
+-        modifier = Modifier.height(6.dp),
+-    )
+ }
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
+index fe62c1c..541bde8 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
+@@ -6,16 +6,25 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.BoxWithConstraints
+ import androidx.compose.foundation.layout.PaddingValues
++import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.height
+ import androidx.compose.foundation.layout.offset
+ import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
+ import androidx.compose.foundation.layout.width
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.outlined.Close
++import androidx.compose.material3.HorizontalDivider
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
+ import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.Surface
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.CompositionLocalProvider
+ import androidx.compose.runtime.remember
++import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clipToBounds
+ import androidx.compose.ui.platform.LocalDensity
+@@ -40,6 +49,11 @@ fun OcrResultPopup(
+     onSearch: (String) -> Unit,
+     onTermGroupClick: (List<DictionaryTerm>) -> Unit,
+     onPlayAudioClick: (List<DictionaryTerm>) -> Unit,
++    onSpeak: () -> Unit = {},
++    onChooseVoice: () -> Unit = {},
++    onSpeakRole: (String) -> Unit = {},
++    onAddToDictionary: () -> Unit = {},
++    onHidePageOverlay: (() -> Unit)? = null,
+ ) {
+     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+         val density = LocalDensity.current
+@@ -92,8 +106,31 @@ fun OcrResultPopup(
+                 onSearch = onSearch,
+                 onTermGroupClick = onTermGroupClick,
+                 onPlayAudioClick = onPlayAudioClick,
++                // Запасной путь: всплывающее окно не поместилось, панель
++                // действий всё равно нужна, иначе озвучка и словарь
++                // пропадали бы именно в этом сценарии.
++                actions = {
++                    OcrResultActionBar(
++                        onSpeak = onSpeak,
++                        onSpeakRole = onSpeakRole,
++                        onChooseVoice = onChooseVoice,
++                        onAddToDictionary = onAddToDictionary,
++                        onHidePageOverlay = onHidePageOverlay,
++                    )
++                },
+             )
+         } else {
++            // Тап мимо всплывающего окна закрывает результат: раньше окно
++            // глотало тапы только внутри себя, а снаружи нечего было нажать.
++            Box(
++                modifier = Modifier
++                    .fillMaxSize()
++                    .clickable(
++                        indication = null,
++                        interactionSource = remember { MutableInteractionSource() },
++                        onClick = onDismissRequest,
++                    ),
++            )
+             Surface(
+                 modifier = Modifier
+                     .width(with(density) { placement.width.toDp() })
+@@ -124,6 +161,23 @@ fun OcrResultPopup(
+                         androidx.compose.foundation.layout.Column(
+                             modifier = Modifier.fillMaxSize(),
+                         ) {
++                            Row(
++                                modifier = Modifier.fillMaxWidth(),
++                                verticalAlignment = Alignment.CenterVertically,
++                            ) {
++                                Box(modifier = Modifier.weight(1f))
++                                IconButton(
++                                    onClick = onDismissRequest,
++                                    modifier = Modifier.size(28.dp),
++                                ) {
++                                    Icon(
++                                        Icons.Outlined.Close,
++                                        contentDescription = "Закрыть",
++                                        modifier = Modifier.size(18.dp),
++                                    )
++                                }
++                            }
++
+                             if (searchState.query.isNotBlank()) {
+                                 TranslationCard(
+                                     originalText = searchState.query,
+@@ -152,6 +206,19 @@ fun OcrResultPopup(
+                                 onCopyText = null,
+                                 contentPadding = PaddingValues(8.dp),
+                             )
++
++                            HorizontalDivider()
++                            OcrResultActionBar(
++                                onSpeak = onSpeak,
++                                onCopyText = onCopyText,
++                                onChooseVoice = onChooseVoice,
++                                onSpeakRole = onSpeakRole,
++                                onAddToDictionary = onAddToDictionary,
++                                onHidePageOverlay = onHidePageOverlay,
++                                modifier = Modifier
++                                    .fillMaxWidth()
++                                    .padding(horizontal = 4.dp, vertical = 2.dp),
++                            )
+                         }
+                     }
+                 }
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrVoiceFloatingControls.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrVoiceFloatingControls.kt
+deleted file mode 100644
+index 1b9fc12..0000000
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrVoiceFloatingControls.kt
++++ /dev/null
+@@ -1,104 +0,0 @@
+-package eu.kanade.presentation.reader
+-
+-import androidx.compose.foundation.horizontalScroll
+-import androidx.compose.foundation.layout.Arrangement
+-import androidx.compose.foundation.layout.Column
+-import androidx.compose.foundation.layout.Row
+-import androidx.compose.foundation.layout.padding
+-import androidx.compose.foundation.rememberScrollState
+-import androidx.compose.material.icons.Icons
+-import androidx.compose.material.icons.outlined.RecordVoiceOver
+-import androidx.compose.material.icons.outlined.Tune
+-import androidx.compose.material.icons.outlined.VisibilityOff
+-import androidx.compose.material3.ExtendedFloatingActionButton
+-import androidx.compose.material3.Icon
+-import androidx.compose.material3.MaterialTheme
+-import androidx.compose.material3.Text
+-import androidx.compose.runtime.Composable
+-import androidx.compose.runtime.LaunchedEffect
+-import androidx.compose.runtime.getValue
+-import androidx.compose.runtime.mutableStateOf
+-import androidx.compose.runtime.remember
+-import androidx.compose.runtime.setValue
+-import androidx.compose.ui.Modifier
+-import androidx.compose.ui.platform.LocalContext
+-import androidx.compose.ui.unit.dp
+-import eu.kanade.tachiyomi.data.ui.UiActionRegistry
+-import eu.kanade.tachiyomi.util.system.toast
+-import kotlinx.coroutines.Dispatchers
+-import kotlinx.coroutines.withContext
+-import mihon.data.ui.UiActionSpec
+-import mihon.data.ui.UiPlacement
+-
+-/**
+- * OCR voice actions intentionally live outside the result card. The reader keeps
+- * the recognized text uncluttered while both speech and voice selection remain
+- * available next to the active OCR dialog.
+- */
+-@Composable
+-fun OcrVoiceFloatingControls(
+-    enabled: Boolean,
+-    onSpeak: () -> Unit,
+-    onChooseVoice: () -> Unit,
+-    onHidePageOverlay: (() -> Unit)? = null,
+-    modifier: Modifier = Modifier,
+-) {
+-    // Пользовательские действия реестра UiActions для карточки OCR.
+-    val context = LocalContext.current
+-    var userActions by remember { mutableStateOf<List<UiActionSpec>>(emptyList()) }
+-    LaunchedEffect(Unit) {
+-        userActions = withContext(Dispatchers.IO) {
+-            UiActionRegistry.list(context).filter { it.placement == UiPlacement.OCR_CARD }
+-        }
+-    }
+-
+-    Column(modifier = modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-            ExtendedFloatingActionButton(
+-                onClick = { if (enabled) onSpeak() },
+-                icon = { Icon(Icons.Outlined.RecordVoiceOver, contentDescription = null) },
+-                containerColor = MaterialTheme.colorScheme.primaryContainer,
+-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+-                text = { Text("Голос") },
+-            )
+-            ExtendedFloatingActionButton(
+-                onClick = onChooseVoice,
+-                icon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
+-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+-                text = { Text("Выбрать голос") },
+-            )
+-            // Убрать текст со страницы, не закрывая результат: на светлых
+-            // страницах оверлей всё равно перекрывал рисунок.
+-            if (onHidePageOverlay != null) {
+-                ExtendedFloatingActionButton(
+-                    onClick = onHidePageOverlay,
+-                    icon = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
+-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+-                    text = { Text("Скрыть текст") },
+-                )
+-            }
+-        }
+-        // Свои действия — отдельной прокручиваемой строкой, чтобы длинный
+-        // список не уезжал за экран и не ломал основные кнопки озвучки.
+-        if (userActions.isNotEmpty()) {
+-            Row(
+-                modifier = Modifier
+-                    .padding(top = 8.dp)
+-                    .horizontalScroll(rememberScrollState()),
+-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+-            ) {
+-                userActions.forEach { action ->
+-                    ExtendedFloatingActionButton(
+-                        onClick = { context.toast(UiActionRegistry.apply(context, action)) },
+-                        icon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
+-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+-                        text = { Text(action.title) },
+-                    )
+-                }
+-            }
+-        }
+-    }
+-}
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt
+index 7e0bcf9..33ecc2d 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt
+@@ -79,6 +79,7 @@ import androidx.compose.ui.text.input.ImeAction
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.window.Dialog
+ import androidx.compose.ui.window.DialogProperties
++import kotlinx.coroutines.CancellationException
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.withContext
+@@ -166,7 +167,12 @@ fun ReaderAiChatOverlay(
+ 
+     LaunchedEffect(Unit) {
+         val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+-        val state = eu.kanade.tachiyomi.data.ai.AiBackends.state(context, prefs)
++        // Снимок бэкенда читает сеть, каталоги моделей и сессии ранера — это
++        // диск и binder, и на главном потоке (здесь это Main.immediate)
++        // он подвешивал чат на открытии.
++        val state = withContext(Dispatchers.IO) {
++            eu.kanade.tachiyomi.data.ai.AiBackends.state(context, prefs)
++        }
+         val backend = eu.kanade.tachiyomi.data.ai.AiBackends.byId(prefs.aiBackend().get())
+         val status = eu.kanade.tachiyomi.data.ai.AiBackends.statusOf(
+             backend,
+@@ -226,7 +232,7 @@ fun ReaderAiChatOverlay(
+             // Поле очищаем сразу при отправке: оставлять отправленный текст в
+             // поле нельзя — читатель видит «не отправлено» и ждёт второй раз.
+             input = ""
+-            sendMessage(
++            runningJob = sendMessage(
+                 context = context,
+                 scope = scope,
+                 mangaId = mangaId,
+@@ -242,7 +248,14 @@ fun ReaderAiChatOverlay(
+                 historyChannel = historyChannel,
+                 onActivity = setActivity,
+                 onDone = { sessionRefresh += 1 },
+-            )
++            ).also {
++                // Ход завершился — ссылка больше не нужна, иначе «Стоп» отменил
++                // бы уже завершённую работу и обнулил индикатор.
++                scope.launch {
++                    it.join()
++                    runningJob = null
++                }
++            }
+             attachedName = null
+             attachedBytes = null
+         }
+@@ -705,12 +718,14 @@ private fun sendMessage(
+     onActivity: (String) -> Unit = {},
+     /** Вызывается после сохранения ответа: пора перечитать сводку сессии. */
+     onDone: () -> Unit = {},
+-) {
++): kotlinx.coroutines.Job {
+     AiHistoryManager.append(context, history, Msg(role = "user", text = input), mangaId, historyChannel)
+     loading(true)
+     onActivity("Запрос к модели…")
+-    scope.launch {
+-        val reply = runCatching {
++    // Job возвращаем наружу, чтобы кнопка «Стоп» действительно прерывала ход:
++    // раньше ссылка на него не хранилась, и `cancel()` был вызовом в пустоту.
++    return scope.launch {
++        val reply = try {
+             chatOnce(
+                 context = context,
+                 mangaId = mangaId,
+@@ -722,10 +737,17 @@ private fun sendMessage(
+                 history = history,
+                 onProgress = onActivity,
+             )
+-        }.getOrElse { error ->
++        } catch (e: CancellationException) {
++            // Кнопка «Стоп»: отмена хода — не ошибка запроса. Раньше
++            // runCatching глотал отмену и в историю попадал ответ
++            // «Сбой запроса к AI: …», хотя читатель просто остановил агента.
++            loading(false)
++            onActivity("Остановлено")
++            throw e
++        } catch (e: Exception) {
+             onActivity("Ошибка запроса")
+             AiAgent.AgentReply(
+-                text = "Сбой запроса к AI: ${error.message ?: error::class.java.simpleName}",
++                text = "Сбой запроса к AI: ${e.message ?: e::class.java.simpleName}",
+                 toolResults = emptyList(),
+                 images = emptyList(),
+             )
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
+index e7b35fd..21f988c 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
+@@ -941,7 +941,7 @@ object AiAgent {
+                 val session = RunnerLlm.listSessions(context).firstOrNull { it.url != null }
+                 when {
+                     text.isBlank() -> ToolResult("runner_chat", "ОШИБКА: пустой text")
+-                    session == null -> ToolResult("runner_chat", "Нет живой ранер-сессии — запусти runner_start или вручную в ⚙")
++                    session == null -> ToolResult("runner_chat", "Нет живой ранер-сессии — запусти runner_start или вручную на вкладке «AI»")
+                     else -> {
+                         val answer = RunnerLlm.chat(context, session, text)
+                         ToolResult("runner_chat", answer ?: "Ранер не ответил (сессия могла умереть)")
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt
+index dececa0..36a9f9e 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt
+@@ -110,6 +110,14 @@ object AiBackends {
+          * ранер модель выбирают сами: там роль может выбрать только бэкенд.
+          */
+         val supportsModelChoice: Boolean = true,
++        /**
++         * Можно ли выбрать этот бэкенд в списках выбора.
++         *
++         * Локальная LLM — вечный стаб: движок не в сборке, `chat()` всегда
++         * бросает. Показывать его в выпадающих списках значило предлагать
++         * заведомо нерабочий вариант, который ломался на каждом ходу.
++         */
++        val selectable: Boolean = true,
+     )
+ 
+     val ONLINE = Plugin(
+@@ -130,6 +138,7 @@ object AiBackends {
+         offline = true,
+         requirements = listOf(AiRequirement.MODEL_DOWNLOAD),
+         supportsModelChoice = false,
++        selectable = false,
+     )
+ 
+     val RUNNER = Plugin(
+@@ -149,6 +158,12 @@ object AiBackends {
+ 
+     val ALL = listOf(ONLINE, LOCAL, RUNNER)
+ 
++    /**
++     * Бэкенды, которые имеет смысл предлагать выбрать. Всё, что не может
++     * ответить никогда (сейчас это локальная LLM), сюда не попадает.
++     */
++    val SELECTABLE = ALL.filter { it.selectable }
++
+     fun byId(id: String?): Plugin = ALL.firstOrNull { it.id == id } ?: ONLINE
+ 
+     /**
+@@ -263,7 +278,7 @@ object AiBackends {
+                     Route(
+                         plugin.id,
+                         ready = false,
+-                        message = "Нет живой ранер-сессии: запустите её в ⚙ → Полу-онлайн LLM",
++                        message = "Нет живой ранер-сессии: запустите её на вкладке «AI»",
+                     )
+                 }
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
+index e2b917f..2b7e0bd 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
+@@ -68,21 +68,57 @@ object AiHistoryManager {
+     fun historyFile(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): File {
+         val ws = aiWorkspaceDir(context)
+         ws.mkdirs()
+-        return when {
++        val target = when {
+             mangaId == null -> File(ws, FILE)
+             channel == CHANNEL_CHAT -> File(ws, "ai_history_${mangaId}.json")
+             else -> File(ws, "ai_history_${mangaId}_$channel.json")
+         }
++        if (!target.exists()) migrateLegacyFile(context, target)
++        return target
+     }
+ 
+-    private fun aiWorkspaceDir(context: Context): File {
+-        // Yomikai workspace — /sdcard/Yomikai/AI или внутренние файлы как fallback
+-        val ext = context.getExternalFilesDir(null)
+-        val candidate = if (ext != null) File(ext, "../../Yomikai/AI").canonicalFile else File(context.filesDir, "ai_workspace")
+-        // Fallback если нет разрешения на ext
+-        return if (candidate.exists() || candidate.mkdirs()) candidate else File(context.filesDir, "ai_workspace")
++    /**
++     * Старый каталог истории: `/sdcard/Android/Yomikai/AI`.
++     *
++     * Именно его вычисляла прежняя версия [aiWorkspaceDir]. Файлы назывались
++     * так же, поэтому достаточно перенести совпадение по имени — иначе после
++     * обновления переписка просто исчезла бы, хотя нигде не удалялась.
++     */
++    private fun legacyDir(context: Context): File? {
++        val external = context.getExternalFilesDir(null) ?: return null
++        val android = external.parentFile?.parentFile ?: return null
++        return File(android, "Yomikai/AI")
+     }
+ 
++    private fun migrateLegacyFile(context: Context, target: File) {
++        val legacy = legacyDir(context) ?: return
++        val old = File(legacy, target.name)
++        if (!old.exists() || old.length() == 0L) return
++        synchronized(saveLock) {
++            try {
++                // Файлы одного тома, rename атомарен; если система отказала
++                // (например, каталог назначения на другом mount), копируем.
++                if (!old.renameTo(target)) {
++                    target.writeText(old.readText())
++                    old.delete()
++                }
++            } catch (e: Exception) {
++                logcat(LogPriority.WARN, e) { "AiHistoryManager legacy move failed: ${target.name}" }
++            }
++        }
++    }
++
++    /**
++     * История лежит в корне workspace.
++     *
++     * Раньше папка вычислялась здесь отдельно (`getExternalFilesDir/../../Yomikai/AI`,
++     * то есть `/sdcard/Android/Yomikai/AI`) и не совпадала ни с одним
++     * кандидатом [AiWorkspace.root]. Из-за этого история была не видна
++     * `workspace_list`/`read_file` — хотя промпт агента прямо велит читать её
++     * оттуда, — и не попадала в `zip_workspace`.
++     */
++    private fun aiWorkspaceDir(context: Context): File = AiWorkspace.root(context)
++
+     fun load(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): MutableList<Msg> {
+         val f = historyFile(context, mangaId, channel)
+         if (!f.exists()) return mutableListOf()
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiWorkspaceSurvey.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiWorkspaceSurvey.kt
+index 4376332..d047285 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiWorkspaceSurvey.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiWorkspaceSurvey.kt
+@@ -143,7 +143,15 @@ object AiWorkspaceSurvey {
+         val clean = subdir.trim().trimStart('/')
+         if (clean.isEmpty() || clean == ".") return root
+         val f = File(root, clean)
+-        return f.takeIf { it.isDirectory }
++        // Тот же запрет выхода за workspace, что и в resolveFile: иначе
++        // `{"path": "../../.."}` перечислял содержимое /sdcard и приватных
++        // папок приложения.
++        val contained = runCatching {
++            val base = root.canonicalFile
++            val target = f.canonicalFile
++            target == base || target.path.startsWith(base.path + File.separator)
++        }.getOrDefault(false)
++        return f.takeIf { contained && it.isDirectory }
+     }
+ 
+     private fun resolveFile(root: File, name: String): File? {
+@@ -153,7 +161,9 @@ object AiWorkspaceSurvey {
+         // Выход за пределы workspace запрещён: путь из модели не должен
+         // приводить к файлам приложения.
+         return runCatching {
+-            if (f.canonicalPath.startsWith(root.canonicalPath)) f else null
++            val base = root.canonicalFile
++            val target = f.canonicalFile
++            if (target == base || target.path.startsWith(base.path + File.separator)) f else null
+         }.getOrNull()
+     }
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/download/OcrQueueScreen.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/download/OcrQueueScreen.kt
+index f54c1a1..caa2b1b 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/download/OcrQueueScreen.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/download/OcrQueueScreen.kt
+@@ -207,11 +207,6 @@ object OcrQueueScreen : Screen() {
+                         onClick = { currentTab = 1 },
+                         text = { Text("Голоса") },
+                     )
+-                    Tab(
+-                        selected = currentTab == 2,
+-                        onClick = { currentTab = 2 },
+-                        text = { Text("Приложения") },
+-                    )
+                 }
+                 when (currentTab) {
+                     0 -> RecognitionTab(
+@@ -221,10 +216,7 @@ object OcrQueueScreen : Screen() {
+                         ocrPreferences = ocrPreferences,
+                         nestedScrollConnection = nestedScrollConnection,
+                     )
+-                    1 -> VoicesTab(ocrPreferences = ocrPreferences)
+-                    // Приложения телефона: на них оверлей кладётся поверх —
+-                    // игра на чужом языке, текст без озвучки, субтитры к видео.
+-                    else -> OverlayAppsTab()
++                    else -> VoicesTab(ocrPreferences = ocrPreferences)
+                 }
+             }
+         }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/download/OverlayAppsTab.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/download/OverlayAppsTab.kt
+deleted file mode 100644
+index f3a92ed..0000000
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/download/OverlayAppsTab.kt
++++ /dev/null
+@@ -1,145 +0,0 @@
+-package eu.kanade.tachiyomi.ui.download
+-
+-import androidx.compose.foundation.clickable
+-import androidx.compose.foundation.layout.Column
+-import androidx.compose.foundation.layout.Row
+-import androidx.compose.foundation.layout.Spacer
+-import androidx.compose.foundation.layout.fillMaxSize
+-import androidx.compose.foundation.layout.fillMaxWidth
+-import androidx.compose.foundation.layout.padding
+-import androidx.compose.foundation.layout.width
+-import androidx.compose.foundation.lazy.LazyColumn
+-import androidx.compose.foundation.lazy.items
+-import androidx.compose.material3.HorizontalDivider
+-import androidx.compose.material3.MaterialTheme
+-import androidx.compose.material3.OutlinedButton
+-import androidx.compose.material3.Text
+-import androidx.compose.runtime.Composable
+-import androidx.compose.runtime.getValue
+-import androidx.compose.runtime.mutableStateOf
+-import androidx.compose.runtime.remember
+-import androidx.compose.runtime.setValue
+-import androidx.compose.ui.Alignment
+-import androidx.compose.ui.Modifier
+-import androidx.compose.foundation.layout.size
+-import androidx.compose.ui.graphics.asImageBitmap
+-import androidx.compose.ui.platform.LocalContext
+-import androidx.compose.ui.text.style.TextOverflow
+-import androidx.compose.ui.unit.dp
+-import eu.kanade.tachiyomi.ui.overlay.InstalledApps
+-
+-/**
+- * Вкладка запуска оверлея поверх приложений телефона.
+- *
+- * Задумана не только для манги: оверлей нужен там, где текст есть, а читать
+- * его нечем или нужен другой язык — игра на чужом языке, русский текст без
+- * озвучки, субтитры к видео в реальном времени. Список поэтому общий, а не
+- * «только манга».
+- */
+-@Composable
+-fun OverlayAppsTab() {
+-    val context = LocalContext.current
+-    var apps by remember { mutableStateOf<InstalledApps.AppsState>(InstalledApps.AppsState.Loading) }
+-
+-    androidx.compose.runtime.LaunchedEffect(Unit) {
+-        apps = InstalledApps.loadState(context)
+-    }
+-
+-    Column(modifier = Modifier.fillMaxSize()) {
+-        Text(
+-            text = "Выберите приложение — оверлей появится поверх него",
+-            style = MaterialTheme.typography.bodyMedium,
+-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+-        )
+-        OutlinedButton(
+-            onClick = {
+-                eu.kanade.tachiyomi.ui.overlay.OcrOverlayService.start(context)
+-            },
+-            modifier = Modifier.padding(horizontal = 16.dp),
+-        ) {
+-            Text("Запустить оверлей без приложения")
+-        }
+-        Spacer(Modifier.width(8.dp))
+-
+-        when (val state = apps) {
+-            is InstalledApps.AppsState.Loading ->
+-                Text("Читаю список приложений…", modifier = Modifier.padding(16.dp))
+-
+-            is InstalledApps.AppsState.Failed ->
+-                Text(
+-                    text = "Не удалось прочитать список: ${state.reason}",
+-                    color = MaterialTheme.colorScheme.error,
+-                    modifier = Modifier.padding(16.dp),
+-                )
+-
+-            is InstalledApps.AppsState.Ready -> {
+-                if (state.entries.isEmpty()) {
+-                    Text("Запускаемых приложений не найдено", modifier = Modifier.padding(16.dp))
+-                }
+-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+-                    items(state.entries, key = { it.packageName }) { entry ->
+-                        Row(
+-                            modifier = Modifier
+-                                .fillMaxWidth()
+-                                .clickable {
+-                                    // Сначала открываем приложение: оверлей
+-                                    // ложится поверх того, что видно, иначе он
+-                                    // повиснет над нашими же настройками.
+-                                    InstalledApps.launch(context, entry.packageName)
+-                                    eu.kanade.tachiyomi.ui.overlay.OcrOverlayService.start(context)
+-                                }
+-                                .padding(horizontal = 16.dp, vertical = 10.dp),
+-                            verticalAlignment = Alignment.CenterVertically,
+-                        ) {
+-                            entry.icon?.let { icon ->
+-                                AppIcon(icon)
+-                                Spacer(Modifier.width(12.dp))
+-                            }
+-                            Text(
+-                                text = entry.label,
+-                                style = MaterialTheme.typography.bodyLarge,
+-                                maxLines = 1,
+-                                overflow = TextOverflow.Ellipsis,
+-                            )
+-                        }
+-                        HorizontalDivider()
+-                    }
+-                }
+-            }
+-        }
+-    }
+-}
+-
+-/**
+- * Иконка приложения.
+- *
+- * `Icon()` умеет только [androidx.compose.ui.graphics.vector.ImageVector] и
+- * Painter, а PackageManager отдаёт Drawable. Конвертируем в картинку сами:
+- * тянуть accompanist ради одного значка незачем.
+- */
+-@Composable
+-private fun AppIcon(drawable: android.graphics.drawable.Drawable) {
+-    val size = 36
+-    val bitmap = remember(drawable) {
+-        runCatching {
+-            if (drawable.intrinsicWidth <= 0 || drawable.intrinsicHeight <= 0) return@runCatching null
+-            android.graphics.Bitmap
+-                .createBitmap(drawable.intrinsicWidth, drawable.intrinsicHeight, android.graphics.Bitmap.Config.ARGB_8888)
+-                .also { bmp ->
+-                    val canvas = android.graphics.Canvas(bmp)
+-                    drawable.setBounds(0, 0, canvas.width, canvas.height)
+-                    drawable.draw(canvas)
+-                }
+-        }.getOrNull()
+-    }
+-    if (bitmap == null) {
+-        Spacer(Modifier.size(36.dp))
+-        return
+-    }
+-    androidx.compose.foundation.Image(
+-        bitmap = bitmap.asImageBitmap(),
+-        contentDescription = null,
+-        modifier = Modifier.size(36.dp),
+-    )
+-}
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/locallibrary/LocalOcrScreens.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/locallibrary/LocalOcrScreens.kt
+index ff4ec6a..465f4ae 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/locallibrary/LocalOcrScreens.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/locallibrary/LocalOcrScreens.kt
+@@ -150,7 +150,7 @@ private fun OptionsBlock(
+     }
+ }
+ 
+-private val ENGINE_TITLES = mapOf(
++internal val ENGINE_TITLES = mapOf(
+     OcrModel.CYRILLIC to "Кириллица (офлайн, точно)",
+     OcrModel.MLKIT to "Google ML Kit (офлайн, встроена в APK)",
+     OcrModel.FAST to "Быстрый (офлайн, для ARM)",
+@@ -551,100 +551,6 @@ object LocalGameSttScreen : Screen {
+     }
+ }
+ 
+-// ---------- 6. Оверлей приложений ----------
+-
+-object LocalAppOverlayScreen : Screen {
+-
+-    @Composable
+-    override fun Content() {
+-        val context = LocalContext.current
+-        val prefs = rememberPrefs()
+-        val regionMode by prefs.overlayRegionMode().changes()
+-            .collectAsState(initial = prefs.overlayRegionMode().get())
+-        val fixedRegion by prefs.overlayFixedRegion().changes()
+-            .collectAsState(initial = prefs.overlayFixedRegion().get())
+-        val showFrame by prefs.overlayShowFrame().changes()
+-            .collectAsState(initial = prefs.overlayShowFrame().get())
+-        val watchClip by prefs.overlayWatchClipboard().changes()
+-            .collectAsState(initial = prefs.overlayWatchClipboard().get())
+-        val appEngine by prefs.appOcrEngine().changes()
+-            .collectAsState(initial = prefs.appOcrEngine().get())
+-
+-        SubSettingsScaffold(
+-            title = "Оверлей приложений",
+-            subtitle = "Плавающая кнопка поверх других APK: свои область и технология.",
+-        ) {
+-            SectionTitle("Питание")
+-            Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+-                TextButton(onClick = {
+-                    if (!OcrOverlayService.canDrawOverlays(context)) {
+-                        OcrOverlayService.requestPermission(context)
+-                    } else {
+-                        OcrOverlayService.start(context)
+-                    }
+-                }) { Text("Запустить") }
+-                TextButton(onClick = { OcrOverlayService.stop(context) }) { Text("Остановить") }
+-            }
+-            OptionsBlock(
+-                title = "Область",
+-                options = mapOf(
+-                    "auto" to "Авто — весь экран",
+-                    "manual" to "Вручную — выделить пальцем",
+-                    "fixed" to "Фикс — реплики игр, область не двигается",
+-                ),
+-                selected = regionMode,
+-                onSelect = {
+-                    prefs.overlayRegionMode().set(it)
+-                    OcrOverlayService.refresh(context)
+-                },
+-            )
+-            Text(
+-                text = if (fixedRegion.isBlank()) {
+-                    "Фиксированная область не задана — кнопка ✏ на панели оверлея."
+-                } else {
+-                    "Фикс: $fixedRegion"
+-                },
+-                style = MaterialTheme.typography.bodySmall,
+-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+-            )
+-            TextButton(
+-                onClick = {
+-                    if (!OcrOverlayService.canDrawOverlays(context)) {
+-                        OcrOverlayService.requestPermission(context)
+-                    } else {
+-                        OcrOverlayService.start(context)
+-                        OcrOverlayService.selectRegion(context)
+-                    }
+-                },
+-                modifier = Modifier.padding(horizontal = 16.dp),
+-            ) { Text("Задать область пальцем") }
+-            SwitchRow(
+-                title = "Показывать рамку области",
+-                subtitle = "Тонкая рамка зафиксированной области поверх приложений",
+-                checked = showFrame,
+-                onChange = {
+-                    prefs.overlayShowFrame().set(it)
+-                    OcrOverlayService.refresh(context)
+-                },
+-            )
+-            SwitchRow(
+-                title = "Следить за буфером обмена",
+-                subtitle = "Новое скопированное озвучивается само",
+-                checked = watchClip,
+-                onChange = {
+-                    prefs.overlayWatchClipboard().set(it)
+-                    OcrOverlayService.refresh(context)
+-                },
+-            )
+-            EngineOptions(
+-                selected = appEngine,
+-                onSelect = { prefs.appOcrEngine().set(it) },
+-            )
+-        }
+-    }
+-}
+-
+ @Composable
+ private fun rememberPrefs(): OcrPreferences {
+     return androidx.compose.runtime.remember { Injekt.get<OcrPreferences>() }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/locallibrary/LocalSettingsScreen.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/locallibrary/LocalSettingsScreen.kt
+index ea50e96..fdb7862 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/locallibrary/LocalSettingsScreen.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/locallibrary/LocalSettingsScreen.kt
+@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.outlined.DocumentScanner
+ import androidx.compose.material.icons.outlined.GTranslate
++import androidx.compose.material.icons.outlined.Layers
+ import androidx.compose.material.icons.outlined.RecordVoiceOver
+ import androidx.compose.material.icons.outlined.SportsEsports
+ import androidx.compose.material.icons.outlined.Translate
+@@ -37,6 +38,7 @@ import eu.kanade.presentation.more.settings.screen.SettingsDictionaryScreen
+ import eu.kanade.presentation.more.settings.screen.SettingsOcrPluginsScreen
+ import eu.kanade.presentation.more.settings.screen.SettingsOcrScreen
+ import eu.kanade.presentation.reader.OcrBubbleSettingsDialog
++import eu.kanade.tachiyomi.ui.overlay.OcrOverlaySettingsScreen
+ 
+ /**
+  * Раздел «Настройки» внутри локальной библиотеки: у каждого пункта свой
+@@ -153,10 +155,10 @@ object LocalSettingsScreen : Screen {
+                 item { SettingsHeader("Приложения") }
+                 item {
+                     SettingsItem(
+-                        icon = Icons.Outlined.RecordVoiceOver,
+-                        title = "Оверлей приложений",
++                        icon = Icons.Outlined.Layers,
++                        title = "Оверлей поверх экрана",
+                         subtitle = "Плавающая кнопка, область, своя технология",
+-                    ) { navigator.push(LocalAppOverlayScreen) }
++                    ) { navigator.push(OcrOverlaySettingsScreen) }
+                 }
+             }
+         }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/more/MoreTab.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/more/MoreTab.kt
+index 6b17cf6..1987b46 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/more/MoreTab.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/more/MoreTab.kt
+@@ -26,6 +26,7 @@ import eu.kanade.tachiyomi.data.ocr.OcrScanManager
+ import eu.kanade.tachiyomi.ui.category.CategoryScreen
+ import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
+ import eu.kanade.tachiyomi.ui.download.OcrQueueScreen
++import eu.kanade.tachiyomi.ui.overlay.OcrOverlaySettingsScreen
+ import eu.kanade.tachiyomi.ui.setting.SettingsScreen
+ import eu.kanade.tachiyomi.ui.stats.StatsScreen
+ import kotlinx.coroutines.flow.MutableStateFlow
+@@ -73,6 +74,7 @@ data object MoreTab : Tab {
+             onIncognitoModeChange = { screenModel.incognitoMode = it },
+             onClickDownloadQueue = { navigator.push(DownloadQueueScreen) },
+             onClickOcrQueue = { navigator.push(OcrQueueScreen) },
++            onClickOcrOverlay = { navigator.push(OcrOverlaySettingsScreen) },
+             onClickCategories = { navigator.push(CategoryScreen()) },
+             onClickStats = { navigator.push(StatsScreen()) },
+             onClickDataAndStorage = { navigator.push(SettingsScreen(SettingsScreen.Destination.DataAndStorage)) },
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index 71a42f6..3972074 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -72,7 +72,6 @@ import eu.kanade.domain.dictionary.OcrResultPresentation
+ import eu.kanade.presentation.reader.DisplayRefreshHost
+ import eu.kanade.presentation.reader.OcrLoadingIndicator
+ import eu.kanade.presentation.reader.OcrResultOverlay
+-import eu.kanade.presentation.reader.OcrVoiceFloatingControls
+ import eu.kanade.presentation.reader.OcrResultPopupSettings
+ import eu.kanade.presentation.reader.OcrSelectionOverlay
+ import eu.kanade.presentation.reader.OrientationSelectDialog
+@@ -465,6 +464,11 @@ class ReaderActivity : BaseActivity() {
+                         clearActiveOcrOverlaySession()
+                         toast(MR.strings.no_results_found)
+                     }
++                    ReaderViewModel.Event.OcrResultMarked -> {
++                        // Пометка видна и во вкладке «Скриншоты», и во всплывающем
++                        // индикаторе угла — сообщаем, что результат не пропал.
++                        toast("Распознанное сохранено в «Скриншоты»")
++                    }
+                     ReaderViewModel.Event.OcrMemoryError -> {
+                         clearActiveOcrOverlaySession()
+                         toast(MR.strings.ocr_memory_error)
+@@ -1199,6 +1203,16 @@ class ReaderActivity : BaseActivity() {
+                             )
+                         }
+                         Box(modifier = Modifier.fillMaxSize()) {
++                            // Текст, над которым работают панельные действия
++                            // (озвучка, словарь, копирование). `queryText` у
++                            // результата долгого нажатия пустой — сам текст
++                            // лежит в selection, поэтому раньше кнопка Speak
++                            // в новой компактной панели молчала вслух.
++                            val ocrActionText = dialog.queryText.ifBlank {
++                                searchState.query.ifBlank {
++                                    activeOcrOverlaySession?.selection?.displayText.orEmpty()
++                                }
++                            }
+                             OcrResultOverlay(
+                             onDismissRequest = onDismissOcrResult,
+                             presentation = when (dialog.origin) {
+@@ -1219,17 +1233,12 @@ class ReaderActivity : BaseActivity() {
+                                 // Копируем РАСПОЗНАННЫЙ текст, а не строку поиска по
+                                 // словарям: searchState.query пуст, пока читатель ничего
+                                 // не искал, и в буфер уходила пустая строка.
+-                                val text = dialog.queryText.ifBlank {
+-                                    searchState.query.ifBlank {
+-                                        activeOcrOverlaySession?.selection?.displayText.orEmpty()
+-                                    }
+-                                }
+-                                if (text.isBlank()) {
++                                if (ocrActionText.isBlank()) {
+                                     toast("Нечего копировать")
+                                 } else {
+                                     val clipboard = getSystemService<ClipboardManager>()
+                                     clipboard?.setPrimaryClip(
+-                                        ClipData.newPlainText(null, text),
++                                        ClipData.newPlainText(null, ocrActionText),
+                                     )
+                                     toast(MR.strings.action_copy_to_clipboard)
+                                 }
+@@ -1255,43 +1264,41 @@ class ReaderActivity : BaseActivity() {
+                             },
+                             onPlayAudioClick = dictionarySearchScreenModel::fetchAndPlayAudio,
+                             onSpeak = {
+-                                eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
+-                                    this@ReaderActivity,
+-                                    dialog.queryText,
+-                                )
++                                if (ocrActionText.isBlank()) {
++                                    toast("Нечего озвучивать")
++                                } else {
++                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
++                                        this@ReaderActivity,
++                                        ocrActionText,
++                                    )
++                                }
+                             },
+                             onSpeakRole = { role ->
+-                                eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakRole(
+-                                    this@ReaderActivity,
+-                                    dialog.queryText,
+-                                    role,
+-                                )
++                                if (ocrActionText.isBlank()) {
++                                    toast("Нечего озвучивать")
++                                } else {
++                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakRole(
++                                        this@ReaderActivity,
++                                        ocrActionText,
++                                        role,
++                                    )
++                                }
+                             },
+                             onChooseVoice = { showVoicePicker = true },
+                             onHidePageOverlay = ::hideActiveOcrOverlayText,
+                             onAddToDictionary = {
+-                                val added = mihon.data.ocr.OcrVocabulary.addFromText(
+-                                    dialog.queryText,
+-                                )
+-                                toast(
+-                                    if (added > 0) "Словарь OCR: добавлено $added"
+-                                    else "Словарь OCR: ничего нового",
+-                                )
+-                            },
+-                            )
+-                            if (searchState.dictionaries.isNotEmpty()) OcrVoiceFloatingControls(
+-                                enabled = dialog.queryText.isNotBlank(),
+-                                onSpeak = {
+-                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
+-                                        this@ReaderActivity,
+-                                        dialog.queryText,
++                                if (ocrActionText.isBlank()) {
++                                    toast("Нечего добавлять")
++                                } else {
++                                    val added = mihon.data.ocr.OcrVocabulary.addFromText(
++                                        ocrActionText,
+                                     )
+-                                },
+-                                onChooseVoice = { showVoicePicker = true },
+-                                onHidePageOverlay = ::hideActiveOcrOverlayText,
+-                                modifier = Modifier
+-                                    .align(Alignment.BottomCenter)
+-                                    .navigationBarsPadding(),
++                                    toast(
++                                        if (added > 0) "Словарь OCR: добавлено $added"
++                                        else "Словарь OCR: ничего нового",
++                                    )
++                                }
++                            },
+                             )
+                             if (showVoicePicker) {
+                                 eu.kanade.presentation.reader.TtsVoicePickerDialog(
+@@ -1300,7 +1307,7 @@ class ReaderActivity : BaseActivity() {
+                                         showVoicePicker = false
+                                         eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithVoice(
+                                             this@ReaderActivity,
+-                                            dialog.queryText,
++                                            ocrActionText,
+                                             spec,
+                                         )
+                                     },
+@@ -1308,7 +1315,7 @@ class ReaderActivity : BaseActivity() {
+                                         showVoicePicker = false
+                                         eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithEdgeVoice(
+                                             this@ReaderActivity,
+-                                            dialog.queryText,
++                                            ocrActionText,
+                                             voice,
+                                         )
+                                     },
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+index 5bbe744..b0f886c 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+@@ -61,11 +61,15 @@ import kotlinx.coroutines.withTimeout
+ import logcat.LogPriority
+ import mihon.domain.ocr.exception.OcrException
+ import mihon.domain.ocr.interactor.OcrProcessor
++import mihon.domain.ocr.model.OcrBoundingBox
+ import mihon.domain.ocr.model.OcrModel
++import mihon.domain.ocr.model.OcrRegion
++import mihon.domain.ocr.model.OcrTextOrientation
+ import mihon.domain.ocr.model.OcrTextSource
+ import mihon.domain.ocr.model.flattenOcrTextForQuery
+ import mihon.domain.ocr.repository.OcrRepository
+ import mihon.domain.ocr.service.OcrPreferences
++import mihon.data.ocr.OcrScreenshotBuffer
+ import mihon.domain.panel.repository.PanelDetectionRepository
+ import tachiyomi.core.common.preference.toggle
+ import tachiyomi.core.common.util.lang.launchIO
+@@ -118,6 +122,12 @@ class ReaderViewModel @JvmOverloads constructor(
+     private val application: Application = Injekt.get(),
+ ) : ViewModel() {
+ 
++    private companion object {
++        /** Сторона кадра, попадающего в буфер «Скриншоты» как пометка распознавания. */
++        const val MARKED_MAX_SIDE = 1080
++        const val MARKED_JPEG_QUALITY = 70
++    }
++
+     private val mutableState = MutableStateFlow(State())
+     val state = mutableState.asStateFlow()
+ 
+@@ -985,6 +995,72 @@ class ReaderViewModel @JvmOverloads constructor(
+         return out
+     }
+ 
++    /**
++     * Пометить распознанную область так же, как это делает авточтение: запись
++     * в буфер «Скриншоты» с JPEG-кадром выделенной области, чтобы результат
++     * ручного распознавания не пропадал и был виден на вкладке скриншотов.
++     *
++     * Кадр уменьшается до [MARKED_MAX_SIDE] — в буфер попадают десятки
++     * записей, и полноразмерные JPEG быстро съедают место.
++     *
++     * @return true, если запись создана.
++     */
++    private fun markRecognizedRegion(bitmap: Bitmap, text: String, usedEngine: OcrModel?): Boolean {
++        val prefs = Injekt.get<OcrPreferences>()
++        if (!prefs.autoScreenshotEnabled().get()) return false
++        if (bitmap.isRecycled) return false
++        return runCatching {
++            val scaled = if (maxOf(bitmap.width, bitmap.height) <= MARKED_MAX_SIDE) {
++                bitmap
++            } else {
++                val scale = MARKED_MAX_SIDE.toFloat() / maxOf(bitmap.width, bitmap.height)
++                Bitmap.createScaledBitmap(
++                    bitmap,
++                    (bitmap.width * scale).toInt().coerceAtLeast(1),
++                    (bitmap.height * scale).toInt().coerceAtLeast(1),
++                    true,
++                )
++            }
++            try {
++                val jpeg = java.io.ByteArrayOutputStream().use { out ->
++                    if (scaled.compress(Bitmap.CompressFormat.JPEG, MARKED_JPEG_QUALITY, out)) {
++                        out.toByteArray()
++                    } else {
++                        null
++                    }
++                }
++                val chapterId = state.value.currentChapter?.chapter?.id ?: -1L
++                val pageIndex = (state.value.currentPage - 1).coerceAtLeast(0)
++                OcrScreenshotBuffer.add(
++                    chapterId = chapterId,
++                    pageIndex = pageIndex,
++                    scrollFraction = 0f,
++                    // Выделенная область — это и есть весь кадр записи, поэтому
++                    // единственный регион занимает его целиком.
++                    regions = listOf(
++                        OcrRegion(
++                            order = 0,
++                            text = text.trim(),
++                            boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
++                            textOrientation = OcrTextOrientation.Horizontal,
++                        ),
++                    ),
++                    engineUsed = usedEngine?.name?.lowercase() ?: "unknown",
++                    imageWidth = scaled.width,
++                    imageHeight = scaled.height,
++                    imageJpeg = jpeg,
++                    scanRegion = "selection",
++                )
++                true
++            } finally {
++                if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
++            }
++        }.getOrElse { e ->
++            logcat(LogPriority.WARN, e) { "Failed to mark recognized OCR region" }
++            false
++        }
++    }
++
+     fun processOcrRegion(bitmap: Bitmap) {
+         viewModelScope.launchIO {
+             mutableState.update { it.copy(isProcessingOcr = true, ocrSelectionMode = false) }
+@@ -999,8 +1075,18 @@ class ReaderViewModel @JvmOverloads constructor(
+                 // пропускается, и текст читает локальный. Показываем
+                 // фактического исполнителя, иначе «онлайн» — враньё.
+                 val usedEngine = ocrProcessor.lastUsedEngine()
++                val queryText = flattenOcrTextForQuery(text)
++                // Помечаем результат так же, как это делает авточтение: запись
++                // в буфер «Скриншоты» с кадром области. Раньше ручной выбор
++                // regions нигде не оставался — распознал, посмотрел, закрыл, и
++                // результат потерян, а вкладка «Скриншоты» показывала только
++                // кадры авточтения.
++                val marked = if (queryText.isNotBlank()) {
++                    markRecognizedRegion(bitmap, queryText, usedEngine)
++                } else {
++                    false
++                }
+                 withUIContext {
+-                    val queryText = flattenOcrTextForQuery(text)
+                     if (queryText.isNotBlank()) {
+                         showOcrResult(
+                             queryText = queryText,
+@@ -1008,6 +1094,9 @@ class ReaderViewModel @JvmOverloads constructor(
+                             source = ocrSource(usedEngine),
+                         )
+                         mutableState.update { it.copy(isProcessingOcr = false) }
++                        if (marked) {
++                            eventChannel.send(Event.OcrResultMarked)
++                        }
+                     } else {
+                         mutableState.update { it.copy(isProcessingOcr = false) }
+                         eventChannel.send(Event.OcrNoTextFound)
+@@ -1348,6 +1437,8 @@ class ReaderViewModel @JvmOverloads constructor(
+         data class ShareImage(val uri: Uri, val page: ReaderPage) : Event
+         data class CopyImage(val uri: Uri) : Event
+         data object OcrNoTextFound : Event
++        /** Результат ручного распознавания помечен в буфере «Скриншоты». */
++        data object OcrResultMarked : Event
+ 
+         data class OfflineExportResult(val message: String) : Event
+         data object OcrMemoryError : Event
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
+index e306d75..10d58fa 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
+@@ -223,10 +223,26 @@ private fun ScreenshotCard(
+                 color = MaterialTheme.colorScheme.onSurface,
+             )
+         }
+-        Text(
+-            text = "${entry.regions.size}",
+-            style = MaterialTheme.typography.titleMedium,
+-            color = MaterialTheme.colorScheme.primary,
+-        )
++        Column(horizontalAlignment = Alignment.End) {
++            Text(
++                text = "${entry.regions.size}",
++                style = MaterialTheme.typography.titleMedium,
++                color = MaterialTheme.colorScheme.primary,
++            )
++            // Откуда запись: авточтение сняло кадр сам или читатель выбрал
++            // область пальцем. Без подписи два вида записей неотличимы.
++            Text(
++                text = entry.scanRegion.sourceLabel(),
++                style = MaterialTheme.typography.labelSmall,
++                color = MaterialTheme.colorScheme.onSurfaceVariant,
++            )
++        }
+     }
+ }
++
++/** Короткая подпись источника записи скриншота. */
++private fun String?.sourceLabel(): String = when (this) {
++    "selection" -> "Область"
++    "viewport", "" , null -> "Кадр"
++    else -> "Кадр"
++}
+diff --git a/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt b/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt
+index f361399..bdbb84e 100644
+--- a/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt
++++ b/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt
+@@ -162,7 +162,7 @@ class AiBackendsTest {
+ 
+         val runner = AiBackends.route("runner", readyState.copy(runnerSessionAlive = false))
+         runner.ready shouldBe false
+-        runner.message shouldBe "Нет живой ранер-сессии: запустите её в ⚙ → Полу-онлайн LLM"
++        runner.message shouldBe "Нет живой ранер-сессии: запустите её на вкладке «AI»"
+ 
+         // Готовый бэкенд сообщений не выдаёт.
+         AiBackends.route("local", readyState).message shouldBe null
