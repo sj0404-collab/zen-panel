@@ -1,0 +1,193 @@
+diff --git a/.github/workflows/android.yml b/.github/workflows/android.yml
+deleted file mode 100644
+index fe3205a..0000000
+--- a/.github/workflows/android.yml
++++ /dev/null
+@@ -1,47 +0,0 @@
+-name: Android CI
+-
+-on:
+-  push:
+-    tags:
+-      - 'v*'
+-
+-jobs:
+-  build:
+-    runs-on: ubuntu-latest
+-    steps:
+-      - uses: actions/checkout@v4
+-
+-      - name: Set up JDK 17
+-        uses: actions/setup-java@v4
+-        with:
+-          java-version: '17'
+-          distribution: 'temurin'
+-
+-      - name: Setup Android SDK manually
+-        run: |
+-          export ANDROID_HOME=$HOME/android-sdk
+-          export ANDROID_SDK_ROOT=$ANDROID_HOME
+-          mkdir -p $ANDROID_HOME/cmdline-tools
+-          cd $ANDROID_HOME/cmdline-tools
+-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+-          unzip -q commandlinetools-linux-11076708_latest.zip
+-          mv cmdline-tools latest
+-          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+-          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+-          echo "PATH=$PATH" >> $GITHUB_ENV
+-
+-      - name: Build APK with gradlew
+-        run: |
+-          cd android
+-          chmod +x gradlew
+-          ./gradlew assembleRelease --no-daemon --stacktrace
+-
+-      - name: Upload APK to Release
+-        uses: softprops/action-gh-release@v1
+-        with:
+-          files: android/app/build/outputs/apk/release/app-release-unsigned.apk
+-        env:
+-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+diff --git a/android/app/build.gradle.kts b/android/app/build.gradle.kts
+index cdc5afc..494cca6 100644
+--- a/android/app/build.gradle.kts
++++ b/android/app/build.gradle.kts
+@@ -60,8 +60,20 @@ android {
+         applicationId = "com.vtuber.ai"
+         minSdk = 24
+         targetSdk = 34
+-        versionCode = 3
+-        versionName = "3.0.0"
++        versionCode = (project.findProperty("vtuberVersionCode") as String?)?.toInt() ?: 3
++        versionName = (project.findProperty("vtuberVersionName") as String?) ?: "3.0.0"
++    }
++
++    val storeFilePath = providers.environmentVariable("KEYSTORE_PATH").orNull
++    signingConfigs {
++        create("release") {
++            if (storeFilePath != null) {
++                storeFile = file(storeFilePath)
++                storePassword = providers.environmentVariable("KEYSTORE_PASSWORD").orNull
++                keyAlias = providers.environmentVariable("KEY_ALIAS").orNull
++                keyPassword = providers.environmentVariable("KEY_PASSWORD").orNull
++            }
++        }
+     }
+ 
+     buildTypes {
+@@ -71,6 +83,9 @@ android {
+                 getDefaultProguardFile("proguard-android-optimize.txt"),
+                 "proguard-rules.pro"
+             )
++            if (storeFilePath != null) {
++                signingConfig = signingConfigs.getByName("release")
++            }
+         }
+     }
+     compileOptions {
+diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
+index 1fcf03f..30ed51a 100644
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -8,6 +8,7 @@
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
++    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+ 
+     <queries>
+         <intent>
+@@ -50,5 +51,15 @@
+                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                 android:value="Live avatar rendered above other apps" />
+         </service>
++
++        <provider
++            android:name="androidx.core.content.FileProvider"
++            android:authorities="${applicationId}.fileprovider"
++            android:exported="false"
++            android:grantUriPermissions="true">
++            <meta-data
++                android:name="android.support.FILE_PROVIDER_PATHS"
++                android:resource="@xml/file_paths" />
++        </provider>
+     </application>
+ </manifest>
+diff --git a/android/app/src/main/java/com/vtuber/ai/MainActivity.kt b/android/app/src/main/java/com/vtuber/ai/MainActivity.kt
+index ccb895a..a3ac232 100644
+--- a/android/app/src/main/java/com/vtuber/ai/MainActivity.kt
++++ b/android/app/src/main/java/com/vtuber/ai/MainActivity.kt
+@@ -20,6 +20,7 @@ class MainActivity : AppCompatActivity() {
+     private lateinit var status: TextView
+     private lateinit var btnOverlay: Button
+     private lateinit var btnSettings: Button
++    private lateinit var updatePrompt: UpdatePrompt
+ 
+     private val overlayPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+         refreshState()
+@@ -49,6 +50,8 @@ class MainActivity : AppCompatActivity() {
+             startActivity(Intent(this, SettingsActivity::class.java))
+         }
+         findViewById<Button>(R.id.btn_hide).setOnClickListener { hideOverlay() }
++        updatePrompt = UpdatePrompt(this)
++        updatePrompt.check(silent = true)
+     }
+ 
+     override fun onResume() {
+@@ -100,7 +103,8 @@ class MainActivity : AppCompatActivity() {
+             append("Аватар: ").append(avatar).append('\n')
+             append("Модели в комплекте: ").append(models.joinToString(", ").ifEmpty { "—" }).append('\n')
+             append("Голос: ").append(if (hasAudioPermission()) "микрофон доступен" else "нужно разрешение").append('\n')
+-            append(if (overlay) "Оверле разрешён" else "Оверле ещё не разрешён")
++            append(if (overlay) "Оверле разрешён" else "Оверле ещё не разрешён").append('\n')
++            append("Версия: ").append(Updater(this).currentVersion())
+         }
+         btnOverlay.text = if (overlay) "Показать аватар" else "Разрешить и показать"
+     }
+diff --git a/android/app/src/main/java/com/vtuber/ai/SettingsActivity.kt b/android/app/src/main/java/com/vtuber/ai/SettingsActivity.kt
+index 292deec..22e2419 100644
+--- a/android/app/src/main/java/com/vtuber/ai/SettingsActivity.kt
++++ b/android/app/src/main/java/com/vtuber/ai/SettingsActivity.kt
+@@ -69,6 +69,10 @@ class SettingsActivity : AppCompatActivity() {
+ 
+         findViewById<Button>(R.id.btn_save).setOnClickListener { save() }
+         findViewById<Button>(R.id.btn_test_voice).setOnClickListener { testVoice() }
++        findViewById<Button>(R.id.btn_check_update).setOnClickListener {
++            UpdatePrompt(this).check(silent = false)
++        }
++        findViewById<TextView>(R.id.tv_version).text = "Версия: ${Updater(this).currentVersion()}"
+         findViewById<Button>(R.id.btn_clear_history).setOnClickListener {
+             prefs.clearHistory()
+             Toast.makeText(this, "История очищена", Toast.LENGTH_SHORT).show()
+diff --git a/android/app/src/main/res/layout/activity_settings.xml b/android/app/src/main/res/layout/activity_settings.xml
+index 24ec08a..b871cc5 100644
+--- a/android/app/src/main/res/layout/activity_settings.xml
++++ b/android/app/src/main/res/layout/activity_settings.xml
+@@ -124,6 +124,24 @@
+             android:text="Очистить историю"
+             android:textColor="#ffffff" />
+ 
++        <Button
++            android:id="@+id/btn_check_update"
++            android:layout_width="match_parent"
++            android:layout_height="52dp"
++            android:layout_marginBottom="10dp"
++            android:backgroundTint="#3a5a8a"
++            android:text="Проверить обновления"
++            android:textColor="#ffffff" />
++
++        <TextView
++            android:id="@+id/tv_version"
++            android:layout_width="wrap_content"
++            android:layout_height="wrap_content"
++            android:layout_marginBottom="16dp"
++            android:text="Версия —"
++            android:textColor="#8888aa"
++            android:textSize="12sp" />
++
+         <Button
+             android:id="@+id/btn_save"
+             android:layout_width="match_parent"

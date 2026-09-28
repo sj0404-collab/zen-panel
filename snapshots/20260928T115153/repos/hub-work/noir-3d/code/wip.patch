@@ -1,0 +1,294 @@
+diff --git a/package.json b/package.json
+index 5ab25cb..953289a 100644
+--- a/package.json
++++ b/package.json
+@@ -7,7 +7,11 @@
+     "dev": "vite",
+     "build": "tsc -b && vite build",
+     "lint": "oxlint",
+-    "preview": "vite preview"
++    "preview": "vite preview",
++    "models": "bash tools/models.sh",
++    "loops": "python3 tools/check_loops.py public/models/detective.glb public/models/car.glb public/models/tram.glb public/models/street_kit.glb",
++    "shots": "node tools/shots.mjs",
++    "release": "node tools/release.mjs"
+   },
+   "dependencies": {
+     "@react-three/drei": "^10.7.9",
+diff --git a/src/scene/CameraRig.tsx b/src/scene/CameraRig.tsx
+index a78a4b1..55a4034 100644
+--- a/src/scene/CameraRig.tsx
++++ b/src/scene/CameraRig.tsx
+@@ -8,6 +8,11 @@ export type CamSpec = {
+   dist: number
+   target: [number, number, number]
+   fov: number
++  /** параметры камеры заданы из URL — они главнее автокадрирования */
++  manualDist: boolean
++  manualTarget: boolean
++  /** камеру ведёт turntable (?spin=), CameraRig уступает */
++  turntable: boolean
+ }
+ 
+ /**
+@@ -27,6 +32,9 @@ function readSpec(): CamSpec {
+     dist: n('dist', 11),
+     target: [n('tx', 0), n('ty', 1.4), n('tz', 0)],
+     fov: n('fov', 42),
++    manualDist: q.has('dist'),
++    manualTarget: q.has('tx') || q.has('ty') || q.has('tz'),
++    turntable: q.has('spin'),
+   }
+ }
+ 
+@@ -34,7 +42,17 @@ export function useCamSpec() {
+   return useRef<CamSpec>(readSpec())
+ }
+ 
+-export function CameraRig({ enabled = true }: { enabled?: boolean }) {
++/**
++ * `frame` — автокадрирование по габаритам модели (стенды `scene=props`):
++ * если дистанция или цель не заданы из URL, берутся из bounding sphere.
++ */
++export function CameraRig({
++  enabled = true,
++  frame,
++}: {
++  enabled?: boolean
++  frame?: { target: [number, number, number]; radius: number }
++}) {
+   const { camera } = useThree()
+   const spec = useRef<CamSpec>(readSpec())
+   const applied = useRef(false)
+@@ -46,9 +64,14 @@ export function CameraRig({ enabled = true }: { enabled?: boolean }) {
+   }, [camera])
+ 
+   useFrame(({ gl }) => {
+-    if (!enabled || applied.current) return
++    if (!enabled || applied.current || spec.current.turntable) return
+     applied.current = true
+-    const { az, el, dist, target } = spec.current
++    const { az, el, fov, manualDist, manualTarget } = spec.current
++    const fit = frame
++      ? (frame.radius * 2.9) / (2 * Math.tan(THREE.MathUtils.degToRad(fov) / 2))
++      : null
++    const dist = manualDist || fit === null ? spec.current.dist : fit
++    const target = manualTarget || !frame ? spec.current.target : frame.target
+     const a = THREE.MathUtils.degToRad(az)
+     const e = THREE.MathUtils.degToRad(el)
+     const x = target[0] + dist * Math.cos(e) * Math.sin(a)
+diff --git a/src/scene/Detective.tsx b/src/scene/Detective.tsx
+index 804e216..4b34fed 100644
+--- a/src/scene/Detective.tsx
++++ b/src/scene/Detective.tsx
+@@ -1,13 +1,10 @@
+-import { useGLTF, useAnimations } from '@react-three/drei'
+-import { useEffect, useMemo, useRef } from 'react'
+-import * as THREE from 'three'
+-import { useFrame } from '@react-three/fiber'
+-
++import { useGLTF } from '@react-three/drei'
++import { GltfModel } from './GltfModel'
+ 
+ /**
+  * Персонаж из Blender (glTF со скелетом и клипами).
+  * Управляется параметрами URL для покадрового рендера:
+- *   ?model=1&clip=Walk&t=0.35   — поставить позу на 35% клипа
++ *   ?scene=model&clip=Walk&t=0.35   — поставить позу на 35% клипа
+  */
+ export function Detective({
+   clip = 'Idle',
+@@ -22,53 +19,15 @@ export function Detective({
+   rotationY?: number
+   scale?: number
+ }) {
+-  const { scene, animations } = useGLTF('/models/detective.glb')
+-  const { actions, names } = useAnimations(animations, scene)
+-  const group = useRef<THREE.Group>(null)
+-
+-  const cloned = useMemo(() => {
+-    const s = scene.clone(true)
+-    s.traverse((o) => {
+-      const m = o as THREE.Mesh
+-      if (m.isMesh) {
+-        m.castShadow = true
+-        m.receiveShadow = true
+-        m.frustumCulled = false
+-        const mats = Array.isArray(m.material) ? m.material : [m.material]
+-        mats.forEach((mat) => {
+-          const mm = mat as THREE.MeshStandardMaterial
+-          if (mm && 'roughness' in mm) {
+-            mm.envMapIntensity = 0.9
+-          }
+-        })
+-      }
+-    })
+-    return s
+-  }, [scene])
+-
+-  useEffect(() => {
+-    const act = actions[clip] ?? actions[names[0]]
+-    if (!act) return
+-    act.reset()
+-    act.setLoop(THREE.LoopRepeat, Infinity)
+-    act.play()
+-    act.paused = true
+-    act.time = time
+-  }, [actions, names, clip, time, cloned])
+-
+-  // держим точку по времени параметра (детерминированно для рендера)
+-  useFrame(() => {
+-    const act = actions[clip]
+-    if (act) {
+-      act.paused = true
+-      act.time = time
+-    }
+-  })
+-
+   return (
+-    <group ref={group} position={position} rotation={[0, rotationY, 0]} scale={scale}>
+-      <primitive object={cloned} />
+-    </group>
++    <GltfModel
++      src="/models/detective.glb"
++      clip={clip}
++      time={time}
++      position={position}
++      rotationY={rotationY}
++      scale={scale}
++    />
+   )
+ }
+ 
+diff --git a/src/scene/Scene.tsx b/src/scene/Scene.tsx
+index 6675ab4..70c1a8b 100644
+--- a/src/scene/Scene.tsx
++++ b/src/scene/Scene.tsx
+@@ -6,63 +6,43 @@ import { CameraRig } from './CameraRig'
+ import { ProceduralEnv } from './ProceduralEnv'
+ import { RenderProbe } from './RenderProbe'
+ import { Detective } from './Detective'
++import { Props } from './Props'
++import { Studio } from './Studio'
+ import { Turntable } from './Turntable'
+ 
+ const q = new URLSearchParams(location.search)
+ const MODE = q.get('scene') ?? 'street'
++const time = parseFloat(q.get('t') ?? '0')
+ 
+ export function Scene() {
+   const model = MODE === 'model' || q.has('model')
++  const props = MODE === 'props' || q.has('props')
+ 
+-  if (model) {
++  if (props) {
+     return (
+       <>
+-        <color attach="background" args={['#0b0e15']} />
+-        <ambientLight intensity={0.6} color="#7f9ad0" />
+-        <hemisphereLight args={['#a8c0ea', '#20222c', 0.9]} />
+-        <directionalLight
+-          castShadow
+-          position={[-3, 5, 4]}
+-          intensity={2.2}
+-          color="#e8eeff"
+-          shadow-mapSize={[1536, 1536]}
+-          shadow-camera-near={0.5}
+-          shadow-camera-far={20}
+-          shadow-camera-left={-3}
+-          shadow-camera-right={3}
+-          shadow-camera-top={3}
+-          shadow-camera-bottom={-3}
+-          shadow-bias={-0.0004}
+-          shadow-normalBias={0.02}
++        <Props
++          name={q.get('prop') ?? 'car'}
++          clip={q.get('clip') ?? undefined}
++          time={time}
++          probe={q.has('probe')}
+         />
+-        {/* ключ сбоку, чтобы читался объём */}
+-        <directionalLight position={[4, 2.5, -3]} intensity={0.9} color="#ffb877" />
+-        <directionalLight position={[0, 1.2, -5]} intensity={0.7} color="#5ad6ff" />
+-
+-        <group position={[0, 0, 0]}>
+-          <Detective
+-            clip={q.get('clip') ?? 'Idle'}
+-            time={parseFloat(q.get('t') ?? '0')}
+-            rotationY={parseFloat(q.get('ry') ?? '0')}
+-            scale={parseFloat(q.get('scale') ?? '1')}
+-          />
+-        </group>
++        <Turntable />
++        <EnvFallback />
++      </>
++    )
++  }
+ 
+-        {/* пол сеткой для ощущения масштаба */}
+-        <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, 0, 0]}>
+-          <circleGeometry args={[3, 64]} />
+-          <meshStandardMaterial color="#14161d" roughness={0.85} metalness={0.05} />
+-        </mesh>
+-        <Grid
+-          args={[6, 6]}
+-          cellSize={0.25}
+-          cellColor="#2a3040"
+-          sectionSize={1}
+-          sectionColor="#3d4759"
+-          fadeDistance={7}
+-          position={[0, 0.002, 0]}
++  if (model) {
++    return (
++      <>
++        <Studio />
++        <Detective
++          clip={q.get('clip') ?? 'Idle'}
++          time={time}
++          rotationY={parseFloat(q.get('ry') ?? '0')}
++          scale={parseFloat(q.get('scale') ?? '1')}
+         />
+-
+         <Turntable />
+         <CameraRig />
+         <ProceduralEnv intensity={1.0} />
+@@ -99,7 +79,7 @@ export function Scene() {
+       {q.has('herob') && (
+         <Detective
+           clip={q.get('clip') ?? 'Idle'}
+-          time={parseFloat(q.get('t') ?? '0')}
++          time={time}
+           position={[1.2, 0.18, 2]}
+           rotationY={parseFloat(q.get('ry') ?? '0')}
+         />
+@@ -115,6 +95,7 @@ export function Scene() {
+ function EnvFallback() {
+   void Environment
+   void Lightformer
++  void Grid
+   void OrbitControls
+   void Stage
+   void useSearchParams
+diff --git a/tools/capture.mjs b/tools/capture.mjs
+index 0967942..405c458 100644
+--- a/tools/capture.mjs
++++ b/tools/capture.mjs
+@@ -44,16 +44,8 @@ await page.waitForTimeout(1200)
+ 
+ // SwiftShader рендерит медленно, поэтому кадр снимаем с большим таймаутом
+ await page.screenshot({ path: out, timeout: 180000, animations: 'allow' })
++const title = await page.title()
+ await browser.close()
+ 
+-const diag = await (async () => {
+-  try {
+-    return ''
+-  } catch {
+-    return ''
+-  }
+-})()
+-
+-console.log(`OK ${out} ready=${ready}`)
++console.log(`OK ${out} ready=${ready} title=${JSON.stringify(title)}`)
+ if (logs.length) console.log('--- консоль страницы ---\n' + logs.slice(0, 20).join('\n'))
+-void diag
