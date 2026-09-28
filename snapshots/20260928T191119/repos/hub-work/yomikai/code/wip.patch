@@ -661,7 +661,7 @@ index 60fe532..248c201 100644
 -    )
  }
 diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
-index fe62c1c..541bde8 100644
+index fe62c1c..89e96ff 100644
 --- a/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
 +++ b/app/src/main/java/eu/kanade/presentation/reader/OcrResultPopup.kt
 @@ -6,16 +6,25 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -702,7 +702,7 @@ index fe62c1c..541bde8 100644
  ) {
      BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
          val density = LocalDensity.current
-@@ -92,8 +106,31 @@ fun OcrResultPopup(
+@@ -92,8 +106,32 @@ fun OcrResultPopup(
                  onSearch = onSearch,
                  onTermGroupClick = onTermGroupClick,
                  onPlayAudioClick = onPlayAudioClick,
@@ -713,6 +713,7 @@ index fe62c1c..541bde8 100644
 +                    OcrResultActionBar(
 +                        onSpeak = onSpeak,
 +                        onSpeakRole = onSpeakRole,
++                        onCopyText = onCopyText,
 +                        onChooseVoice = onChooseVoice,
 +                        onAddToDictionary = onAddToDictionary,
 +                        onHidePageOverlay = onHidePageOverlay,
@@ -734,7 +735,7 @@ index fe62c1c..541bde8 100644
              Surface(
                  modifier = Modifier
                      .width(with(density) { placement.width.toDp() })
-@@ -124,6 +161,23 @@ fun OcrResultPopup(
+@@ -124,6 +162,23 @@ fun OcrResultPopup(
                          androidx.compose.foundation.layout.Column(
                              modifier = Modifier.fillMaxSize(),
                          ) {
@@ -758,7 +759,7 @@ index fe62c1c..541bde8 100644
                              if (searchState.query.isNotBlank()) {
                                  TranslationCard(
                                      originalText = searchState.query,
-@@ -152,6 +206,19 @@ fun OcrResultPopup(
+@@ -152,6 +207,19 @@ fun OcrResultPopup(
                                  onCopyText = null,
                                  contentPadding = PaddingValues(8.dp),
                              )
@@ -1820,10 +1821,48 @@ index e306d75..10d58fa 100644
 +    else -> "Кадр"
 +}
 diff --git a/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt b/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt
-index f361399..bdbb84e 100644
+index f361399..dd49bc0 100644
 --- a/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt
 +++ b/app/src/test/java/eu/kanade/tachiyomi/data/ai/AiBackendsTest.kt
-@@ -162,7 +162,7 @@ class AiBackendsTest {
+@@ -103,11 +103,23 @@ class AiBackendsTest {
+ 
+     @Test
+     fun `local reports a missing or unselected model`() {
++        // Движка в сборке нет, поэтому «скачать модель» больше не требование:
++        // показывать его значило обещать загрузку, которой не бывает.
+         AiBackends.statusOf(AiBackends.LOCAL, readyState.copy(localModelInstalled = false))
+-            .missing shouldContainExactly listOf(AiRequirement.MODEL_DOWNLOAD)
++            .missing shouldBe emptyList()
+         AiBackends.statusOf(AiBackends.LOCAL, readyState.copy(localModelId = "")).detail shouldBe
+-            "Модель не выбрана"
+-        AiBackends.statusOf(AiBackends.LOCAL, readyState).detail shouldBe "qwen25_05b • 521 МБ • установлена"
++            "Движок не в сборке — используйте Онлайн или Полу-онлайн"
++        AiBackends.statusOf(AiBackends.LOCAL, readyState).detail shouldBe
++            "Движок не в сборке — используйте Онлайн или Полу-онлайн. " +
++            "Файл .task: qwen25_05b (521 МБ) — лежит на устройстве, пригоден для выгрузки на ранер"
++    }
++
++    @Test
++    fun `local backend is not offered for selection`() {
++        // Локальная LLM — стаб, её нельзя предлагать выбрать: она не ответит
++        // ни на один ход.
++        AiBackends.SELECTABLE.map { it.id } shouldContainExactly listOf("online", "runner")
++        AiBackends.LOCAL.selectable shouldBe false
+     }
+ 
+     @Test
+@@ -154,7 +166,9 @@ class AiBackendsTest {
+         val local = AiBackends.route("local", readyState.copy(localModelInstalled = false))
+         local.ready shouldBe false
+         local.message shouldBe
+-            "Локальная модель не готова: скачайте её в ⚙ → Локальные LLM и прогоните «Тест»"
++            "Локальный LLM отключён в этой сборке: движок не включён " +
++            "(это было сделано ради размера APK). Берите Онлайн или Полу-онлайн; " +
++            "файлы .task остаются для экспорта на ранер."
+ 
+         val noModel = AiBackends.route("local", readyState.copy(localModelId = ""))
+         noModel.ready shouldBe false
+@@ -162,7 +176,7 @@ class AiBackendsTest {
  
          val runner = AiBackends.route("runner", readyState.copy(runnerSessionAlive = false))
          runner.ready shouldBe false
