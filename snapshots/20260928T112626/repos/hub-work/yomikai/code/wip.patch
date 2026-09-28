@@ -1,0 +1,1112 @@
+diff --git a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsOcrScreen.kt b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsOcrScreen.kt
+index e823e709f..dd69257de 100644
+--- a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsOcrScreen.kt
++++ b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsOcrScreen.kt
+@@ -98,6 +98,7 @@ object SettingsOcrScreen : SearchableSettings {
+             getDiagnosticsGroup(onOpenEval = { showEval = true }),
+             getEnginesGroup(prefs = prefs, navigator = navigator, availableIds = availableIds),
+             getGlensLanguageGroup(prefs = prefs),
++            getPageOverlayGroup(prefs = prefs),
+             getHistoryGroup(onOpenHistory = { showHistory = true }),
+         )
+     }
+@@ -141,6 +142,31 @@ object SettingsOcrScreen : SearchableSettings {
+         )
+     }
+ 
++    /**
++     * Видимость распознанного текста поверх страницы. Без этого пункта
++     * оверлей нельзя было убрать вообще: на светлой странице белый текст
++     * поверх белой бумаги не читался, а карточку результата закрывать не
++     * хотелось.
++     */
++    @Composable
++    private fun getPageOverlayGroup(prefs: OcrPreferences): Preference.PreferenceGroup {
++        return Preference.PreferenceGroup(
++            title = "Текст поверх страницы",
++            preferenceItems = listOf(
++                Preference.PreferenceItem.SwitchPreference(
++                    preference = prefs.ocrPageTextOverlay(),
++                    title = "Показывать распознанный текст",
++                    subtitle = "Выключите, если текст поверх рисунка мешает читать",
++                ),
++                Preference.PreferenceItem.InfoPreference(
++                    title = "Кнопка «Скрыть текст» есть и в карточке результата: она\n" +
++                        "убирает текст со страницы, не закрывая сам результат.\n" +
++                        "Этот переключатель действует постоянно, до перезапуска.",
++                ),
++            ),
++        )
++    }
++
+     @Composable
+     private fun getHistoryGroup(onOpenHistory: () -> Unit): Preference.PreferenceGroup {        return Preference.PreferenceGroup(
+             title = "История",
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
+index 4fd1b038b..60fe532b2 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrResultOverlay.kt
+@@ -55,6 +55,12 @@ fun OcrResultOverlay(
+     onChooseVoice: () -> Unit = {},
+     onSpeakRole: (String) -> Unit = {},
+     onAddToDictionary: () -> Unit = {},
++    /**
++     * Убрать распознанный текст со страницы, не закрывая карточку. Раньше
++     * оверлей нельзя было убрать, не закрыв результат, — а на светлой
++     * странице он всё равно мешал.
++     */
++    onHidePageOverlay: (() -> Unit)? = null,
+ ) {
+     BackHandler(onBack = onDismissRequest)
+     // Словарей нет — не дёргаем поиск и не показываем «No Dictionaries
+@@ -87,6 +93,7 @@ fun OcrResultOverlay(
+                     onChooseVoice = onChooseVoice,
+                     onSpeakRole = onSpeakRole,
+                     onAddToDictionary = onAddToDictionary,
++                    onHidePageOverlay = onHidePageOverlay,
+                 )
+             }
+             presentation == OcrResultPresentation.POPUP && anchorRect != null -> {
+@@ -125,12 +132,13 @@ fun OcrResultOverlay(
+ private fun OcrPlainTextCard(
+     text: String,
+     source: OcrTextSource?,
+-    onCopyText: () -> Unit,
+     onDismissRequest: () -> Unit,
++    onCopyText: () -> Unit,
+     onSpeak: () -> Unit = {},
+     onChooseVoice: () -> Unit = {},
+     onSpeakRole: (String) -> Unit = {},
+     onAddToDictionary: () -> Unit = {},
++    onHidePageOverlay: (() -> Unit)? = null,
+ ) {
+     Box(
+         modifier = Modifier.fillMaxSize(),
+@@ -185,6 +193,11 @@ private fun OcrPlainTextCard(
+                         modifier = Modifier.fillMaxWidth(),
+                         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
+                     ) {
++                        if (onHidePageOverlay != null) {
++                            androidx.compose.material3.TextButton(onClick = onHidePageOverlay) {
++                                androidx.compose.material3.Text("👁 Скрыть текст")
++                            }
++                        }
+                         androidx.compose.material3.TextButton(onClick = onCopyText) {
+                             androidx.compose.material3.Text("Копировать")
+                         }
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrVoiceFloatingControls.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrVoiceFloatingControls.kt
+index 12aeb1bf2..1b9fc12af 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrVoiceFloatingControls.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrVoiceFloatingControls.kt
+@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.outlined.RecordVoiceOver
+ import androidx.compose.material.icons.outlined.Tune
++import androidx.compose.material.icons.outlined.VisibilityOff
+ import androidx.compose.material3.ExtendedFloatingActionButton
+ import androidx.compose.material3.Icon
+ import androidx.compose.material3.MaterialTheme
+@@ -39,6 +40,7 @@ fun OcrVoiceFloatingControls(
+     enabled: Boolean,
+     onSpeak: () -> Unit,
+     onChooseVoice: () -> Unit,
++    onHidePageOverlay: (() -> Unit)? = null,
+     modifier: Modifier = Modifier,
+ ) {
+     // Пользовательские действия реестра UiActions для карточки OCR.
+@@ -66,6 +68,17 @@ fun OcrVoiceFloatingControls(
+                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                 text = { Text("Выбрать голос") },
+             )
++            // Убрать текст со страницы, не закрывая результат: на светлых
++            // страницах оверлей всё равно перекрывал рисунок.
++            if (onHidePageOverlay != null) {
++                ExtendedFloatingActionButton(
++                    onClick = onHidePageOverlay,
++                    icon = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
++                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
++                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
++                    text = { Text("Скрыть текст") },
++                )
++            }
+         }
+         // Свои действия — отдельной прокручиваемой строкой, чтобы длинный
+         // список не уезжал за экран и не ломал основные кнопки озвучки.
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt
+index 6082cd94c..7e0bcf90c 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt
+@@ -3,6 +3,7 @@ package eu.kanade.presentation.reader.components
+ import android.content.ClipData
+ import android.content.ClipboardManager
+ import android.content.Context
++import android.content.Intent
+ import android.net.Uri
+ import android.provider.OpenableColumns
+ import androidx.activity.compose.rememberLauncherForActivityResult
+@@ -92,9 +93,9 @@ import eu.kanade.tachiyomi.data.ai.AiHistoryManager.Msg
+ import eu.kanade.tachiyomi.data.ai.BookChatProfile
+ import eu.kanade.tachiyomi.data.ai.BookKnowledge
+ import eu.kanade.tachiyomi.data.tts.TtsSpeaker
+-import eu.kanade.tachiyomi.util.storage.getUriCompat
++import eu.kanade.tachiyomi.util.storage.mimeType
++import eu.kanade.tachiyomi.util.storage.toViewIntent
+ import eu.kanade.tachiyomi.util.system.toast
+-import eu.kanade.tachiyomi.util.system.toShareIntent
+ import java.text.SimpleDateFormat
+ import java.util.Date
+ import java.util.Locale
+@@ -290,13 +291,23 @@ fun ReaderAiChatOverlay(
+     // История книги грузится один раз на книгу: перечитывать её на каждый
+     // ответ нельзя — файл на диске ещё не дописан, и перезагрузка стирала бы
+     // сообщение, которое агент только что сохранил.
+-    // Канал входит в ключ: у отыгрыша своя переписка, и переключение режима
+-    // должно показывать именно её, а не смешанную с обычным чатом.
+-    LaunchedEffect(mangaId, historyChannel) {
++    // Канал входит в ключ ОТДЕЛЬНО: раньше он был в одном ключе с mangaId, и
++    // переключение «Чат ⇄ Отыгрыш» делало history.clear() прямо посреди
++    // разговора — читатель видел пустой чат и делал вывод, что агент всё
++    // забыл.
++    LaunchedEffect(mangaId) {
+         history.clear()
+         history.addAll(AiHistoryManager.load(context, mangaId, historyChannel))
+         runCatching { listState.scrollToItem((history.size - 1).coerceAtLeast(0)) }
+     }
++    LaunchedEffect(mangaId, historyChannel) {
++        if (history.isEmpty()) return@LaunchedEffect
++        val loaded = AiHistoryManager.load(context, mangaId, historyChannel)
++        if (loaded.isEmpty()) return@LaunchedEffect
++        history.clear()
++        history.addAll(loaded)
++        runCatching { listState.scrollToItem((history.size - 1).coerceAtLeast(0)) }
++    }
+ 
+     // Сводка сессии — отдельный эффект: она меняется после ответа агента,
+     // когда выучены новые правила/источники.
+@@ -406,16 +417,18 @@ fun ReaderAiChatOverlay(
+                     WorkspaceFilesPanel(
+                         context = context,
+                         refresh = filesRefresh,
++                        // «Открыть» = показать файл. Раньше здесь был
++                        // toShareIntent (ACTION_SEND), и кнопка открывала лист
++                        // отправки: чтобы просто глянуть картинку, файл надо
++                        // было сначала скопировать или отправить себе.
+                         onOpen = { file ->
+                             runCatching {
+                                 context.startActivity(
+-                                    file.getUriCompat(context).toShareIntent(
+-                                        context = context,
+-                                        type = "application/octet-stream",
+-                                        message = file.name,
+-                                    ),
++                                    file.toViewIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                 )
+-                            }.onFailure { showToast("Не удалось открыть файл") }
++                            }.onFailure {
++                                showToast("Не открыть ${file.name}: нет приложения для ${file.mimeType()}")
++                            }
+                         },
+                     )
+                 } else {
+@@ -748,7 +761,7 @@ private fun sendMessage(
+                     buildString {
+                         append(tr.name)
+                         if (tr.status == "error") append(" — ошибка")
+-                        if (tr.tookMs > 0) append(" · ").append(tr.tookMs / 1000).append(" с")
++                        if (tr.tookMs > 0) append(" · ").append(AiAgent.humanMs(tr.tookMs))
+                         val produced = tr.fileProduced
+                         if (produced != null) {
+                             append(" · ").append(produced.name).append(' ')
+@@ -835,8 +848,20 @@ private suspend fun chatOnce(
+         }
+         val priorTurns = history
+             .dropLast(1)
++            // Сводка сжатия — не реплика, окно на неё тратить не надо.
++            .filterNot { it.text.startsWith("[Сжато: ") || it.text.startsWith("[Сводка прошлого контекста]") }
+             .map { it.role to it.text }
+-            .takeLast(6)
++            // Раньше жёстко 6 сообщений (~3 обмена) при том, что и настройка,
++            // и подпись в промпте обещали 12: первая тема исчезала через пару
++            // реплик — читатель и видел «AI ничего не помнит».
++            .takeLast(
++                runCatching {
++                    Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
++                        .aiHistoryLimit()
++                        .get()
++                        .coerceIn(4, 100)
++                }.getOrDefault(12),
++            )
+         val knowledge = eu.kanade.tachiyomi.data.ai.BookKnowledge.render(context, mangaId)
+             .ifBlank {
+                 "ЗНАНИЕ О КНИГЕ: пока ничего не проверено — выясни через web_search, " +
+@@ -1013,18 +1038,16 @@ private fun ChatBubble(
+                                 } else {
+                                     runCatching {
+                                         context.startActivity(
+-                                            file.getUriCompat(context).toShareIntent(
+-                                                context = context,
+-                                                type = "application/octet-stream",
+-                                                message = rel,
+-                                            ),
++                                            file.toViewIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                         )
+-                                    }.onFailure { context.toast("Не удалось открыть файл") }
++                                    }.onFailure {
++                                        context.toast("Не открыть ${file.name}: нет приложения для ${file.mimeType()}")
++                                    }
+                                 }
+                             },
+                             enabled = file.exists(),
+                         ) {
+-                            Text("Отправить")
++                            Text("Открыть")
+                         }
+                     }
+                 }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
+index c3ac67ab6..f0f56db35 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
+@@ -16,7 +16,6 @@ import mihon.data.ui.UiTab
+ import mihon.data.ui.UiTabs
+ import mihon.domain.ocr.model.OcrImage
+ import mihon.domain.ocr.repository.OcrRepository
+-import org.json.JSONArray
+ import org.json.JSONObject
+ import tachiyomi.core.common.util.system.logcat
+ import tachiyomi.domain.source.service.SourceManager
+@@ -104,6 +103,59 @@ object AiAgent {
+     private val sourceManager: SourceManager by lazy { Injekt.get() }
+     private val sourcePrefs: SourcePreferences by lazy { Injekt.get() }
+ 
++    /**
++     * Сколько символов одной реплики переписки уходит в промпт. Раньше стояло
++     * 280 и резалась только голова: конец ответа агента (вывод, путь к файлу)
++     * до модели не доходил.
++     */
++    private const val MAX_HISTORY_CHARS = 900
++
++    /** Таймаут инструмента по умолчанию. */
++    private const val DEFAULT_TOOL_TIMEOUT_MS = 120_000L
++
++    /**
++     * Инструменты с собственным, более длинным таймаутом. Раньше у всех был
++     * общий 120-секундный, и `gen_video` (9 мин) и `runner_start` (12 мин)
++     * физически не могли завершиться.
++     */
++    private val TOOL_TIMEOUT_MS = mapOf(
++        "gen_video" to 10L * 60_000L,
++        "runner_start" to 13L * 60_000L,
++        "runner_runs" to 90_000L,
++        "runner_events" to 90_000L,
++        "gen_image" to 180_000L,
++        "gen_images" to 300_000L,
++        "check_site" to 90_000L,
++        "web_search" to 90_000L,
++        "web_fetch" to 90_000L,
++    )
++
++    /**
++     * Длительность для человека. Раньше везде писали `tookMs / 1000` — целочисленное
++     * деление миллисекунд, поэтому всё, что быстрее секунды (а это большинство
++     * инструментов), показывалось как «0 с».
++     */
++    fun humanMs(ms: Long): String = when {
++        ms < 0 -> "—"
++        ms < 1_000 -> "$ms мс"
++        ms < 60_000 -> "${ms / 1_000} с"
++        else -> "${ms / 60_000} мин ${(ms % 60_000) / 1_000} с"
++    }
++
++    /**
++     * Каноническая подпись вызова инструмента: имя + аргументы по отсортированным
++     * ключам. Ключ из `args.toString()` зависел от порядка, который написала
++     * модель, и `{"query":"x","limit":5}` с `{"limit":5,"query":"x"}` считались
++     * разными вызовами — а одинаковые стыковались «повтором».
++     */
++    internal fun callSignature(call: ToolCall): String = buildString {
++        append(call.name).append('\u0000')
++        val keys = call.args.keys().asSequence().sorted().toList()
++        for (k in keys) {
++            append(k).append('=').append(call.args.opt(k)).append('\u0001')
++        }
++    }
++
+     // Не const: в промпт подставляется документация инструментов читалки
+     // из AiReaderTools, а это выражение, а не литерал.
+     private val SYSTEM_PROMPT =
+@@ -119,6 +171,12 @@ object AiAgent {
+             "@tool check_site {\"url\":\"https://...\"} — проверить, работает ли сайт\n" +
+             "@tool web_search {\"query\":\"поисковый запрос\"} — поиск в интернете, вернёт список результатов со ссылками\n" +
+             "@tool web_fetch {\"url\":\"https://...\",\"maxChars\":4000} — скачать страницу и вернуть её текст без разметки\n" +
++            "@tool web_screenshot {\"url\":\"https://...\",\"width\":1280} — ОТРЕНДЕРИТЬ веб-страницу в PNG и положить в workspace, " +
++            "файл придёт карточкой в чат; дальше спрашивай vision через see_image или читай через read_file\n" +
++            "РАЗНИЦА, не путай: web_fetch отдаёт ТОЛЬКО текст — ни вёрстки, ни цветов, ни картинок он не показывает. " +
++            "see_page смотрит на страницу КНИГИ в читалке и НЕ открывает веб-страницы. " +
++            "Когда читатель просит «посмотри страницу и сделай похожее», речь о ВЕБ-странице: " +
++            "это web_screenshot (увидеть) + gen_image (нарисовать похожее), а не see_page.\n" +
+             "@tool book_recall {} — что уже известно о текущей книге (где читать, о чём, как читать, заметки, советы)\n" +
+             "@tool book_remember {\"kind\":\"site|summary|fact|advice|заметка\",\"text\":\"значение\"} — сохранить знание о книге\n" +
+             "@tool book_learn {\"url\":\"https://...\"} — прочитать страницу и сохранить её как источник правил\n" +
+@@ -135,9 +193,9 @@ object AiAgent {
+             "@tool reader_do {\"action\":\"speak_page\"} — выполнить действие читалки: " +
+             "speak_page (озвучить текущую страницу), speak_chapter (озвучивать всю главу), " +
+             "stop_speak (прекратить озвучку), page_text (распознать текст текущей страницы), " +
+-            "see_page (СПРОСИТЬ ВИЖУЩУЮ МОДЕЛЬ про открытую страницу, обязательно с вопросом: " +
+-            "{\"action\":\"see_page\",\"question\":\"что нарисовано на этой странице?\"} — " +
+-            "это твои глаза: картинку вижу я, модель описывает её), " +
++            "see_page (СПРОСИТЬ ВИЖУЩУЮ МОДЕЛЬ про открытую в читалке страницу книги, " +
++            "обязательно с вопросом: {\"action\":\"see_page\",\"question\":\"что нарисовано на этой странице?\"} — " +
++            "это твои глаза на КНИГУ, веб-страницу так не посмотреть), " +
+             "page_count (сколько страниц в главе), " +
+             "turn_page (ЛИСТАТЬ САМ: {\"action\":\"turn_page\",\"to\":\"next|prev|first|last\"}), " +
+             "auto_read ({\"action\":\"auto_read\",\"to\":\"on|off\"} — самому включить или " +
+@@ -286,7 +344,6 @@ object AiAgent {
+         val results = mutableListOf<ToolResult>()
+         val images = mutableListOf<File>()
+ 
+-        // Продвинутый лимит истории и токен-бюджет (запрос: не тратить 50к токенов)
+         // Продвинутый лимит истории и токен-бюджет (запрос: не тратить 50к токенов)
+         val prefs = runCatching { uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>() }.getOrNull()
+         val historyLimit = prefs?.aiHistoryLimit()?.get()?.coerceIn(4, 100) ?: 12
+@@ -301,8 +358,16 @@ object AiAgent {
+             budgetedHistory = budgetedHistory.drop(1)
+         }
+         val trimmedHistory = budgetedHistory
+-        val historyBlock = trimmedHistory.takeLast(historyLimit).joinToString("\n") { (role, c) ->
+-            (if (role == "user") "Пользователь: " else "Ассистент: ") + c.take(280)
++        // Реплики режем ГОЛОВОЙ и ХВОСТОМ, а не только головой: в ответе агента
++        // вывод и путь к файлу стоят в конце, и take(280) их отбрасывал —
++        // модель теряла ровно то, ради чего ход затевался.
++        val historyBlock = trimmedHistory.takeLast(historyLimit).joinToString("\n\n") { (role, c) ->
++            val body = if (c.length > MAX_HISTORY_CHARS) {
++                c.take(MAX_HISTORY_CHARS / 2) + " … " + c.takeLast(MAX_HISTORY_CHARS / 2)
++            } else {
++                c
++            }
++            (if (role == "user") "Пользователь: " else "Ассистент: ") + body
+         }
+         val capabilityBlock = runCatching { AiCapabilityReporter.renderForPrompt(context) }.getOrNull().orEmpty()
+         // Сессия книги создаётся при первом обращении к AI. Пока правил нет,
+@@ -346,15 +411,22 @@ object AiAgent {
+             "ИЗДАНИЕ КНИГИ (читать именно его): $it"
+         }.orEmpty()
+         val prompt = buildString {
+-            if (historyBlock.isNotBlank()) append("Контекст диалога (последние $historyLimit, бюджет ${tokenBudget} токенов):\n").append(historyBlock).append("\n\n")
+             if (!bookContext.isNullOrBlank()) append(bookContext).append("\n\n")
+             if (editionHint.isNotBlank()) append(editionHint).append("\n\n")
+             if (sharedMemory.isNotBlank()) append(sharedMemory).append("\n\n")
+             if (onboarding != null) append(onboarding).append("\n\n")
+             if (modeBlock.isNotBlank()) append(modeBlock).append("\n\n")
+             if (!attachmentsInfo.isNullOrBlank()) append("Вложения пользователя:\n").append(attachmentsInfo).append("\n\n")
+-            if (capabilityBlock.isNotBlank()) append(capabilityBlock).append("\n\n")
+             append(userText)
++            // История стоит СРАЗУ под вопросом, а не в начале промпта. Перед
++            // ней — книга, память, правила, вложения, блок возможностей:
++            // на локальных моделях это ~11 КБ текста, и реплики, лежавшие в
++            // начале, выпадали из окна внимания — агент «забывал» то, что
++            // было пару секунд назад.
++            if (historyBlock.isNotBlank()) {
++                append("\n\nПереписка (последние ${trimmedHistory.size} реплик, бюджет ${tokenBudget} токенов):\n")
++                append(historyBlock)
++            }
+             append("\n\n[Инструкция: отвечай кратко на русском, одним языком, reasoning ≤250 токенов, укажи что доступно/недоступно из блока выше, не повторяй запрос; токен-бюджет хода ${tokenBudget}.]")
+         }
+         // Настоящий путь workspace вместо обещанного в тексте промпта
+@@ -373,7 +445,9 @@ object AiAgent {
+         val systemPromptEffective = SYSTEM_PROMPT + "\n\n" + workspaceBlock + "\n\n" +
+             skillsBlock + "\n\n" + capabilityBlock
+ 
+-        val turnStarted = System.currentTimeMillis()
++        // Монотонные часы: currentTimeMillis() — настенные, и смена времени
++        // телефона посреди хода давала отрицательную или завышенную длительность.
++        val turnStarted = System.nanoTime()
+         onProgress?.invoke("Запрос к модели…")
+         var totalTokens = 0
+         var roundsDone = 0
+@@ -417,44 +491,72 @@ object AiAgent {
+         for (round in 1..12) {
+             val parsedCalls = parseToolCalls(context, answer)
+             if (parsedCalls.isEmpty()) break
+-            val calls = parsedCalls.filter { call ->
+-                val fresh = executedCalls.add(call.name + "\u0000" + call.args.toString())
+-                // Поиск пропускается только когда бюджет исчерпан; при этом
+-                // остальные инструменты раунда (например reader_do) выполняются
+-                // как обычно — иначе агент встал бы целиком.
+-                fresh && (call.name != "web_search" || searchesUsed < searchBudget)
++            // Считаем, что ПОВТОР за ход и ЛИМИТ — разные вещи, и агент
++            // должен называть причину, а не «уже использовано».
++            // Главное: в executedCalls попадает только то, что РЕАЛЬНО ушло
++            // в execute(). Раньше отклонённый вызов тоже туда попадал, и на
++            // следующем круге тот же инструмент отваливался уже как «повтор» —
++            // агент писал «пропускаю» про то, что никогда не выполнялось.
++            val takenThisRound = mutableSetOf<String>()
++            val calls = mutableListOf<ToolCall>()
++            val skipped = mutableListOf<Pair<ToolCall, String>>()
++            for (call in parsedCalls) {
++                val sig = callSignature(call)
++                when {
++                    sig in executedCalls || sig in takenThisRound ->
++                        skipped += call to "тот же вызов уже выполнялся в этом ходе"
++                    call.name == "web_search" && searchesUsed >= searchBudget ->
++                        skipped += call to "лимит web_search — $searchBudget поиска за ход"
++                    else -> {
++                        takenThisRound += sig
++                        calls += call
++                    }
++                }
+             }
++            executedCalls += takenThisRound
+             if (calls.isEmpty() && parsedCalls.any { it.name == "web_search" } &&
+                 searchesUsed >= searchBudget
+             ) {
+                 answer = stripToolSyntax(context, answer).ifBlank {
+-                    "Поиск в сети уже выполнялся $searchBudget раза и результат использован. " +
+-                        "Дальше искать нечего — отвечаю по тому, что уже есть."
++                    "Поиск в сети уже выполнялся $searchBudget раза за этот ход, и результат использован. " +
++                        "Дальше искать нечего — отвечаю по тому, что уже есть. " +
++                        "Если нужна другая страница, назови её точно, и я сделаю один прямой запрос через web_fetch."
+                 }
+                 break
+             }
+             searchesUsed += calls.count { it.name == "web_search" }
+             if (calls.isEmpty()) {
++                val why = skipped.joinToString(", ") { (c, r) -> "${c.name}: $r" }.take(240)
+                 answer = stripToolSyntax(context, answer).ifBlank {
+-                    "Все запрошенные инструменты уже выполнены; повторный вызов пропущен."
++                    "Инструменты не выполнены — $why. " +
++                        "Используй уже полученный результат или измени аргументы; " +
++                        "остальные инструменты (кроме web_search) лимитом не ограничены."
+                 }
+                 break
+             }
+             roundsDone = round
+             onProgress?.invoke("Инструменты: ${calls.joinToString(", ") { it.name }}")
+             val outputs = calls.map { call ->
+-                val t0 = System.currentTimeMillis()
+-                // Инструменты больше не могут зависнуть навсегда (gen_image /
+-                // check_site на медленной сети): жёсткий таймаут 120 секунд.
++                val t0 = System.nanoTime()
++                // Инструменты не могут зависнуть навсегда, но и не должны
++                // обрываться раньше, чем их собственные таймауты: gen_video
++                // ждёт 9 минут, runner_start — 12, и общий 120-секундный
++                // ограничитель убивал их всегда, то есть эти инструменты не
++                // могли succeed НИКОГДА.
++                val limit = TOOL_TIMEOUT_MS[call.name] ?: DEFAULT_TOOL_TIMEOUT_MS
+                 val r = runCatching {
+-                    withTimeoutOrNull(120_000L) { execute(context, call, chat, mangaId) }
+-                        ?: ToolResult(call.name, "ОШИБКА: инструмент не ответил за 120 секунд", status = "error")
++                    withTimeoutOrNull(limit) { execute(context, call, chat, mangaId, onProgress) }
++                        ?: ToolResult(
++                            call.name,
++                            "ОШИБКА: инструмент не ответил за ${humanMs(limit)}",
++                            status = "error",
++                        )
+                 }
+                     .getOrElse { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}", status = "error") }
+                     .copy(
+                         args = call.args.toString().take(200),
+                         round = round,
+-                        tookMs = System.currentTimeMillis() - t0,
++                        tookMs = (System.nanoTime() - t0) / 1_000_000,
+                     )
+                 val finalR = if (r.output.startsWith("ОШИБКА")) r.copy(status = "error") else r
+                 if (finalR.fileProduced != null && finalR.name == "gen_image") images += finalR.fileProduced
+@@ -463,7 +565,7 @@ object AiAgent {
+                 onProgress?.invoke(
+                     buildString {
+                         append(finalR.name)
+-                        if (finalR.tookMs > 0) append(" · ").append(finalR.tookMs / 1000).append(" с")
++                        if (finalR.tookMs > 0) append(" · ").append(humanMs(finalR.tookMs))
+                         if (file != null) {
+                             append(" · файл ").append(file.name).append(" · ")
+                             append(file.length() / 1024).append(" КБ")
+@@ -514,7 +616,7 @@ object AiAgent {
+             cleanText, results, images,
+             reasoning = reasoning, model = usedModel,
+             tokens = totalTokens,
+-            tookMs = System.currentTimeMillis() - turnStarted,
++            tookMs = (System.nanoTime() - turnStarted) / 1_000_000,
+             rounds = roundsDone,
+             choices = choices,
+         )
+@@ -531,10 +633,21 @@ object AiAgent {
+     internal fun stripChoices(text: String): String = choiceRe.replace(text, "").trim()
+ 
+     /** Имена всех известных инструментов — для «мягкого» синтаксиса без @tool. */
++    /**
++     * Действия читалки, которые промпт документирует как отдельные @tool.
++     * Раньше они были описаны словами, но в [knownToolNames] не попадали —
++     * `parseToolCalls` молча выбрасывал `@tool see_page {...}`, и модель
++     * получала НИ результата, НИ ошибки: раунд просто исчезал.
++     */
++    private val READER_ACTION_ALIASES = listOf(
++        "speak_page", "speak_chapter", "stop_speak", "page_text",
++        "see_page", "page_count", "turn_page", "auto_read",
++    )
++
+     private fun knownToolNames(context: Context): Set<String> =
+         setOf(
+             "write_file", "edit_file", "append_file", "read_file", "gen_image",
+-            "check_site", "web_search", "web_fetch", "gen_images",
++            "check_site", "web_search", "web_fetch", "web_screenshot", "gen_images",
+             "runner_runs", "runner_events", "repo_pulls", "book_recall", "book_remember", "book_learn",
+             "reader_actions", "reader_do",
+             "list_ext", "filter_ext", "find_manga", "zip_workspace",
+@@ -545,7 +658,7 @@ object AiAgent {
+             "provider_create", "provider_edit", "provider_delete", "provider_list",
+             "ui_action_create", "ui_action_edit", "ui_action_delete", "ui_action_list",
+             "ui_tab_hide", "ui_tab_show", "ui_tab_list",
+-        ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES +
++        ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES + READER_ACTION_ALIASES +
+             AiPlugins.list(context).map { it.name } + AiSkills.list(context).map { it.name }
+ 
+     /**
+@@ -736,6 +849,7 @@ object AiAgent {
+         call: ToolCall,
+         chatFn: suspend (String, String) -> AiAssistant.ChatReply?,
+         mangaId: Long? = null,
++        onProgress: ((String) -> Unit)? = null,
+     ): ToolResult = when (call.name) {
+         // Инструменты читалки: видят те же реестры и настройки, что и экраны,
+         // поэтому ответ агента не может разойтись с настройками пользователя.
+@@ -803,6 +917,9 @@ object AiAgent {
+                 call.args.optString("text"),
+                 call.args.optInt("fps", 3),
+                 call.args.optString("name").ifBlank { null },
++                // Раньше статус не показывался, и сборка видео висела молча до
++                // 10 минут (лимит gen_video) — выглядело как зависание.
++                onStatus = { st -> onProgress?.invoke("Видео: $st") },
+             )
+         }.fold(
+             onSuccess = { outcome ->
+@@ -1172,6 +1289,13 @@ object AiAgent {
+             ToolResult("web_fetch", webFetch(url, maxChars))
+         }
+ 
++        "web_screenshot" -> {
++            val url = call.args.optString("url")
++            val width = call.args.optInt("width", 1280).coerceIn(320, 2000)
++            val question = call.args.optString("question")
++            webScreenshot(context, url, width, question)
++        }
++
+         "book_recall" -> ToolResult("book_recall", BookKnowledge.render(context, mangaId))
+ 
+         "reader_actions" -> ToolResult("reader_actions", ReaderAiActions.describe())
+@@ -1181,6 +1305,14 @@ object AiAgent {
+             ToolResult("reader_do", ReaderAiActions.run(action, call.args))
+         }
+ 
++        // Прямые @tool see_page/turn_page/… идут в тот же реестр, что и
++        // reader_do: промпт называет их отдельными инструментами, и раньше
++        // такие вызовы просто исчезали без результата и без ошибки.
++        in READER_ACTION_ALIASES -> ToolResult(
++            call.name,
++            ReaderAiActions.run(call.name, call.args),
++        )
++
+         "book_learn" -> {
+             val manga = mangaId
+             if (manga == null) {
+@@ -1797,6 +1929,103 @@ object AiAgent {
+         }.getOrElse { "ОШИБКА загрузки: ${it.message?.take(120)}" }
+     }
+ 
++    /**
++     * Скриншот ВЕБ-страницы. Без него «посмотри страницу и сделай похожее»
++     * было нечем выполнить: `web_fetch` отдаёт только текст, а `see_page`
++     * смотрит на страницу книги в читалке — то есть на совсем другую картинку.
++     *
++     * На устройстве нет headless-браузера, поэтому рендерим внешним сервисом
++     * (mshots/thum.io, без ключа) и сразу спрашиваем vision — иначе агент
++     * получил бы файл и должен был догадаться, что с ним делать.
++     */
++    private fun webScreenshot(
++        context: Context,
++        rawUrl: String,
++        width: Int,
++        question: String,
++    ): ToolResult {
++        val url = rawUrl.trim()
++        if (url.isBlank()) return ToolResult("web_screenshot", "ОШИБКА: пустой URL", status = "error")
++        if (!url.startsWith("http")) return ToolResult("web_screenshot", "ОШИБКА: нужен полный URL с http(s)", status = "error")
++        val enc = java.net.URLEncoder.encode(url, "UTF-8")
++        val services = listOf(
++            "https://s.wordpress.com/mshots/v1/$enc?w=$width" to "mshots",
++            "https://image.thum.io/get/width/$width/noanimate/$enc" to "thum.io",
++        )
++        var lastError = "сервис не ответил"
++        for ((endpoint, label) in services) {
++            val bytes = runCatching { downloadBytes(endpoint, 30_000) }.getOrNull()
++            if (bytes == null || bytes.size < 2_000 || !looksLikeImage(bytes)) {
++                lastError = if (bytes != null && bytes.size < 2_000) {
++                    "$label вернул ${bytes.size} Б — это не скриншот (страница отдала заглушку или редирект)"
++                } else {
++                    "$label недоступен"
++                }
++                continue
++            }
++            val f = AiWorkspace.newImageFile(context, "web", sanitizeForFile(url))
++            f.writeBytes(bytes)
++            val rel = AiWorkspace.relPath(context, f)
++            val answer = askAboutImageFile(
++                f,
++                question.ifBlank { "Опиши эту веб-страницу: вёрстка, цвета, шрифты, композиция, и что именно можно повторить." },
++            )
++            return ToolResult(
++                "web_screenshot",
++                buildString {
++                    append("Скриншот $url сохранён: ").append(rel)
++                    append(" (").append(bytes.size / 1024).append(" КБ, ширина ").append(width).append(")")
++                    if (answer != null) {
++                        append("\n\nЧто на скриншоте (vision-модель):\n").append(answer)
++                    } else {
++                        append(
++                            "\n\nВопрос к vision-модели не задан: нужен движок ZenFree, Google AI или OpenRouter. " +
++                                "Посмотреть картинку позже можно see_image {\"name\":\"" + rel + "\"," +
++                                "\"question\":\"...\"}.",
++                        )
++                    }
++                },
++                fileProduced = f,
++            )
++        }
++        return ToolResult(
++            "web_screenshot",
++            "ОШИБКА: скриншот не получен ($lastError). Для текста страницы используй web_fetch — " +
++                "он отдаст текст без разметки.",
++            status = "error",
++        )
++    }
++
++    private fun looksLikeImage(bytes: ByteArray): Boolean =
++        (bytes.size > 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte()) || // PNG
++            (bytes.size > 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()) || // JPEG
++            (bytes.size > 12 && bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte()) || // RIFF/WEBP
++            (bytes.size > 3 && bytes[0] == 'G'.code.toByte() && bytes[1] == 'I'.code.toByte()) // GIF
++
++    private fun downloadBytes(url: String, timeoutMs: Int): ByteArray? {
++        val conn = AiAssistant.openConnection(url)
++        conn.connectTimeout = 12_000
++        conn.readTimeout = timeoutMs
++        conn.instanceFollowRedirects = true
++        conn.requestMethod = "GET"
++        conn.setRequestProperty(
++            "User-Agent",
++            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
++        )
++        return try {
++            conn.getInputStream().use { it.readBytes() }
++        } finally {
++            conn.disconnect()
++        }
++    }
++
++    private fun sanitizeForFile(url: String): String =
++        url.removePrefix("https://").removePrefix("http://")
++            .substringBefore('/')
++            .replace(Regex("[^A-Za-z0-9._-]"), "_")
++            .take(30)
++            .ifBlank { "page" }
++
+     private fun fetchText(url: String, maxChars: Int): String {
+         val conn = AiAssistant.openConnection(url)
+         conn.connectTimeout = 12_000
+@@ -2045,7 +2274,4 @@ object AiAgent {
+         )
+     }
+ 
+-    // JSONArray импортирован для будущих инструментов; подавляем предупреждение
+-    @Suppress("unused")
+-    private val unusedKeep = JSONArray()
+ }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt
+index a99aa0e2e..dececa0c3 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiBackends.kt
+@@ -178,13 +178,16 @@ object AiBackends {
+             }
+ 
+             BACKEND_LOCAL -> {
+-                if (!state.localModelInstalled) missing += AiRequirement.MODEL_DOWNLOAD
+-                detail = when {
+-                    state.localModelId.isBlank() -> "Модель не выбрана"
+-                    state.localModelSizeMb > 0 ->
+-                        "${state.localModelId} • ${state.localModelSizeMb} МБ" +
+-                            if (state.localModelInstalled) " • установлена" else " • не скачана"
+-                    else -> state.localModelId
++                // Требование «скачать модель» больше не может выполниться:
++                // движка в сборке нет, поэтому показывать его — враньё, из-за
++                // которого пользователь ждал бесконечную загрузку .task.
++                detail = buildString {
++                    append("Движок не в сборке — используйте Онлайн или Полу-онлайн")
++                    if (state.localModelId.isNotBlank()) {
++                        append(". Файл .task: ${state.localModelId}")
++                        if (state.localModelSizeMb > 0) append(" (${state.localModelSizeMb} МБ)")
++                        if (state.localModelInstalled) append(" — лежит на устройстве, пригоден для выгрузки на ранер")
++                    }
+                 }
+             }
+ 
+@@ -238,16 +241,20 @@ object AiBackends {
+     fun route(backendId: String?, state: AiBackendState): Route {
+         val plugin = byId(backendId)
+         return when (plugin.id) {
++            // Локальная LLM — честно «не в сборке». Раньше готовность
++            // определялась ТОЛЬКО наличием файла .task, backend отдавал
++            // ready=true, блок возможностей писал «✅ Локальная LLM», и каждый
++            // ход падал в LocalLlm.chat, который бросает error(): читателю
++            // показывали «Нет ответа от AI-бененда после повторов», и он искал
++            // несуществующую проблему с прокси.
+             BACKEND_LOCAL ->
+-                if (state.localModelId.isNotBlank() && state.localModelInstalled) {
+-                    Route(plugin.id, ready = true)
+-                } else {
+-                    Route(
+-                        plugin.id,
+-                        ready = false,
+-                        message = "Локальная модель не готова: скачайте её в ⚙ → Локальные LLM и прогоните «Тест»",
+-                    )
+-                }
++                Route(
++                    plugin.id,
++                    ready = false,
++                    message = "Локальный LLM отключён в этой сборке: движок не включён " +
++                        "(это было сделано ради размера APK). Берите Онлайн или Полу-онлайн; " +
++                        "файлы .task остаются для экспорта на ранер.",
++                )
+ 
+             BACKEND_RUNNER ->
+                 if (state.runnerSessionAlive) {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiCapabilityReporter.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiCapabilityReporter.kt
+index ea006a8bc..cd1d67d7c 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiCapabilityReporter.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiCapabilityReporter.kt
+@@ -66,11 +66,18 @@ object AiCapabilityReporter {
+                 !allowGithub -> "Выключено в Настройки → AI"
+                 else -> "OK"
+             }),
+-            Capability("Локальная LLM (.task в /sdcard/Yomikai/models)", FileProbe.hasLocalLlm(context), if (!FileProbe.hasLocalLlm(context)) "Нет .task модели" else "OK"),
+-            Capability("Бэкенд чата: $backend", true, when (backend) {
+-                "online" -> if (hasNetwork) "OK" else "Нет сети"
+-                "local" -> if (FileProbe.hasLocalLlm(context)) "OK" else "Нет модели"
+-                "runner" -> if (hasGithubPat && allowRunner) "OK" else "См. выше"
++            // Локальная LLM: движка нет в сборке, и писать «OK» по наличию
++            // файла .task было враньём — модель бралась за несуществующий
++            // бэкенд и падала на каждом ходу.
++            Capability(
++                "Локальная LLM (.task в /sdcard/Yomikai/models)",
++                false,
++                "Движок не в сборке — только Онлайн/Полу-онлайн",
++            ),
++            Capability("Бэкенд чата: $backend", backend != "local", when {
++                backend == "local" -> "Локальный движок не в сборке"
++                backend == "online" -> if (hasNetwork) "OK" else "Нет сети"
++                backend == "runner" -> if (hasGithubPat && allowRunner) "OK" else "См. выше"
+                 else -> "Неизвестный бэкенд"
+             }),
+         )
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
+index 704046e00..e2b917f94 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
+@@ -98,13 +98,28 @@ object AiHistoryManager {
+         }
+     }
+ 
++    private val saveLock = Any()
++
+     fun save(context: Context, history: List<Msg>, mangaId: Long? = null, channel: String = CHANNEL_CHAT) {
+-        try {
+-            val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
+-            val toSave = history.takeLast(limit)
+-            historyFile(context, mangaId, channel).writeText(json.encodeToString(toSave))
+-        } catch (e: Exception) {
+-            logcat(LogPriority.WARN, e) { "AiHistoryManager save failed" }
++        // Пишем через временный файл и переименовываем. Раньше шли три
++        // несинхронизированных writeText() на один и тот же файл (append плюс
++        // два вызова из UI), и оборванная запись оставляла битый JSON — после
++        // него load() молча отдавал пустую историю, то есть вся переписка
++        // исчезала без единого слова читателю.
++        synchronized(saveLock) {
++            try {
++                val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
++                val toSave = history.takeLast(limit)
++                val target = historyFile(context, mangaId, channel)
++                val tmp = File(target.parentFile, target.name + ".tmp")
++                tmp.writeText(json.encodeToString(toSave))
++                if (!tmp.renameTo(target)) {
++                    target.writeText(tmp.readText())
++                    tmp.delete()
++                }
++            } catch (e: Exception) {
++                logcat(LogPriority.WARN, e) { "AiHistoryManager save failed" }
++            }
+         }
+     }
+ 
+@@ -122,10 +137,9 @@ object AiHistoryManager {
+             val oldest = history.removeAt(0)
+             val second = if (history.isNotEmpty()) history.removeAt(0) else null
+             val summary = buildString {
+-                append("[Сжато: ")
++                append("[Сводка прошлого контекста] ")
+                 append(oldest.role).append(": ").append(oldest.text.take(80))
+                 if (second != null) append(" | ").append(second.role).append(": ").append(second.text.take(80))
+-                append("]")
+             }
+             history.add(0, Msg(role = "ai", text = summary, time = System.currentTimeMillis()))
+         }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiPlugins.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiPlugins.kt
+index 2bb925bb2..64d9886bd 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiPlugins.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiPlugins.kt
+@@ -100,6 +100,13 @@ object AiPlugins {
+         // Инструменты реестра видимости вкладок (UiTabs): тоже закрыты, иначе
+         // плагин с именем ui_tab_hide перехватил бы управление навигацией.
+         "ui_tab_hide", "ui_tab_show", "ui_tab_list",
++        // Пакетная генерация, просмотр картинок и обзор папки тоже закрыты:
++        // иначе плагин разработчика перехватил бы gen_images и see_image.
++        "gen_images", "see_image", "read_many", "workspace_list",
++        "runner_runs", "runner_events", "repo_pulls",
++        "skill_create", "skill_list", "skill_run",
++        "reader_actions", "reader_do",
++        "web_screenshot",
+     ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES
+ 
+     private fun toJson(p: Plugin) = JSONObject()
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiWorkspaceSurvey.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiWorkspaceSurvey.kt
+index 8b834f273..4376332ac 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiWorkspaceSurvey.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiWorkspaceSurvey.kt
+@@ -104,7 +104,13 @@ object AiWorkspaceSurvey {
+                 continue
+             }
+             if (f.extension.lowercase() in IMAGE_EXT) {
+-                sb.append("— $name: изображение ${f.length() / 1024} КБ, я не вижу картинки, опиши словами или используй другое изображение\n")
++                // Раньше здесь было «я не вижу картинки». Это неправда: и
++                // read_file, и see_image спрашивают vision-модель. Одно
++                // сообщение говорило «не вижу», другое — «спрошу», и модель
++                // верила тому, что прочитала последним.
++                sb.append("— $name: изображение ${f.length() / 1024} КБ; текста нет. ")
++                sb.append("Спросить vision можно see_image {\"name\":\"$name\",\"question\":\"что на ней\"}, ")
++                sb.append("прочитать — read_file\n")
+                 continue
+             }
+             val text = runCatching { f.readText() }.getOrElse {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/LocalLlm.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/LocalLlm.kt
+index 732953e32..600501ce3 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/LocalLlm.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/LocalLlm.kt
+@@ -316,31 +316,21 @@ object LocalLlm {
+     }
+ 
+     /**
+-     * ТЕСТ ПЕРЕД ЗАПУСКОМ: реальный probe-инференс. Возвращает пару
+-     * (успех, сообщение с временем ответа или ошибкой).
++     * ТЕСТ ПЕРЕД ЗАПУСКОМ. Движка нет в сборке, поэтому честный ответ — «нет»,
++     * а не «Тест пройден». Раньше здесь стоял `error(...)` внутри
++     * `runCatching`, и он был недостижим: probe() не вызывался НИ ОТКУДА, то
++     * есть кнопка «Тест» проверяла только наличие файла и рапортовала «OK».
+      */
+     suspend fun probe(context: Context, m: Model): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+-        _probeState.value = _probeState.value + (m.id to "testing")
++        _probeState.value = _probeState.value + (m.id to "fail")
+         val ramGb = deviceRamGb(context)
+-        if (m.tier.minRamGb > ramGb) {
+-            _probeState.value = _probeState.value + (m.id to "fail")
+-            return@withContext false to "Мало ОЗУ: у устройства $ramGb ГБ, модели нужно ${m.tier.label}"
++        val ramNote = if (m.tier.minRamGb > ramGb) {
++            " (и ОЗУ мало: у устройства $ramGb ГБ, нужно ${m.tier.label})"
++        } else {
++            ""
+         }
+-        val started = System.currentTimeMillis()
+-        val result = runCatching<String> {
+-            error("Локальный LLM-движок удалён из сборки для уменьшения размера APK")
+-        }
+-        val took = System.currentTimeMillis() - started
+-        result.fold(
+-            onSuccess = {
+-                _probeState.value = _probeState.value + (m.id to "ok")
+-                true to "Тест пройден за ${took / 1000.0}с: «${it.take(40).trim()}»"
+-            },
+-            onFailure = {
+-                _probeState.value = _probeState.value + (m.id to "fail")
+-                false to "Тест провален: ${it.message?.take(120)}"
+-            },
+-        )
++        false to "Движок локальной LLM не входит в эту сборку (её убрали ради размера APK)$ramNote. " +
++            "Используйте Онлайн или Полу-онлайн; файл .task можно выгрузить на ранер."
+     }
+ 
+     /** Локальный чат: полностью офлайн-ответ установленной моделью. */
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index fd511b77d..71a42f699 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -1268,6 +1268,7 @@ class ReaderActivity : BaseActivity() {
+                                 )
+                             },
+                             onChooseVoice = { showVoicePicker = true },
++                            onHidePageOverlay = ::hideActiveOcrOverlayText,
+                             onAddToDictionary = {
+                                 val added = mihon.data.ocr.OcrVocabulary.addFromText(
+                                     dialog.queryText,
+@@ -1287,6 +1288,7 @@ class ReaderActivity : BaseActivity() {
+                                     )
+                                 },
+                                 onChooseVoice = { showVoicePicker = true },
++                                onHidePageOverlay = ::hideActiveOcrOverlayText,
+                                 modifier = Modifier
+                                     .align(Alignment.BottomCenter)
+                                     .navigationBarsPadding(),
+@@ -2071,6 +2073,15 @@ class ReaderActivity : BaseActivity() {
+         return activeOcrOverlaySession != null
+     }
+ 
++    /**
++     * Убрать распознанный текст со страницы, оставив карточку результата
++     * открытой. Оверлей поверх рисунка мешает читать саму страницу, а раньше
++     * убрать его можно было только закрыв результат целиком.
++     */
++    private fun hideActiveOcrOverlayText() {
++        clearActiveOcrOverlaySession()
++    }
++
+     fun searchActiveOcrOverlay(offset: Int) {
+         val session = activeOcrOverlaySession ?: return
+         val text = session.selection.queryText
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderPageImageView.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderPageImageView.kt
+index 586d8c0ff..6c1ace2f0 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderPageImageView.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderPageImageView.kt
+@@ -54,6 +54,7 @@ import mihon.domain.ocr.model.OcrBoundingBox
+ import mihon.domain.ocr.model.OcrPageResult
+ import mihon.domain.ocr.model.flattenOcrTextForQuery
+ import mihon.domain.ocr.model.normalizeOcrTextForDisplay
++import mihon.domain.ocr.service.OcrPreferences
+ import mihon.domain.panel.model.DebugPanelDetection
+ import okio.BufferedSource
+ import tachiyomi.core.common.util.system.ImageUtil
+@@ -116,6 +117,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
+             color = Color.WHITE
+             textAlign = Paint.Align.LEFT
+         }
++    private val ocrPrefs by lazy { Injekt.get<OcrPreferences>() }
+     private val ocrOverlayRenderer by lazy {
+         ReaderOcrOverlayRenderer(
+             textPaint = ocrOverlayTextPaint,
+@@ -764,8 +766,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
+     }
+ 
+     private fun drawActiveOcrOverlay(canvas: Canvas) {
++        // Выключатель из Настройки → Распознавание: пользователь убирает
++        // оверлей совсем, когда текст поверх страницы мешает читать картинку.
++        if (!ocrPrefs.ocrPageTextOverlay().get()) return
+         val overlayLayout = getOrBuildActiveOverlayLayout() ?: return
+-        // Draw OCR overlay text highlights without opaque blocking box
++        // Подложка под текстом обязательна. Раньше её убрали («solid white
++        // background box»), и на светлой странице белый текст поверх белой
++        // бумаги просто исчезал — оверлей был, а прочитать его нельзя.
++        // Заливка идёт по textRect (области текста), а не по всему
++        // boundingBox, и полупрозрачная: картинка под ней остаётся видна.
++        val pad = resources.displayMetrics.density * 4f
++        val bg = RectF(overlayLayout.textRect).apply { inset(-pad, -pad) }
++        val radius = resources.displayMetrics.density * 6f
++        canvas.drawRoundRect(bg, radius, radius, ocrOverlayBackgroundPaint)
++        canvas.drawRoundRect(bg, radius, radius, ocrOverlayStrokePaint)
+         ocrOverlayRenderer.drawOverlay(canvas, overlayLayout)
+     }
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/util/storage/FileExtensions.kt b/app/src/main/java/eu/kanade/tachiyomi/util/storage/FileExtensions.kt
+index 412de99fa..e7d077db6 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/util/storage/FileExtensions.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/util/storage/FileExtensions.kt
+@@ -1,6 +1,8 @@
+ package eu.kanade.tachiyomi.util.storage
+ 
++import android.content.ClipData
+ import android.content.Context
++import android.content.Intent
+ import android.net.Uri
+ import androidx.core.content.FileProvider
+ import eu.kanade.tachiyomi.BuildConfig
+@@ -11,6 +13,55 @@ import tachiyomi.core.common.util.system.logcat
+ val Context.cacheImageDir: File
+     get() = File(cacheDir, "shared_image")
+ 
++/**
++ * MIME-тип файла по расширению — для `ACTION_VIEW`.
++ *
++ * Без него намерение «открыть» уходило в приложение, которое вообще не
++ * понимает формат, и читатель получал ошибку вместо просмотра.
++ */
++fun File.mimeType(): String = when (extension.lowercase()) {
++    "png" -> "image/png"
++    "jpg", "jpeg" -> "image/jpeg"
++    "webp" -> "image/webp"
++    "gif" -> "image/gif"
++    "bmp" -> "image/bmp"
++    "svg" -> "image/svg+xml"
++    "mp3" -> "audio/mpeg"
++    "m4a", "m4b" -> "audio/mp4"
++    "wav" -> "audio/wav"
++    "ogg", "oga" -> "audio/ogg"
++    "opus" -> "audio/opus"
++    "flac" -> "audio/flac"
++    "mp4" -> "video/mp4"
++    "webm" -> "video/webm"
++    "mkv" -> "video/x-matroska"
++    "3gp" -> "video/3gpp"
++    "pdf" -> "application/pdf"
++    "epub" -> "application/epub+zip"
++    "md", "txt", "log", "csv" -> "text/plain"
++    "json" -> "application/json"
++    "html", "htm" -> "text/html"
++    "xml" -> "text/xml"
++    "zip" -> "application/zip"
++    "tflite" -> "application/octet-stream"
++    else -> "*/*"
++}
++
++/**
++ * Намерение «показать файл», а не «поделиться».
++ *
++ * Раньше кнопка «Открыть» собирала `ACTION_SEND` через `toShareIntent`, то
++ * есть открывала системный лист отправки: читателю приходилось сначала
++ * выбрать приложение, а потом уже копировать файл или отправлять его себе.
++ * Здесь — `ACTION_VIEW` с типом по расширению.
++ */
++fun File.toViewIntent(context: Context): Intent = Intent(Intent.ACTION_VIEW).apply {
++    val uri = getUriCompat(context)
++    setDataAndType(uri, mimeType())
++    clipData = ClipData.newRawUri(null, uri)
++    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
++}
++
+ /**
+  * Returns the uri of a file
+  *
+diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+index a426ab7e7..ccfba97e9 100644
+--- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
++++ b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+@@ -347,6 +347,16 @@ class OcrPreferences(
+     /** Компактный оверлей (уменьшенный) вместо полноэкранного затемнения */
+     fun ocrOverlayCompact() = preferenceStore.getBoolean("pref_ocr_overlay_compact", true)
+ 
++    /**
++     * Рисовать распознанный текст поверх страницы в читалке.
++     *
++     * Выключено = оверлей не рисуется вовсе: на светлых страницах (бумага,
++     * скан с белым фоном) белый текст поверх картинки был не виден, а
++     * выключить его было нечем — кроме как уйти в настройки шапки, где такой
++     * пункт не было.
++     */
++    fun ocrPageTextOverlay() = preferenceStore.getBoolean("pref_ocr_page_text_overlay", true)
++
+     /** Дублировать распознанный текст в шторку уведомлений */
+     fun ocrToNotification() = preferenceStore.getBoolean("pref_ocr_to_notification", false)
+ 
