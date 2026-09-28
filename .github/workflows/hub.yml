@@ -284,16 +284,17 @@ jobs:
           # so a runner with a dead hub and a dead tunnel stays steerable from
           # GitHub alone instead of being a closed box until the 6h cap.
           if [ "${{ inputs.rescue_ssh }}" = "true" ]; then
-            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" CONTROL_TARGET=hub \
               nohup bash "$GITHUB_WORKSPACE/fork/tools/rescue_ssh.sh" >> "$HUB_LOGS/rescue-ssh.log" 2>&1 &
             echo $! > "$HUB_LOGS/rescue-ssh.pid"
-            echo "rescue ssh daemon: tmate shell published -> control/rescue.json"
+            echo "rescue ssh daemon: tmate shell published -> control/rescue-hub.json"
           fi
           if [ "${{ inputs.command_queue }}" = "true" ]; then
-            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" CONTROL_TARGET=hub \
+              HUB_TOKEN_VALUE='${{ inputs.token }}' HUB_LABEL='${{ inputs.label }}' \
               nohup bash "$GITHUB_WORKSPACE/fork/tools/hub_control.sh" >> "$HUB_LOGS/hub-control.log" 2>&1 &
             echo $! > "$HUB_LOGS/hub-control.pid"
-            echo "control daemon: commands from control/queue.json: ping, backup-now, restart-hub, restart-tunnel, handoff-save"
+            echo "control daemon (hub VM): control/queue.json + heartbeat; ops: ping, backup-now, restart-hub, up-hub, reopen-tunnel, handoff-save"
           fi
 
           URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 $HUB_LOGS/tunnel.log)
@@ -1035,6 +1036,24 @@ jobs:
               "url=$URL/vnc.html" "novncUrl=$URL/vnc.html" \
               "label=${{ inputs.label }}"
 
+          # Same lifelines as the hub job (Z10): this VM holds the desktop the
+          # user actually watches - when the hub VM wedges, the queue + tmate
+          # here stay reachable. Beacons land in control/rescue-vnc.json and
+          # control/heartbeat-vnc.json, commands pick target=vnc.
+          if [ "${{ inputs.rescue_ssh }}" = "true" ]; then
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" CONTROL_TARGET=vnc \
+              nohup bash "$GITHUB_WORKSPACE/fork/tools/rescue_ssh.sh" >> "$HUB_LOGS/rescue-ssh.log" 2>&1 &
+            echo $! > "$HUB_LOGS/rescue-ssh.pid"
+            echo "rescue ssh daemon (vnc vm): -> control/rescue-vnc.json"
+          fi
+          if [ "${{ inputs.command_queue }}" = "true" ]; then
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" CONTROL_TARGET=vnc \
+              HUB_LABEL='${{ inputs.label }}' \
+              nohup bash "$GITHUB_WORKSPACE/fork/tools/hub_control.sh" >> "$HUB_LOGS/hub-control.log" 2>&1 &
+            echo $! > "$HUB_LOGS/hub-control.pid"
+            echo "control daemon (vnc vm): queue + heartbeat; reopen-tunnel reopens the VNC tunnel"
+          fi
+
       - name: Keep the VNC session alive
         run: |
           PIDFILE="$HUB_LOGS/cloudflared-6081.pid"
@@ -1047,6 +1066,10 @@ jobs:
             fi
             pkill -f "websockify.*6081" 2>/dev/null || true
             pkill -f "cloudflared [t]unnel --url http://127.0.0.1:6081" 2>/dev/null || true
+            # Background lifelines started above: same "Complete job" hang rule.
+            pkill -f "[h]ub_control.sh" 2>/dev/null || true
+            pkill -f "[r]escue_ssh.sh" 2>/dev/null || true
+            tmate -S "$HUB_LOGS/tmate.sock" kill-session >/dev/null 2>&1 || true
             # The X stack is started detached by start_desktop.sh and the
             # runner waits for it too - leaving Xvfb/openbox/x11vnc running
             # hangs "Complete job" exactly like the hub's daemons did.
