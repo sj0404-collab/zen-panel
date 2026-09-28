@@ -1,0 +1,55 @@
+diff --git a/MANIFEST.md b/MANIFEST.md
+index cfc8afe..3e27208 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -15,9 +15,3 @@
+ 4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи
+    и не логируй его значение.
+ 5. Готовые сборки/артефакты клади в /home/runner/hub-work/yomikai/tmp — их видно вкладкой «Файлы».
+-6. Историю текущего агента храни в этом репозитории (/home/runner/hub-work/yomikai/code), а не во временных папках.
+-7. После внесения исправлений автоматически создавай коммит и отправляй его в текущую ветку репозитория.
+-8. Все сборки запускай через GitHub Actions/workflows; не запускай сборки внутри локального окружения.
+-9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
+-10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
+-11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 7a60a3f..f7a2455 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -269,6 +269,25 @@
+             android:exported="false"
+             android:foregroundServiceType="mediaPlayback" />
+ 
++        <!--
++             Служба доступности существует ровно для одной вещи: отправлять
++             свайпы чужому приложению, чтобы рамка поверх окна листала его
++             самостоятельно. Ни события не читает, ни узлы не обходит, ни
++             ничего не выполняет — только dispatchGesture по координатам.
++             По умолчанию выключена, включается читателем в настройках. -->
++        <service
++            android:name=".ui.overlay.OverlayGestureService"
++            android:exported="true"
++            android:label="@string/ocr_overlay_gesture_service"
++            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
++            <intent-filter>
++                <action android:name="android.accessibilityservice.AccessibilityService" />
++            </intent-filter>
++            <meta-data
++                android:name="android.accessibilityservice"
++                android:resource="@xml/ocr_overlay_gesture_service" />
++        </service>
++
+         <provider
+             android:name="androidx.core.content.FileProvider"
+             android:authorities="${applicationId}.provider"
+diff --git a/i18n/src/commonMain/moko-resources/base/strings.xml b/i18n/src/commonMain/moko-resources/base/strings.xml
+index 2043264..175787d 100644
+--- a/i18n/src/commonMain/moko-resources/base/strings.xml
++++ b/i18n/src/commonMain/moko-resources/base/strings.xml
+@@ -1414,4 +1414,6 @@
+     <string name="pref_reader_actions_builtin">built-in</string>
+     <string name="constructor">Constructor</string>
+     <string name="constructor_summary">Tabs, panel modules, custom buttons: hide, reorder, create</string>
++    <string name="ocr_overlay_gesture_service">Yomikai — прокрутка рамки</string>
++    <string name="ocr_overlay_gesture_service_desc">Нужна только для прокрутки: чтобы рамка поверх окна могла листать приложение сама. Приложение не читает содержимое экрана и не выполняет действия — только отправляет свайп по вашей команде.</string>
+ </resources>
