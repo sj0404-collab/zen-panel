@@ -13,10 +13,40 @@ index cfc8afe..3e27208 100644
 -10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
 -11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index f84b24c..90885c9 100644
+index f84b24c..912a536 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
-@@ -365,9 +365,6 @@ dependencies {
+@@ -17,13 +17,6 @@ plugins {
+     alias(libs.plugins.kotlin.serialization)
+ }
+ 
+-if (Config.includeTelemetry) {
+-    pluginManager.apply {
+-        apply(libs.plugins.google.services.get().pluginId)
+-        apply(libs.plugins.firebase.crashlytics.get().pluginId)
+-    }
+-}
+-
+ val keystorePropertiesFile = rootProject.file("keystore.properties")
+ 
+ android {
+@@ -63,7 +56,6 @@ android {
+         buildConfigField("String", "COMMIT_COUNT", "\"${getLatestCommitCount()}\"")
+         buildConfigField("String", "COMMIT_SHA", "\"${getLatestCommitSha()}\"")
+         buildConfigField("String", "BUILD_TIME", "\"${getBuildTime(useLatestCommitTime = false)}\"")
+-        buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
+         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
+ 
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+@@ -266,7 +258,6 @@ dependencies {
+     implementation(projects.domain)
+     implementation(projects.presentationCore)
+     implementation(projects.presentationWidget)
+-    implementation(projects.telemetry)
+ 
+     // Compose
+     implementation(libs.androidx.activity.compose)
+@@ -365,9 +356,6 @@ dependencies {
      // Logging
      implementation(libs.logcat)
  
@@ -26,6 +56,80 @@ index f84b24c..90885c9 100644
      // String similarity
      implementation(libs.stringSimilarity)
  
+diff --git a/app/google-services.json b/app/google-services.json
+deleted file mode 100644
+index d54ca97..0000000
+--- a/app/google-services.json
++++ /dev/null
+@@ -1,67 +0,0 @@
+-{
+-  "project_info": {
+-    "project_number": "347252887835",
+-    "project_id": "mihonocr",
+-    "storage_bucket": "mihonocr.firebasestorage.app"
+-  },
+-  "client": [
+-    {
+-      "client_info": {
+-        "mobilesdk_app_id": "1:347252887835:android:3b8f3c10fb5058276543be",
+-        "android_client_info": {
+-          "package_name": "app.yomihon"
+-        }
+-      },
+-      "oauth_client": [],
+-      "api_key": [
+-        {
+-          "current_key": "AIzaSyAfmherIDe5iN53xInHGf_qtF8SMEGHQFg"
+-        }
+-      ],
+-      "services": {
+-        "appinvite_service": {
+-          "other_platform_oauth_client": []
+-        }
+-      }
+-    },
+-    {
+-      "client_info": {
+-        "mobilesdk_app_id": "1:347252887835:android:dfe9ccbf46f758196543be",
+-        "android_client_info": {
+-          "package_name": "app.yomihon.debug"
+-        }
+-      },
+-      "oauth_client": [],
+-      "api_key": [
+-        {
+-          "current_key": "AIzaSyAfmherIDe5iN53xInHGf_qtF8SMEGHQFg"
+-        }
+-      ],
+-      "services": {
+-        "appinvite_service": {
+-          "other_platform_oauth_client": []
+-        }
+-      }
+-    },
+-    {
+-      "client_info": {
+-        "mobilesdk_app_id": "1:347252887835:android:399d1fd541b2df826543be",
+-        "android_client_info": {
+-          "package_name": "app.yomihon.dev"
+-        }
+-      },
+-      "oauth_client": [],
+-      "api_key": [
+-        {
+-          "current_key": "AIzaSyAfmherIDe5iN53xInHGf_qtF8SMEGHQFg"
+-        }
+-      ],
+-      "services": {
+-        "appinvite_service": {
+-          "other_platform_oauth_client": []
+-        }
+-      }
+-    }
+-  ],
+-  "configuration_version": "1"
+-}
+\ No newline at end of file
 diff --git a/app/proguard-rules.pro b/app/proguard-rules.pro
 index edcf559..7a204a8 100644
 --- a/app/proguard-rules.pro
@@ -1913,20 +2017,47 @@ index 4134656..0ad5095 100644
 -    data class Success<out T>(val value: T) : Result<T>()
 -}
 diff --git a/app/src/main/java/eu/kanade/presentation/more/onboarding/PermissionStep.kt b/app/src/main/java/eu/kanade/presentation/more/onboarding/PermissionStep.kt
-index 2a41923..0ec0bdc 100644
+index 2a41923..185acc7 100644
 --- a/app/src/main/java/eu/kanade/presentation/more/onboarding/PermissionStep.kt
 +++ b/app/src/main/java/eu/kanade/presentation/more/onboarding/PermissionStep.kt
-@@ -35,9 +35,7 @@ import androidx.core.net.toUri
+@@ -13,13 +13,11 @@ import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.filled.Check
+-import androidx.compose.material3.HorizontalDivider
+ import androidx.compose.material3.Icon
+ import androidx.compose.material3.ListItem
+ import androidx.compose.material3.ListItemDefaults
+ import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.OutlinedButton
+-import androidx.compose.material3.Switch
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.DisposableEffect
+@@ -35,22 +33,15 @@ import androidx.core.net.toUri
  import androidx.lifecycle.DefaultLifecycleObserver
  import androidx.lifecycle.LifecycleOwner
  import androidx.lifecycle.compose.LocalLifecycleOwner
 -import eu.kanade.presentation.util.rememberRequestPackageInstallsPermissionState
- import eu.kanade.tachiyomi.core.security.PrivacyPreferences
+-import eu.kanade.tachiyomi.core.security.PrivacyPreferences
 -import eu.kanade.tachiyomi.util.system.launchRequestPackageInstallsPermission
- import eu.kanade.tachiyomi.util.system.telemetryIncluded
+-import eu.kanade.tachiyomi.util.system.telemetryIncluded
  import kotlinx.coroutines.flow.launchIn
  import kotlinx.coroutines.flow.onEach
-@@ -65,8 +63,6 @@ internal class PermissionStep : OnboardingStep {
+ import mihon.domain.ankidroid.repository.AnkiDroidRepository
+ import tachiyomi.i18n.MR
+ import tachiyomi.presentation.core.i18n.stringResource
+-import tachiyomi.presentation.core.util.collectAsState
+-import tachiyomi.presentation.core.util.secondaryItemAlpha
+ import uy.kohesive.injekt.injectLazy
+ 
+ internal class PermissionStep : OnboardingStep {
+ 
+-    private val privacyPreferences: PrivacyPreferences by injectLazy()
+     private val ankiDroidRepository: AnkiDroidRepository by injectLazy()
+ 
+     private var notificationGranted by mutableStateOf(false)
+@@ -65,8 +56,6 @@ internal class PermissionStep : OnboardingStep {
          val context = LocalContext.current
          val lifecycleOwner = LocalLifecycleOwner.current
  
@@ -1935,7 +2066,7 @@ index 2a41923..0ec0bdc 100644
          DisposableEffect(lifecycleOwner.lifecycle) {
              val observer = object : DefaultLifecycleObserver {
                  override fun onResume(owner: LifecycleOwner) {
-@@ -92,15 +88,6 @@ internal class PermissionStep : OnboardingStep {
+@@ -92,15 +81,6 @@ internal class PermissionStep : OnboardingStep {
          }
  
          Column {
@@ -1951,6 +2082,82 @@ index 2a41923..0ec0bdc 100644
              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                  val permissionRequester = rememberLauncherForActivityResult(
                      contract = ActivityResultContracts.RequestPermission(),
+@@ -144,48 +124,9 @@ internal class PermissionStep : OnboardingStep {
+                     },
+                 )
+             }
+-
+-            if (!telemetryIncluded) return@Column
+-
+-            HorizontalDivider(
+-                modifier = Modifier.padding(vertical = 8.dp, horizontal = 16.dp),
+-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+-            )
+-
+-            val crashlyticsPref = privacyPreferences.crashlytics
+-            val crashlytics by crashlyticsPref.collectAsState()
+-            PermissionSwitch(
+-                title = stringResource(MR.strings.onboarding_permission_crashlytics),
+-                subtitle = stringResource(MR.strings.onboarding_permission_crashlytics_description),
+-                granted = crashlytics,
+-                onToggleChange = crashlyticsPref::set,
+-            )
+-
+-            val analyticsPref = privacyPreferences.analytics
+-            val analytics by analyticsPref.collectAsState()
+-            PermissionSwitch(
+-                title = stringResource(MR.strings.onboarding_permission_analytics),
+-                subtitle = stringResource(MR.strings.onboarding_permission_analytics_description),
+-                granted = analytics,
+-                onToggleChange = analyticsPref::set,
+-            )
+         }
+     }
+ 
+-    @Composable
+-    private fun SectionHeader(
+-        text: String,
+-        modifier: Modifier = Modifier,
+-    ) {
+-        Text(
+-            text = text,
+-            style = MaterialTheme.typography.titleLarge,
+-            modifier = modifier
+-                .padding(horizontal = 16.dp)
+-                .secondaryItemAlpha(),
+-        )
+-    }
+-
+     @Composable
+     private fun PermissionCheckbox(
+         title: String,
+@@ -217,26 +158,4 @@ internal class PermissionStep : OnboardingStep {
+             content = { Text(text = title) },
+         )
+     }
+-
+-    @Composable
+-    private fun PermissionSwitch(
+-        title: String,
+-        subtitle: String,
+-        granted: Boolean,
+-        modifier: Modifier = Modifier,
+-        onToggleChange: (Boolean) -> Unit,
+-    ) {
+-        ListItem(
+-            modifier = modifier,
+-            trailingContent = {
+-                Switch(
+-                    checked = granted,
+-                    onCheckedChange = onToggleChange,
+-                )
+-            },
+-            supportingContent = { Text(text = subtitle) },
+-            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+-            content = { Text(text = title) },
+-        )
+-    }
+ }
 diff --git a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsAdvancedScreen.kt b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsAdvancedScreen.kt
 index d9e2128..b503722 100644
 --- a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsAdvancedScreen.kt
@@ -2124,6 +2331,62 @@ index bcbafc2..8e31263 100644
                  ),
              ),
              Preference.PreferenceGroup(
+diff --git a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsSecurityScreen.kt b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsSecurityScreen.kt
+index fb12493..dedd0a2 100644
+--- a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsSecurityScreen.kt
++++ b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsSecurityScreen.kt
+@@ -7,11 +7,9 @@ import androidx.compose.runtime.remember
+ import androidx.compose.ui.platform.LocalContext
+ import androidx.fragment.app.FragmentActivity
+ import eu.kanade.presentation.more.settings.Preference
+-import eu.kanade.tachiyomi.core.security.PrivacyPreferences
+ import eu.kanade.tachiyomi.core.security.SecurityPreferences
+ import eu.kanade.tachiyomi.util.system.AuthenticatorUtil.authenticate
+ import eu.kanade.tachiyomi.util.system.AuthenticatorUtil.isAuthenticationSupported
+-import eu.kanade.tachiyomi.util.system.telemetryIncluded
+ import tachiyomi.core.common.i18n.stringResource
+ import tachiyomi.i18n.MR
+ import tachiyomi.presentation.core.i18n.pluralStringResource
+@@ -29,11 +27,8 @@ object SettingsSecurityScreen : SearchableSettings {
+     @Composable
+     override fun getPreferences(): List<Preference> {
+         val securityPreferences = remember { Injekt.get<SecurityPreferences>() }
+-        val privacyPreferences = remember { Injekt.get<PrivacyPreferences>() }
+         return buildList(2) {
+             add(getSecurityGroup(securityPreferences))
+-            if (!telemetryIncluded) return@buildList
+-            add(getFirebaseGroup(privacyPreferences))
+         }
+     }
+ 
+@@ -93,27 +88,6 @@ object SettingsSecurityScreen : SearchableSettings {
+         )
+     }
+ 
+-    @Composable
+-    private fun getFirebaseGroup(
+-        privacyPreferences: PrivacyPreferences,
+-    ): Preference.PreferenceGroup {
+-        return Preference.PreferenceGroup(
+-            title = stringResource(MR.strings.pref_firebase),
+-            preferenceItems = listOf(
+-                Preference.PreferenceItem.SwitchPreference(
+-                    preference = privacyPreferences.crashlytics,
+-                    title = stringResource(MR.strings.onboarding_permission_crashlytics),
+-                    subtitle = stringResource(MR.strings.onboarding_permission_crashlytics_description),
+-                ),
+-                Preference.PreferenceItem.SwitchPreference(
+-                    preference = privacyPreferences.analytics,
+-                    title = stringResource(MR.strings.onboarding_permission_analytics),
+-                    subtitle = stringResource(MR.strings.onboarding_permission_analytics_description),
+-                ),
+-                Preference.PreferenceItem.InfoPreference(stringResource(MR.strings.firebase_summary)),
+-            ),
+-        )
+-    }
+ }
+ 
+ private val LockAfterValues = listOf(
 diff --git a/app/src/main/java/eu/kanade/presentation/more/settings/screen/browse/ExtensionStoresScreen.kt b/app/src/main/java/eu/kanade/presentation/more/settings/screen/browse/ExtensionStoresScreen.kt
 deleted file mode 100644
 index cf06527..0000000
@@ -2842,6 +3105,66 @@ index 80c2f90..0000000
 -
 -    return installGranted
 -}
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/App.kt b/app/src/main/java/eu/kanade/tachiyomi/App.kt
+index 294ebe1..d3187dc 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/App.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/App.kt
+@@ -28,7 +28,6 @@ import eu.kanade.domain.DomainModule
+ import eu.kanade.domain.base.BasePreferences
+ import eu.kanade.domain.ui.UiPreferences
+ import eu.kanade.domain.ui.model.setAppCompatDelegateThemeMode
+-import eu.kanade.tachiyomi.core.security.PrivacyPreferences
+ import eu.kanade.tachiyomi.crash.CrashActivity
+ import eu.kanade.tachiyomi.crash.GlobalExceptionHandler
+ import eu.kanade.tachiyomi.data.coil.BufferedSourceFetcher
+@@ -64,7 +63,6 @@ import mihon.domain.dictionary.repository.DictionaryMigrationStatusRepository
+ import mihon.domain.dictionary.repository.DictionaryRepository
+ import mihon.domain.ocr.repository.OcrRepository
+ import mihon.domain.panel.repository.PanelDetectionRepository
+-import mihon.telemetry.TelemetryConfig
+ import org.conscrypt.Conscrypt
+ import tachiyomi.core.common.i18n.stringResource
+ import tachiyomi.core.common.preference.Preference
+@@ -81,7 +79,6 @@ import java.security.Security
+ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factory {
+ 
+     private val basePreferences: BasePreferences by injectLazy()
+-    private val privacyPreferences: PrivacyPreferences by injectLazy()
+     private val networkPreferences: NetworkPreferences by injectLazy()
+ 
+     private val disableIncognitoReceiver = DisableIncognitoReceiver()
+@@ -90,14 +87,6 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
+     override fun onCreate() {
+         super<Application>.onCreate()
+         patchInjekt()
+-        // Firebase/Telemetry инициализируется в фоне: на главном потоке при
+-        // доступном интернете он ходил в сеть и заметно тормозил холодный старт
+-        // (без интернетаинициализация мгновенно падала в fallback — поэтому
+-        // "без интернета запускается быстрее").
+-        Thread { TelemetryConfig.init(applicationContext) }
+-            .apply { name = "telemetry-init"; priority = Thread.MIN_PRIORITY }
+-            .start()
+-
+         GlobalExceptionHandler.initialize(applicationContext, CrashActivity::class.java)
+ 
+         // AI-агент из внешнего браузера: если сервер был включён — поднимаем
+@@ -223,16 +212,6 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
+             }
+             .launchIn(scope)
+ 
+-        privacyPreferences.analytics
+-            .changes()
+-            .onEach(TelemetryConfig::setAnalyticsEnabled)
+-            .launchIn(scope)
+-
+-        privacyPreferences.crashlytics
+-            .changes()
+-            .onEach(TelemetryConfig::setCrashlyticsEnabled)
+-            .launchIn(scope)
+-
+         basePreferences.hardwareBitmapThreshold.let { preference ->
+             if (!preference.isSet()) preference.set(GLUtil.DEVICE_TEXTURE_LIMIT)
+         }
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/backup/create/BackupCreator.kt b/app/src/main/java/eu/kanade/tachiyomi/data/backup/create/BackupCreator.kt
 index 1aadd00..9879449 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/data/backup/create/BackupCreator.kt
@@ -3356,6 +3679,26 @@ index cb9fa5b..33255bf 100644
  
          addSingletonFactory { DownloadProvider(app) }
          addSingletonFactory { DownloadManager(app) }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/di/PreferenceModule.kt b/app/src/main/java/eu/kanade/tachiyomi/di/PreferenceModule.kt
+index ed38433..14b9c99 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/di/PreferenceModule.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/di/PreferenceModule.kt
+@@ -6,7 +6,6 @@ import eu.kanade.domain.dictionary.DictionaryPreferences
+ import eu.kanade.domain.source.service.SourcePreferences
+ import eu.kanade.domain.track.service.TrackPreferences
+ import eu.kanade.domain.ui.UiPreferences
+-import eu.kanade.tachiyomi.core.security.PrivacyPreferences
+ import eu.kanade.tachiyomi.core.security.SecurityPreferences
+ import eu.kanade.tachiyomi.network.NetworkPreferences
+ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+@@ -44,7 +43,6 @@ class PreferenceModule(val app: Application) : InjektModule {
+             SecurityPreferences(get())
+         }
+         addSingletonFactory {
+-            PrivacyPreferences(get())
+         }
+         addSingletonFactory {
+             LibraryPreferences(get())
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/extension/ExtensionManager.kt b/app/src/main/java/eu/kanade/tachiyomi/extension/ExtensionManager.kt
 deleted file mode 100644
 index 4f9856c..0000000
@@ -6760,6 +7103,37 @@ index ec3f17b..67d5d1d 100644
 -        }
 -    }
  }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/util/system/BuildConfig.kt b/app/src/main/java/eu/kanade/tachiyomi/util/system/BuildConfig.kt
+index 073b373..7d5ba48 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/util/system/BuildConfig.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/util/system/BuildConfig.kt
+@@ -1,26 +1,6 @@
+-@file:Suppress("UNUSED", "KotlinConstantConditions")
+-
+ package eu.kanade.tachiyomi.util.system
+ 
+ import eu.kanade.tachiyomi.BuildConfig
+ 
+-val telemetryIncluded: Boolean
+-    inline get() = BuildConfig.TELEMETRY_INCLUDED
+-
+ val updaterEnabled: Boolean
+     inline get() = BuildConfig.UPDATER_ENABLED
+-
+-val isDebugBuildType: Boolean
+-    inline get() = BuildConfig.BUILD_TYPE == "debug"
+-
+-val isPreviewBuildType: Boolean
+-    inline get() = BuildConfig.BUILD_TYPE == "preview"
+-
+-val isReleaseBuildType: Boolean
+-    inline get() = BuildConfig.BUILD_TYPE == "release"
+-
+-val isFossBuildType: Boolean
+-    inline get() = BuildConfig.BUILD_TYPE == "foss"
+-
+-val isBenchmarkBuildType: Boolean
+-    inline get() = BuildConfig.BUILD_TYPE.contains("nonMinified") || BuildConfig.BUILD_TYPE.contains("benchmark")
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/util/system/ContextExtensions.kt b/app/src/main/java/eu/kanade/tachiyomi/util/system/ContextExtensions.kt
 index ef0e41a..9865e9a 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/util/system/ContextExtensions.kt
@@ -7057,6 +7431,37 @@ index d5abfaf..35ad687 100644
              device.waitAndClick(By.text("More"))
              device.waitForIdle()
          }
+diff --git a/build.gradle.kts b/build.gradle.kts
+index d8977a3..9defca5 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -11,8 +11,6 @@ plugins {
+     alias(libs.plugins.android.library) apply false
+     alias(libs.plugins.android.test) apply false
+     alias(libs.plugins.androidx.baselineProfile) apply false
+-    alias(libs.plugins.firebase.crashlytics) apply false
+-    alias(libs.plugins.google.services) apply false
+     alias(libs.plugins.kotlin.compose.compiler) apply false
+     alias(libs.plugins.kotlin.serialization) apply false
+     alias(libs.plugins.moko.resources) apply false
+diff --git a/core/common/src/main/kotlin/eu/kanade/tachiyomi/core/security/PrivacyPreferences.kt b/core/common/src/main/kotlin/eu/kanade/tachiyomi/core/security/PrivacyPreferences.kt
+deleted file mode 100644
+index cdb0098..0000000
+--- a/core/common/src/main/kotlin/eu/kanade/tachiyomi/core/security/PrivacyPreferences.kt
++++ /dev/null
+@@ -1,12 +0,0 @@
+-package eu.kanade.tachiyomi.core.security
+-
+-import tachiyomi.core.common.preference.Preference
+-import tachiyomi.core.common.preference.PreferenceStore
+-
+-class PrivacyPreferences(
+-    preferenceStore: PreferenceStore,
+-) {
+-    val crashlytics: Preference<Boolean> = preferenceStore.getBoolean("crashlytics", true)
+-
+-    val analytics: Preference<Boolean> = preferenceStore.getBoolean("analytics", true)
+-}
 diff --git a/core/common/src/main/kotlin/tachiyomi/core/common/Constants.kt b/core/common/src/main/kotlin/tachiyomi/core/common/Constants.kt
 index 1be7a58..0d5b9a9 100644
 --- a/core/common/src/main/kotlin/tachiyomi/core/common/Constants.kt
@@ -7872,10 +8277,22 @@ index 3ab4770..0000000
 -    suspend fun remove(indexUrl: String)
 -}
 diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
-index f687124..f91bd78 100644
+index f687124..b79e8d6 100644
 --- a/gradle/libs.versions.toml
 +++ b/gradle/libs.versions.toml
-@@ -71,7 +71,6 @@ quickJs = "547f5b1597"
+@@ -36,11 +36,8 @@ core-ktx-version = "1.7.0"
+ conscrypt = "2.6.0"
+ directionalViewPager = "1.0.0"
+ diskLruCache = "2.0.2"
+-firebase-bom = "34.15.0"
+-firebase-crashlytics = "3.0.7"
+ flexibleAdapter = "5.1.0"
+ furiganable = "v0.1.2"
+-google-services = "4.5.0"
+ hoshidicts = "v1.4.1"
+ image-decoder = "da05c859ff"
+ injekt = "91edab2317"
+@@ -71,7 +68,6 @@ quickJs = "547f5b1597"
  reorderable = "3.1.0"
  rxJava = "1.3.8"
  runner-version = "1.7.0"
@@ -7883,7 +8300,17 @@ index f687124..f91bd78 100644
  spotless = "8.8.0"
  sqldelight = "2.3.2"
  sqldelight-androidx-driver = "0637a964a1"
-@@ -191,8 +190,6 @@ quickJs = { module = "com.github.zhanghai.quickjs-java:quickjs-android", version
+@@ -138,9 +134,6 @@ composeWebview = { module = "io.github.kevinnzou:compose-webview", version.ref =
+ conscrypt = { module = "org.conscrypt:conscrypt-android", version.ref = "conscrypt" }
+ directionalViewPager = { module = "com.github.tachiyomiorg:DirectionalViewPager", version.ref = "directionalViewPager" }
+ diskLruCache = { module = "com.jakewharton:disklrucache", version.ref = "diskLruCache" }
+-firebase-analytics = { module = "com.google.firebase:firebase-analytics" }
+-firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebase-bom" }
+-firebase-crashlytics = { module = "com.google.firebase:firebase-crashlytics" }
+ flexibleAdapter = { module = "eu.davidea:flexible-adapter", version.ref = "flexibleAdapter" }
+ furiganable = { module = "com.github.yomihon.Furiganable:compose-m3", version.ref = "furiganable" }
+ hoshidicts = { module = "com.github.yomihon:hoshidicts", version.ref = "hoshidicts" }
+@@ -191,8 +184,6 @@ quickJs = { module = "com.github.zhanghai.quickjs-java:quickjs-android", version
  reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reorderable" }
  rxJava = { module = "io.reactivex:rxjava", version.ref = "rxJava" }
  runner = { module = "androidx.test:runner", version.ref = "runner-version" }
@@ -7892,7 +8319,16 @@ index f687124..f91bd78 100644
  spotless-gradle = { module = "com.diffplug.spotless:spotless-plugin-gradle", version.ref = "spotless" }
  sqldelight-androidxDriver = { module = "com.github.mihon.sqldelight-androidx-driver:sqldelight-androidx-driver", version.ref = "sqldelight-androidx-driver" }
  sqldelight-androidxPaging = { module = "app.cash.sqldelight:androidx-paging3-extensions", version.ref = "sqldelight" }
-@@ -237,7 +234,6 @@ kotlinx-coroutines = ["kotlinx-coroutines-core", "kotlinx-coroutines-android", "
+@@ -219,8 +210,6 @@ android-kmp-library = { id = "com.android.kotlin.multiplatform.library", version
+ android-library = { id = "com.android.library", version.ref = "android-gradle" }
+ android-test = { id = "com.android.test", version.ref = "android-gradle" }
+ androidx-baselineProfile = { id = "androidx.baselineprofile", version.ref = "androidx-baselineProfile" }
+-firebase-crashlytics = { id = "com.google.firebase.crashlytics", version.ref = "firebase-crashlytics" }
+-google-services = { id = "com.google.gms.google-services", version.ref = "google-services" }
+ kotlin-compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin-gradle" }
+ kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin-gradle" }
+ kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin-gradle" }
+@@ -237,7 +226,6 @@ kotlinx-coroutines = ["kotlinx-coroutines-core", "kotlinx-coroutines-android", "
  markdown = ["markdown-core", "markdown-coil"]
  okhttp = ["okhttp-core", "okhttp-logging", "okhttp-brotli", "okhttp-dnsOverHttps", "okhttp-zstd"]
  serialization = ["kotlinx-serialization-json", "kotlinx-serialization-jsonOkio", "kotlinx-serialization-protobuf", "xmlutil-core", "xmlutil-serialization"]
@@ -16924,6 +17360,15 @@ index a00351f..b5e13d5 100644
 -    <string name="extensionStoresScreen.deleteStore.body">你是否要刪除擴充套件商店「%1$s」(%2$s)？</string>
      <string name="pref_webtoon_vertical_navigator_on_left">將垂直導航器設於左側</string>
  </resources>
+diff --git a/settings.gradle.kts b/settings.gradle.kts
+index 312d0cc..c226165 100644
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -41,4 +41,3 @@ include(":presentation-core")
+ include(":presentation-widget")
+ include(":source-api")
+ include(":source-local")
+-include(":telemetry")
 diff --git a/source-api/build.gradle.kts b/source-api/build.gradle.kts
 index 0c56e03..1e08034 100644
 --- a/source-api/build.gradle.kts
@@ -16952,3 +17397,243 @@ index aa81da4..0000000
 --keep class eu.kanade.tachiyomi.source.** extends eu.kanade.tachiyomi.source.Source { public protected *; }
 -
 --keep,allowoptimization class eu.kanade.tachiyomi.util.JsoupExtensionsKt { public protected *; }
+diff --git a/telemetry/build.gradle.kts b/telemetry/build.gradle.kts
+deleted file mode 100644
+index 4c2f77e..0000000
+--- a/telemetry/build.gradle.kts
++++ /dev/null
+@@ -1,31 +0,0 @@
+-import mihon.gradle.Config
+-
+-plugins {
+-    alias(mihonx.plugins.android.library)
+-    alias(mihonx.plugins.spotless)
+-}
+-
+-android {
+-    namespace = "mihon.telemetry"
+-
+-    sourceSets {
+-        getByName("main") {
+-            if (Config.includeTelemetry) {
+-                kotlin.directories.add("src/firebase/kotlin")
+-            } else {
+-                kotlin.directories.add("src/noop/kotlin")
+-                manifest.srcFile("src/noop/AndroidManifext.xml")
+-            }
+-        }
+-    }
+-}
+-
+-dependencies {
+-    implementation(projects.core.common)
+-
+-    if (Config.includeTelemetry) {
+-        implementation(platform(libs.firebase.bom))
+-        implementation(libs.firebase.analytics)
+-        implementation(libs.firebase.crashlytics)
+-    }
+-}
+diff --git a/telemetry/src/firebase/kotlin/mihon/telemetry/PackageInfo.kt b/telemetry/src/firebase/kotlin/mihon/telemetry/PackageInfo.kt
+deleted file mode 100644
+index eb81ca8..0000000
+--- a/telemetry/src/firebase/kotlin/mihon/telemetry/PackageInfo.kt
++++ /dev/null
+@@ -1,46 +0,0 @@
+-package mihon.telemetry
+-
+-import android.content.pm.PackageInfo
+-import android.content.pm.PackageManager
+-import android.content.pm.Signature
+-import android.os.Build
+-import java.security.MessageDigest
+-
+-internal fun PackageInfo.getCertificateFingerprints(): List<String> {
+-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+-        val signingInfo = signingInfo!!
+-        if (signingInfo.hasMultipleSigners()) {
+-            signingInfo.apkContentsSigners
+-        } else {
+-            signingInfo.signingCertificateHistory
+-        }
+-    } else {
+-        @Suppress("DEPRECATION")
+-        signatures
+-    }
+-        ?.map(Signature::getCertificateFingerprint)
+-        ?.toList()
+-        ?: emptyList()
+-}
+-
+-internal val SignatureFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+-    PackageManager.GET_SIGNING_CERTIFICATES
+-} else {
+-    @Suppress("DEPRECATION")
+-    PackageManager.GET_SIGNATURES
+-}
+-
+-@OptIn(ExperimentalStdlibApi::class)
+-private val CertificateFingerprintHexFormat = HexFormat {
+-    upperCase = true
+-    bytes {
+-        byteSeparator = ":"
+-    }
+-}
+-
+-@OptIn(ExperimentalStdlibApi::class)
+-private fun Signature.getCertificateFingerprint(): String {
+-    return MessageDigest.getInstance("SHA-256")
+-        .digest(toByteArray())
+-        .toHexString(CertificateFingerprintHexFormat)
+-}
+diff --git a/telemetry/src/firebase/kotlin/mihon/telemetry/TelemetryConfig.kt b/telemetry/src/firebase/kotlin/mihon/telemetry/TelemetryConfig.kt
+deleted file mode 100644
+index 7430c78..0000000
+--- a/telemetry/src/firebase/kotlin/mihon/telemetry/TelemetryConfig.kt
++++ /dev/null
+@@ -1,64 +0,0 @@
+-package mihon.telemetry
+-
+-import android.content.Context
+-import android.content.pm.PackageManager
+-import com.google.firebase.FirebaseApp
+-import com.google.firebase.analytics.FirebaseAnalytics
+-import com.google.firebase.crashlytics.FirebaseCrashlytics
+-import logcat.LogPriority
+-import tachiyomi.core.common.util.system.logcat
+-
+-object TelemetryConfig {
+-    private var analytics: FirebaseAnalytics? = null
+-    private var crashlytics: FirebaseCrashlytics? = null
+-
+-    fun init(context: Context) {
+-        // To stop forks/test builds from polluting our data
+-        if (!context.isYomihonProductionApp()) return
+-
+-        // Check if Google Play Services is available before initializing Firebase
+-        if (!isGooglePlayServicesAvailable(context)) {
+-            logcat(LogPriority.WARN) { "Google Play Services not available, skipping Firebase initialization" }
+-            return
+-        }
+-
+-        try {
+-            analytics = FirebaseAnalytics.getInstance(context)
+-            FirebaseApp.initializeApp(context)
+-            crashlytics = FirebaseCrashlytics.getInstance()
+-        } catch (e: Exception) {
+-            logcat(LogPriority.ERROR, e) { "Failed to initialize Firebase" }
+-        }
+-    }
+-
+-    private fun isGooglePlayServicesAvailable(context: Context): Boolean {
+-        return try {
+-            context.packageManager
+-                .getPackageInfo("com.google.android.gms", PackageManager.GET_META_DATA)
+-                .applicationInfo
+-                ?.enabled == true
+-        } catch (e: PackageManager.NameNotFoundException) {
+-            false
+-        }
+-    }
+-
+-    fun setAnalyticsEnabled(enabled: Boolean) {
+-        analytics?.setAnalyticsCollectionEnabled(enabled)
+-    }
+-
+-    fun setCrashlyticsEnabled(enabled: Boolean) {
+-        crashlytics?.isCrashlyticsCollectionEnabled = enabled
+-    }
+-
+-    private fun Context.isYomihonProductionApp(): Boolean {
+-        if (packageName !in YOMIHON_PACKAGES) return false
+-
+-        return packageManager.getPackageInfo(packageName, SignatureFlags)
+-            .getCertificateFingerprints()
+-            .any { it == YOMIHON_CERTIFICATE_FINGERPRINT }
+-    }
+-}
+-
+-private val YOMIHON_PACKAGES = hashSetOf("app.yomihon", "app.yomihon.debug")
+-private const val YOMIHON_CERTIFICATE_FINGERPRINT =
+-    "80:0D:DF:D7:15:EE:C6:F4:8E:69:C8:69:54:38:C0:9D:54:3E:6B:85:34:35:62:24:C6:7A:D9:EF:A5:B9:B0:CE"
+diff --git a/telemetry/src/main/AndroidManifest.xml b/telemetry/src/main/AndroidManifest.xml
+deleted file mode 100644
+index 65e3e4a..0000000
+--- a/telemetry/src/main/AndroidManifest.xml
++++ /dev/null
+@@ -1,49 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-    xmlns:tools="http://schemas.android.com/tools">
+-
+-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+-    <uses-permission android:name="android.permission.INTERNET" />
+-    <uses-permission android:name="android.permission.WAKE_LOCK" />
+-
+-    <!-- Remove unnecessary permissions from Firebase dependency -->
+-    <uses-permission
+-        android:name="android.permission.ACCESS_ADSERVICES_AD_ID"
+-        tools:node="remove" />
+-
+-    <uses-permission
+-        android:name="android.permission.ACCESS_ADSERVICES_ATTRIBUTION"
+-        tools:node="remove" />
+-
+-    <uses-permission
+-        android:name="com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE"
+-        tools:node="remove" />
+-
+-    <uses-permission
+-        android:name="com.google.android.gms.permission.AD_ID"
+-        tools:node="remove" />
+-
+-    <application>
+-        <!-- Disable for manual opt-in -->
+-        <meta-data
+-            android:name="firebase_analytics_collection_enabled"
+-            android:value="false" />
+-
+-        <meta-data
+-            android:name="firebase_crashlytics_collection_enabled"
+-            android:value="false" />
+-
+-        <!-- Disable unnecessary stuff from Firebase -->
+-        <meta-data
+-            android:name="google_analytics_adid_collection_enabled"
+-            android:value="false" />
+-
+-        <meta-data
+-            android:name="google_analytics_automatic_screen_reporting_enabled"
+-            android:value="false" />
+-
+-        <meta-data
+-            android:name="google_analytics_default_allow_ad_personalization_signals"
+-            android:value="false" />
+-    </application>
+-</manifest>
+diff --git a/telemetry/src/noop/AndroidManifest.xml b/telemetry/src/noop/AndroidManifest.xml
+deleted file mode 100644
+index 8072ee0..0000000
+--- a/telemetry/src/noop/AndroidManifest.xml
++++ /dev/null
+@@ -1,2 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<manifest />
+diff --git a/telemetry/src/noop/kotlin/mihon/telemetry/TelemetryConfig.kt b/telemetry/src/noop/kotlin/mihon/telemetry/TelemetryConfig.kt
+deleted file mode 100644
+index e238db0..0000000
+--- a/telemetry/src/noop/kotlin/mihon/telemetry/TelemetryConfig.kt
++++ /dev/null
+@@ -1,12 +0,0 @@
+-package mihon.telemetry
+-
+-import android.content.Context
+-
+-@Suppress("UNUSED_PARAMETER")
+-object TelemetryConfig {
+-    fun init(context: Context) = Unit
+-
+-    fun setAnalyticsEnabled(enabled: Boolean) = Unit
+-
+-    fun setCrashlyticsEnabled(enabled: Boolean) = Unit
+-}
