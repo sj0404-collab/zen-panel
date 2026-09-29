@@ -1,0 +1,151 @@
+diff --git a/android/app/build.gradle.kts b/android/app/build.gradle.kts
+index dce92b0..ae23168 100644
+--- a/android/app/build.gradle.kts
++++ b/android/app/build.gradle.kts
+@@ -69,6 +69,8 @@ android {
+         versionName = runGit("describe", "--tags", "--abbrev=0")?.removePrefix("v") ?: "1.0.0"
+         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+         buildConfigField("String", "LICENSE_PUBKEY", "\"${licensePublicKey()}\"")
++        buildConfigField("String", "SHARED_LICENSE_KEY", "\"${sharedLicenseKey()}\"")
++        buildConfigField("String", "UPDATE_REPO", "\"${updateRepo()}\"")
+     }
+ 
+     signingConfigs {
+@@ -169,6 +171,32 @@ fun licensePublicKey(): String {
+     return "DEMO00000000000000000000000000000000000000000000000000000000000000"
+ }
+ 
++/**
++ * The key every build carries in it: the app activates itself with this one, so
++ * a published release is usable by anyone without pasting anything. It is public
++ * by design - whoever holds the APK can read it - so the license gate is a
++ * formality here, not a protection.
++ *
++ * The file is written by tools/keygen (see docs/PLAN.md §2.3); keep it in sync
++ * with license.pubkey, or the app falls back to the activation screen.
++ */
++fun sharedLicenseKey(): String {
++    val override = (project.findProperty("sharedLicenseKey") as String?)?.trim()
++    if (!override.isNullOrEmpty()) return override
++    val file = rootProject.file("shared-license.key")
++    if (!file.isFile) return ""
++    val key = file.readText().trim()
++    require('"' !in key && '\\' !in key) { "shared-license.key is not a plain PRK1 key" }
++    return key
++}
++
++/** Where the in-app updater looks for releases: owner/name of the GitHub repository. */
++fun updateRepo(): String {
++    val override = (project.findProperty("updateRepo") as String?)?.trim()
++    if (!override.isNullOrEmpty()) return override
++    return "sj0404-collab/pocketrun"
++}
++
+ dependencies {
+     implementation("androidx.core:core-ktx:1.13.1")
+     implementation("androidx.activity:activity-compose:1.9.3")
+diff --git a/android/app/src/main/java/dev/pocketrun/license/LicenseManager.kt b/android/app/src/main/java/dev/pocketrun/license/LicenseManager.kt
+index ae1bbb5..e8b5ca0 100644
+--- a/android/app/src/main/java/dev/pocketrun/license/LicenseManager.kt
++++ b/android/app/src/main/java/dev/pocketrun/license/LicenseManager.kt
+@@ -11,12 +11,18 @@ import kotlinx.coroutines.flow.asStateFlow
+  * re-verified on every launch and whenever the user pastes a new one; nothing is
+  * cached as "already validated".
+  *
++ * [sharedKey] is the key the build itself carries: it is tried first, so a
++ * published release works for everyone without anyone pasting anything. The
++ * activation screen is still there for a key of one's own, and one that verifies
++ * is stored and used instead of the shared one.
++ *
+  * Verification uses [MonotonicClock], so turning the device clock back cannot
+  * bring an expired key back to life.
+  */
+ class LicenseManager(
+     context: Context,
+     private val publicKey: String,
++    private val sharedKey: String = "",
+     private val clock: MonotonicClock = MonotonicClock.forContext(context),
+ ) {
+     private val prefs: SharedPreferences =
+@@ -31,6 +37,7 @@ class LicenseManager(
+             val claims: LicenseFormat.Claims,
+             val fingerprint: String,
+             val daysRemaining: Long?,
++            val isShared: Boolean = false,
+         ) : LicenseState {
+             val canUseAgent: Boolean get() = claims.plan in AGENT_PLANS
+         }
+@@ -48,11 +55,7 @@ class LicenseManager(
+         return when (val outcome = LicenseVerifier.verify(key, publicKey, clock.now())) {
+             is LicenseVerifier.Outcome.Valid -> {
+                 prefs.edit().putString(KEY, key).apply()
+-                _state.value = LicenseState.Active(
+-                    claims = outcome.claims,
+-                    fingerprint = outcome.keyFingerprint,
+-                    daysRemaining = LicenseVerifier.daysRemaining(outcome.claims, clock.now()),
+-                )
++                _state.value = outcome.toActive(shared = false)
+                 true
+             }
+ 
+@@ -75,18 +78,14 @@ class LicenseManager(
+ 
+     fun forget() {
+         prefs.edit().remove(KEY).apply()
+-        _state.value = LicenseState.NeedsActivation
++        _state.value = sharedState()
+     }
+ 
+     private fun evaluate(): LicenseState {
+         val stored = prefs.getString(KEY, null)
+-        if (stored.isNullOrBlank()) return LicenseState.NeedsActivation
+-        return when (val outcome = LicenseVerifier.verify(stored, publicKey, clock.now())) {
+-            is LicenseVerifier.Outcome.Valid -> LicenseState.Active(
+-                claims = outcome.claims,
+-                fingerprint = outcome.keyFingerprint,
+-                daysRemaining = LicenseVerifier.daysRemaining(outcome.claims, clock.now()),
+-            )
++        if (stored.isNullOrBlank()) return sharedState()
++        return when (val outcome = LicenseVerifier.verify(LicenseFormat.normalize(stored), publicKey, clock.now())) {
++            is LicenseVerifier.Outcome.Valid -> outcome.toActive(shared = false)
+ 
+             is LicenseVerifier.Outcome.Expired ->
+                 LicenseState.Rejected(
+@@ -101,6 +100,29 @@ class LicenseManager(
+         }
+     }
+ 
++    /**
++     * The key the build carries. A build whose shared key does not match its own
++     * public key is broken, and that must not lock the user out of the activation
++     * screen - so an unusable shared key is simply not used.
++     */
++    private fun sharedState(): LicenseState {
++        val key = LicenseFormat.normalize(sharedKey)
++        if (key.isEmpty()) return LicenseState.NeedsActivation
++        val outcome = LicenseVerifier.verify(key, publicKey, clock.now())
++        return if (outcome is LicenseVerifier.Outcome.Valid) {
++            outcome.toActive(shared = true)
++        } else {
++            LicenseState.NeedsActivation
++        }
++    }
++
++    private fun LicenseVerifier.Outcome.Valid.toActive(shared: Boolean): LicenseState.Active = LicenseState.Active(
++        claims = claims,
++        fingerprint = keyFingerprint,
++        daysRemaining = LicenseVerifier.daysRemaining(claims, clock.now()),
++        isShared = shared,
++    )
++
+     companion object {
+         private const val KEY = "key"
+         private val AGENT_PLANS = setOf("pro", "team", "lifetime")
+diff --git a/android/license.pubkey b/android/license.pubkey
+index a99090d..d5ce61c 100644
+--- a/android/license.pubkey
++++ b/android/license.pubkey
+@@ -1 +1 @@
+-QbK7WpRNmZszTrer9geqY_dPlnHg8fVfvn0hwbft5K4
++VCflYJMyV5SNSnwj4WNy_1axE7VX8tst8je74biAMX4
+\ No newline at end of file
