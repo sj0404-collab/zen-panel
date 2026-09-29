@@ -6412,6 +6412,19 @@ index 538e257..0000000
 -        }
 -    }
 -}
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/browse/migration/search/MigrateSourceSearchScreen.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/browse/migration/search/MigrateSourceSearchScreen.kt
+index 94fa3d7..cd9df73 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/browse/migration/search/MigrateSourceSearchScreen.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/browse/migration/search/MigrateSourceSearchScreen.kt
+@@ -157,7 +157,7 @@ data class MigrateSourceSearchScreen(
+                     onComplete = {
+                         scope.launch {
+                             navigator.popUntilRoot()
+-                            HomeScreen.openTab(HomeScreen.Tab.Browse())
++                            HomeScreen.openTab(HomeScreen.Tab.Browse)
+                             navigator.push(MangaScreen(dialog.target.id))
+                         }
+                     },
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/browse/source/browse/BrowseSourceScreen.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/browse/source/browse/BrowseSourceScreen.kt
 index 792d394..994d0d2 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/ui/browse/source/browse/BrowseSourceScreen.kt
@@ -6596,7 +6609,7 @@ index bf37729..36ba239 100644
  
          /**
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/main/MainActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/main/MainActivity.kt
-index 445d4aa..2608cb1 100644
+index 445d4aa..a5254e4 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/ui/main/MainActivity.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/ui/main/MainActivity.kt
 @@ -70,7 +70,6 @@ import eu.kanade.presentation.components.AppStateBanners
@@ -6642,7 +6655,18 @@ index 445d4aa..2608cb1 100644
              Constants.SHORTCUT_DOWNLOADS -> {
                  navigator.popUntilRoot()
                  HomeScreen.Tab.More(toDownloads = true)
-@@ -508,13 +495,6 @@ class MainActivity : BaseActivity() {
+@@ -496,9 +483,8 @@ class MainActivity : BaseActivity() {
+             INTENT_SEARCH -> {
+                 val query = intent.getStringExtra(INTENT_SEARCH_QUERY)
+                 if (!query.isNullOrEmpty()) {
+-                    val filter = intent.getStringExtra(INTENT_SEARCH_FILTER)
+                     navigator.popUntilRoot()
+-                    navigator.push(GlobalSearchScreen(query, filter))
++                    navigator.push(GlobalSearchScreen(query))
+                 }
+                 null
+             }
+@@ -508,13 +494,6 @@ class MainActivity : BaseActivity() {
                      navigator.popUntilRoot()
                      navigator.push(RestoreBackupScreen(intent.data.toString()))
                  }
@@ -6656,7 +6680,7 @@ index 445d4aa..2608cb1 100644
                  null
              }
              else -> return false
-@@ -528,11 +508,6 @@ class MainActivity : BaseActivity() {
+@@ -528,18 +507,12 @@ class MainActivity : BaseActivity() {
          return true
      }
  
@@ -6668,6 +6692,13 @@ index 445d4aa..2608cb1 100644
      companion object {
          /** Extra: открыть вкладку «AI» (кнопка «Открыть AI-чат» в настройках). */
          const val EXTRA_OPEN_AI_CHAT = "open_ai_chat"
+ 
+         const val INTENT_SEARCH = "eu.kanade.tachiyomi.SEARCH"
+         const val INTENT_SEARCH_QUERY = "query"
+-        const val INTENT_SEARCH_FILTER = "filter"
+     }
+ }
+ 
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/util/CrashLogUtil.kt b/app/src/main/java/eu/kanade/tachiyomi/util/CrashLogUtil.kt
 index ec3f17b..67d5d1d 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/util/CrashLogUtil.kt
