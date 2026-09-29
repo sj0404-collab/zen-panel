@@ -1,0 +1,854 @@
+diff --git a/MANIFEST.md b/MANIFEST.md
+index cfc8afe..3e27208 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -15,9 +15,3 @@
+ 4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи
+    и не логируй его значение.
+ 5. Готовые сборки/артефакты клади в /home/runner/hub-work/yomikai/tmp — их видно вкладкой «Файлы».
+-6. Историю текущего агента храни в этом репозитории (/home/runner/hub-work/yomikai/code), а не во временных папках.
+-7. После внесения исправлений автоматически создавай коммит и отправляй его в текущую ветку репозитория.
+-8. Все сборки запускай через GitHub Actions/workflows; не запускай сборки внутри локального окружения.
+-9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
+-10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
+-11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 7a60a3f..557d215 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -39,6 +39,12 @@
+          не гасился системой. -->
+     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
++    <!-- Захват экрана рамкой оверлея. С Android 14 (targetSdk 36) система
++         требует, чтобы приложение ДО вызова getMediaProjection() держало
++         работающий foreground service с типом mediaProjection и объявленным
++         правом — иначе вызов падает с SecurityException и рамка молча не
++         читает ничего. -->
++    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+     <!-- v1.9.72: STT для игр — слушаем речь микрофоном (реал-тайм),
+          английские голоса → текст → русские голоса. -->
+     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+@@ -267,7 +273,40 @@
+         <service
+             android:name=".ui.overlay.OcrOverlayService"
+             android:exported="false"
+-            android:foregroundServiceType="mediaPlayback" />
++            android:foregroundServiceType="mediaPlayback|mediaProjection" />
++
++        <!--
++             Прозрачная activity: только чтобы показать системный диалог
++             захвата экрана. MediaProjection нельзя запустить из сервиса,
++             поэтому оверлей поднимает её, а результат уходит обратно в
++             сервис. Видимого содержимого у неё нет.
++        -->
++        <activity
++            android:name=".ui.overlay.OcrCaptureActivity"
++            android:excludeFromRecents="true"
++            android:exported="false"
++            android:noHistory="true"
++            android:taskAffinity=""
++            android:theme="@style/Theme.Tachiyomi.CaptureDialog" />
++
++        <!--
++             Служба доступности существует ровно для одной вещи: отправлять
++             свайпы чужому приложению, чтобы рамка поверх окна листала его
++             самостоятельно. Ни события не читает, ни узлы не обходит, ни
++             ничего не выполняет — только dispatchGesture по координатам.
++             По умолчанию выключена, включается читателем в настройках. -->
++        <service
++            android:name=".ui.overlay.OverlayGestureService"
++            android:exported="true"
++            android:label="@string/ocr_overlay_gesture_service"
++            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
++            <intent-filter>
++                <action android:name="android.accessibilityservice.AccessibilityService" />
++            </intent-filter>
++            <meta-data
++                android:name="android.accessibilityservice"
++                android:resource="@xml/ocr_overlay_gesture_service" />
++        </service>
+ 
+         <provider
+             android:name="androidx.core.content.FileProvider"
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/track/hikka/dto/HKPagination.kt b/app/src/main/java/eu/kanade/tachiyomi/data/track/hikka/dto/HKPagination.kt
+index 3c7e5f2..e4c93fd 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/track/hikka/dto/HKPagination.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/track/hikka/dto/HKPagination.kt
+@@ -2,9 +2,16 @@ package eu.kanade.tachiyomi.data.track.hikka.dto
+ 
+ import kotlinx.serialization.Serializable
+ 
++/**
++ * Разбивка ответа Hikka.
++ *
++ * Все поля с дефолтами: сервер отдаёт неполную пагинацию (например, без
++ * `pages` на пустой выдаче), а раньше такое приводило к падению разбора
++ * всего ответа — на экране манги появлялась ошибка вместо трекера.
++ */
+ @Serializable
+ data class HKPagination(
+-    val total: Int,
+-    val pages: Int,
+-    val page: Int,
++    val total: Int = 0,
++    val pages: Int = 0,
++    val page: Int = 0,
+ )
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/track/kavita/KavitaModels.kt b/app/src/main/java/eu/kanade/tachiyomi/data/track/kavita/KavitaModels.kt
+index 6f42f68..cb6e52e 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/track/kavita/KavitaModels.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/track/kavita/KavitaModels.kt
+@@ -12,14 +12,17 @@ data class SeriesDto(
+     val thumbnail_url: String? = "",
+     val localizedName: String? = "",
+     val sortName: String? = "",
+-    val pages: Int,
++    // Kavita не отдаёт pages для части серий (и для серий-заглушек вовсе).
++    // Без значения по умолчанию весь разбор DTO падал целиком, и страница
++    // манги показывала ошибку вместо трекера.
++    val pages: Int = 0,
+     val coverImageLocked: Boolean = true,
+-    val pagesRead: Int,
++    val pagesRead: Int = 0,
+     val userRating: Int? = 0,
+     val userReview: String? = "",
+-    val format: Int,
++    val format: Int = 0,
+     val created: String? = "",
+-    val libraryId: Int,
++    val libraryId: Int = 0,
+     val libraryName: String? = "",
+ ) {
+     fun toTrack(): TrackSearch = TrackSearch.create(TrackerManager.KAVITA).also {
+@@ -32,12 +35,12 @@ data class SeriesDto(
+ data class VolumeDto(
+     val id: Int,
+     val number: Int,
+-    val name: String,
+-    val pages: Int,
+-    val pagesRead: Int,
+-    val lastModified: String,
+-    val created: String,
+-    val seriesId: Int,
++    val name: String = "",
++    val pages: Int = 0,
++    val pagesRead: Int = 0,
++    val lastModified: String = "",
++    val created: String = "",
++    val seriesId: Int = 0,
+     val chapters: List<ChapterDto> = emptyList(),
+ )
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 9ec7a20..607fc40 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -794,6 +794,12 @@ class AutoReadEngine(
+      * Мгновенный скриншот: распознать текущий кадр выбранным движком (в т.ч.
+      * Glens) и сохранить в буфер «Скриншоты», НЕ озвучивая и не трогая
+      * состояние авточтения. Вызывается с плавающей кнопки читалки.
++     *
++     * Кадр читается ЗДЕСЬ, на потоке вызывающего, и в фон уходит его копия.
++     * Раньше фоновой задаче отдавался исходный битмап, а вызывающий
++     * переиспользовал его сразу же: гонка приводила к `getPixels` по
++     * переиспользованному битмапу, и приложение падало сразу после сообщения
++     * «Скриншот сохранён» — без всякой ошибки на экране.
+      */
+     fun captureInstantScreenshot(
+         bitmap: Bitmap,
+@@ -801,59 +807,67 @@ class AutoReadEngine(
+         pageIndex: Int,
+         scrollFraction: Float,
+     ) {
+-        if (prefs.autoScreenshotEnabled().get()) {
+-            scope.launch {
+-                // Скриншот в фоне и в минимально читаемом разрешении.
+-                val scaled = downscaleForScan(bitmap)
+-                try {
+-                    val result = try {
+-                        withTimeout(OCR_FRAME_TIMEOUT_MS) {
+-                            scanPageOcr.await(chapterId, pageIndex, scaled.toOcrImage())
+-                        }
+-                    } catch (e: TimeoutCancellationException) {
+-                        logcat(LogPriority.WARN) {
+-                            "Instant screenshot OCR timeout (${OCR_FRAME_TIMEOUT_MS}ms)"
+-                        }
+-                        return@launch
++        if (!prefs.autoScreenshotEnabled().get()) return
++        if (bitmap.isRecycled) return
++
++        // Фоновой задаче нужна ЕЁ копия. Кадр вызывающего может быть
++        // переиспользован сразу после возврата, а уменьшение не всегда
++        // требуется — тогда downscaleForScan отдаёт тот же объект, и гонка
++        // вернулась бы вместе с падением по переиспользованному битмапу.
++        val scaled = downscaleForScan(bitmap).takeIf { it !== bitmap }
++            ?: runCatching { bitmap.copy(bitmap.config ?: android.graphics.Bitmap.Config.ARGB_8888, false) }
++                .getOrNull()
++            ?: return
++        scope.launch {
++            try {
++                val result = try {
++                    withTimeout(OCR_FRAME_TIMEOUT_MS) {
++                        scanPageOcr.await(chapterId, pageIndex, scaled.toOcrImage())
+                     }
+-                    // JPEG-кадр пишем ДО recycle: после него пикселей не будет.
+-                    val jpeg = runCatching { encodeJpeg(scaled, JPEG_QUALITY) }.getOrNull()
+-                    val width = scaled.width
+-                    val height = scaled.height
+-                    if (result.regions.isEmpty()) return@launch
+-                    val ordered = orderRegions(
+-                        result.regions.map {
+-                            Line(
+-                                text = it.text,
+-                                boundingBox = it.boundingBox,
+-                            )
+-                        },
+-                        OcrRegionRules.readingOrderFor(prefs),
+-                    )
+-                    OcrScreenshotBuffer.add(
+-                        chapterId = chapterId,
+-                        pageIndex = pageIndex,
+-                        scrollFraction = scrollFraction,
+-                        regions = ordered.mapIndexed { idx, line ->
+-                            OcrRegion(
+-                                order = idx,
+-                                text = line.text,
+-                                boundingBox = line.boundingBox,
+-                                textOrientation = OcrTextOrientation.Horizontal,
+-                            )
+-                        },
+-                        engineUsed = result.ocrModel.name.lowercase(),
+-                        imageWidth = width,
+-                        imageHeight = height,
+-                        imageJpeg = jpeg,
+-                    )
+-                } catch (e: CancellationException) {
+-                    throw e
+-                } catch (e: Exception) {
+-                    logcat(LogPriority.WARN, e) { "Instant screenshot OCR failed" }
+-                } finally {
+-                    if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
++                } catch (e: TimeoutCancellationException) {
++                    logcat(LogPriority.WARN) {
++                        "Instant screenshot OCR timeout (${OCR_FRAME_TIMEOUT_MS}ms)"
++                    }
++                    return@launch
+                 }
++                // JPEG-кадр пишем ДО recycle: после него пикселей не будет.
++                val jpeg = runCatching { encodeJpeg(scaled, JPEG_QUALITY) }.getOrNull()
++                val width = scaled.width
++                val height = scaled.height
++                if (result.regions.isEmpty()) return@launch
++                val ordered = orderRegions(
++                    result.regions.map {
++                        Line(
++                            text = it.text,
++                            boundingBox = it.boundingBox,
++                        )
++                    },
++                    OcrRegionRules.readingOrderFor(prefs),
++                )
++                OcrScreenshotBuffer.add(
++                    chapterId = chapterId,
++                    pageIndex = pageIndex,
++                    scrollFraction = scrollFraction,
++                    regions = ordered.mapIndexed { idx, line ->
++                        OcrRegion(
++                            order = idx,
++                            text = line.text,
++                            boundingBox = line.boundingBox,
++                            textOrientation = OcrTextOrientation.Horizontal,
++                        )
++                    },
++                    engineUsed = result.ocrModel.name.lowercase(),
++                    imageWidth = width,
++                    imageHeight = height,
++                    imageJpeg = jpeg,
++                )
++            } catch (e: CancellationException) {
++                throw e
++            } catch (e: Exception) {
++                logcat(LogPriority.WARN, e) { "Instant screenshot OCR failed" }
++            } finally {
++                // Переиспользуем только копию: кадр вызывающего остаётся его.
++                if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
+             }
+         }
+     }
+@@ -1558,6 +1572,8 @@ class AutoReadEngine(
+ 
+         /** Возвращает кадр в минимально читаемом разрешении (сам же, если он уже мал). */
+         private fun downscaleForScan(src: Bitmap): Bitmap {
++            // Переиспользованный кадр отдавать нельзя: следующий же getPixels
++            // на нём роняет процесс. Лучше пустой результат, чем падение.
+             if (src.isRecycled) return src
+             val longEdge = maxOf(src.width, src.height)
+             if (longEdge <= OCR_SCAN_MAX_EDGE) return src
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/di/AppModule.kt b/app/src/main/java/eu/kanade/tachiyomi/di/AppModule.kt
+index e98e8d2..cb9fa5b 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/di/AppModule.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/di/AppModule.kt
+@@ -92,6 +92,10 @@ class AppModule(val app: Application) : InjektModule {
+             Json {
+                 ignoreUnknownKeys = true
+                 explicitNulls = false
++                // Ответы трекеров и источников приходят неполными: вместо
++                // «pages»: null или «rating»: "N/A" раньше падал весь разбор
++                // ответа. Теперь такое значение заменяется дефолтом типа.
++                coerceInputValues = true
+             }
+         }
+         addSingletonFactory<XML> {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModel.kt
+index be9234e..ff1b6f9 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModel.kt
+@@ -304,7 +304,17 @@ class MangaScreenModel(
+             }
+ 
+             screenModelScope.launch {
+-                snackbarHostState.showSnackbar(message = message)
++                // Повтор прямо в сообщении: строка с ошибкой исчезает через
++                // несколько секунд, а список глав остаётся пустым, и «0 глав»
++                // выглядит как правда. Кнопка «Повторить» возвращает список.
++                val retry = snackbarHostState.showSnackbar(
++                    message = message,
++                    actionLabel = "Повторить",
++                    withDismissAction = true,
++                )
++                if (retry == SnackbarResult.ActionPerformed) {
++                    fetchAllFromSource(manualFetch = true)
++                }
+             }
+         }
+     }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt
+index 2f78969..5b69225 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt
+@@ -5,15 +5,17 @@ import android.app.NotificationChannel
+ import android.app.NotificationManager
+ import android.app.PendingIntent
+ import android.app.Service
++import android.app.usage.UsageStatsManager
+ import android.content.ClipData
+ import android.content.ClipboardManager
+ import android.content.Context
+ import android.content.Intent
+ import android.content.pm.PackageManager
++import android.content.pm.ServiceInfo
+ import android.graphics.Canvas
+ import android.graphics.Paint
+-import android.app.usage.UsageStatsManager
+ import android.graphics.PixelFormat
++import android.graphics.Rect
+ import android.graphics.RectF
+ import android.graphics.drawable.GradientDrawable
+ import android.os.Build
+@@ -21,6 +23,7 @@ import android.os.Handler
+ import android.os.IBinder
+ import android.os.Looper
+ import android.provider.Settings
++import kotlinx.coroutines.cancel
+ import android.view.Gravity
+ import android.view.MotionEvent
+ import android.view.View
+@@ -73,6 +76,11 @@ class OcrOverlayService : Service() {
+         /** Как часто проверять, не открыто ли наше собственное приложение. */
+         private const val FOREGROUND_POLL_MS = 700L
+ 
++        /** Действие: начать чтение рамки с уже полученным разрешением. */
++        private const val ACTION_START_READING = "eu.kanade.tachiyomi.ocr.START_READING"
++        private const val EXTRA_RESULT_CODE = "resultCode"
++        private const val EXTRA_RESULT_DATA = "resultData"
++
+         fun canDrawOverlays(context: Context): Boolean =
+             Settings.canDrawOverlays(context)
+ 
+@@ -142,6 +150,22 @@ class OcrOverlayService : Service() {
+         fun selectRegion(context: Context) {
+             startWith(context, intentFor(context).setAction(ACTION_SELECT_REGION))
+         }
++
++        /**
++         * Начать чтение рамки с уже полученным разрешением на захват.
++         *
++         * Разрешение добывает [OcrCaptureActivity]: сервис не может
++         * показать системный диалог и получить его результат.
++         */
++        fun startReading(context: Context, resultCode: Int, data: Intent) {
++            startWith(
++                context,
++                intentFor(context)
++                    .setAction(ACTION_START_READING)
++                    .putExtra(EXTRA_RESULT_CODE, resultCode)
++                    .putExtra(EXTRA_RESULT_DATA, data),
++            )
++        }
+     }
+ 
+     private lateinit var wm: WindowManager
+@@ -173,6 +197,78 @@ class OcrOverlayService : Service() {
+     private var selectorRoot: FrameLayout? = null
+     private var selectorDraw: RegionDrawView? = null
+ 
++    // ---- Чтение рамки поверх чужого приложения ----
++    private var capture: OverlayCaptureEngine? = null
++    private var autoReader: OverlayAutoReader? = null
++    private var readJob: kotlinx.coroutines.Job? = null
++    private var readProjection: android.media.projection.MediaProjection? = null
++    private var readButton: Button? = null
++
++    /** Прямоугольник зафиксированной области в пикселях экрана. */
++    private fun fixedRegionRect(): Rect? {
++        val region = parseRegion() ?: return null
++        val dm = resources.displayMetrics
++        return Rect(
++            (region.l * dm.widthPixels).toInt(),
++            (region.t * dm.heightPixels).toInt(),
++            (region.r * dm.widthPixels).toInt(),
++            (region.b * dm.heightPixels).toInt(),
++        ).takeIf { it.width() > 0 && it.height() > 0 }
++    }
++
++    /**
++     * Включает режим чтения.
++     *
++     * Захват экрана разрешается системным диалогом, поэтому его нельзя
++     * начать из фонового сервиса молча: вызывающий обязан получить
++     * [MediaProjection] из [MediaProjectionManager.getMediaProjection].
++     */
++    fun startReading(projection: android.media.projection.MediaProjection) {
++        val rect = fixedRegionRect()
++        if (rect == null) {
++            toast("Сначала задайте область рамки")
++            return
++        }
++        if (!OverlayGestureService.isEnabled()) {
++            toast("Включите Службу доступности, чтобы листать самому")
++        }
++        stopReading()
++        readProjection = projection
++        val engine = OverlayCaptureEngine(applicationContext, projection)
++        capture = engine
++        val reader = OverlayAutoReader(applicationContext, engine)
++        autoReader = reader
++        readJob = reader.start(
++            scope = serviceScope,
++            region = rect,
++            onPage = { text -> uiHandler.post { setBubble(text) } },
++            onNote = { note ->
++                uiHandler.post {
++                    setBubble(note)
++                    readButton?.text = if (isReading) "⏹ Стоп-чтение" else "▶ Читать рамку"
++                }
++            },
++        )
++        toast("Чтение: ${reader.engineTitle()}")
++    }
++
++    fun stopReading() {
++        readJob?.cancel()
++        readJob = null
++        runCatching { capture?.stop() }
++        capture = null
++        runCatching { readProjection?.stop() }
++        readProjection = null
++        autoReader = null
++        runCatching { readEngine.stop() }
++    }
++
++    val isReading: Boolean get() = readJob?.isActive == true
++
++    private val serviceScope = kotlinx.coroutines.CoroutineScope(
++        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate,
++    )
++
+     private fun dp(v: Float): Int = (v * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+ 
+     override fun onCreate() {
+@@ -205,6 +301,24 @@ class OcrOverlayService : Service() {
+                 applyClipboardWatch()
+                 applyFrame()
+             }
++            ACTION_START_READING -> {
++                val code = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
++                val data: Intent? = intent.getParcelableExtra(EXTRA_RESULT_DATA)
++                if (data == null) {
++                    toast("Разрешение на захват не получено")
++                } else {
++                    val projection = runCatching {
++                        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE)
++                            as android.media.projection.MediaProjectionManager
++                        mpm.getMediaProjection(code, data)
++                    }.getOrNull()
++                    if (projection == null) {
++                        toast("Не удалось начать захват экрана")
++                    } else {
++                        startReading(projection)
++                    }
++                }
++            }
+         }
+         applyClipboardWatch()
+         applyFrame()
+@@ -286,7 +400,18 @@ class OcrOverlayService : Service() {
+             .setSmallIcon(android.R.drawable.ic_menu_view)
+             .setOngoing(true)
+         if (contentIntent != null) b.setContentIntent(contentIntent)
+-        startForeground(NOTIF_ID, b.build())
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++            // Тип mediaProjection обязателен: без него на Android 14+ система
++            // не отдаст MediaProjection и захват рамки не запустится.
++            startForeground(
++                NOTIF_ID,
++                b.build(),
++                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
++                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
++            )
++        } else {
++            startForeground(NOTIF_ID, b.build())
++        }
+     }
+ 
+     // ---------- Озвучка (тот же движок, что в читалке) ----------
+@@ -722,6 +847,20 @@ class OcrOverlayService : Service() {
+         row3.addView(textButton("▦") { toggleFrame() })
+         content.addView(row3, rowParams())
+ 
++        // Чтение рамки: захват экрана, распознавание, озвучка и своя
++        // прокрутка. Захват разрешается системным диалогом, а сервис не
++        // умеет просить разрешения — этим занимается прозрачная activity.
++        readButton = textButton(if (isReading) "⏹ Стоп-чтение" else "▶ Читать рамку") {
++            if (isReading) {
++                stopReading()
++                uiHandler.post { readButton?.text = "▶ Читать рамку" }
++            } else {
++                OcrCaptureActivity.request(applicationContext)
++            }
++        }
++        content.addView(readButton, rowParams())
++
++
+         // Ручной ввод (если в другом приложении нельзя копировать).
+         val inputEdit = EditText(this)
+         inputEdit.hint = "Текст для бабла…"
+@@ -923,6 +1062,10 @@ class OcrOverlayService : Service() {
+     }
+ 
+     override fun onDestroy() {
++        stopReading()
++        // Цикл чтения живёт в serviceScope: без отмены задача продолжала бы
++        // держать сервис и захват после его смерти.
++        serviceScope.cancel()
+         foregroundHandler.removeCallbacks(foregroundCheck)
+         runCatching { stt?.destroy() }
+         stt = null
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlaySettingsScreen.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlaySettingsScreen.kt
+index cf85096..5f6ccec 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlaySettingsScreen.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlaySettingsScreen.kt
+@@ -81,6 +81,8 @@ object OcrOverlaySettingsScreen : Screen {
+             .collectAsState(initial = prefs.overlayWatchClipboard().get())
+         val appEngine by prefs.appOcrEngine().changes()
+             .collectAsState(initial = prefs.appOcrEngine().get())
++        val ownEngine by prefs.overlayOwnEngine().changes()
++            .collectAsState(initial = prefs.overlayOwnEngine().get())
+ 
+         val canDraw = OcrOverlayService.canDrawOverlays(context)
+ 
+@@ -184,7 +186,45 @@ object OcrOverlaySettingsScreen : Screen {
+                     },
+                 )
+ 
++                OverlaySectionTitle("Чтение рамки и своя прокрутка")
++                Text(
++                    text = "Кнопка «▶ Читать рамку» на панели снимает область экрана, " +
++                        "распознаёт, озвучивает и листает приложение СВОИМ свайпом — " +
++                        "не полагаясь на его собственную прокрутку. Дальше листать " +
++                        "чужое приложение можно только жестом, а жест умеет " +
++                        "отправлять Служба доступности. Она ничего не читает и " +
++                        "ничего не выполняет — только свайп по вашей команде.",
++                    style = MaterialTheme.typography.bodySmall,
++                    color = MaterialTheme.colorScheme.onSurfaceVariant,
++                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
++                )
++                SwitchRow(
++                    title = "Служба доступности включена",
++                    subtitle = "Нужна для прокрутки. Если выключена, чтение озвучивает " +
++                        "кадр, но листать не сможет.",
++                    checked = OverlayGestureService.isEnabled(),
++                    onChange = { context.requestGestureService() },
++                )
++                Text(
++                    text = "Пауза после реплики: ${prefs.overlayReadPause().get()} мс • " +
++                        "ожидание перерисовки: ${prefs.overlayScrollSettle().get()} мс • " +
++                        "длина свайпа: ${prefs.overlayScrollStep().get()}% высоты области",
++                    style = MaterialTheme.typography.bodySmall,
++                    color = MaterialTheme.colorScheme.onSurfaceVariant,
++                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
++                )
++
+                 OverlaySectionTitle("Технология распознавания")
++                SwitchRow(
++                    title = "Свой движок для оверлея",
++                    subtitle = "Выключено — читает тем же движком, что и читалка. " +
++                        "Включено — собственным, заданным ниже.",
++                    checked = ownEngine,
++                    onChange = {
++                        prefs.overlayOwnEngine().set(it)
++                        OcrOverlayService.refresh(context)
++                    },
++                )
+                 Text(
+                     text = "Движок, которым оверлей читает текст поверх приложений.",
+                     style = MaterialTheme.typography.bodySmall,
+diff --git a/app/src/main/java/mihon/domain/source/interactor/UpdateMangaFromRemote.kt b/app/src/main/java/mihon/domain/source/interactor/UpdateMangaFromRemote.kt
+index d81914f..41ede6d 100644
+--- a/app/src/main/java/mihon/domain/source/interactor/UpdateMangaFromRemote.kt
++++ b/app/src/main/java/mihon/domain/source/interactor/UpdateMangaFromRemote.kt
+@@ -6,8 +6,12 @@ import eu.kanade.domain.manga.model.hasCustomCover
+ import eu.kanade.domain.manga.model.toSManga
+ import eu.kanade.tachiyomi.data.cache.CoverCache
+ import eu.kanade.tachiyomi.data.download.DownloadManager
++import eu.kanade.tachiyomi.network.HttpException
+ import eu.kanade.tachiyomi.source.Source
+ import eu.kanade.tachiyomi.source.model.SManga
++import eu.kanade.tachiyomi.source.model.SMangaUpdate
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.delay
+ import logcat.LogPriority
+ import mihon.domain.source.models.RemoteMangaUpdate
+ import tachiyomi.core.common.util.lang.withIOContext
+@@ -20,6 +24,9 @@ import tachiyomi.domain.manga.model.MangaUpdate
+ import tachiyomi.domain.manga.repository.MangaRepository
+ import tachiyomi.domain.source.service.SourceManager
+ import tachiyomi.source.local.isLocal
++import java.io.InterruptedIOException
++import java.net.SocketTimeoutException
++import java.net.UnknownHostException
+ import java.time.Instant
+ 
+ class UpdateMangaFromRemote(
+@@ -60,7 +67,7 @@ class UpdateMangaFromRemote(
+             val chapters = chapterRepository.getChapterByMangaId(manga.id)
+                 .sortedBy { it.sourceOrder }
+             val update = withIOContext {
+-                source.getMangaUpdate(
++                source.getMangaUpdateWithRetry(
+                     manga = manga.toSManga(),
+                     chapters = chapters.map(Chapter::toSChapter),
+                     fetchDetails = fetchDetails,
+@@ -84,6 +91,47 @@ class UpdateMangaFromRemote(
+         }
+     }
+ 
++    /**
++     * Забрать обновление у источника, повторив запрос при временной ошибке.
++     *
++     * Источники (особенно сайты без API) отдают 500/502/429 и рвут соединение
++     * без всякой причины: на второй попытке тот же запрос обычно проходит. Без
++     * повтора страница манги оставалась с «0 глав» и единственным следом была
++     * исчезающая строка ошибки. Повтор делается только для временных отказов:
++     * 404 или «источник не установлен» повторять бессмысленно.
++     */
++    private suspend fun Source.getMangaUpdateWithRetry(
++        manga: SManga,
++        chapters: List<eu.kanade.tachiyomi.source.model.SChapter>,
++        fetchDetails: Boolean,
++        fetchChapters: Boolean,
++    ): SMangaUpdate {
++        var lastError: Exception? = null
++        repeat(ATTEMPTS) { attempt ->
++            try {
++                return getMangaUpdate(manga, chapters, fetchDetails, fetchChapters)
++            } catch (e: CancellationException) {
++                throw e
++            } catch (e: Exception) {
++                if (!e.isTemporary()) throw e
++                lastError = e
++                logcat(LogPriority.WARN) { "Temporary source failure (${e.message}), attempt ${attempt + 1}" }
++                delay(RETRY_DELAY_MS * (attempt + 1))
++            }
++        }
++        throw lastError ?: IllegalStateException("Не удалось получить данные у источника")
++    }
++
++    /** Временный ли отказ: сервер перегружен, сеть дёрнулась, источник не ответил вовремя. */
++    private fun Exception.isTemporary(): Boolean = when (this) {
++        is HttpException -> code >= 500 || code == 408 || code == 429
++        is UnknownHostException -> true
++        is SocketTimeoutException -> true
++        is InterruptedIOException -> true
++        is java.net.ConnectException -> true
++        else -> message?.contains("Failed to connect", ignoreCase = true) == true
++    }
++
+     private suspend fun awaitUpdateFromSource(
+         localManga: Manga,
+         remoteManga: SManga,
+@@ -141,4 +189,12 @@ class UpdateMangaFromRemote(
+         }
+         return success
+     }
++
++    companion object {
++        /** Сколько раз пробуем достой запрос источника. */
++        private const val ATTEMPTS = 3
++
++        /** Пауза перед повтором, мс; растёт с каждой попыткой. */
++        private const val RETRY_DELAY_MS = 800L
++    }
+ }
+diff --git a/app/src/main/res/values/themes.xml b/app/src/main/res/values/themes.xml
+index aa405dc..972633d 100644
+--- a/app/src/main/res/values/themes.xml
++++ b/app/src/main/res/values/themes.xml
+@@ -535,6 +535,20 @@
+     <!-- Launch Screen -->
+     <!--===============-->
+ 
++    <!--
++         Прозрачная activity только для системного диалога захвата экрана.
++         На экране не видна ничего: своего содержимого у неё нет, она только
++         спрашивает разрешение и сразу закрывается.
++    -->
++    <style name="Theme.Tachiyomi.CaptureDialog" parent="Theme.Tachiyomi">
++        <item name="android:windowBackground">@android:color/transparent</item>
++        <item name="android:windowIsTranslucent">true</item>
++        <item name="android:windowContentOverlay">@null</item>
++        <item name="android:windowNoTitle">true</item>
++        <item name="android:windowAnimationStyle">@null</item>
++        <item name="android:backgroundDimEnabled">false</item>
++    </style>
++
+     <!--== Splash Theme ==-->
+     <style name="Theme.Tachiyomi.SplashScreen" parent="Theme.SplashScreen">
+         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_mihon_splash</item>
+diff --git a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+index 61c4f74..d500d10 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+@@ -194,8 +194,17 @@ class OcrRepositoryImpl(
+         ZEN_FREE,
+     }
+ 
+-    private fun selectedEngineType(): EngineType {
+-        val engine = when (ocrModelPref.get()) {
++    private fun selectedEngineType(): EngineType = engineTypeOf(ocrModelPref.get())
++
++    /**
++     * Модель в тип движка.
++     *
++     * Вынесено отдельно от [selectedEngineType], потому что оверле поверх
++     * чужого приложения распознаёт своим движком, а не тем, что выбран для
++     * манги, — и он тоже не должен молча уезжать в ML Kit на кириллице.
++     */
++    private fun engineTypeOf(model: OcrModel): EngineType {
++        val engine = when (model) {
+             OcrModel.CYRILLIC -> EngineType.CYRILLIC
+             OcrModel.MLKIT -> EngineType.MLKIT
+             // Old offline selections migrate transparently to the Russian
+@@ -451,10 +460,13 @@ class OcrRepositoryImpl(
+         return primaryText ?: throw lastError ?: OcrException.InitializationError()
+     }
+ 
+-    override suspend fun recognizeText(image: OcrImage): String {
++    override suspend fun recognizeText(image: OcrImage): String = recognizeText(image, null)
++
++    override suspend fun recognizeText(image: OcrImage, model: OcrModel?): String {
+         // Новый вызов — новый отчёт: без сброса неудача показала бы движок
+-        // ПРЕДЫДУщего распознавания.
++        // ПРЕДЫДУЩЕГО распознавания.
+         lastRecognizedEngine = null
++        val engine = model?.let(::engineTypeOf) ?: selectedEngineType()
+         return withActiveOperation {
+             submitTask(PrioritizedTaskQueue.Priority.HIGH) {
+                 image.useBitmap { bitmap ->
+@@ -467,7 +479,7 @@ class OcrRepositoryImpl(
+                     // пробуем вовсе. Крупный кроп оставляем как был.
+                     val tiny = minOf(bitmap.width, bitmap.height) < onlineMinSidePx
+                     recognizeWithFallback(
+-                        primary = selectedEngineType(),
++                        primary = engine,
+                         image = bitmap,
+                         fallbackBudgetMs = if (tiny) tinyFallbackBudgetMs else defaultFallbackBudgetMs,
+                         allowOnlineFallback = !tiny,
+@@ -476,6 +488,9 @@ class OcrRepositoryImpl(
+             }
+         }
+     }
++            }
++        }
++    }
+ 
+     /**
+      * Вопрос к vision-модели по выбранному движку.
+diff --git a/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt b/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
+index e8ca0a9..05d7eb3 100644
+--- a/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
++++ b/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
+@@ -8,6 +8,20 @@ import mihon.domain.ocr.model.OcrRegion
+ interface OcrRepository {
+     suspend fun recognizeText(image: OcrImage): String
+ 
++    /**
++     * Распознать картинку ЗАДАННЫМ движком, минуя выбор движка приложения.
++     *
++     * [recognizeText] всегда берёт движок из общей настройки — той, что
++     * настроена под мангу. Оверле поверх чужого приложения распознаёт совсем
++     * другой шрифт (игровой, мелкий, цветной), и для него нужен отдельный
++     * выбор. Без этой функции переключатель «свой движок у оверлея» был
++     * пустой надписью: на кнопке менялось только название, а распознавал всё
++     * равно движок читалки.
++     *
++     * @param model движок; null означает «как у читалки»
++     */
++    suspend fun recognizeText(image: OcrImage, model: OcrModel?): String
++
+     /**
+      * Движок, который ФАКТИЧЕСКИ вернул последний распознанный текст.
+      *
+diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+index ccfba97..c7635c1 100644
+--- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
++++ b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+@@ -432,6 +432,26 @@ class OcrPreferences(
+     /** Самому следить за буфером обмена и озвучивать новое. */
+     fun overlayWatchClipboard() = preferenceStore.getBoolean("pref_overlay_watch_clipboard", false)
+ 
++    // ---- Чтение рамки поверх чужого приложения ----
++
++    /**
++     * Брать для оверлея свой движок распознавания.
++     *
++     * Выключено — оверлей читает тем же движком, что и читалка. Включено —
++     * отдельным, заданным в [appOcrEngine]. Разделение нужно там, где у
++     * читалки движок подобран под мангу, а оверлею — под игровой шрифт.
++     */
++    fun overlayOwnEngine() = preferenceStore.getBoolean("pref_overlay_own_engine", false)
++
++    /** Пауза после конца реплики перед прокруткой, мс. */
++    fun overlayReadPause() = preferenceStore.getInt("pref_overlay_read_pause", 900)
++
++    /** Пауза после свайпа, пока приложение перерисует кадр, мс. */
++    fun overlayScrollSettle() = preferenceStore.getInt("pref_overlay_scroll_settle", 1200)
++
++    /** Длина свайпа в процентах высоты области. */
++    fun overlayScrollStep() = preferenceStore.getInt("pref_overlay_scroll_step", 45)
++
+     // ---- Озвучка книг (свои настройки, отдельно от читалки манги) ----
+     fun bookSpeechRate() = preferenceStore.getFloat("pref_book_speech_rate", 1.0f)
+     fun bookSpeechPitch() = preferenceStore.getFloat("pref_book_speech_pitch", 1.0f)
+diff --git a/i18n/src/commonMain/moko-resources/base/strings.xml b/i18n/src/commonMain/moko-resources/base/strings.xml
+index 2043264..175787d 100644
+--- a/i18n/src/commonMain/moko-resources/base/strings.xml
++++ b/i18n/src/commonMain/moko-resources/base/strings.xml
+@@ -1414,4 +1414,6 @@
+     <string name="pref_reader_actions_builtin">built-in</string>
+     <string name="constructor">Constructor</string>
+     <string name="constructor_summary">Tabs, panel modules, custom buttons: hide, reorder, create</string>
++    <string name="ocr_overlay_gesture_service">Yomikai — прокрутка рамки</string>
++    <string name="ocr_overlay_gesture_service_desc">Нужна только для прокрутки: чтобы рамка поверх окна могла листать приложение сама. Приложение не читает содержимое экрана и не выполняет действия — только отправляет свайп по вашей команде.</string>
+ </resources>
