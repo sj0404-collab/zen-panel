@@ -1,0 +1,544 @@
+diff --git a/.github/workflows/android.yml b/.github/workflows/android.yml
+index 3702390..480ff6d 100644
+--- a/.github/workflows/android.yml
++++ b/.github/workflows/android.yml
+@@ -51,6 +51,10 @@ jobs:
+         working-directory: android
+         run: ./gradlew --no-daemon :app:testDebugUnitTest
+ 
++      # The Python jail is plain CPython, so it is tested without an emulator.
++      - name: Python sandbox tests
++        run: python3 -m unittest discover -s android/app/src/test/python -v
++
+       - name: Assemble debug APK
+         working-directory: android
+         run: ./gradlew --no-daemon :app:assembleDebug
+diff --git a/.gitignore b/.gitignore
+index d5eb3a5..bac0b86 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -13,3 +13,5 @@ captures/
+ .externalNativeBuild/
+ .cxx/
+ .DS_Store
++__pycache__/
++*.pyc
+diff --git a/android/app/src/main/java/dev/pocketrun/core/Workspace.kt b/android/app/src/main/java/dev/pocketrun/core/Workspace.kt
+index 40c0550..b175453 100644
+--- a/android/app/src/main/java/dev/pocketrun/core/Workspace.kt
++++ b/android/app/src/main/java/dev/pocketrun/core/Workspace.kt
+@@ -2,6 +2,8 @@ package dev.pocketrun.core
+ 
+ import android.content.Context
+ import java.io.File
++import java.io.IOException
++import java.nio.file.Path
+ 
+ /**
+  * Every path the app touches lives under one of these roots. User code can reach
+@@ -25,15 +27,30 @@ class Workspace private constructor(val root: File) {
+     /**
+      * Resolves [candidate] against [base], returning null when it would leave the
+      * sandbox. Callers treat null as "path rejected" rather than "file missing".
++     *
++     * Symlinks are followed before the containment check, so a link inside the
++     * workspace that points at the app's private files (`shared_prefs/` with the
++     * activation key, other projects, the keystore) is rejected exactly like an
++     * absolute path would be. Paths that do not exist yet are resolved through
++     * their deepest existing ancestor, so `write`, `mkdir` and friends keep
++     * working for new files.
+      */
+     fun resolve(candidate: String, base: File = root): File? {
+         val target = File(candidate).let { if (it.isAbsolute) it else File(base, candidate) }
+-        val normalized = normalize(target.absolutePath)
+-        val normalizedRoot = normalize(root.absolutePath)
+-        if (normalized != normalizedRoot && !normalized.startsWith("$normalizedRoot${File.separator}")) {
+-            return null
+-        }
+-        return File(normalized)
++        val sandbox = realPath(root) ?: return null
++        val resolved = realPath(target) ?: return null
++        return resolved.takeIf { contains(it, sandbox) }
++    }
++
++    /**
++     * True when [file] really is inside the sandbox — symlinks resolved, not
++     * just the text of the path. For gates that must not be tricked by a path
++     * (`npx` bin resolution, script entry points).
++     */
++    fun isInside(file: File): Boolean {
++        val sandbox = realPath(root) ?: return false
++        val resolved = realPath(file) ?: return false
++        return contains(resolved, sandbox)
+     }
+ 
+     fun relativeTo(file: File): String {
+@@ -46,6 +63,40 @@ class Workspace private constructor(val root: File) {
+         }
+     }
+ 
++    private fun contains(file: File, sandbox: File): Boolean {
++        val path = trimSep(file.absolutePath)
++        val prefix = trimSep(sandbox.absolutePath)
++        return path == prefix || path.startsWith("$prefix${File.separator}")
++    }
++
++    /**
++     * The path with every symlink resolved. The deepest existing ancestor is
++     * canonicalized and the not-yet-created tail is appended, so callers can use
++     * this for paths they are about to create. Returns null only when even the
++     * root cannot be resolved, which cannot happen for a rooted path.
++     */
++    private fun realPath(file: File): File? {
++        val missing = ArrayDeque<String>()
++        var current: Path = file.absoluteFile.toPath().normalize()
++        while (true) {
++            val real = try {
++                current.toRealPath()
++            } catch (e: IOException) {
++                // Nothing there yet (or unreadable): canonicalize the parent and
++                // keep the missing name.
++                val name = current.fileName?.toString() ?: return null
++                missing.addLast(name)
++                current = current.parent ?: return null
++                continue
++            }
++            var result = real.toFile()
++            for (name in missing.asReversed()) result = File(result, name)
++            return result.absoluteFile
++        }
++    }
++
++    private fun trimSep(path: String): String = path.trimEnd(File.separatorChar).ifEmpty { File.separator }
++
+     private fun normalize(path: String): String {
+         val canonical = File(path).toPath().normalize()
+         return canonical.toString().trimEnd(File.separatorChar).ifEmpty { File.separator }
+diff --git a/android/app/src/main/java/dev/pocketrun/license/LicenseManager.kt b/android/app/src/main/java/dev/pocketrun/license/LicenseManager.kt
+index fd549f3..ae1bbb5 100644
+--- a/android/app/src/main/java/dev/pocketrun/license/LicenseManager.kt
++++ b/android/app/src/main/java/dev/pocketrun/license/LicenseManager.kt
+@@ -10,11 +10,14 @@ import kotlinx.coroutines.flow.asStateFlow
+  * Holds the activated key and exposes it as observable state. The key is
+  * re-verified on every launch and whenever the user pastes a new one; nothing is
+  * cached as "already validated".
++ *
++ * Verification uses [MonotonicClock], so turning the device clock back cannot
++ * bring an expired key back to life.
+  */
+ class LicenseManager(
+     context: Context,
+     private val publicKey: String,
+-    private val now: () -> Long = { System.currentTimeMillis() / 1000 },
++    private val clock: MonotonicClock = MonotonicClock.forContext(context),
+ ) {
+     private val prefs: SharedPreferences =
+         context.applicationContext.getSharedPreferences("license", Context.MODE_PRIVATE)
+@@ -42,13 +45,13 @@ class LicenseManager(
+             _state.value = LicenseState.Rejected("Enter a license key.")
+             return false
+         }
+-        return when (val outcome = LicenseVerifier.verify(key, publicKey, now())) {
++        return when (val outcome = LicenseVerifier.verify(key, publicKey, clock.now())) {
+             is LicenseVerifier.Outcome.Valid -> {
+                 prefs.edit().putString(KEY, key).apply()
+                 _state.value = LicenseState.Active(
+                     claims = outcome.claims,
+                     fingerprint = outcome.keyFingerprint,
+-                    daysRemaining = LicenseVerifier.daysRemaining(outcome.claims, now()),
++                    daysRemaining = LicenseVerifier.daysRemaining(outcome.claims, clock.now()),
+                 )
+                 true
+             }
+@@ -78,11 +81,11 @@ class LicenseManager(
+     private fun evaluate(): LicenseState {
+         val stored = prefs.getString(KEY, null)
+         if (stored.isNullOrBlank()) return LicenseState.NeedsActivation
+-        return when (val outcome = LicenseVerifier.verify(stored, publicKey, now())) {
++        return when (val outcome = LicenseVerifier.verify(stored, publicKey, clock.now())) {
+             is LicenseVerifier.Outcome.Valid -> LicenseState.Active(
+                 claims = outcome.claims,
+                 fingerprint = outcome.keyFingerprint,
+-                daysRemaining = LicenseVerifier.daysRemaining(outcome.claims, now()),
++                daysRemaining = LicenseVerifier.daysRemaining(outcome.claims, clock.now()),
+             )
+ 
+             is LicenseVerifier.Outcome.Expired ->
+diff --git a/android/app/src/main/java/dev/pocketrun/runtime/js/JsRuntime.kt b/android/app/src/main/java/dev/pocketrun/runtime/js/JsRuntime.kt
+index 2d5b029..5f9c1e9 100644
+--- a/android/app/src/main/java/dev/pocketrun/runtime/js/JsRuntime.kt
++++ b/android/app/src/main/java/dev/pocketrun/runtime/js/JsRuntime.kt
+@@ -223,11 +223,18 @@ class JsRuntime(
+         }
+     }
+ 
++    /**
++     * The script to evaluate, sandboxed: `require` is already gated by
++     * [sandboxFile], and the entry point needs the same check — otherwise a
++     * script outside the workspace (a path from a stale run, a package `bin`
++     * pointing at `../../../shared_prefs/…`) would be evaluated as JavaScript.
++     */
+     private fun readMainSource(request: ExecRequest): String {
+-        val f = File(request.target)
+-        if (!f.isFile) throw IllegalStateException("скрипт не найден: ${request.target}")
++        val file = workspace.resolve(request.target, request.cwd ?: workspace.root)
++            ?: throw IllegalStateException("путь вне рабочей папки отклонён: ${request.target}")
++        if (!file.isFile) throw IllegalStateException("скрипт не найден: ${request.target}")
+         // Bin scripts start with a shebang; Rhino has no '#' comments.
+-        return f.readText(Charsets.UTF_8).replace(Regex("^#![^\\n]*\\n?"), "")
++        return file.readText(Charsets.UTF_8).replace(Regex("^#![^\\n]*\\n?"), "")
+     }
+ 
+     private fun callGlobal(cx: Context, scope: Scriptable, name: String, args: () -> Array<Any?>): Any? {
+diff --git a/android/app/src/main/java/dev/pocketrun/runtime/npm/NpmRegistry.kt b/android/app/src/main/java/dev/pocketrun/runtime/npm/NpmRegistry.kt
+index 6a5fc89..0538daa 100644
+--- a/android/app/src/main/java/dev/pocketrun/runtime/npm/NpmRegistry.kt
++++ b/android/app/src/main/java/dev/pocketrun/runtime/npm/NpmRegistry.kt
+@@ -3,14 +3,23 @@ package dev.pocketrun.runtime.npm
+ import org.json.JSONObject
+ import java.io.File
+ import java.io.FileOutputStream
++import java.io.InputStream
+ import java.net.HttpURLConnection
+ import java.net.URL
+ import java.net.URLEncoder
++import java.security.MessageDigest
++import java.util.Base64
+ 
+ /**
+  * The slice of the npm registry HTTP API the app needs: package metadata and
+  * tarball downloads. Works against registry.npmjs.org; the same endpoints are
+  * served by any npm mirror (GPR, Verdaccio, …) by changing [baseUrl].
++ *
++ * A registry is a code source: whoever answers it chooses the JavaScript the
++ * app evaluates. Two things are therefore checked on every tarball — the digest
++ * the metadata promised, and that the download really comes from the registry
++ * the metadata came from. Metadata without a digest is refused, exactly like
++ * npm does.
+  */
+ class NpmRegistry(private val baseUrl: String = "https://registry.npmjs.org/") {
+ 
+@@ -29,9 +38,92 @@ class NpmRegistry(private val baseUrl: String = "https://registry.npmjs.org/") {
+         }
+     }
+ 
+-    /** Downloads the tarball at [url] (a `dist.tarball` value) into [dest]. */
+-    fun downloadTarball(url: String, dest: File) {
++    /**
++     * Downloads the tarball at [url] into [dest] and proves it is the one the
++     * metadata described.
++     *
++     * @param integrity the `dist.integrity` value (`sha512-<base64>`, possibly
++     *   several space-separated digests). Required: a packument without it
++     *   cannot be trusted to be the real package.
++     */
++    fun downloadTarball(url: String, dest: File, integrity: String?) {
++        requireTrusted(url)
++        val expected = requireIntegrity(integrity, url)
+         http(url, dest)
++        val actual = digestOf(dest, expected.algorithm)
++        if (actual != expected.b64) {
++            // Never leave a tarball that failed its check on disk: the caller
++            // would happily extract it.
++            dest.delete()
++            val detail = expected.algorithms.joinToString(", ")
++            throw RegistryException(
++                "несовпадение контрольной суммы tarball (ожидалась $detail, получено " +
++                    "${actual.take(12)}…) — пакет отклонён",
++            )
++        }
++    }
++
++    // ------------------------------------------------------------- digests
++
++    /** One expected digest: the algorithm and the base64 it must equal. */
++    private data class Expected(val algorithm: String, val b64: String, val algorithms: List<String>)
++
++    private fun requireIntegrity(integrity: String?, url: String): Expected {
++        val digests = integrity?.split(' ', '\t')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
++        val parsed = digests.mapNotNull { parseDigest(it) }
++        if (parsed.isEmpty()) {
++            throw RegistryException(
++                "в метаданных нет integrity для ${url.take(120)} — пакет без контрольной суммы не ставится",
++            )
++        }
++        // The strongest digest is the one that is checked; npm does the same.
++        val strongest = parsed.maxBy { it.first.length }
++        return Expected(strongest.first, strongest.second, parsed.map { it.first }.distinct())
++    }
++
++    private fun parseDigest(value: String): Pair<String, String>? {
++        val dash = value.indexOf('-')
++        if (dash <= 0) return null
++        val algorithm = value.substring(0, dash).lowercase()
++        if (algorithm !in SUPPORTED) return null
++        val b64 = value.substring(dash + 1)
++        return runCatching { Base64.getDecoder().decode(b64) }.map { algorithm to b64 }.getOrNull()
++    }
++
++    private fun digestOf(file: File, algorithm: String): String {
++        val digest = MessageDigest.getInstance(algorithm)
++        file.inputStream().use { input ->
++            val buf = ByteArray(64 * 1024)
++            while (true) {
++                val n = input.read(buf)
++                if (n < 0) break
++                digest.update(buf, 0, n)
++            }
++        }
++        return Base64.getEncoder().encodeToString(digest.digest())
++    }
++
++    /**
++     * A tarball must be https and must live on the registry the metadata came
++     * from — otherwise a compromised packument can point the app at an
++     * arbitrary host and the integrity check would only prove that *that* host
++     * serves what it said.
++     */
++    private fun requireTrusted(url: String) {
++        val parsed = runCatching { URL(url) }.getOrElse {
++            throw RegistryException("некорректный tarball URL: ${url.take(120)}")
++        }
++        if (parsed.protocol != "https") {
++            throw RegistryException("tarball должен скачиваться по https, а не ${parsed.protocol}")
++        }
++        val registry = runCatching { URL(baseUrl).host }.getOrElse { "" }
++        val host = parsed.host.lowercase()
++        val allowed = registry.lowercase()
++        if (allowed.isNotEmpty() && host != allowed && !host.endsWith(".$allowed")) {
++            throw RegistryException(
++                "tarball лежит на $host, а метаданные пришли с $allowed — пакет отклонён",
++            )
++        }
+     }
+ 
+     // ---------------------------------------------------------------- http
+@@ -54,7 +146,10 @@ class NpmRegistry(private val baseUrl: String = "https://registry.npmjs.org/") {
+             val text = streamText(conn, status)
+             throw RegistryException("HTTP $status для ${url.take(120)}: ${text.take(200)}")
+         }
+-        val input = conn.inputStream
++        copy(conn.inputStream, dest)
++    }
++
++    private fun copy(input: InputStream, dest: File) {
+         FileOutputStream(dest).use { out ->
+             val buf = ByteArray(64 * 1024)
+             while (true) {
+@@ -88,4 +183,8 @@ class NpmRegistry(private val baseUrl: String = "https://registry.npmjs.org/") {
+             stream.bufferedReader(Charsets.UTF_8).use { it.readText().take(8_192) }
+         }
+     }
++
++    companion object {
++        private val SUPPORTED = setOf("sha512", "sha384", "sha256", "sha1")
++    }
+ }
+diff --git a/android/app/src/main/java/dev/pocketrun/runtime/npm/NpxRuntime.kt b/android/app/src/main/java/dev/pocketrun/runtime/npm/NpxRuntime.kt
+index 079ab76..8577fa6 100644
+--- a/android/app/src/main/java/dev/pocketrun/runtime/npm/NpxRuntime.kt
++++ b/android/app/src/main/java/dev/pocketrun/runtime/npm/NpxRuntime.kt
+@@ -231,7 +231,7 @@ class NpxRuntime(
+         if (tarball.isNullOrEmpty()) throw IllegalStateException("у ${spec.name}@$version нет tarball")
+         val tgz = File(workspace.cache, "tmp-${UUID.randomUUID()}.tgz")
+         try {
+-            registry.downloadTarball(tarball, tgz)
++            registry.downloadTarball(tarball, tgz, versionMeta.optJSONObject("dist")?.optString("integrity"))
+             pkgDir.mkdirs()
+             TarReader.extract(tgz, pkgDir, "package/")
+         } finally {
+@@ -300,7 +300,7 @@ class NpxRuntime(
+         if (targetDir.exists()) targetDir.deleteRecursively()
+         val tgz = File(workspace.cache, "tmp-${UUID.randomUUID()}.tgz")
+         try {
+-            registry.downloadTarball(tarball, tgz)
++            registry.downloadTarball(tarball, tgz, versionMeta.optJSONObject("dist")?.optString("integrity"))
+             targetDir.mkdirs()
+             TarReader.extract(tgz, targetDir, "package/")
+         } finally {
+@@ -362,7 +362,10 @@ class NpxRuntime(
+             }
+             else -> return null
+         } ?: return null
+-        val f = File(pkgDir, rel).toPath().normalize().toFile()
+-        return f.takeIf { it.isFile }
++        // A manifest can point `bin` anywhere ("../../../../shared_prefs/…"),
++        // so the resolved file has to be inside the sandbox before it is read
++        // as JavaScript.
++        val f = workspace.resolve(rel, pkgDir)?.takeIf { it.isFile } ?: return null
++        return f
+     }
+ }
+diff --git a/android/app/src/main/java/dev/pocketrun/runtime/python/PythonRuntime.kt b/android/app/src/main/java/dev/pocketrun/runtime/python/PythonRuntime.kt
+index 4eef988..ce6ca6f 100644
+--- a/android/app/src/main/java/dev/pocketrun/runtime/python/PythonRuntime.kt
++++ b/android/app/src/main/java/dev/pocketrun/runtime/python/PythonRuntime.kt
+@@ -36,7 +36,7 @@ object PythonRuntime {
+ 
+     @Volatile private var python: Python? = null
+     @Volatile private var version: String? = null
+-    @Volatile private var runsDir: File? = null
++    @Volatile private var workspace: Workspace? = null
+ 
+     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+         Thread(runnable, "pocketrun-python-run").apply { isDaemon = true }
+@@ -52,7 +52,7 @@ object PythonRuntime {
+                         val appContext = context.applicationContext
+                         Python.start(AndroidPlatform(appContext))
+                         val py = Python.getInstance()
+-                        runsDir = File(Workspace.from(appContext).cache, "runs").apply { mkdirs() }
++                        workspace = Workspace.from(appContext)
+                         version = readVersion(py)
+                         python = py
+                         Log.i(TAG, "Python started ($version)")
+@@ -83,6 +83,11 @@ object PythonRuntime {
+      * tailer threads; [listener.onFinished] / [listener.onFailed] arrive from
+      * the single run thread.
+      *
++     * The target and the working directory are resolved through
++     * [Workspace.resolve] first, so a script can only ever be one of the files
++     * inside the sandbox; the Python side repeats the check with an audit-hook
++     * jail for everything the script does itself.
++     *
+      * Cancellation is cooperative: Chaquopy cannot interrupt a call, so
+      * [ExecutionHandle.cancel] only raises a flag, and the result is reported
+      * with exit code 130 (SIGINT) once the script returns on its own.
+@@ -98,9 +103,22 @@ object PythonRuntime {
+             return Handle(running, cancelled)
+         }
+ 
++        val sandbox = workspace
++        if (sandbox == null) {
++            running.set(false)
++            listener.onFailed(IllegalStateException("Python is not running (yet)"))
++            return Handle(running, cancelled)
++        }
++        val cwd = request.cwd?.let { sandbox.resolve(it.absolutePath) } ?: sandbox.root
++        val target = sandbox.resolve(request.target, cwd)
++        if (target == null) {
++            running.set(false)
++            listener.onFailed(IllegalArgumentException("путь вне рабочей папки отклонён: ${request.target}"))
++            return Handle(running, cancelled)
++        }
++
+         val startedAt = System.currentTimeMillis()
+-        val runDir = File(runsDir ?: File(request.cwd, ".runs"), UUID.randomUUID().toString())
+-            .apply { mkdirs() }
++        val runDir = File(sandbox.cache, "runs/${UUID.randomUUID()}").apply { mkdirs() }
+         val outFile = File(runDir, "out.log")
+         val errFile = File(runDir, "err.log")
+         val stdout = Capture()
+@@ -116,12 +134,13 @@ object PythonRuntime {
+                 val argsJson = org.json.JSONArray().apply { request.args.forEach { put(it) } }.toString()
+                 val exitCode = py.getModule("pocketrun").callAttr(
+                     "run",
+-                    request.target,
++                    target.absolutePath,
+                     argsJson,
+                     request.stdin,
+                     outFile.absolutePath,
+                     errFile.absolutePath,
+-                    request.cwd?.absolutePath,
++                    cwd.absolutePath,
++                    sandbox.root.absolutePath,
+                 ).toInt()
+ 
+                 stopped.set(true)
+diff --git a/android/app/src/main/python/pocketrun.py b/android/app/src/main/python/pocketrun.py
+index 15d615d..1813d15 100644
+--- a/android/app/src/main/python/pocketrun.py
++++ b/android/app/src/main/python/pocketrun.py
+@@ -3,6 +3,10 @@
+ Kotlin owns the UI, the sandbox and process lifetime; everything that only makes
+ sense in Python lives here: argv handling, sys.path setup, stream redirection and
+ traceback formatting.
++
++User code runs inside the interpreter with the app's own uid, so `open` and `os`
++would reach the activation key in shared_prefs and every other project. The
++`pocketrun_sandbox` audit-hook jail is what keeps a script inside the workspace.
+ """
+ 
+ import io
+@@ -12,6 +16,13 @@ import runpy
+ import sys
+ import traceback
+ 
++import pocketrun_sandbox
++
++# Nothing here is reachable from a script: the loopback interface (the app's own
++# java bridges and any local debug server), link-local addresses (cloud metadata)
++# and unix sockets (any local service).
++BLOCKED_HOSTS = ("localhost", "127.0.0.1", "::1", "0.0.0.0", "169.254.169.254")
++
+ 
+ class PipeStream:
+     """A minimal text stream that appends to a file the Android side tails.
+@@ -61,8 +72,12 @@ class PipeStream:
+             pass
+ 
+ 
+-def run(script, args_json, stdin_text, out_path, err_path, cwd):
+-    """Runs ``script`` as __main__ and returns its exit code."""
++def run(script, args_json, stdin_text, out_path, err_path, cwd, sandbox_root=None):
++    """Runs ``script`` as __main__ and returns its exit code.
++
++    ``sandbox_root`` is the workspace directory; the script may read the Python
++    installation (stdlib, installed packages) but may only touch the workspace.
++    """
+     if not os.path.isfile(script):
+         _write_line(err_path, "python: no such file: %s" % script)
+         return 2
+@@ -106,16 +121,25 @@ def run(script, args_json, stdin_text, out_path, err_path, cwd):
+     sys.stdout, sys.stderr = out, err
+     code = 0
+     try:
+-        runpy.run_path(script, run_name="__main__")
+-    except SystemExit as exc:
+-        code = _exit_code(exc.code)
+-    except KeyboardInterrupt:
+-        _write_line(err_path, "KeyboardInterrupt")
+-        code = 130
+-    except BaseException:
+-        traceback.print_exc(file=err)
+-        code = 1
++        with pocketrun_sandbox.intercept(
++            read_roots=_read_roots(sandbox_root or cwd),
++            write_roots=[sandbox_root or cwd],
++            blocked_hosts=BLOCKED_HOSTS,
++        ):
++            try:
++                runpy.run_path(script, run_name="__main__")
++            except SystemExit as exc:
++                code = _exit_code(exc.code)
++            except KeyboardInterrupt:
++                _write_line(err_path, "KeyboardInterrupt")
++                code = 130
++            except BaseException:
++                # SandboxViolation lands here too: the traceback is the report.
++                traceback.print_exc(file=err)
++                code = 1
+     finally:
++        # Restoring global state happens outside the jail: the previous working
++        # directory is the app's own, and the jail would refuse to go back to it.
+         sys.stdout, sys.stderr, sys.stdin, sys.argv = previous[:4]
+         out.close()
+         err.close()
+@@ -126,6 +150,18 @@ def run(script, args_json, stdin_text, out_path, err_path, cwd):
+     return code
+ 
+ 
++def _read_roots(sandbox_root):
++    """Where a script may read: the workspace plus the Python installation.
++
++    Chaquopy unpacks the interpreter, the standard library and every pip
++    package into the app's data directory, so the workspace alone is not enough
++    to run anything.
++    """
++    roots = [sandbox_root]
++    roots.extend(pocketrun_sandbox.interpreter_roots())
++    return roots
++
++
+ def check_script(script):
+     """Cheap syntax check so the editor can flag errors before a run."""
+     if not os.path.isfile(script):
