@@ -332,10 +332,10 @@ index d54ca97..0000000
 -}
 \ No newline at end of file
 diff --git a/app/proguard-rules.pro b/app/proguard-rules.pro
-index edcf559..d09d11f 100644
+index edcf559..00e665d 100644
 --- a/app/proguard-rules.pro
 +++ b/app/proguard-rules.pro
-@@ -1,30 +1,8 @@
+@@ -1,30 +1,6 @@
  -dontobfuscate
  
 --keep,allowoptimization class eu.kanade.**
@@ -364,12 +364,10 @@ index edcf559..d09d11f 100644
 --keep,allowoptimization class eu.kanade.tachiyomi.network.RequestsKt { public protected *; }
 --keep,allowoptimization class eu.kanade.tachiyomi.AppInfo { public protected *; }
 +-keep,allowoptimization class yomikai.**
-+-keep,allowoptimization class yomikai.**
-+-keep,allowoptimization class yomikai.**
  
  -keepclassmembers class * implements java.io.Serializable {
      java.lang.Object writeReplace();
-@@ -66,11 +44,11 @@
+@@ -66,11 +42,11 @@
      kotlinx.serialization.KSerializer serializer(...);
  }
  
@@ -384,7 +382,7 @@ index edcf559..d09d11f 100644
      kotlinx.serialization.KSerializer serializer(...);
  }
  
-@@ -83,17 +61,13 @@
+@@ -83,17 +59,13 @@
  # XmlUtil
  -keep public enum nl.adaptivity.xmlutil.EventType { *; }
  
@@ -322689,7 +322687,7 @@ index 1cde042..0000000
 -    }
 -}
 diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
-index f687124..807af3b 100644
+index f687124..b79e8d6 100644
 --- a/gradle/libs.versions.toml
 +++ b/gradle/libs.versions.toml
 @@ -36,11 +36,8 @@ core-ktx-version = "1.7.0"
@@ -322722,18 +322720,15 @@ index f687124..807af3b 100644
  flexibleAdapter = { module = "eu.davidea:flexible-adapter", version.ref = "flexibleAdapter" }
  furiganable = { module = "com.github.yomihon.Furiganable:compose-m3", version.ref = "furiganable" }
  hoshidicts = { module = "com.github.yomihon:hoshidicts", version.ref = "hoshidicts" }
-@@ -191,10 +184,8 @@ quickJs = { module = "com.github.zhanghai.quickjs-java:quickjs-android", version
+@@ -191,8 +184,6 @@ quickJs = { module = "com.github.zhanghai.quickjs-java:quickjs-android", version
  reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reorderable" }
  rxJava = { module = "io.reactivex:rxjava", version.ref = "rxJava" }
  runner = { module = "androidx.test:runner", version.ref = "runner-version" }
 -shizuku-api = { module = "dev.rikka.shizuku:api", version.ref = "shizuku" }
 -shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizuku" }
  spotless-gradle = { module = "com.diffplug.spotless:spotless-plugin-gradle", version.ref = "spotless" }
--sqldelight-androidxDriver = { module = "com.github.mihon.sqldelight-androidx-driver:sqldelight-androidx-driver", version.ref = "sqldelight-androidx-driver" }
-+sqldelight-androidxDriver = { module = "com.github.yomikai.sqldelight-androidx-driver:sqldelight-androidx-driver", version.ref = "sqldelight-androidx-driver" }
+ sqldelight-androidxDriver = { module = "com.github.mihon.sqldelight-androidx-driver:sqldelight-androidx-driver", version.ref = "sqldelight-androidx-driver" }
  sqldelight-androidxPaging = { module = "app.cash.sqldelight:androidx-paging3-extensions", version.ref = "sqldelight" }
- sqldelight-async = { module = "app.cash.sqldelight:async-extensions", version.ref = "sqldelight" }
- sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "sqldelight" }
 @@ -219,8 +210,6 @@ android-kmp-library = { id = "com.android.kotlin.multiplatform.library", version
  android-library = { id = "com.android.library", version.ref = "android-gradle" }
  android-test = { id = "com.android.test", version.ref = "android-gradle" }
