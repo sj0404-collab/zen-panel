@@ -1,0 +1,495 @@
+diff --git a/android/app/src/main/java/dev/pocketrun/agent/opencode/MiniShell.kt b/android/app/src/main/java/dev/pocketrun/agent/opencode/MiniShell.kt
+index 952283e..499be79 100644
+--- a/android/app/src/main/java/dev/pocketrun/agent/opencode/MiniShell.kt
++++ b/android/app/src/main/java/dev/pocketrun/agent/opencode/MiniShell.kt
+@@ -57,13 +57,20 @@ class MiniShell(
+     /** Executes [commandLine] with [cwd] as the working directory. */
+     fun execute(commandLine: String, cwd: File, timeoutMs: Long = OpenCodeTools.BASH_TIMEOUT_MS): Result {
+         var dir = if (cwd.isDirectory) cwd else workspace.root
+-        val segments = splitAnd(commandLine)
++        val segments = splitOps(commandLine)
+         if (segments.isEmpty()) return Result(0, "")
+         val out = StringBuilder()
+         var lastExit = 0
+         for (segment in segments) {
+-            if (lastExit != 0) break
+-            val r = runPipeline(segment, dir, timeoutMs) { d -> dir = d }
++            // `;` always runs, `&&` only after a success, `||` only after a
++            // failure — the point of a chain is to *not* run the wrong side.
++            val shouldRun = when (segment.op) {
++                Segment.Op.AND -> lastExit == 0
++                Segment.Op.OR -> lastExit != 0
++                else -> true
++            }
++            if (!shouldRun) continue
++            val r = runPipeline(segment.command, dir, timeoutMs) { d -> dir = d }
+             out.append(r.output)
+             lastExit = r.exitCode
+         }
+@@ -72,11 +79,20 @@ class MiniShell(
+ 
+     // ---------------------------------------------------------------- structure
+ 
+-    /** Splits on && at top level (outside quotes). */
+-    private fun splitAnd(line: String): List<String> {
+-        val parts = mutableListOf<String>()
++    /** One command of a chain, with the operator that decided whether it runs. */
++    private class Segment(val command: String, val op: Op) {
++        enum class Op { FIRST, AND, OR, SEMI }
++    }
++
++    /**
++     * Splits on `&&`, `||` and `;` outside quotes. Pipes are left alone — they
++     * belong to the pipeline, and splitting them here would lose the order.
++     */
++    private fun splitOps(line: String): List<Segment> {
++        val out = mutableListOf<Segment>()
+         val cur = StringBuilder()
+         var quote: Char? = null
++        var pending = Segment.Op.FIRST
+         var i = 0
+         while (i < line.length) {
+             val c = line[i]
+@@ -86,91 +102,157 @@ class MiniShell(
+                     if (c == quote) quote = null
+                 }
+                 c == '"' || c == '\'' -> { quote = c; cur.append(c) }
+-                c == '&' && i + 1 < line.length && line[i + 1] == '&' -> {
+-                    if (cur.isNotBlank()) parts += cur.toString().trim()
+-                    cur.clear()
++                c == '&' && line.getOrNull(i + 1) == '&' -> {
++                    out.addIfNotEmpty(cur, pending)
++                    pending = Segment.Op.AND
++                    i++
++                }
++                c == '|' && line.getOrNull(i + 1) == '|' -> {
++                    out.addIfNotEmpty(cur, pending)
++                    pending = Segment.Op.OR
+                     i++
+                 }
++                c == ';' -> {
++                    out.addIfNotEmpty(cur, pending)
++                    pending = Segment.Op.SEMI
++                }
+                 else -> cur.append(c)
+             }
+             i++
+         }
+-        if (cur.isNotBlank()) parts += cur.toString().trim()
+-        return parts
++        out.addIfNotEmpty(cur, pending)
++        return out
+     }
+ 
+-    /** Runs one `cmd | cmd | cmd [> file]` pipeline segment. */
++    private fun MutableList<Segment>.addIfNotEmpty(cur: StringBuilder, op: Segment.Op) {
++        val text = cur.toString().trim()
++        if (text.isNotEmpty()) add(Segment(text, op))
++        cur.clear()
++    }
++
++    /** Runs one `cmd | cmd | cmd [> file] [< file]` pipeline segment. */
+     private fun runPipeline(
+         segment: String,
+         dir: File,
+         timeoutMs: Long,
+         onCd: (File) -> Unit,
+     ): Result {
+-        // split on top-level |
+-        val stages = mutableListOf<String>()
+-        val cur = StringBuilder()
+-        var quote: Char? = null
+-        var i = 0
+-        while (i < segment.length) {
+-            val c = segment[i]
+-            when {
+-                quote != null -> { cur.append(c); if (c == quote) quote = null }
+-                c == '"' || c == '\'' -> { quote = c; cur.append(c) }
+-                c == '|' -> { stages += cur.toString().trim(); cur.clear() }
+-                else -> cur.append(c)
+-            }
+-            i++
+-        }
+-        if (cur.isNotBlank()) stages += cur.toString().trim()
++        val stages = splitPipes(segment)
+         if (stages.isEmpty()) return Result(0, "")
+ 
+         var input = ""
+         var exit = 0
+-        var redirectFile: File? = null
+-        var append = false
+-
+-        for ((index, stage) in stages.withIndex()) {
+-            val (tokens, redir, redirAppend) = extractRedirect(tokenize(stage), dir)
+-            redirectFile = redir
+-            append = redirAppend
+-            if (tokens.isEmpty()) continue
+-            val cmd = tokens[0]
+-            val args = tokens.drop(1)
++        for (stage in stages) {
++            val parsed = parseStage(tokenize(stage), dir)
++            val error = parsed.error
++            if (error != null) return Result(1, error)
++            if (parsed.tokens.isEmpty()) continue
++            val cmd = parsed.tokens[0]
++            val args = parsed.tokens.drop(1)
++
++            // `< file` replaces what the stage reads; otherwise it reads the
++            // previous stage, and a real runtime gets the text just like a
++            // built-in does — `cat data.txt | python fix.py` has to work.
++            val stageInput = if (parsed.input != null) {
++                if (!parsed.input.isFile) {
++                    return Result(1, "bash: ${parsed.input.name}: нет такого файла\n")
++                }
++                readCapped(parsed.input) ?: return Result(1, "bash: ${parsed.input.name}: не удалось прочитать\n")
++            } else {
++                input
++            }
+ 
+-            // runtime commands ignore stdin/pipes — they run to completion
+             val r = when (cmd) {
+-                "python", "python3" -> runPython(args, dir, timeoutMs)
+-                "node" -> runNode(args, dir, timeoutMs)
+-                "npx" -> runNpx(args, dir, timeoutMs)
++                "python", "python3" -> runPython(args, dir, timeoutMs, stageInput)
++                "node" -> runNode(args, dir, timeoutMs, stageInput)
++                "npx" -> runNpx(args, dir, timeoutMs, stageInput)
+                 "npm" -> npm(args, dir, timeoutMs)
+-                else -> runBuiltin(cmd, args, dir, input, onCd)
++                else -> runBuiltin(cmd, args, dir, stageInput, onCd)
+             }
+             exit = r.exitCode
+-            input = r.output
+-            // redirect only applies to the last stage
+-            if (index == stages.lastIndex) {
+-                if (redirectFile != null) {
+-                    writeToFile(redirectFile, input, append)
+-                    return Result(r.exitCode, "")
++            input = cap(r.output)
++            if (parsed.output != null) {
++                if (!writeToFile(parsed.output, input, parsed.append)) {
++                    return Result(1, "bash: ${parsed.output.name}: не удалось записать\n")
+                 }
++                input = ""
+             }
+         }
+         return Result(exit, input)
+     }
+ 
+-    /** `> file` / `>> file` on built-in commands. */
+-    private fun extractRedirect(tokens: List<String>, dir: File): Triple<List<String>, File?, Boolean> {
+-        val gt = tokens.indexOfFirst { it == ">" || it == ">>" }
+-        if (gt < 0 || gt + 1 >= tokens.size) return Triple(tokens, null, false)
+-        val file = sandboxPath(tokens[gt + 1], dir)
+-        return Triple(tokens.subList(0, gt), file, tokens[gt] == ">>")
++    /** One pipeline stage after its redirections have been taken out. */
++    private class Stage(
++        val tokens: List<String>,
++        val output: File?,
++        val append: Boolean,
++        val input: File?,
++        val error: String?,
++    )
++
++    private fun parseStage(tokens: List<String>, dir: File): Stage {
++        val kept = mutableListOf<String>()
++        var output: File? = null
++        var append = false
++        var input: File? = null
++        var i = 0
++        while (i < tokens.size) {
++            val t = tokens[i]
++            when {
++                t == ">" || t == ">>" -> {
++                    val target = tokens.getOrNull(i + 1)
++                        ?: return Stage(kept, null, false, null, "bash: $t: нужен файл\n")
++                    val file = sandboxPath(target, dir)
++                        ?: return Stage(kept, null, false, null, "bash: $target: путь вне песочницы\n")
++                    output = file
++                    append = t == ">>"
++                    i++
++                }
++                t == "<" -> {
++                    val target = tokens.getOrNull(i + 1)
++                        ?: return Stage(kept, null, false, null, "bash: <: нужен файл\n")
++                    val file = sandboxPath(target, dir)
++                        ?: return Stage(kept, null, false, null, "bash: $target: путь вне песочницы\n")
++                    input = file
++                    i++
++                }
++                else -> kept += t
++            }
++            i++
++        }
++        return Stage(kept, output, append, input, null)
++    }
++
++    /** Splits on top-level `|`, honouring quotes. */
++    private fun splitPipes(segment: String): List<String> {
++        val stages = mutableListOf<String>()
++        val cur = StringBuilder()
++        var quote: Char? = null
++        var i = 0
++        while (i < segment.length) {
++            val c = segment[i]
++            when {
++                quote != null -> { cur.append(c); if (c == quote) quote = null }
++                c == '"' || c == '\'' -> { quote = c; cur.append(c) }
++                // A single `&` in the background is not supported; treating it as
++                // a literal keeps `a & b` from silently meaning something else.
++                c == '|' -> {
++                    stages += cur.toString().trim()
++                    cur.clear()
++                }
++                else -> cur.append(c)
++            }
++            i++
++        }
++        stages += cur.toString().trim()
++        return stages.filter { it.isNotEmpty() }
+     }
+ 
+     // ---------------------------------------------------------------- builtins
+ 
+     private fun runBuiltin(cmd: String, args: List<String>, dir: File, stdin: String, onCd: (File) -> Unit): Result {
+         return when (cmd) {
+-            "pwd" -> Result(0, dir.relativeToOrNull(workspace.root)?.let { "./$it" } ?: dir.absolutePath + "\n")
++            "pwd" -> Result(0, (dir.relativeToOrNull(workspace.root)?.let { "./$it" } ?: dir.absolutePath) + "\n")
+             "cd" -> {
+                 val target = sandboxPath(args.firstOrNull() ?: ".", dir)
+                 if (target == null || !target.isDirectory) Result(1, "cd: ${args.firstOrNull() ?: ""}: нет такого каталога\n")
+@@ -197,7 +279,13 @@ class MiniShell(
+             "wc" -> wc(args, dir, stdin)
+             "find" -> find(args, dir)
+             "grep" -> shellGrep(args, dir, stdin)
+-            "env" -> Result(0, "HOME=${workspace.root.absolutePath}\nLANG=C.UTF-8\n")
++            "env" -> {
++                if (args.isNotEmpty()) {
++                    Result(1, "env: песочница отдаёт фиксированное окружение, аргументы не поддерживаются\n")
++                } else {
++                    Result(0, "HOME=${workspace.root.absolutePath}\nPWD=${dir.absolutePath}\nLANG=C.UTF-8\n")
++                }
++            }
+             "date" -> Result(0, SimpleDateFormat("EEE MMM dd HH:mm:ss yyyy", Locale.US).format(Date()) + "\n")
+             "sleep" -> {
+                 val sec = args.firstOrNull()?.toFloatOrNull() ?: return Result(1, "sleep: нужен аргумент в секундах\n")
+@@ -205,7 +293,18 @@ class MiniShell(
+                 if (sec > 0) Thread.sleep((sec * 1000).toLong())
+                 Result(0, "")
+             }
+-            "uname" -> Result(0, "Linux aarch64 PocketRun\n")
++            "uname" -> {
++                // A wrong answer is worse than no answer: `uname -a` must not
++                // print plain `uname`.
++                val known = args.isEmpty() || args.all { it == "-a" || it == "-s" || it == "-m" || it == "-r" }
++                if (!known) {
++                    Result(1, "uname: неизвестный аргумент (поддерживаются: -a, -s, -m, -r)\n")
++                } else if (args.isEmpty()) {
++                    Result(0, "Linux\n")
++                } else {
++                    Result(0, "Linux aarch64 PocketRun 6.1-android14\n")
++                }
++            }
+             "which" -> Result(if (args.firstOrNull() in COMMANDS) 0 else 1, if (args.firstOrNull() in COMMANDS) "/bin/${args.first()}\n" else "")
+             "true" -> Result(0, "")
+             "false" -> Result(1, "")
+@@ -232,7 +331,10 @@ class MiniShell(
+             if (targets.size > 1) out.append("${t}:\n")
+             for (e in entries) {
+                 if (long) {
+-                    out.append("%s %8d  %s\n".format(if (e.isDirectory()) "d" else "-", e.length(), e.name))
++                    // A directory's byte length is meaningless (and huge on some
++                    // filesystems), so it gets a dash like real ls.
++                    val size = if (e.isDirectory) "-" else e.length().toString()
++                    out.append("%s %8s  %s\n".format(if (e.isDirectory()) "d" else "-", size, e.name))
+                 } else {
+                     out.append(if (e.isDirectory()) e.name + "/" else e.name)
+                     out.append("\n")
+@@ -312,38 +414,85 @@ class MiniShell(
+     }
+ 
+     private fun headTail(args: List<String>, dir: File, fromStart: Boolean): Result {
+-        // head [-n N] [-N] file — `head -n 5 f`, `head -5 f`, `head f` all work.
++        // head [-n N] [-N] file... — `head -n 5 f`, `head -5 f`, `head f` all
++        // work, and every named file is processed: dropping the rest would look
++        // successful while showing a slice of the wrong one.
++        val name = if (fromStart) "head" else "tail"
+         var n = 10
+         val files = mutableListOf<String>()
+         var i = 0
+         while (i < args.size) {
++            val a = args[i]
+             when {
+-                args[i] == "-n" && i + 1 < args.size && args[i + 1].toIntOrNull() != null ->
++                a == "-n" && i + 1 < args.size && args[i + 1].toIntOrNull() != null ->
+                     n = args[++i].toInt()
+-                args[i].startsWith("-") && args[i].removePrefix("-").toIntOrNull() != null ->
+-                    n = args[i].removePrefix("-").toInt()
+-                !args[i].startsWith("-") -> files += args[i]
++                a.startsWith("-") && a.removePrefix("-").toIntOrNull() != null ->
++                    n = a.removePrefix("-").toInt()
++                a == "--" -> files += args.drop(i + 1)
++                a.startsWith("-") -> return Result(1, "$name: неизвестный аргумент $a\n")
++                else -> files += a
+             }
+             i++
+         }
+-        if (files.isEmpty()) return Result(1, "${if (fromStart) "head" else "tail"}: нужен файл\n")
+-        val f = sandboxPath(files[0], dir) ?: return Result(1, "путь вне песочницы\n")
+-        if (!f.isFile) return Result(1, "${files[0]}: нет такого файла\n")
+-        val lines = f.readText(Charsets.UTF_8).lines()
+-        val picked = if (fromStart) lines.take(n) else lines.takeLast(n)
+-        return Result(0, picked.joinToString("\n") + "\n")
++        if (files.isEmpty()) return Result(1, "$name: нужен файл\n")
++        val out = StringBuilder()
++        var exit = 0
++        val several = files.size > 1
++        for (name_ in files) {
++            val f = sandboxPath(name_, dir)
++            if (f == null || !f.isFile) { exit = 1; out.append("$name: $name_: нет такого файла\n"); continue }
++            val lines = f.readText(Charsets.UTF_8).lines()
++            val picked = if (fromStart) lines.take(n) else lines.takeLast(n)
++            if (several) out.append("==> $name_ <==\n")
++            picked.forEach { out.append(it).append('\n') }
++        }
++        return Result(exit, out.toString())
+     }
+ 
+     private fun wc(args: List<String>, dir: File, stdin: String): Result {
+-        val files = flagsFree(args)
+-        val text = when {
+-            files.isEmpty() -> stdin
+-            else -> sandboxPath(files.last(), dir)?.takeIf { it.isFile }?.readText(Charsets.UTF_8)
+-                ?: return Result(1, "wc: ${files.last()}: нет такого файла\n")
++        val countLines = args.any { it.contains('l') && it.startsWith("-") }
++        val countWords = args.any { it.contains('w') && it.startsWith("-") }
++        val countBytes = args.any { it.contains('c') && it.startsWith("-") }
++        val named = flagsFree(args)
++        // With no flag, wc counts lines, words and bytes — as it does on a
++        // real system. Every named file is counted, and a multi-file run ends
++        // with a total.
++        val wantAll = !countLines && !countWords && !countBytes
++        val files = if (named.isEmpty()) listOf<String?>(null) else named.map { it as String? }
++        val out = StringBuilder()
++        var exit = 0
++        var totalLines = 0L
++        var totalWords = 0L
++        var totalBytes = 0L
++        for (name in files) {
++            val text = if (name == null) {
++                stdin
++            } else {
++                val f = sandboxPath(name, dir)
++                if (f == null || !f.isFile) { exit = 1; out.append("wc: $name: нет такого файла\n"); continue }
++                readCapped(f) ?: ""
++            }
++            // A trailing newline does not start a new line (like wc -l).
++            val lines = text.lines().let { if (text.endsWith("\n")) it.dropLast(1) else it }
++            val words = text.split(Regex("\\s+")).count { it.isNotEmpty() }
++            totalLines += lines.size
++            totalWords += words
++            totalBytes += text.length
++            val parts = mutableListOf<String>()
++            if (wantAll || countLines) parts += "%7d".format(lines.size)
++            if (wantAll || countWords) parts += "%7d".format(words)
++            if (wantAll || countBytes) parts += "%7d".format(text.length)
++            out.append(parts.joinToString("")).append(' ')
++            out.append(name ?: "").append('\n')
++        }
++        if (files.size > 1) {
++            val parts = mutableListOf<String>()
++            if (wantAll || countLines) parts += "%7d".format(totalLines)
++            if (wantAll || countWords) parts += "%7d".format(totalWords)
++            if (wantAll || countBytes) parts += "%7d".format(totalBytes)
++            out.append(parts.joinToString("")).append(" total\n")
+         }
+-        // A trailing newline does not start a new line (like wc -l).
+-        val lines = text.lines().let { if (text.endsWith("\n")) it.dropLast(1) else it }
+-        return Result(0, "%7d %7d %7d\n".format(lines.size, text.split(Regex("\\s+")).count { it.isNotEmpty() }, text.length))
++        return Result(exit, out.toString())
+     }
+ 
+     private fun find(args: List<String>, dir: File): Result {
+@@ -396,19 +545,19 @@ class MiniShell(
+ 
+     // ---------------------------------------------------------------- runtimes
+ 
+-    private fun runPython(args: List<String>, dir: File, timeoutMs: Long): Result {
++    private fun runPython(args: List<String>, dir: File, timeoutMs: Long, stdin: String): Result {
+         if (!PythonRuntime.isAvailable()) {
+             return Result(1, "python: рантайм ещё запускается, попробуйте снова через пару секунд\n")
+         }
+         return when {
+-            args.firstOrNull() == "-c" && args.size >= 2 -> runCodeFile("py", args[1], dir, timeoutMs, python = true)
++            args.firstOrNull() == "-c" && args.size >= 2 -> runCodeFile("py", args[1], dir, timeoutMs, python = true, stdin = stdin)
+             args.isEmpty() -> Result(1, "python: нужен файл или -c '<код>'\n")
+             else -> {
+                 val f = sandboxPath(args[0], dir)
+                     ?: return Result(1, "python: путь вне песочницы\n")
+                 if (!f.isFile) return Result(1, "python: ${args[0]}: нет такого файла\n")
+                 val r = PythonRuntime.executeSync(
+-                    ExecRequest(RuntimeKind.PYTHON, f.absolutePath, args.drop(1), dir),
++                    ExecRequest(RuntimeKind.PYTHON, f.absolutePath, args.drop(1), dir, stdin.asStdin()),
+                     timeoutMs,
+                 )
+                 Result(r.exitCode, r.stdout + (if (r.stderr.isNotBlank()) r.stderr else ""))
+@@ -416,16 +565,16 @@ class MiniShell(
+         }
+     }
+ 
+-    private fun runNode(args: List<String>, dir: File, timeoutMs: Long): Result {
++    private fun runNode(args: List<String>, dir: File, timeoutMs: Long, stdin: String): Result {
+         return when {
+-            args.firstOrNull() == "-e" && args.size >= 2 -> runCodeFile("js", args[1], dir, timeoutMs, python = false)
++            args.firstOrNull() == "-e" && args.size >= 2 -> runCodeFile("js", args[1], dir, timeoutMs, python = false, stdin = stdin)
+             args.isEmpty() -> Result(1, "node: нужен файл или -e '<код>'\n")
+             else -> {
+                 val f = sandboxPath(args[0], dir)
+                     ?: return Result(1, "node: путь вне песочницы\n")
+                 if (!f.isFile) return Result(1, "node: ${args[0]}: нет такого файла\n")
+                 val r = jsRuntime.executeSync(
+-                    ExecRequest(RuntimeKind.NODE, f.absolutePath, args.drop(1), dir),
++                    ExecRequest(RuntimeKind.NODE, f.absolutePath, args.drop(1), dir, stdin.asStdin()),
+                     timeoutMs,
+                 )
+                 Result(r.exitCode, r.stdout + (if (r.stderr.isNotBlank()) r.stderr else ""))
+@@ -433,15 +582,18 @@ class MiniShell(
+         }
+     }
+ 
+-    private fun runNpx(args: List<String>, dir: File, timeoutMs: Long): Result {
++    private fun runNpx(args: List<String>, dir: File, timeoutMs: Long, stdin: String): Result {
+         val spec = args.firstOrNull() ?: return Result(1, "npx: укажите пакет\n")
+         val r = npxRuntime.executeSync(
+-            ExecRequest(RuntimeKind.NPX, spec, args.drop(1), dir),
++            ExecRequest(RuntimeKind.NPX, spec, args.drop(1), dir, stdin.asStdin()),
+             timeoutMs,
+         )
+         return Result(r.exitCode, r.stdout + (if (r.stderr.isNotBlank()) r.stderr else ""))
+     }
+ 
++    /** An empty pipe is no pipe: real `cat x | node` must see a closed stdin. */
++    private fun String.asStdin(): String? = takeIf { it.isNotEmpty() }
++
+     // ---------------------------------------------------------------- npm
+ 
+     /**
+@@ -543,15 +695,15 @@ class MiniShell(
+         return Result(0, out.toString().ifEmpty { "(ничего не установлено)\n" })
+     }
+ 
+-    private fun runCodeFile(ext: String, code: String, dir: File, timeoutMs: Long, python: Boolean): Result {
++    private fun runCodeFile(ext: String, code: String, dir: File, timeoutMs: Long, python: Boolean, stdin: String): Result {
+         val scratch = File(workspace.cache, "opencode-shell").apply { mkdirs() }
+         val f = File(scratch, "cmd.${if (python) "py" else "js"}")
+         f.writeText(code, Charsets.UTF_8)
+         val r = if (python) {
+             if (!PythonRuntime.isAvailable()) return Result(1, "python: рантайм ещё запускается\n")
+-            PythonRuntime.executeSync(ExecRequest(RuntimeKind.PYTHON, f.absolutePath, emptyList(), dir), timeoutMs)
++            PythonRuntime.executeSync(ExecRequest(RuntimeKind.PYTHON, f.absolutePath, emptyList(), dir, stdin.asStdin()), timeoutMs)
+         } else {
+-            jsRuntime.executeSync(ExecRequest(RuntimeKind.NODE, f.absolutePath, emptyList(), dir), timeoutMs)
++            jsRuntime.executeSync(ExecRequest(RuntimeKind.NODE, f.absolutePath, emptyList(), dir, stdin.asStdin()), timeoutMs)
+         }
+         return Result(r.exitCode, r.stdout + (if (r.stderr.isNotBlank()) r.stderr else ""))
+     }
