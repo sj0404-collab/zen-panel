@@ -2399,7 +2399,7 @@ index fb12493..dedd0a2 100644
  
  private val LockAfterValues = listOf(
 diff --git a/app/src/main/java/eu/kanade/presentation/more/settings/screen/about/AboutScreen.kt b/app/src/main/java/eu/kanade/presentation/more/settings/screen/about/AboutScreen.kt
-index fa05c25..c3769dd 100644
+index fa05c25..49d928f 100644
 --- a/app/src/main/java/eu/kanade/presentation/more/settings/screen/about/AboutScreen.kt
 +++ b/app/src/main/java/eu/kanade/presentation/more/settings/screen/about/AboutScreen.kt
 @@ -41,7 +41,6 @@ import eu.kanade.tachiyomi.util.system.toast
@@ -2410,7 +2410,15 @@ index fa05c25..c3769dd 100644
  import tachiyomi.core.common.util.lang.withIOContext
  import tachiyomi.core.common.util.lang.withUIContext
  import tachiyomi.core.common.util.system.logcat
-@@ -175,31 +174,8 @@ object AboutScreen : Screen() {
+@@ -52,7 +51,6 @@ import tachiyomi.presentation.core.components.ScrollbarLazyColumn
+ import tachiyomi.presentation.core.components.material.Scaffold
+ import tachiyomi.presentation.core.i18n.stringResource
+ import tachiyomi.presentation.core.icons.CustomIcons
+-import tachiyomi.presentation.core.icons.Discord
+ import tachiyomi.presentation.core.icons.Facebook
+ import tachiyomi.presentation.core.icons.Github
+ import tachiyomi.presentation.core.icons.Reddit
+@@ -175,31 +173,8 @@ object AboutScreen : Screen() {
                          LinkIcon(
                              label = stringResource(MR.strings.website),
                              icon = Icons.Outlined.Public,
@@ -7325,13 +7333,10 @@ index ec3f17b..67d5d1d 100644
 -    }
  }
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/util/system/BuildConfig.kt b/app/src/main/java/eu/kanade/tachiyomi/util/system/BuildConfig.kt
-index 073b373..7d5ba48 100644
+index 073b373..c02e6d1 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/util/system/BuildConfig.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/util/system/BuildConfig.kt
-@@ -1,26 +1,6 @@
--@file:Suppress("UNUSED", "KotlinConstantConditions")
--
- package eu.kanade.tachiyomi.util.system
+@@ -4,9 +4,6 @@ package eu.kanade.tachiyomi.util.system
  
  import eu.kanade.tachiyomi.BuildConfig
  
@@ -7340,21 +7345,7 @@ index 073b373..7d5ba48 100644
 -
  val updaterEnabled: Boolean
      inline get() = BuildConfig.UPDATER_ENABLED
--
--val isDebugBuildType: Boolean
--    inline get() = BuildConfig.BUILD_TYPE == "debug"
--
--val isPreviewBuildType: Boolean
--    inline get() = BuildConfig.BUILD_TYPE == "preview"
--
--val isReleaseBuildType: Boolean
--    inline get() = BuildConfig.BUILD_TYPE == "release"
--
--val isFossBuildType: Boolean
--    inline get() = BuildConfig.BUILD_TYPE == "foss"
--
--val isBenchmarkBuildType: Boolean
--    inline get() = BuildConfig.BUILD_TYPE.contains("nonMinified") || BuildConfig.BUILD_TYPE.contains("benchmark")
+ 
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/util/system/ContextExtensions.kt b/app/src/main/java/eu/kanade/tachiyomi/util/system/ContextExtensions.kt
 index ef0e41a..9865e9a 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/util/system/ContextExtensions.kt
@@ -7624,7 +7615,7 @@ index e4335d5..0000000
 -    }
 -}
 diff --git a/app/src/main/java/mihon/feature/support/SupportUsScreen.kt b/app/src/main/java/mihon/feature/support/SupportUsScreen.kt
-index a9f9d21..c129895 100644
+index a9f9d21..3581ecc 100644
 --- a/app/src/main/java/mihon/feature/support/SupportUsScreen.kt
 +++ b/app/src/main/java/mihon/feature/support/SupportUsScreen.kt
 @@ -33,9 +33,7 @@ import tachiyomi.i18n.MR
@@ -7691,15 +7682,6 @@ index a9f9d21..c129895 100644
                  )
  
                  Spacer(modifier = Modifier.height(paddingValues.calculateBottomPadding()))
-@@ -124,7 +100,7 @@ class SupportUsScreen : Screen() {
-     private fun SupportItem(
-         icon: ImageVector,
-         title: String,
--        onClick: () -> Unit,
-+        onClick: () Unit,
-     ) {
-         Card {
-             TextPreferenceWidget(
 diff --git a/app/src/main/res/drawable/ic_extension_24dp.xml b/app/src/main/res/drawable/ic_extension_24dp.xml
 deleted file mode 100644
 index 7682b25..0000000
