@@ -1,0 +1,577 @@
+diff --git a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsConstructorScreen.kt b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsConstructorScreen.kt
+index 080f7cc3a..b92918e18 100644
+--- a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsConstructorScreen.kt
++++ b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsConstructorScreen.kt
+@@ -68,7 +68,6 @@ object SettingsConstructorScreen : Screen() {
+         "r_autoscroll" to "Читалка: автопрокрутка",
+         "r_autoread" to "Читалка: прочитать страницу",
+         "r_instant_sc" to "Читалка: мгновенный скриншот (Glens)",
+-        "r_export" to "Читалка: сохранить главу в папку",
+         "r_order" to "Читалка: порядок чтения",
+         "r_tts" to "Читалка: озвучка (TTS)",
+     )
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt
+index 8e27003ff..b478c4b87 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt
+@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.layout.width
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.outlined.Tune
+-import androidx.compose.material.icons.outlined.Download
+ import androidx.compose.material.icons.outlined.AutoMode
+ import androidx.compose.material.icons.outlined.CameraAlt
+ import androidx.compose.material.icons.outlined.Close
+@@ -95,7 +94,6 @@ fun ReaderFloatingControls(
+     /** Пресет типа контента (id из OcrContentType): задаёт и порядок чтения. */
+     contentPreset: String = "balanced",
+     onContentPresetChange: (String) -> Unit = {},
+-    onExportChapter: () -> Unit = {},
+     /** true — голос выбирает читатель, false — определяется автоматически. */
+     manualVoiceMode: Boolean = false,
+     /** Голос в ручном режиме: "female" | "male". */
+@@ -334,19 +332,6 @@ fun ReaderFloatingControls(
+                                     }
+                                 }
+ 
+-                                }
+-                                if (!hiddenM.contains("r_export")) {
+-
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text("Сохранить главу в папку  ", style = MaterialTheme.typography.labelMedium)
+-                                    SmallFloatingActionButton(onClick = {
+-                                        beepAction()
+-                                        onExportChapter()
+-                                    }) {
+-                                        Icon(Icons.Outlined.Download, contentDescription = "Оффлайн")
+-                                    }
+-                                }
+-
+                                 }
+                                 if (!hiddenM.contains("r_order")) {
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt
+index 5b692258f..d03a23eba 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/overlay/OcrOverlayService.kt
+@@ -73,6 +73,22 @@ class OcrOverlayService : Service() {
+         private const val BASE_H_DP = 340f
+         private const val BTN_DP = 60f
+ 
++        // Цвета меню — те же роли, что у Material в читалке: карточка,
++        // круглая кнопка, кнопка в активном состоянии, текст и подпись.
++        private const val CARD_BG = 0xF5232A3A.toInt()
++        private const val FAB_BG = 0xF52E4A6B.toInt()
++        private const val BTN_BG = 0xFF3A4A63.toInt()
++        private const val PRIMARY_ACTIVE_BG = 0xFF4A7EAF.toInt()
++        private const val ON_SURFACE = 0xFFF2F4F8.toInt()
++        private const val ON_SURFACE_VARIANT = 0xFFB9C4D6.toInt()
++        private const val CARD_RADIUS_DP = 14f
++        private const val FAB_RADIUS_DP = 30f
++        private const val BTN_RADIUS_DP = 18f
++        private const val BTN_SIZE_DP = 36f
++
++        /** Отступ от края экрана, куда прижимается панель. */
++        private const val CORNER_MARGIN_DP = 8f
++
+         /** Как часто проверять, не открыто ли наше собственное приложение. */
+         private const val FOREGROUND_POLL_MS = 700L
+ 
+@@ -178,8 +194,13 @@ class OcrOverlayService : Service() {
+     private var input: EditText? = null
+     private var contentView: LinearLayout? = null
+     private var floatButton: TextView? = null
+-    private var sttButton: Button? = null
+-    private var regionButton: Button? = null
++    private var sttButton: TextView? = null
++    private var regionButton: TextView? = null
++
++    /** Подпись строки режима области: на круглой кнопке она не помещается. */
++    private var regionRowLabel: TextView? = null
++    /** Подпись строки чтения рамки — там же, где и состояние кнопки. */
++    private var readRowLabel: TextView? = null
+ 
+     private val readEngine by lazy { AutoReadEngine(applicationContext) }
+     private var stt: GameSttManager? = null
+@@ -202,7 +223,7 @@ class OcrOverlayService : Service() {
+     private var autoReader: OverlayAutoReader? = null
+     private var readJob: kotlinx.coroutines.Job? = null
+     private var readProjection: android.media.projection.MediaProjection? = null
+-    private var readButton: Button? = null
++    private var readButton: TextView? = null
+ 
+     /** Прямоугольник зафиксированной области в пикселях экрана. */
+     private fun fixedRegionRect(): Rect? {
+@@ -245,7 +266,9 @@ class OcrOverlayService : Service() {
+             onNote = { note ->
+                 uiHandler.post {
+                     setBubble(note)
+-                    readButton?.text = if (isReading) "⏹ Стоп-чтение" else "▶ Читать рамку"
++                    readButton?.text = if (isReading) "⏹" else "▶"
++                    readButton?.setBackgroundColor((if (isReading) PRIMARY_ACTIVE_BG else BTN_BG).toInt())
++                    readRowLabel?.text = if (isReading) "Стоп-чтение" else "Читать рамку"
+                 }
+             },
+         )
+@@ -558,7 +581,10 @@ class OcrOverlayService : Service() {
+     }
+ 
+     private fun updateSttButton(on: Boolean) {
+-        uiHandler.post { sttButton?.text = if (on) "⏹ STT" else "🎙 STT" }
++        uiHandler.post {
++            sttButton?.text = if (on) "⏹" else "🎙"
++            sttButton?.setBackgroundColor((if (on) PRIMARY_ACTIVE_BG else BTN_BG).toInt())
++        }
+     }
+ 
+     // ---------- Область: режимы, селектор, рамка ----------
+@@ -579,8 +605,14 @@ class OcrOverlayService : Service() {
+         else -> "Область: авто"
+     }
+ 
++    /**
++     * Обновить подпись режима области.
++     *
++     * Надпись живёт в строке меню, а не на кнопке: на круглой кнопке она не
++     * помещалась, и режим области переставал быть виден.
++     */
+     private fun updateRegionButton() {
+-        uiHandler.post { regionButton?.text = regionModeLabel() }
++        uiHandler.post { regionRowLabel?.text = regionModeLabel() }
+     }
+ 
+     private fun cycleRegionMode() {
+@@ -765,7 +797,7 @@ class OcrOverlayService : Service() {
+ 
+         val layout = FrameLayout(this)
+ 
+-        // ===== Развёрнутая панель =====
++        // ===== Развёрнутая панель: как меню читалки, а не «экран» =====
+         val content = LinearLayout(this)
+         content.orientation = LinearLayout.VERTICAL
+         // Панель лежит поверх чужого приложения, и её фон обязан быть
+@@ -773,7 +805,7 @@ class OcrOverlayService : Service() {
+         // читался текст игры — надписи панели сливались с чужими, и
+         // разобрать, где чьё, было невозможно. Светлый текст даже 5%
+         // просвечивания давали читаемую картинку.
+-        content.setBackgroundColor(0xFF14101B.toInt())
++        content.background = rounded(CARD_BG, CARD_RADIUS_DP)
+         content.setPadding(dp(6f), dp(4f), dp(6f), dp(6f))
+ 
+         val header = LinearLayout(this)
+@@ -782,11 +814,11 @@ class OcrOverlayService : Service() {
+         val handle = TextView(this)
+         handle.text = "≡ "
+         handle.textSize = 14f
+-        handle.setTextColor(0xFFFFFFFF.toInt())
++        handle.setTextColor(ON_SURFACE.toInt())
+         header.addView(handle)
+         val title = TextView(this)
+         title.text = "OCR-бабл"
+-        title.setTextColor(0xFFE0E0E0.toInt())
++        title.setTextColor(ON_SURFACE_VARIANT.toInt())
+         title.textSize = 12f
+         header.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+         val collapseBtn = textButton("▾") { collapseNow() }
+@@ -796,7 +828,7 @@ class OcrOverlayService : Service() {
+         content.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30f)))
+ 
+         val bubble = TextView(this)
+-        bubble.setTextColor(0xFFFFFFFF.toInt())
++        bubble.setTextColor(ON_SURFACE.toInt())
+         bubble.textSize = 14f
+         bubble.setPadding(dp(10f), dp(8f), dp(10f), dp(8f))
+         bubble.maxLines = 6
+@@ -814,72 +846,97 @@ class OcrOverlayService : Service() {
+         )
+         bubbleText = bubble
+ 
+-        // Ряд 1 — как в читалке: голос, роли, выбор.
+-        val row1 = LinearLayout(this)
+-        row1.orientation = LinearLayout.HORIZONTAL
+-        row1.gravity = Gravity.CENTER_VERTICAL
+-        row1.addView(textButton("▶ Голос") { toggleSpeak() })
+-        row1.addView(textButton("♀") { speakRole("female") })
+-        row1.addView(textButton("♂") { speakRole("male") })
+-        row1.addView(textButton("🎙") { speakRole("narrator") })
+-        row1.addView(textButton("Выбрать") { openVoiceChoice() })
+-        content.addView(row1, rowParams())
+-
+-        // Ряд 2 — STT, буфер, копировать, словарь, закрыть.
+-        val row2 = LinearLayout(this)
+-        row2.orientation = LinearLayout.HORIZONTAL
+-        row2.gravity = Gravity.CENTER_VERTICAL
+-        sttButton = textButton("🎙 STT") { toggleStt() }
+-        row2.addView(sttButton)
+-        row2.addView(textButton("📋") { fromClipboard() })
+-        row2.addView(textButton("Копировать") { copyBubble() })
+-        row2.addView(textButton("＋ Словарь") { addToDictionary() })
+-        row2.addView(textButton("Закрыть") { collapseNow() })
+-        content.addView(row2, rowParams())
+-
+-        // Ряд 3 — область: режим, задать, рамка.
+-        val row3 = LinearLayout(this)
+-        row3.orientation = LinearLayout.HORIZONTAL
+-        row3.gravity = Gravity.CENTER_VERTICAL
+-        regionButton = textButton(regionModeLabel()) { cycleRegionMode() }
+-        row3.addView(regionButton)
+-        row3.addView(textButton("✏") { openSelector() })
+-        row3.addView(textButton("▦") { toggleFrame() })
+-        content.addView(row3, rowParams())
+-
+-        // Чтение рамки: захват экрана, распознавание, озвучка и своя
+-        // прокрутка. Захват разрешается системным диалогом, а сервис не
+-        // умеет просить разрешения — этим занимается прозрачная activity.
+-        readButton = textButton(if (isReading) "⏹ Стоп-чтение" else "▶ Читать рамку") {
++        // Вертикальное меню — как плавающее меню читалки: подпись слева,
++        // круглая кнопка справа. Раньше здесь были ряды прямоугольных кнопок
++        // с текстом, и панель выглядела отдельным экраном поверх игры.
++        val menu = LinearLayout(this)
++        menu.orientation = LinearLayout.VERTICAL
++
++        readButton = roundButton(if (isReading) "⏹" else "▶", active = isReading) {
+             if (isReading) {
+                 stopReading()
+-                uiHandler.post { readButton?.text = "▶ Читать рамку" }
++                refreshReadButton()
+             } else {
+                 OcrCaptureActivity.request(applicationContext)
+             }
+         }
+-        content.addView(readButton, rowParams())
++        val readRow = menuRow(if (isReading) "Стоп-чтение" else "Читать рамку", readButton)
++        readRowLabel = readRow.label()
++        menu.addView(readRow, rowParams())
+ 
++        menu.addView(
++            menuRow("Голос", roundButton(if (isSpeaking) "⏹" else "▶", active = isSpeaking) { toggleSpeak() }),
++            rowParams(),
++        )
++
++        menu.addView(
++            menuRow(
++                "Голос ♀ / ♂ · движок",
++                roundButton("♀", active = voiceIsFemale()) { speakRole("female") },
++                roundButton("♂", active = !voiceIsFemale()) { speakRole("male") },
++                roundButton("⚙", active = false) { openVoiceChoice() },
++            ),
++            rowParams(),
++        )
++
++        sttButton = roundButton("🎙", active = false) { toggleStt() }
++        menu.addView(
++            menuRow(
++                "STT · распознать речь",
++                sttButton,
++                roundButton("📋", active = false) { fromClipboard() },
++            ),
++            rowParams(),
++        )
++
++        regionButton = roundButton("▦", active = false) { cycleRegionMode() }
++        val regionRow = menuRow(regionModeLabel(), roundButton("✏", active = false) { openSelector() }, regionButton)
++        regionRowLabel = regionRow.label()
++        menu.addView(regionRow, rowParams())
++
++        menu.addView(
++            menuRow(
++                "Текст",
++                roundButton("⧉", active = false) { copyBubble() },
++                roundButton("＋", active = false) { addToDictionary() },
++            ),
++            rowParams(),
++        )
++
++        menu.addView(
++            menuRow(
++                "Панель",
++                roundButton("▤", active = false) { toggleFrame() },
++                roundButton("⚙", active = false) { openOverlaySettings() },
++            ),
++            rowParams(),
++        )
++
++        content.addView(menu, rowParams())
+ 
+         // Ручной ввод (если в другом приложении нельзя копировать).
+         val inputEdit = EditText(this)
+         inputEdit.hint = "Текст для бабла…"
+-        inputEdit.setTextColor(0xFFFFFFFF.toInt())
+-        inputEdit.setHintTextColor(0xAAE0E0E0.toInt())
++        inputEdit.setTextColor(ON_SURFACE.toInt())
++        inputEdit.setHintTextColor(ON_SURFACE_VARIANT.toInt())
+         inputEdit.textSize = 13f
+         inputEdit.setPadding(dp(8f), dp(4f), dp(8f), dp(4f))
+         content.addView(inputEdit, rowParams())
+         input = inputEdit
+         val sayRow = LinearLayout(this)
+         sayRow.orientation = LinearLayout.HORIZONTAL
+-        sayRow.addView(textButton("Сказать") {
+-            val t = input?.text?.toString()?.trim().orEmpty()
+-            if (t.isNotBlank()) speakText(t)
+-        })
+-        sayRow.addView(textButton("Очистить") {
+-            bubble?.text = ""
+-            input?.text?.clear()
+-        })
++        sayRow.addView(
++            roundButton("▶", active = false) {
++                val t = input?.text?.toString()?.trim().orEmpty()
++                if (t.isNotBlank()) speakText(t)
++            },
++        )
++        sayRow.addView(
++            roundButton("✕", active = false) {
++                bubble.text = ""
++                input?.text?.clear()
++            },
++        )
+         content.addView(sayRow, rowParams())
+ 
+         layout.addView(
+@@ -889,15 +946,15 @@ class OcrOverlayService : Service() {
+         contentView = content
+ 
+         // ===== Плавающая кнопка (стартовое состояние) =====
++        // Круглая, как FAB читалки: в углу, перетаскивается, тап —
++        // развернуть меню. Прямоугольная кнопка с эмодзи читалась как
++        // «штука поверх экрана», круглая — как часть управления.
+         val floatBtn = TextView(this)
+-        floatBtn.text = "💬"
+-        floatBtn.textSize = 24f
++        floatBtn.text = "☰"
++        floatBtn.textSize = 22f
+         floatBtn.gravity = Gravity.CENTER
+-        val oval = GradientDrawable()
+-        oval.shape = GradientDrawable.OVAL
+-        oval.setColor(0xE614101B.toInt())
+-        oval.setStroke(dp(2f), 0xFF4A7EAF.toInt())
+-        floatBtn.background = oval
++        floatBtn.background = rounded(FAB_BG, FAB_RADIUS_DP)
++        floatBtn.setTextColor(ON_SURFACE.toInt())
+         floatBtn.setOnTouchListener { _, event -> handleFloatTouch(event) }
+         layout.addView(floatBtn, FrameLayout.LayoutParams(dp(BTN_DP), dp(BTN_DP), Gravity.CENTER))
+         floatButton = floatBtn
+@@ -936,6 +993,85 @@ class OcrOverlayService : Service() {
+         ).apply { topMargin = dp(2f) }
+     }
+ 
++    /**
++     * Строка меню: подпись слева, круглые кнопки справа.
++     *
++     * Так устроено плавающее меню читалки, и оверлей повторяет его: читатель
++     * уже знает, что это за вид, и не разбирается заново, что означает
++     * кнопка без подписи.
++     */
++    private fun menuRow(label: String, vararg buttons: TextView): LinearLayout {
++        val row = LinearLayout(this)
++        row.orientation = LinearLayout.HORIZONTAL
++        row.gravity = Gravity.CENTER_VERTICAL
++        val text = TextView(this)
++        text.text = label
++        text.textSize = 12f
++        text.setTextColor(ON_SURFACE_VARIANT.toInt())
++        row.addView(text, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
++        buttons.forEach { row.addView(it) }
++        row.tag = text
++        return row
++    }
++
++    /** Подпись строки: нужно, чтобы обновлять её, не пересобирая меню. */
++    private fun LinearLayout.label(): TextView? = tag as? TextView
++
++    /**
++     * Круглая кнопка меню — как SmallFloatingActionButton читалки.
++     *
++     * @param active подсвеченное состояние: кнопка показывает, что действие
++     *   уже идёт (чтение, озвучка, STT)
++     */
++    private fun roundButton(glyph: String, active: Boolean = false, onClick: () -> Unit): TextView {
++        val b = TextView(this)
++        b.text = glyph
++        b.textSize = 15f
++        b.gravity = Gravity.CENTER
++        b.setTextColor(ON_SURFACE.toInt())
++        // Круг получается только при ширине, равной высоте: иначе скругление
++        // рисуется по большой стороне и кнопка выходит прямоугольной.
++        b.background = rounded(if (active) PRIMARY_ACTIVE_BG else BTN_BG, BTN_RADIUS_DP)
++        b.setOnClickListener { onClick() }
++        b.layoutParams = LinearLayout.LayoutParams(dp(BTN_SIZE_DP), dp(BTN_SIZE_DP))
++        return b
++    }
++
++    private fun rounded(color: Int, radiusDp: Float): GradientDrawable {
++        val d = GradientDrawable()
++        d.shape = GradientDrawable.RECTANGLE
++        d.cornerRadius = dp(radiusDp).toFloat()
++        d.setColor(color)
++        return d
++    }
++
++    /** Кнопка чтения: подпись и состояние должны совпадать с тем, что идёт. */
++    private fun refreshReadButton() {
++        uiHandler.post {
++            val on = isReading
++            readButton?.text = if (on) "⏹" else "▶"
++            readButton?.setBackgroundColor((if (on) PRIMARY_ACTIVE_BG else BTN_BG).toInt())
++            readRowLabel?.text = if (on) "Стоп-чтение" else "Читать рамку"
++        }
++    }
++
++    /** Женский ли голос выбран в настройках — от этого зависит вид кнопок. */
++    private fun voiceIsFemale(): Boolean {
++        val gender = runCatching { prefs.voicePresetGender().get() }.getOrNull()
++        return gender != "male"
++    }
++
++    private fun openOverlaySettings() {
++        // Экран настроек живёт внутри приложения, а сервис оверлея —
++        // снаружи. Открываем приложение: оверлей сам спрячется, как только
++        // заметит, что мы на переднем плане.
++        runCatching {
++            val launch = packageManager.getLaunchIntentForPackage(packageName)
++            launch?.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
++            launch?.let { startActivity(it) }
++        }.onFailure { toast("Открой настройки оверлея в приложении") }
++    }
++
+     private fun textButton(symbol: String, onClick: () -> Unit): Button {
+         val b = Button(this)
+         b.text = symbol
+@@ -1026,6 +1162,7 @@ class OcrOverlayService : Service() {
+         contentView?.visibility = View.GONE
+         floatButton?.visibility = View.VISIBLE
+         clampToScreen(lp)
++        snapToCorner(lp)
+         root?.let { runCatching { wm.updateViewLayout(it, lp) } }
+     }
+ 
+@@ -1038,9 +1175,31 @@ class OcrOverlayService : Service() {
+         contentView?.visibility = View.VISIBLE
+         floatButton?.visibility = View.GONE
+         clampToScreen(lp)
++        snapToCorner(lp)
+         root?.let { runCatching { wm.updateViewLayout(it, lp) } }
+     }
+ 
++    /**
++     * Прижать к краю экрана — как кнопка в углу у читалки.
++     *
++     * Раньше панель оставалась там, куда её перетащили, и у краёв экрана
++     * наполовину уезжала за него. Теперь она всегда стоит у края: по
++     * горизонтали — к ближайшему боку, по вертикали — к нижней трети, где
++     * до кнопки не достаёт большой палец.
++     */
++    private fun snapToCorner(lp: WindowManager.LayoutParams) {
++        val dm = resources.displayMetrics
++        val margin = dp(CORNER_MARGIN_DP)
++        val toLeft = lp.x + lp.width / 2 < dm.widthPixels / 2
++        lp.x = if (toLeft) margin else (dm.widthPixels - lp.width - margin)
++        val bottomZone = dm.heightPixels * 2 / 3
++        lp.y = if (lp.y < bottomZone) {
++            margin
++        } else {
++            (dm.heightPixels - lp.height - margin).coerceAtLeast(margin)
++        }
++    }
++
+     private fun makeFocusable(value: Boolean) {
+         val lp = params ?: return
+         lp.flags = if (value) {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index 3972074dd..3528a1017 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -457,9 +457,6 @@ class ReaderActivity : BaseActivity() {
+                     is ReaderViewModel.Event.SetCoverResult -> {
+                         onSetAsCoverResult(event.result)
+                     }
+-                    is ReaderViewModel.Event.OfflineExportResult -> {
+-                        toast(event.message)
+-                    }
+                     ReaderViewModel.Event.OcrNoTextFound -> {
+                         clearActiveOcrOverlaySession()
+                         toast(MR.strings.no_results_found)
+@@ -1108,7 +1105,6 @@ class ReaderActivity : BaseActivity() {
+                         readingOrderState = order
+                         toast("Режим: ${type.title} — ${mihon.data.ocr.OcrRegionRules.orderTitle(order)}")
+                     },
+-                    onExportChapter = { viewModel.exportChapterToOfflineFolder(this@ReaderActivity) },
+                 )
+ 
+                 val scanShapeId by uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+index b0f886c67..90e082542 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+@@ -866,62 +866,6 @@ class ReaderViewModel @JvmOverloads constructor(
+      * Прогрев OCR-двика при входе в читалку: первая ручная область не
+      * должна ждать инициализацию модели («долго грузит»).
+      */
+-    /**
+-     * Сохранение страниц скачанной главы в папки оффлайн-чтения:
+-     * <files>/offline/<манга>/<глава>/… (запрос пользователя).
+-     */
+-    fun exportChapterToOfflineFolder(context: android.content.Context) {
+-        viewModelScope.launchIO {
+-            val manga = state.value.manga
+-            val chapter = state.value.currentChapter?.chapter
+-            if (manga == null || chapter == null) return@launchIO
+-            val source = sourceManager.getOrStub(manga.source)
+-            val chapterDir = downloadProvider.findChapterDir(
+-                chapterName = chapter.name,
+-                chapterScanlator = chapter.scanlator,
+-                chapterUrl = chapter.url,
+-                mangaTitle = manga.title,
+-                source = source,
+-            )
+-            if (chapterDir == null) {
+-                withUIContext {
+-                    eventChannel.send(
+-                        Event.OfflineExportResult(
+-                            "Глава не скачана: скачайте её (загрузки), затем повторите",
+-                        ),
+-                    )
+-                }
+-                return@launchIO
+-            }
+-            val safeManga = manga.title.replace(Regex("[^A-Za-zА-Яа-яЁё0-9 _-]"), "_").take(60)
+-            val safeChap = chapter.name.replace(Regex("[^A-Za-zА-Яа-яЁё0-9 ._-]"), "_").take(60)
+-            val target = java.io.File(context.getExternalFilesDir(null), "offline/$safeManga/$safeChap")
+-            target.mkdirs()
+-            var count = 0
+-            fun copyDir(src: com.hippo.unifile.UniFile, dst: java.io.File) {
+-                for (f in src.listFiles() ?: emptyArray()) {
+-                    val name = f.name ?: continue
+-                    if (f.isDirectory) {
+-                        val nd = java.io.File(dst, name)
+-                        nd.mkdirs()
+-                        copyDir(f, nd)
+-                    } else {
+-                        val out = java.io.File(dst, name)
+-                        f.openInputStream().use { ins -> out.outputStream().use { ins.copyTo(it) } }
+-                        count++
+-                    }
+-                }
+-            }
+-            runCatching { copyDir(chapterDir, target) }
+-                .onFailure { e -> logcat(LogPriority.ERROR, e) { "Offline export failed" } }
+-            withUIContext {
+-                eventChannel.send(
+-                    Event.OfflineExportResult("Сохранено страниц: $count → ${target.absolutePath}"),
+-                )
+-            }
+-        }
+-    }
+-
+     fun warmupOcr() {
+         viewModelScope.launchIO {
+             runCatching {
+@@ -1440,7 +1384,6 @@ class ReaderViewModel @JvmOverloads constructor(
+         /** Результат ручного распознавания помечен в буфере «Скриншоты». */
+         data object OcrResultMarked : Event
+ 
+-        data class OfflineExportResult(val message: String) : Event
+         data object OcrMemoryError : Event
+         data object OcrInitializationError : Event
+         /** Общая ошибка OCR. `message` — реальная причина (или null). */
