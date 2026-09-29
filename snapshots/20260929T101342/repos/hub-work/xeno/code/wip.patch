@@ -1,0 +1,202 @@
+diff --git a/.github/workflows/docker-arm64-apk.yml b/.github/workflows/docker-arm64-apk.yml
+index ceed8b30d..1b743da20 100644
+--- a/.github/workflows/docker-arm64-apk.yml
++++ b/.github/workflows/docker-arm64-apk.yml
+@@ -14,6 +14,13 @@
+ #     build step retries up to 3 times to ride out flaky pulls;
+ #   * cache saves are best-effort (continue-on-error) - a cache problem must
+ #     never fail an otherwise green build.
++#
++# One core, one build dir. This workflow builds a13 only and says so explicitly
++# rather than relying on build-variants.sh's default. Every core is a full LLVM
++# build from cold in its own directory sharing no objects, so a legacy/a11/a13/a15
++# run is four of them back to back -- the thing the a13-only cache key below is
++# built around. A variant rollout stays a one-line change here plus a matching
++# cache entry, not a silent multi-hour regression.
+ 
+ name: Docker ARM64 APK
+ 
+@@ -24,10 +31,6 @@ on:
+     tags:
+       - "0.*"
+   workflow_dispatch:
+-    inputs:
+-      variant:
+-        description: APK ISA/API variant (legacy, a11, a13, a15)
+-        default: "a13"
+ 
+ concurrency:
+   group: docker-arm64-apk-${{ github.ref }}-${{ github.event_name }}
+@@ -64,6 +67,11 @@ jobs:
+               android/configure.sh \
+               android/build-variants.sh \
+               android/stamp-git-version.sh | sha1sum | cut -c1-12)"
++          # Single core: the key is scoped a13, and that is the only build dir
++          # this workflow ever populates. A second variant would need its own
++          # restore/save pair -- sharing this key would restore an a13 tree and
++          # silently build a13 into it, which configured_ok() catches, but only
++          # after ninja has already relinked the wrong core.
+           echo "a13-bin-key=xeno-docker-build-a13-${{ github.ref_name }}-llvm-${LLVM_PIN}-cfg-${RECIPE}" >> "$GITHUB_OUTPUT"
+ 
+           GRADLE_FILES="android/armsx3-ui/settings.gradle.kts
+@@ -99,6 +107,22 @@ jobs:
+           restore-keys: |
+             gradle-Linux-
+ 
++      # The two hand-fetched dependency trees, cached on top of the Gradle cache so
++      # a warm run does no network fetches beyond the LLVM submodule checkout.
++      # Keyed on the workflow's own revision rather than their upstream HEADs on
++      # purpose: these are build inputs, and an upstream bump is picked up by the
++      # fetch/reset steps above within the same run, not by a key change.
++      - name: Restore fetched dependency trees
++        uses: actions/cache/restore@v4
++        id: deps-cache
++        with:
++          path: |
++            ${{ github.workspace }}/3rdparty/librashader
++            ${{ github.workspace }}/android/armsx3-ui/app/src/main/cpp/libadrenotools
++          key: xeno-fetched-deps-${{ github.run_id }}
++          restore-keys: |
++            xeno-fetched-deps-
++
+       # Fast-forward the restored LLVM build tree.
+       #
+       # A restored cache hands the objects back with their ORIGINAL mtimes, and
+@@ -144,12 +168,29 @@ jobs:
+           cache-to: type=gha,mode=max,scope=xeno-android-ci
+ 
+       # librashader and libadrenotools are not submodules upstream; fetched by
+-      # hand per the repository README.
++      # hand per the repository README. libadrenotools is a --recursive clone and
++      # is the slowest of the two, so both trees are cached -- they are build
++      # inputs the container compiles against, and re-cloning them on every run
++      # buys nothing: they are pinned to upstream HEAD, not to our tree, so a
++      # change in them is what the cache key's restore-keys let through anyway.
+       - name: Fetch librashader
+-        run: git clone --depth 1 https://github.com/SnowflakePowered/librashader 3rdparty/librashader
++        run: |
++          if [ -d 3rdparty/librashader/.git ]; then
++            git -C 3rdparty/librashader fetch --depth 1 origin && \
++              git -C 3rdparty/librashader reset --hard origin/HEAD
++          else
++            git clone --depth 1 https://github.com/SnowflakePowered/librashader 3rdparty/librashader
++          fi
+ 
+       - name: Fetch libadrenotools
+-        run: git clone --depth 1 --recursive https://github.com/bylaws/libadrenotools android/armsx3-ui/app/src/main/cpp/libadrenotools
++        run: |
++          if [ -d android/armsx3-ui/app/src/main/cpp/libadrenotools/.git ]; then
++            git -C android/armsx3-ui/app/src/main/cpp/libadrenotools fetch --depth 1 origin && \
++              git -C android/armsx3-ui/app/src/main/cpp/libadrenotools reset --hard origin/HEAD && \
++              git -C android/armsx3-ui/app/src/main/cpp/libadrenotools submodule update --init --recursive --depth 1
++          else
++            git clone --depth 1 --recursive https://github.com/bylaws/libadrenotools android/armsx3-ui/app/src/main/cpp/libadrenotools
++          fi
+ 
+       # The actual build, fully inside the container. The workspace is mounted
+       # read-write at /src so build-a13 and the gradle cache live under the
+@@ -158,7 +199,11 @@ jobs:
+       - name: Build ARM64 APK in Docker container
+         shell: bash
+         env:
+-          VARIANTS: "${{ github.event.inputs.variant || 'a13' }}"
++          # a13, hardcoded on purpose -- see the header. Every core is a full cold
++          # LLVM build with no objects shared between variants, and only the a13
++          # build dir is cached below, so any other value here is a guaranteed
++          # hours-long cold run.
++          VARIANTS: "a13"
+         run: |
+           # OUT_DIR is /src/out; build-variants.sh does not mkdir it, and the
+           # bind mount only creates /src, so the final APK copy would fail
+@@ -218,6 +263,19 @@ jobs:
+           path: ${{ github.workspace }}/.gradle
+           key: ${{ steps.cache-keys.outputs.gradle-key }}-${{ github.run_id }}
+ 
++      # Run-unique key for the same reason as the build dir: the fetch steps reset
++      # these to upstream HEAD on every run, so the tree is expected to differ
++      # between runs and a fixed key would pin the first one saved forever.
++      - name: Save fetched dependency trees
++        if: ${{ !cancelled() }}
++        continue-on-error: true
++        uses: actions/cache/save@v4
++        with:
++          path: |
++            ${{ github.workspace }}/3rdparty/librashader
++            ${{ github.workspace }}/android/armsx3-ui/app/src/main/cpp/libadrenotools
++          key: xeno-fetched-deps-${{ github.run_id }}
++
+       - name: Create GitHub Release
+         # Manual dispatches on master are for producing an artifact, not a
+         # release; publication only makes sense for a tag. The `gh release view`
+diff --git a/README.md b/README.md
+index 5f023adbb..7b6bbc706 100644
+--- a/README.md
++++ b/README.md
+@@ -81,7 +81,7 @@ Then build the app:
+ 
+     cd android/armsx3-ui
+     export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+-    ./gradlew :app:assembleGithubRelease "-Parmsx3.minSdk=33"
++    ./gradlew :app:assembleGithubRelease "-Pxeno.minSdk=33"
+ 
+ The apk lands in app/build/outputs/apk/github/release/.
+ 
+diff --git a/android/build-play-aab.sh b/android/build-play-aab.sh
+index 3acc1108c..04b73c1bf 100755
+--- a/android/build-play-aab.sh
++++ b/android/build-play-aab.sh
+@@ -65,7 +65,7 @@ MSG
+ 	exit 1
+ fi
+ 
+-# armsx3.noMinify because AGP 9.2.1 cannot bundle with R8 on: R8 writes mapping.prt, a
++# xeno.noMinify because AGP 9.2.1 cannot bundle with R8 on: R8 writes mapping.prt, a
+ # compressed per-class archive, and packageBundle demands a plain mapping.txt. ARMSX2 ships
+ # its Play build with minify off too, so this is the existing precedent rather than a new
+ # compromise.
+@@ -96,7 +96,7 @@ mkdir -p "$JNI"
+ "$STRIP" --strip-unneeded -o "$JNI/libxeno-core.so" "$CORE_SRC"
+ 
+ echo "==> Building Play bundle (minSdk $MIN_SDK, minify off)"
+-( cd "$UI" && ./gradlew --quiet :app:bundlePlayRelease "-Parmsx3.minSdk=$MIN_SDK" -Parmsx3.noMinify -Parmsx3.uploadSigning -Pxeno.keepCore )
++( cd "$UI" && ./gradlew --quiet :app:bundlePlayRelease "-Pxeno.minSdk=$MIN_SDK" -Pxeno.noMinify -Pxeno.uploadSigning -Pxeno.keepCore )
+ 
+ AAB="$UI/app/build/outputs/bundle/playRelease/app-play-release.aab"
+ [ -f "$AAB" ] || { echo "FAIL: no bundle produced at $AAB" >&2; exit 1; }
+diff --git a/android/build-variants.sh b/android/build-variants.sh
+index 23853381d..f2cb48bf3 100755
+--- a/android/build-variants.sh
++++ b/android/build-variants.sh
+@@ -104,6 +104,12 @@ VARIANT_a15="29.0.14206865:35:armv8.2-a+dotprod+fp16:a15-armv8.2-sdk35"
+ # standard for 8 Gen 1 and newer, covers current devices, and cuts a cold
+ # full-LLVM build from ~6 hours to ~45 minutes. legacy/a11/a15 stay available
+ # for device-level rollouts with VARIANTS="legacy a11 a13 a15".
++#
++# This default is not advisory: every core is a full LLVM build from cold in its
++# own directory with no shared objects, so a four-variant run is four of those,
++# back to back. The CI workflows pass VARIANTS=a13 explicitly and keep only the
++# a13 cache, so switching the default is the only thing that turns a ~45 minute
++# green run into an hours-long one. Keep it as a deliberate, separate act.
+ VARIANTS="${VARIANTS:-${*:-a13}}"
+ 
+ version_name() {
+@@ -231,10 +237,17 @@ local native_flags=()
+ 
+ 	# assembleGithubRelease, not assembleRelease: the flavor split means there is no
+ 	# flavorless release variant any more. The play bundle is built by build-play-aab.sh.
++	#
++	# The property is xeno.minSdk, NOT armsx3.minSdk: app/build.gradle.kts only ever reads the
++	# xeno.* names, and an unknown -P is accepted silently, so the armsx3 spelling built the
++	# release with the default minSdk 33 for EVERY variant -- the A11/A15 APKs were shipping
++	# an API-33 minSdk against an API-30/35 core and nothing in the build complained. A
++	# variant that only sets api 30/35 and leaves minSdk at 33 is simply unreachable, so
++	# there is no way to notice from the APK's own output either.
+ 	if [ -f "$UI/gradlew.bat" ] && [[ "$NDK_PREBUILT" == windows-* ]]; then
+-		( cd "$UI" && cmd //c "gradlew.bat --quiet :app:assembleGithubRelease -Parmsx3.minSdk=$api" )
++		( cd "$UI" && cmd //c "gradlew.bat --quiet :app:assembleGithubRelease -Pxeno.minSdk=$api" )
+ 	else
+-		( cd "$UI" && sh ./gradlew --quiet :app:assembleGithubRelease "-Parmsx3.minSdk=$api" )
++		( cd "$UI" && sh ./gradlew --quiet :app:assembleGithubRelease "-Pxeno.minSdk=$api" )
+ 	fi
+ 
+ 	local out="$OUT_DIR/ARMSX3-$(version_name)-$suffix.apk"
