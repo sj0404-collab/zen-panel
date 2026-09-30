@@ -1,0 +1,1268 @@
+diff --git a/MANIFEST.md b/MANIFEST.md
+index cfc8afe24..3e2720833 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -15,9 +15,3 @@
+ 4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи
+    и не логируй его значение.
+ 5. Готовые сборки/артефакты клади в /home/runner/hub-work/yomikai/tmp — их видно вкладкой «Файлы».
+-6. Историю текущего агента храни в этом репозитории (/home/runner/hub-work/yomikai/code), а не во временных папках.
+-7. После внесения исправлений автоматически создавай коммит и отправляй его в текущую ветку репозитория.
+-8. Все сборки запускай через GitHub Actions/workflows; не запускай сборки внутри локального окружения.
+-9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
+-10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
+-11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt
+index b478c4b87..cc96d580f 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt
+@@ -5,9 +5,6 @@ import android.media.ToneGenerator
+ import uy.kohesive.injekt.Injekt
+ import uy.kohesive.injekt.api.get
+ import androidx.compose.animation.AnimatedVisibility
+-import androidx.compose.foundation.layout.heightIn
+-import androidx.compose.foundation.rememberScrollState
+-import androidx.compose.foundation.verticalScroll
+ import androidx.compose.material3.IconButton
+ import androidx.compose.material.icons.outlined.KeyboardArrowDown
+ import androidx.compose.material.icons.outlined.KeyboardArrowUp
+@@ -17,13 +14,14 @@ import androidx.compose.animation.fadeIn
+ import androidx.compose.animation.fadeOut
+ import androidx.compose.animation.scaleIn
+ import androidx.compose.animation.scaleOut
+-import androidx.compose.foundation.gestures.detectDragGestures
+ import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.ColumnScope
+ import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.Spacer
+ import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.offset
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.layout.width
+@@ -31,25 +29,18 @@ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.outlined.Tune
+ import androidx.compose.material.icons.outlined.AutoMode
+ import androidx.compose.material.icons.outlined.CameraAlt
+-import androidx.compose.material.icons.outlined.Close
+ import androidx.compose.material.icons.outlined.DocumentScanner
+ import androidx.compose.material.icons.outlined.GraphicEq
+-import androidx.compose.material.icons.outlined.Menu
+ import androidx.compose.material.icons.outlined.RecordVoiceOver
+ import androidx.compose.material.icons.outlined.StopCircle
+ import androidx.compose.material.icons.outlined.Pause
+ import androidx.compose.material.icons.outlined.PlayArrow
+-import androidx.compose.material.icons.outlined.RecordVoiceOver
+ import androidx.compose.material.icons.outlined.SmartToy
+ import androidx.compose.material.icons.outlined.Speed
+ import androidx.compose.material.icons.outlined.TouchApp
+-import androidx.compose.material3.Card
+-import androidx.compose.material3.CardDefaults
+-import androidx.compose.material3.FloatingActionButton
+ import androidx.compose.material3.Icon
+ import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.Slider
+-import androidx.compose.material3.SmallFloatingActionButton
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.DisposableEffect
+@@ -61,7 +52,7 @@ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+-import androidx.compose.ui.input.pointer.pointerInput
++import androidx.compose.ui.text.style.TextOverflow
+ import eu.kanade.tachiyomi.util.system.toast
+ import androidx.compose.ui.unit.IntOffset
+ import androidx.compose.ui.unit.dp
+@@ -130,6 +121,56 @@ fun ReaderFloatingControls(
+     fun beepOpen() = runCatching { tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 60) }
+     fun beepAction() = runCatching { tone?.startTone(ToneGenerator.TONE_PROP_ACK, 70) }
+ 
++    // Скрытые в конструкторе модули отсеиваем при сборке списка: сами строки
++    // каждый раз заново создаются, но это просто data-классы, так что дёшево.
++    fun rowUnlessHidden(module: String, row: OcrMenuRow): OcrMenuRow? =
++        if (hiddenM.contains(module)) null else row
++
++    // Пресет типа контента задаёт и порядок чтения — подпись строки меню.
++    val presetTitle = when (contentPreset) {
++        "manga" -> "Манга"
++        "manhwa" -> "Манхва"
++        "manhua" -> "Маньхуа"
++        "comic" -> "Комикс"
++        else -> "Сбаланс."
++    }
++    val presetOrder = when (contentPreset) {
++        "manga" -> "← Справа налево"
++        "manhwa", "manhua" -> "↓ Сверху вниз"
++        "comic" -> "→ Слева направо"
++        else -> when (readingOrder) {
++            "ltr" -> "→ Слева направо"
++            "vertical" -> "↓ Сверху вниз"
++            else -> "← Справа налево"
++        }
++    }
++
++    // Пункты меню как данные: вид и раскладку рисует общий
++    // OcrControlMenuCard — здесь только подписи, действия и состояние.
++    //
++    // Слайдер скорости виден только при активной автопрокрутке и вставлен
++    // сразу под свою строку: в общем хвосте карточки до него пришлось бы
++    // доезжать скроллом.
++    val speedBlock: (@Composable ColumnScope.() -> Unit)? = if (isAutoscrollActive) {
++        {
++            Row(verticalAlignment = Alignment.CenterVertically) {
++                Icon(Icons.Outlined.Speed, contentDescription = null)
++                Slider(
++                    value = autoscrollSpeed,
++                    onValueChange = {
++                        autoscrollSpeed = it
++                        onAutoscrollToggle(true, autoscrollSpeed)
++                    },
++                    valueRange = 1f..10f,
++                    modifier = Modifier.width(140.dp),
++                )
++                Text("×${autoscrollSpeed.roundToInt()}")
++            }
++        }
++    } else {
++        null
++    }
++
+     Box(
+         modifier = modifier.fillMaxSize(),
+         contentAlignment = Alignment.BottomEnd,
+@@ -165,89 +206,64 @@ fun ReaderFloatingControls(
+                 horizontalAlignment = Alignment.End,
+                 verticalArrangement = Arrangement.spacedBy(8.dp),
+             ) {
+-                // Раскрывающееся меню (SAO): столбец пунктов над кнопкой
++                // Раскрывающееся меню (SAO): столбец пунктов над кнопкой.
++                // Вид и раскладку рисует общий OcrControlMenuCard — здесь
++                // только данные: подписи, действия и состояние.
+                 AnimatedVisibility(
+                     visible = menuOpen,
+                     enter = fadeIn() + scaleIn(initialScale = 0.8f),
+                     exit = fadeOut() + scaleOut(targetScale = 0.8f),
+                 ) {
+-                    Card(
+-                        colors = CardDefaults.cardColors(
+-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.96f),
+-                        ),
+-                    ) {
+-                        Column(
+-                            modifier = Modifier
+-                                .verticalScroll(rememberScrollState())
+-                                .heightIn(max = 480.dp)
+-                                .padding(10.dp),
+-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+-                            horizontalAlignment = Alignment.End,
+-                        ) {
+-                                if (!hiddenM.contains("r_scan")) {
+-
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text("OCR скан  ", style = MaterialTheme.typography.labelMedium)
+-                                    SmallFloatingActionButton(onClick = {
+-                                        beepAction()
+-                                        // Сразу режим выделения области: промежуточные
+-                                        // кнопки «100%/верх/низ» убраны как лишние — область
+-                                        // пользователь выбирает перетаскиванием.
+-                                        onTriggerOcr()
+-                                    }) {
+-                                        Icon(Icons.Outlined.DocumentScanner, contentDescription = "OCR")
+-                                    }
+-                                }
+-
+-                                }
+-                                if (!hiddenM.contains("r_autoscroll")) {
+-
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text(
+-                                        if (isAutoscrollActive) "Стоп прокрутки  " else "Автопрокрутка  ",
+-                                        style = MaterialTheme.typography.labelMedium,
+-                                    )
+-                                    SmallFloatingActionButton(onClick = {
+-                                        beepAction()
+-                                        isAutoscrollActive = !isAutoscrollActive
+-                                        onAutoscrollToggle(isAutoscrollActive, autoscrollSpeed)
+-                                    }) {
+-                                        Icon(
+-                                            if (isAutoscrollActive) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+-                                            contentDescription = "Автопрокрутка",
+-                                            tint = if (isAutoscrollActive) {
+-                                                MaterialTheme.colorScheme.primary
+-                                            } else {
+-                                                MaterialTheme.colorScheme.onSurface
+-                                            },
+-                                        )
+-                                    }
+-                                }
+-
+-                                }
+-                                if (isAutoscrollActive) {
+-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+-                                        Icon(Icons.Outlined.Speed, contentDescription = null)
+-                                        Slider(
+-                                            value = autoscrollSpeed,
+-                                            onValueChange = {
+-                                                autoscrollSpeed = it
+-                                                onAutoscrollToggle(true, autoscrollSpeed)
+-                                            },
+-                                            valueRange = 1f..10f,
+-                                            modifier = Modifier.width(140.dp),
+-                                        )
+-                                        Text("×${autoscrollSpeed.roundToInt()}")
+-                                    }
+-                                }
+-                                if (!hiddenM.contains("r_autoread")) {
+-
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text(
+-                                        if (readingActive) "Чтение: идёт…  " else "Прочитать страницу  ",
+-                                        style = MaterialTheme.typography.labelMedium,
+-                                    )
+-                                    SmallFloatingActionButton(
++                    OcrControlMenuCard(
++                        rows = listOfNotNull(
++                            rowUnlessHidden(
++                                "r_scan",
++                                OcrMenuRow(
++                                    label = "OCR скан",
++                                    action = OcrMenuAction(
++                                        icon = Icons.Outlined.DocumentScanner,
++                                        onClick = {
++                                            beepAction()
++                                            // Сразу режим выделения области: промежуточные
++                                            // кнопки «100%/верх/низ» убраны как лишние — область
++                                            // пользователь выбирает перетаскиванием.
++                                            onTriggerOcr()
++                                        },
++                                        contentDescription = "OCR",
++                                    ),
++                                ),
++                            ),
++                            rowUnlessHidden(
++                                "r_autoscroll",
++                                OcrMenuRow(
++                                    label = if (isAutoscrollActive) "Стоп прокрутки" else "Автопрокрутка",
++                                    action = OcrMenuAction(
++                                        icon = if (isAutoscrollActive) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
++                                        onClick = {
++                                            beepAction()
++                                            isAutoscrollActive = !isAutoscrollActive
++                                            onAutoscrollToggle(isAutoscrollActive, autoscrollSpeed)
++                                        },
++                                        // Подсветки фона тут нет, меняется только иконка —
++                                        // так владелец сразу видит, что автопрокрутка идёт.
++                                        contentColor = if (isAutoscrollActive) {
++                                            MaterialTheme.colorScheme.primary
++                                        } else {
++                                            MaterialTheme.colorScheme.onSurfaceVariant
++                                        },
++                                        contentDescription = "Автопрокрутка",
++                                    ),
++                                    // Слайдер идёт сразу за своей строкой, а не
++                                    // в хвосте extraContent.
++                                    below = speedBlock,
++                                ),
++                            ),
++                            rowUnlessHidden(
++                                "r_autoread",
++                                OcrMenuRow(
++                                    label = if (readingActive) "Чтение: идёт…" else "Прочитать страницу",
++                                    action = OcrMenuAction(
++                                        icon = if (readingActive) Icons.Outlined.GraphicEq else Icons.Outlined.PlayArrow,
+                                         onClick = {
+                                             beepAction()
+                                             menuOpen = false
+@@ -258,274 +274,260 @@ fun ReaderFloatingControls(
+                                         } else {
+                                             MaterialTheme.colorScheme.secondaryContainer
+                                         },
+-                                    ) {
+-                                        Icon(
+-                                            if (readingActive) Icons.Outlined.GraphicEq else Icons.Outlined.PlayArrow,
+-                                            contentDescription = "Прочитать страницу",
+-                                            tint = if (readingActive) {
+-                                                MaterialTheme.colorScheme.onTertiaryContainer
+-                                            } else {
+-                                                MaterialTheme.colorScheme.onSecondaryContainer
+-                                            },
+-                                        )
+-                                    }
+-                                }
+-
+-                                }
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text("Стоп чтения  ", style = MaterialTheme.typography.labelMedium)
+-                                    SmallFloatingActionButton(
++                                        contentColor = if (readingActive) {
++                                            MaterialTheme.colorScheme.onTertiaryContainer
++                                        } else {
++                                            MaterialTheme.colorScheme.onSecondaryContainer
++                                        },
++                                        contentDescription = "Прочитать страницу",
++                                    ),
++                                ),
++                            ),
++                            OcrMenuRow(
++                                label = "Стоп чтения",
++                                action = OcrMenuAction(
++                                    icon = if (readingActive) Icons.Outlined.StopCircle else Icons.Outlined.Pause,
++                                    onClick = {
++                                        beepAction()
++                                        onStopSpeak()
++                                    },
++                                    containerColor = if (readingActive) {
++                                        MaterialTheme.colorScheme.errorContainer
++                                    } else {
++                                        MaterialTheme.colorScheme.surfaceContainerHigh
++                                    },
++                                    contentColor = if (readingActive) {
++                                        MaterialTheme.colorScheme.onErrorContainer
++                                    } else {
++                                        MaterialTheme.colorScheme.onSurfaceVariant
++                                    },
++                                    contentDescription = "Стоп чтения",
++                                ),
++                            ),
++                            rowUnlessHidden(
++                                "r_instant_sc",
++                                OcrMenuRow(
++                                    label = "Скриншот сейчас",
++                                    action = OcrMenuAction(
++                                        icon = Icons.Outlined.CameraAlt,
+                                         onClick = {
+                                             beepAction()
+-                                            onStopSpeak()
++                                            onInstantScreenshot()
+                                         },
+-                                        containerColor = if (readingActive) {
+-                                            MaterialTheme.colorScheme.errorContainer
++                                        contentDescription = "Скриншот сейчас",
++                                    ),
++                                ),
++                            ),
++                            rowUnlessHidden(
++                                "r_voiceicons",
++                                OcrMenuRow(
++                                    label = if (voiceIconsEnabled) "Значки озвучки: вкл" else "Значки озвучки: выкл",
++                                    action = OcrMenuAction(
++                                        icon = Icons.Outlined.RecordVoiceOver,
++                                        onClick = {
++                                            beepAction()
++                                            onVoiceIconsToggle(!voiceIconsEnabled)
++                                        },
++                                        contentColor = if (voiceIconsEnabled) {
++                                            MaterialTheme.colorScheme.primary
+                                         } else {
+-                                            MaterialTheme.colorScheme.surfaceVariant
++                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                         },
+-                                    ) {
+-                                        Icon(
+-                                            if (readingActive) Icons.Outlined.StopCircle else Icons.Outlined.Pause,
+-                                            contentDescription = "Стоп чтения",
+-                                            tint = if (readingActive) {
+-                                                MaterialTheme.colorScheme.onErrorContainer
+-                                            } else {
+-                                                MaterialTheme.colorScheme.onSurfaceVariant
+-                                            },
+-                                        )
+-                                    }
+-                                }
+-                                if (!hiddenM.contains("r_instant_sc")) {
+-
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text("Скриншот сейчас  ", style = MaterialTheme.typography.labelMedium)
+-                                    SmallFloatingActionButton(onClick = {
+-                                        beepAction()
+-                                        onInstantScreenshot()
+-                                    }) {
+-                                        Icon(Icons.Outlined.CameraAlt, contentDescription = "Скриншот сейчас")
+-                                    }
+-                                }
+-
+-                                }
+-                                if (!hiddenM.contains("r_voiceicons")) {
+-
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text(
+-                                        if (voiceIconsEnabled) "Значки озвучки: вкл  " else "Значки озвучки: выкл  ",
+-                                        style = MaterialTheme.typography.labelMedium,
+-                                    )
+-                                    SmallFloatingActionButton(onClick = {
+-                                        beepAction()
+-                                        onVoiceIconsToggle(!voiceIconsEnabled)
+-                                    }) {
+-                                        Icon(
+-                                            Icons.Outlined.RecordVoiceOver,
+-                                            contentDescription = "Значки озвучки",
+-                                            tint = if (voiceIconsEnabled) {
+-                                                MaterialTheme.colorScheme.primary
+-                                            } else {
+-                                                MaterialTheme.colorScheme.onSurface
+-                                            },
+-                                        )
+-                                    }
+-                                }
+-
+-                                }
+-                                if (!hiddenM.contains("r_order")) {
+-
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    val presetTitle = when (contentPreset) {
+-                                        "manga" -> "Манга"
+-                                        "manhwa" -> "Манхва"
+-                                        "manhua" -> "Маньхуа"
+-                                        "comic" -> "Комикс"
+-                                        else -> "Сбаланс."
+-                                    }
+-                                    val presetOrder = when (contentPreset) {
+-                                        "manga" -> "← Справа налево"
+-                                        "manhwa", "manhua" -> "↓ Сверху вниз"
+-                                        "comic" -> "→ Слева направо"
+-                                        else -> when (readingOrder) {
+-                                            "ltr" -> "→ Слева направо"
+-                                            "vertical" -> "↓ Сверху вниз"
+-                                            else -> "← Справа налево"
+-                                        }
+-                                    }
+-                                    Text("$presetTitle · $presetOrder  ", style = MaterialTheme.typography.labelMedium)
+-                                    SmallFloatingActionButton(onClick = {
+-                                        beepAction()
+-                                        onContentPresetChange(
+-                                            when (contentPreset) {
+-                                                "manga" -> "manhwa"
+-                                                "manhwa" -> "manhua"
+-                                                "manhua" -> "comic"
+-                                                "comic" -> "manga"
+-                                                else -> "manga"
+-                                            },
+-                                        )
+-                                    }) {
+-                                        Icon(Icons.Outlined.DocumentScanner, contentDescription = "Режим чтения: $presetTitle")
+-                                    }
+-                                }
+-
+-                                }
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text("AI-чат  ", style = MaterialTheme.typography.labelMedium)
+-                                    SmallFloatingActionButton(onClick = {
++                                        contentDescription = "Значки озвучки",
++                                    ),
++                                ),
++                            ),
++                            rowUnlessHidden(
++                                "r_order",
++                                OcrMenuRow(
++                                    label = "$presetTitle · $presetOrder",
++                                    action = OcrMenuAction(
++                                        icon = Icons.Outlined.DocumentScanner,
++                                        onClick = {
++                                            beepAction()
++                                            onContentPresetChange(
++                                                when (contentPreset) {
++                                                    "manga" -> "manhwa"
++                                                    "manhwa" -> "manhua"
++                                                    "manhua" -> "comic"
++                                                    "comic" -> "manga"
++                                                    else -> "manga"
++                                                },
++                                            )
++                                        },
++                                        contentDescription = "Режим чтения: $presetTitle",
++                                    ),
++                                ),
++                            ),
++                            OcrMenuRow(
++                                label = "AI-чат",
++                                action = OcrMenuAction(
++                                    icon = Icons.Outlined.SmartToy,
++                                    onClick = {
+                                         beepAction()
+                                         menuOpen = false
+                                         onOpenAiChat()
+-                                    }) {
+-                                        Icon(Icons.Outlined.SmartToy, contentDescription = "AI-чат")
+-                                    }
+-                                }
+-
+-                                // Голос: режим (авто/ручной) и, в ручном,
+-                                // выбор пола. Две кнопки рядом — чтобы не
+-                                // уходить в настройки посреди главы.
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text(
+-                                        if (manualVoice) "Голос: вручную  " else "Голос: авто  ",
+-                                        style = MaterialTheme.typography.labelMedium,
+-                                    )
+-                                    SmallFloatingActionButton(onClick = {
++                                    },
++                                    contentDescription = "AI-чат",
++                                ),
++                            ),
++                            // Голос: режим (авто/ручной) и, в ручном, выбор пола. Две кнопки
++                            // рядом — чтобы не уходить в настройки посреди главы.
++                            OcrMenuRow(
++                                label = if (manualVoice) "Голос: вручную" else "Голос: авто",
++                                action = OcrMenuAction(
++                                    icon = if (manualVoice) Icons.Outlined.TouchApp else Icons.Outlined.AutoMode,
++                                    onClick = {
+                                         beepAction()
+                                         manualVoice = !manualVoice
+                                         onVoiceModeChange(manualVoice)
+-                                    }) {
+-                                        Icon(
+-                                            if (manualVoice) Icons.Outlined.TouchApp else Icons.Outlined.AutoMode,
+-                                            contentDescription = "Режим выбора голоса",
+-                                        )
+-                                    }
+-
+-                                    Spacer(Modifier.width(8.dp))
+-
+-                                    SmallFloatingActionButton(
++                                    },
++                                    contentDescription = "Режим выбора голоса",
++                                ),
++                                secondary = OcrMenuAction(
++                                    glyph = if (voiceGender == "male") "♂" else "♀",
++                                    onClick = {
++                                        if (!manualVoice) return@OcrMenuAction
++                                        beepAction()
++                                        voiceGender = if (voiceGender == "male") "female" else "male"
++                                        onVoiceGenderChange(voiceGender)
++                                    },
++                                    // В ручном режиме кнопка подсвечена: в авто пол выбирать
++                                    // нечем, и тап остаётся вхолостую (см. onClick выше).
++                                    active = manualVoice,
++                                    contentDescription = "Голос: ${if (voiceGender == "male") "мужской" else "женский"}",
++                                ),
++                            ),
++                            rowUnlessHidden(
++                                "r_tts",
++                                OcrMenuRow(
++                                    label = "Озвучка (TTS)",
++                                    action = OcrMenuAction(
++                                        icon = Icons.Outlined.RecordVoiceOver,
+                                         onClick = {
+-                                            if (!manualVoice) return@SmallFloatingActionButton
+                                             beepAction()
+-                                            voiceGender = if (voiceGender == "male") "female" else "male"
+-                                            onVoiceGenderChange(voiceGender)
++                                            menuOpen = false
++                                            onOpenOcrSettings()
+                                         },
+-                                        containerColor = if (manualVoice) {
+-                                            MaterialTheme.colorScheme.primaryContainer
+-                                        } else {
+-                                            MaterialTheme.colorScheme.surfaceVariant
++                                        contentDescription = "Озвучка",
++                                    ),
++                                ),
++                            ),
++                            rowUnlessHidden(
++                                "r_ocr_bubbles",
++                                OcrMenuRow(
++                                    label = "Настройки OCR (баблы)",
++                                    action = OcrMenuAction(
++                                        icon = Icons.Outlined.Tune,
++                                        onClick = {
++                                            beepAction()
++                                            menuOpen = false
++                                            onOpenFullOcrSettings()
+                                         },
+-                                    ) {
+-                                        Text(if (voiceGender == "male") "♂" else "♀")
+-                                    }
+-                                }
+-
+-                                if (!hiddenM.contains("r_tts")) {
+-
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text("Озвучка (TTS)  ", style = MaterialTheme.typography.labelMedium)
+-                                    SmallFloatingActionButton(onClick = {
+-                                        beepAction()
+-                                        menuOpen = false
+-                                        onOpenOcrSettings()
+-                                    }) {
+-                                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Озвучка")
+-                                    }
+-                                }
+-
+-                                }
+-                                if (!hiddenM.contains("r_ocr_bubbles")) {
+-
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text("Настройки OCR (баблы)  ", style = MaterialTheme.typography.labelMedium)
+-                                    SmallFloatingActionButton(onClick = {
+-                                        beepAction()
+-                                        menuOpen = false
+-                                        onOpenFullOcrSettings()
+-                                    }) {
+-                                        Icon(Icons.Outlined.Tune, contentDescription = "Настройки OCR")
+-                                    }
+-                                }
+-
+-                                }
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text("Мужской голос  ", style = MaterialTheme.typography.labelMedium)
+-                                    SmallFloatingActionButton(onClick = {
++                                        contentDescription = "Настройки OCR",
++                                    ),
++                                ),
++                            ),
++                            OcrMenuRow(
++                                label = "Мужской голос",
++                                action = OcrMenuAction(
++                                    icon = Icons.Outlined.RecordVoiceOver,
++                                    onClick = {
+                                         Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("male")
+                                         ctorContext.toast("Мужской голос по умолчанию")
+-                                    }) {
+-                                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Мужской голос")
+-                                    }
+-                                }
+-                                Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Text("Женский голос  ", style = MaterialTheme.typography.labelMedium)
+-                                    SmallFloatingActionButton(onClick = {
++                                    },
++                                    contentDescription = "Мужской голос",
++                                ),
++                            ),
++                            OcrMenuRow(
++                                label = "Женский голос",
++                                action = OcrMenuAction(
++                                    icon = Icons.Outlined.RecordVoiceOver,
++                                    onClick = {
+                                         Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("female")
+                                         ctorContext.toast("Женский голос по умолчанию")
++                                    },
++                                    contentDescription = "Женский голос",
++                                ),
++                            ),
++                        ),
++                        maxHeight = 480.dp,
++                        footer = "yomikai " + eu.kanade.tachiyomi.AppInfo.getVersionName(),
++                        // Кнопки конструктора: список пользовательских действий
++                        // известен только в рантайме, в модель строк он не ложится.
++                        extraContent = {
++                            if (userActs.isNotEmpty()) {
++                                Row(
++                                    modifier = Modifier.fillMaxWidth(),
++                                    verticalAlignment = Alignment.CenterVertically,
++                                ) {
++                                    Text(
++                                        text = "Кнопки конструктора",
++                                        modifier = Modifier.weight(1f),
++                                        style = MaterialTheme.typography.labelMedium,
++                                        maxLines = 2,
++                                        overflow = TextOverflow.Ellipsis,
++                                    )
++                                    IconButton(onClick = {
++                                        ctorExpanded = !ctorExpanded
++                                        ctorUiPrefs.edit().putBoolean("menu_ctor_expanded", ctorExpanded).apply()
+                                     }) {
+-                                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Женский голос")
++                                        Icon(
++                                            if (ctorExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
++                                            contentDescription = "Скрыть или показать кнопки конструктора",
++                                        )
+                                     }
+                                 }
+-                                if (userActs.isNotEmpty()) {
+-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+-                                        Text("Кнопки конструктора  ", style = MaterialTheme.typography.labelMedium)
+-                                        IconButton(onClick = {
+-                                            ctorExpanded = !ctorExpanded
+-                                            ctorUiPrefs.edit().putBoolean("menu_ctor_expanded", ctorExpanded).apply()
+-                                        }) {
+-                                            Icon(if (ctorExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = "Скрыть или показать кнопки конструктора")
+-                                        }
+-                                    }
+-                                    if (ctorExpanded) {
+-                                        userActs.filterNot { it.title.startsWith("Пресет") }.forEach { act ->
+-                                            Row(verticalAlignment = Alignment.CenterVertically) {
+-                                                Text(act.title + "  ", style = MaterialTheme.typography.labelMedium)
+-                                                SmallFloatingActionButton(onClick = {
+-                                                    ctorContext.toast(eu.kanade.tachiyomi.data.ui.UiActionRegistry.apply(ctorContext, act))
+-                                                }) {
+-                                                    Icon(Icons.Outlined.Tune, contentDescription = act.title)
+-                                                }
+-                                            }
++                                if (ctorExpanded) {
++                                    userActs.filterNot { it.title.startsWith("Пресет") }.forEach { act ->
++                                        Row(
++                                            modifier = Modifier.fillMaxWidth(),
++                                            verticalAlignment = Alignment.CenterVertically,
++                                        ) {
++                                            Text(
++                                                text = act.title,
++                                                modifier = Modifier.weight(1f),
++                                                style = MaterialTheme.typography.labelMedium,
++                                                maxLines = 2,
++                                                overflow = TextOverflow.Ellipsis,
++                                            )
++                                            Spacer(Modifier.width(8.dp))
++                                            OcrMenuActionButton(
++                                                OcrMenuAction(
++                                                    icon = Icons.Outlined.Tune,
++                                                    onClick = {
++                                                        ctorContext.toast(eu.kanade.tachiyomi.data.ui.UiActionRegistry.apply(ctorContext, act))
++                                                    },
++                                                    contentDescription = act.title,
++                                                ),
++                                            )
+                                         }
+                                     }
+                                 }
+-                                Text(
+-                                    "yomikai " + eu.kanade.tachiyomi.AppInfo.getVersionName(),
+-                                    style = MaterialTheme.typography.labelSmall,
+-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+-                                )
+                             }
+-                        }
+-                    }
++                        },
++                    )
+                 }
+ 
+-                // Главная кнопка: тап — меню; перетаскивание — отдельная
+-                // обёртка Box поверх FAB, чтобы клик и drag не конфликтовали.
+-                Box(
+-                    modifier = Modifier.pointerInput(Unit) {
+-                        detectDragGestures { change, dragAmount ->
+-                            change.consume()
+-                            offsetX = (offsetX + dragAmount.x).coerceIn(-4000f, 0f)
+-                            offsetY = (offsetY + dragAmount.y).coerceIn(-4000f, 400f)
+-                        }
++                // Главная кнопка: тап — меню; перетаскивание разведено
++                // отдельной обёрткой Box внутри компонента, чтобы клик и drag
++                // не конфликтовали. Позицию держит вызывающий.
++                OcrControlFab(
++                    expanded = menuOpen,
++                    onToggle = {
++                        beepOpen()
++                        menuOpen = !menuOpen
+                     },
+-                ) {
+-                    FloatingActionButton(
+-                        onClick = {
+-                            beepOpen()
+-                            menuOpen = !menuOpen
+-                        },
+-                        containerColor = MaterialTheme.colorScheme.primary,
+-                    ) {
+-                        Icon(
+-                            if (menuOpen) Icons.Outlined.Close else Icons.Outlined.Menu,
+-                            contentDescription = "Меню читалки",
+-                        )
+-                    }
+-                }
++                    onDrag = { delta ->
++                        offsetX = (offsetX + delta.x).coerceIn(-4000f, 0f)
++                        offsetY = (offsetY + delta.y).coerceIn(-4000f, 400f)
++                    },
++                    contentDescription = if (menuOpen) "Закрыть меню" else "Меню читалки",
++                )
+             }
+         }
+     }
++}
+ 
+ /**
+  * Маленькие «часики» статуса OCR, изолированные от родителя: переворот
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 607fc40b1..c34771834 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.tts
+ 
+ import android.content.Context
+ import android.graphics.Bitmap
++import android.net.Uri
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.async
+ import kotlinx.coroutines.channels.Channel
+diff --git a/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt b/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt
+index 8cad6f89a..5b84c4ea7 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt
+@@ -1,6 +1,14 @@
+ package mihon.data.ocr
+ 
++import android.Manifest
++import android.content.ContentValues
+ import android.content.Context
++import android.content.pm.PackageManager
++import android.net.Uri
++import android.os.Build
++import android.os.Environment
++import android.provider.MediaStore
++import androidx.core.content.ContextCompat
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.SupervisorJob
+@@ -32,6 +40,13 @@ object OcrScreenshotBuffer {
+     private const val FILE_NAME = "screenshots.json"
+     private const val IMAGE_DIR_NAME = "screenshots_images"
+ 
++    /** Публичная папка в «Pictures», куда публикуются скриншоты для Галереи. */
++    private const val GALLERY_DIR_NAME = "Yomikai"
++    private const val JPEG_MIME = "image/jpeg"
++
++    /** Ограничение длины DISPLAY_NAME: длинные имена обрезаются системой. */
++    private const val MAX_GALLERY_NAME_LENGTH = 80
++
+     /** Лимит записей (кольцевой буфер). Меняется через dev-панель. */
+     @kotlin.jvm.Volatile
+     var maxEntries: Int = DEFAULT_MAX_ENTRIES
+@@ -114,6 +129,42 @@ object OcrScreenshotBuffer {
+         return entry
+     }
+ 
++    /**
++     * Опубликовать JPEG-кадр в общем хранилище: `Pictures/Yomikai`, то есть
++     * ровно там, где его видят «Галерея», «Файлы» и любой файловый менеджер.
++     *
++     * Зачем это нужно рядом с [add]: картинки буфера лежат в приватном
++     * `filesDir/screenshots_images/`, куда не смотрят ни MediaStore, ни
++     * FileProvider, ни галерея телефона. Читатель нажимал «Скриншот сейчас» и
++     * не находил файл НИГДЕ. Поэтому тот же JPEG дополнительно уходит в
++     * публичное хранилище, а внутренняя копия остаётся для вкладки «Скриншоты»
++     * (там кадр показывается вместе с оверлеем распознанных регионов).
++     *
++     * На Android 10+ (MediaStore) разрешение на запись не нужно вовсе, а при
++     * targetSdk 36 писать в публичные папки через `File` уже нельзя. Ветка для
++     * API < 29 нужна только для Android 8–9: там пишем файлом, но лишь если
++     * WRITE_EXTERNAL_STORAGE реально выдан — с targetSdk 36 система может не
++     * выдать его вовсе, и тогда возвращаем null, а не падаем.
++     *
++     * Ошибки никогда не пробрасываются: публикация — дополнение, из-за неё
++     * скриншот не должен теряться (в logcat пишем причину).
++     *
++     * @return Uri опубликованного файла или null, если публикация не вышла.
++     */
++    fun publishToGallery(context: Context, jpeg: ByteArray, displayName: String): Uri? {
++        val name = galleryFileName(displayName)
++        return runCatching {
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++                insertIntoMediaStore(context, jpeg, name)
++            } else {
++                writeToPublicPictures(context, jpeg, name)
++            }
++        }.getOrElse { e ->
++            logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: gallery publish failed for $name" }
++            null
++        }
++    }
++
+     /** Все скриншоты для конкретной главы (в порядке добавления). */
+     fun forChapter(chapterId: Long): List<OcrScreenshotEntry> =
+         _entries.value.filter { it.chapterId == chapterId }
+@@ -151,6 +202,83 @@ object OcrScreenshotBuffer {
+ 
+     // ---- Внутренние ----
+ 
++    /**
++     * Вставка в MediaStore (Android 10+). Само разрешение на запись в
++     * `Pictures` приложению не нужно — картинка сразу становится видна
++     * Галерее. Если запись в поток не удалась, вставку откатываем: иначе в
++     * `Pictures/Yomikai` остаётся файл нулевого размера, который галерея
++     * показывает как «битую» картинку.
++     */
++    private fun insertIntoMediaStore(context: Context, jpeg: ByteArray, name: String): Uri? {
++        val resolver = context.contentResolver
++        val values = ContentValues().apply {
++            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
++            put(MediaStore.MediaColumns.MIME_TYPE, JPEG_MIME)
++            put(
++                MediaStore.MediaColumns.RELATIVE_PATH,
++                "${Environment.DIRECTORY_PICTURES}/$GALLERY_DIR_NAME",
++            )
++            put(MediaStore.MediaColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000)
++        }
++        val uri = resolver.insert(
++            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
++            values,
++        ) ?: run {
++            logcat(LogPriority.WARN) { "OcrScreenshotBuffer: MediaStore insert returned null for $name" }
++            return null
++        }
++        return try {
++            val output = resolver.openOutputStream(uri, "w")
++            if (output == null) {
++                runCatching { resolver.delete(uri, null, null) }
++                logcat(LogPriority.WARN) { "OcrScreenshotBuffer: openOutputStream returned null for $name" }
++                null
++            } else {
++                output.use { it.write(jpeg) }
++                uri
++            }
++        } catch (e: Exception) {
++            runCatching { resolver.delete(uri, null, null) }
++            throw e
++        }
++    }
++
++    /** Фолбэк для Android 8–9: публичные «Pictures» ещё пишутся файлом. */
++    @Suppress("DEPRECATION")
++    private fun writeToPublicPictures(context: Context, jpeg: ByteArray, name: String): Uri? {
++        if (
++            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
++            PackageManager.PERMISSION_GRANTED
++        ) {
++            logcat(LogPriority.WARN) {
++                "OcrScreenshotBuffer: WRITE_EXTERNAL_STORAGE not granted, skip gallery publish"
++            }
++            return null
++        }
++        val dir = File(
++            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
++            GALLERY_DIR_NAME,
++        )
++        if (!dir.exists() && !dir.mkdirs()) return null
++        val file = File(dir, name)
++        file.outputStream().use { it.write(jpeg) }
++        return Uri.fromFile(file)
++    }
++
++    /**
++     * Имя файла для галереи: MediaStore не любит слеши и прочие символы пути,
++     * а расширение должно быть ровно `.jpg` — по нему галерея решает, что это
++     * именно изображение, и рисует миниатюру.
++     */
++    private fun galleryFileName(displayName: String): String {
++        val safe = displayName.substringBeforeLast('.')
++            .map { ch -> if (ch.isLetterOrDigit() || ch == '-' || ch == '_') ch else '_' }
++            .joinToString("")
++            .take(MAX_GALLERY_NAME_LENGTH)
++            .trim('_')
++        return "${safe.ifBlank { "screenshot" }}.jpg"
++    }
++
+     private fun deleteImageFile(entry: OcrScreenshotEntry) {
+         entry.imagePath?.let { path ->
+             runCatching { File(path).delete() }.onFailure {
+diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
+index d4828bee8..41e07ccd8 100644
+--- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
++++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
+@@ -183,8 +183,8 @@ class OverlayReaderService : Service() {
+ 
+             // Оверлей держим видимым и «прокачиваем» его перерисовку: это заставляет
+             // компоновщик непрерывно выдавать кадры, и VirtualDisplay видит их
+-            // даже на статичном экране. Панели оверлея в кадр не попадут
+-            // (во время прокачки они не рисуются).
++            // даже на статичном экране. Область захвата лежит между панелями
++            // оверлея, поэтому в кадр они не попадают.
+             val wasHidden = overlayView.visibility != View.VISIBLE
+             if (wasHidden) setPassthrough(false)
+             overlayView.beginCapturePump()
+diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
+index 262a1bafd..5ce9b0726 100644
+--- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
++++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
+@@ -4,6 +4,7 @@ import android.content.Context
+ import android.graphics.Canvas
+ import android.graphics.Color
+ import android.graphics.Paint
++import android.graphics.Path
+ import android.graphics.RectF
+ import android.graphics.Typeface
+ import android.os.Handler
+@@ -51,12 +52,27 @@ class OverlayView(
+     // Публичное состояние, управляется сервисом.
+     var scanning: Boolean = false
+     var statusText: String = ""
++
++    /**
++     * Распознанный текст. Панель результата держится высотой в одну строку статуса,
++     * пока текста нет, и разворачивается на полную высоту вместе с текстом — при
++     * запуске оверлей не занимает низ экрана впустую.
++     */
+     var resultText: String = ""
++        set(value) {
++            if (field == value) return
++            field = value
++            scrollLines = 0
++            scrollAccum = 0f
++            layoutPanel()
++            clampFrame()
++            invalidate()
++        }
+ 
+     // «Прокачка» кадров на время захвата: оверлей постоянно перерисовывается,
+     // поэтому дисплей (а с ним и VirtualDisplay) получает свежие кадры даже на
+-    // полностью статичном экране. Панели при этом не рисуются, чтобы кадр был
+-    // чистым.
++    // полностью статичном экране. Сама графика при этом рисуется как обычно:
++    // область захвата лежит между панелями, поэтому в кадр они не попадают.
+     private var capturePumping = false
+     private val pumpHandler = Handler(Looper.getMainLooper())
+     private val pumpRunnable = object : Runnable {
+@@ -91,7 +107,12 @@ class OverlayView(
+     private var touchY = 0f
+     private var startFrame = RectF()
+     private var scrollLines = 0
++    private var scrollAccum = 0f
+     private var lastPanelY = 0f
++    private var contentLines: List<String> = emptyList()
++    private var visibleLines = 1
++
++    private val path = Path()
+ 
+     private val dimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+@@ -145,10 +166,11 @@ class OverlayView(
+     private fun layoutMetrics(w: Float, h: Float) {
+         viewW = w
+         viewH = h
+-        val toolbarH = dp(44f)
+-        val panelH = dp(132f)
++        // Высоты панелей ограничены долей экрана: на плотных экранах (density 3+)
++        // фиксированные dp съедали бы заметную часть дисплея.
++        val toolbarH = min(dp(44f), h * 0.07f)
+         toolbarRect = RectF(0f, 0f, w, toolbarH)
+-        panelRect = RectF(0f, h - panelH, w, h)
++        layoutPanel()
+ 
+         val pref = Prefs.frame()
+         frame = RectF(
+@@ -170,43 +192,77 @@ class OverlayView(
+         }
+     }
+ 
++    /** Нижняя панель: строка статуса без результата, полная высота с текстом. */
++    private fun layoutPanel() {
++        if (viewH <= 0f) return
++        val collapsed = min(statusPaint.textSize * 2.2f, viewH * 0.09f)
++        val expanded = min(dp(132f), viewH * 0.30f)
++        val h = if (resultText.isBlank()) collapsed else max(collapsed, expanded)
++        panelRect = RectF(0f, viewH - h, viewW, viewH)
++    }
++
+     private fun clampFrame() {
+-        val minSide = dp(48f)
+-        val left = max(frame.left, dp(6f))
+-        val top = max(frame.top, toolbarRect.bottom + dp(6f))
+-        val right = min(frame.right, viewW - dp(6f))
+-        val bottom = min(frame.bottom, panelRect.top - dp(6f))
+-        frame.set(left, top, max(right, left + minSide), max(bottom, top + minSide))
++        if (viewW <= 0f || viewH <= 0f) return
++        val padL = min(dp(6f), viewW * 0.02f)
++        val padT = min(dp(6f), viewH * 0.01f)
++        val boxTop = toolbarRect.bottom + padT
++        val boxBottom = panelRect.top - padT
++        val boxRight = viewW - padL
++        // Минимальная сторона не должна превышать половину доступной высоты,
++        // иначе на низких экранах рамка вылезала бы под панели.
++        val minSide = max(dp(20f), min(dp(48f), (boxBottom - boxTop) * 0.5f))
++
++        val left = frame.left.coerceIn(padL, max(padL, boxRight - minSide))
++        val top = frame.top.coerceIn(boxTop, max(boxTop, boxBottom - minSide))
++        val right = frame.right.coerceIn(left + minSide, max(left + minSide, boxRight))
++        val bottom = frame.bottom.coerceIn(top + minSide, max(top + minSide, boxBottom))
++        frame.set(left, top, right, bottom)
+     }
+ 
+     override fun onDraw(canvas: Canvas) {
+         super.onDraw(canvas)
+-        if (capturePumping) return
+ 
+         val alpha = (Prefs.overlayOpacity().coerceIn(0.1f, 0.9f) * 255).toInt()
+         dimPaint.color = Color.argb(alpha, 4, 8, 20)
+ 
+-        // Затемнение вокруг рамки.
++        // Затемнение вокруг рамки. Четыре прямоугольника идут строго встык, иначе
++        // наложение давало бы участки, затемнённые вдвое.
+         canvas.drawRect(0f, 0f, viewW, toolbarRect.bottom, dimPaint)
+         canvas.drawRect(0f, toolbarRect.bottom, frame.left, frame.top, dimPaint)
+-        canvas.drawRect(frame.right, toolbarRect.bottom, viewW, frame.bottom, dimPaint)
++        canvas.drawRect(frame.right, toolbarRect.bottom, viewW, frame.top, dimPaint)
++        canvas.drawRect(0f, frame.top, frame.left, frame.bottom, dimPaint)
++        canvas.drawRect(frame.right, frame.top, viewW, frame.bottom, dimPaint)
+         canvas.drawRect(0f, frame.bottom, viewW, viewH, dimPaint)
+-        canvas.drawRect(frame.left, frame.bottom, frame.right, viewH, dimPaint)
+-        canvas.drawRect(0f, toolbarRect.bottom, frame.left, viewH, dimPaint)
+ 
+         // Рамка захвата.
+         canvas.drawRoundRect(frame, dp(10f), dp(10f), borderPaint)
+         drawHandles(canvas)
+ 
+-        // Тулбар.
+-        canvas.drawRoundRect(toolbarRect, dp(10f), dp(10f), toolbarPaint)
++        // Тулбар и панель результата.
++        roundRectPath(toolbarRect, 0f, 0f, dp(10f), dp(10f))
++        canvas.drawPath(path, toolbarPaint)
+         drawToolbarButtons(canvas)
+ 
+-        // Панель результата.
+-        canvas.drawRoundRect(panelRect, dp(10f), dp(10f), panelPaint)
++        roundRectPath(panelRect, dp(10f), dp(10f), 0f, 0f)
++        canvas.drawPath(path, panelPaint)
+         drawResultPanel(canvas)
+     }
+ 
++    /** Прямоугольник с независимым радиусом каждого угла (в dp-радиусах — px). */
++    private fun roundRectPath(rect: RectF, tl: Float, tr: Float, br: Float, bl: Float) {
++        path.reset()
++        path.moveTo(rect.left + tl, rect.top)
++        path.lineTo(rect.right - tr, rect.top)
++        path.quadTo(rect.right, rect.top, rect.right, rect.top + tr)
++        path.lineTo(rect.right, rect.bottom - br)
++        path.quadTo(rect.right, rect.bottom, rect.right - br, rect.bottom)
++        path.lineTo(rect.left + bl, rect.bottom)
++        path.quadTo(rect.left, rect.bottom, rect.left, rect.bottom - bl)
++        path.lineTo(rect.left, rect.top + tl)
++        path.quadTo(rect.left, rect.top, rect.left + tl, rect.top)
++        path.close()
++    }
++
+     private fun drawToolbarButtons(canvas: Canvas) {
+         for ((rect, btn) in buttons) {
+             btnPaint.color = if (btn == pressedBtn) Color.parseColor("#FF8A65") else Color.WHITE
+@@ -241,21 +297,28 @@ class OverlayView(
+     private fun drawResultPanel(canvas: Canvas) {
+         val pad = dp(10f)
+         statusPaint.textAlign = Paint.Align.LEFT
+-        canvas.drawText(
+-            if (scanning) "Распознаю текст…" else statusText.ifBlank { "Готово" },
+-            pad,
+-            panelRect.top + dp(18f),
+-            statusPaint,
+-        )
+-        val maxW = (panelRect.width() - pad * 2).toInt()
++        val status = if (scanning) "Распознаю текст…" else statusText.ifBlank { "Готово" }
++        val textMetrics = statusPaint.fontMetrics
++        val statusBaseline = if (resultText.isBlank()) {
++            // Свёрнутая панель — одна строка по центру.
++            panelRect.centerY() - (textMetrics.ascent + textMetrics.descent) / 2f
++        } else {
++            panelRect.top + dp(20f)
++        }
++        canvas.drawText(status, pad, statusBaseline, statusPaint)
++
++        contentLines = emptyList()
++        visibleLines = 0
+         val text = resultText
+         if (text.isNotBlank()) {
++            val maxW = (panelRect.width() - pad * 2).toInt()
+             val lines = wrapText(resultPaint, text, maxW)
+             val lineH = resultPaint.textSize * 1.25f
+             val available = panelRect.height() - dp(34f)
+             val visible = (available / lineH).toInt().coerceAtLeast(1)
+-            val maxScroll = max(0, lines.size - visible)
+-            scrollLines = scrollLines.coerceIn(0, maxScroll)
++            contentLines = lines
++            visibleLines = visible
++            scrollLines = scrollLines.coerceIn(0, max(0, lines.size - visible))
+             var y = panelRect.top + dp(34f) + lineH
+             for (i in scrollLines until min(scrollLines + visible, lines.size)) {
+                 canvas.drawText(lines[i], pad, y, resultPaint)
+@@ -264,6 +327,8 @@ class OverlayView(
+         }
+     }
+ 
++    private fun maxScroll(): Int = max(0, contentLines.size - visibleLines)
++
+     private fun wrapText(paint: Paint, text: String, maxW: Int): List<String> {
+         val words = text.split(" ")
+         val lines = ArrayList<String>()
+@@ -346,19 +411,18 @@ class OverlayView(
+         val dy = y - touchY
+         when (mode) {
+             Mode.MOVE -> {
+-                val newLeft = startFrame.left + dx
+-                val newTop = startFrame.top + dy
+-                val newRight = startFrame.right + dx
+-                val newBottom = startFrame.bottom + dy
+-                val shiftX = newLeft.coerceAtLeast(dp(6f)) - newLeft
+-                val fixedLeft = newLeft + shiftX
+-                val fixedRight = newRight + shiftX
+-                frame.set(
+-                    fixedLeft,
+-                    newTop.coerceIn(toolbarRect.bottom + dp(6f), panelRect.top - frame.height() - dp(6f)),
+-                    fixedRight,
+-                    newTop.coerceIn(toolbarRect.bottom + dp(6f), panelRect.top - frame.height() - dp(6f)) + frame.height(),
+-                )
++                val fw = startFrame.width()
++                val fh = startFrame.height()
++                val pad = dp(6f)
++                // Сдвиг ограничиваем по обеим осям сразу: иначе рамка не доезжала
++                // до левого/верхнего края, зато уезжала за правый/нижний.
++                val maxLeft = viewW - pad - fw
++                val newLeft = (startFrame.left + dx).coerceIn(min(pad, maxLeft), max(pad, maxLeft))
++                val minTop = toolbarRect.bottom + pad
++                val maxTop = panelRect.top - pad - fh
++                val newTop = (startFrame.top + dy).coerceIn(min(minTop, maxTop), max(minTop, maxTop))
++                frame.set(newLeft, newTop, newLeft + fw, newTop + fh)
++                clampFrame()
+                 invalidate()
+             }
+             Mode.CORNER_RESIZE -> {
+@@ -367,8 +431,16 @@ class OverlayView(
+             }
+             Mode.SCROLL -> {
+                 val lineH = resultPaint.textSize * 1.25f
+-                val delta = (y - lastPanelY) / lineH
+-                scrollLines += delta.toInt()
++                // Дробный остаток копится: иначе медленное перетаскивание
++                // (меньше строки за кадр) не листало текст вовсе.
++                scrollAccum += (y - lastPanelY) / lineH
++                val whole = scrollAccum.toInt()
++                if (whole != 0) {
++                    scrollAccum -= whole
++                    val next = (scrollLines + whole).coerceIn(0, maxScroll())
++                    if (next == scrollLines) scrollAccum = 0f
++                    scrollLines = next
++                }
+                 lastPanelY = y
+                 invalidate()
+             }
+@@ -379,7 +451,7 @@ class OverlayView(
+     }
+ 
+     private fun resizeTo(dx: Float, dy: Float) {
+-        val minSide = dp(48f)
++        val minSide = min(dp(48f), max(dp(20f), (panelRect.top - toolbarRect.bottom) * 0.5f))
+         val l = frame.left
+         val t = frame.top
+         val r = frame.right
+@@ -399,12 +471,13 @@ class OverlayView(
+ 
+     private fun onUp() {
+         val btn = pressedBtn
+-        if (btn != null) {
+-            perform(btn)
+-        }
+         pressedBtn = null
+         mode = Mode.NONE
++        // Рамку сохраняем до действия: «Скан» читает Prefs.frame(), и при
++        // прежнем порядке захватывалась старая область, если рамку только что
++        // передвинули.
+         callback.onFrameChanged(bean())
++        if (btn != null) perform(btn)
+         invalidate()
+     }
+ 
+@@ -427,7 +500,16 @@ class OverlayView(
+     )
+ 
+     fun resetFrame() {
+-        frame.set(viewW * 0.06f, toolbarRect.bottom + dp(24f), viewW * 0.94f, viewW * 0.94f * 0.55f + toolbarRect.bottom)
++        val boxTop = toolbarRect.bottom + dp(10f)
++        val boxBottom = panelRect.top - dp(10f)
++        val boxH = max(dp(48f), boxBottom - boxTop)
++        val left = min(viewW * 0.06f, viewW - dp(6f))
++        // Высота рамки считалась от viewW, а не от viewH, — в альбомной
++        // ориентации уезжала далеко за нижнюю панель.
++        val top = min(boxTop + boxH * 0.1f, boxBottom)
++        val right = max(min(viewW * 0.94f, viewW - dp(6f)), left)
++        val bottom = max(min(top + boxH * 0.55f, boxBottom), top)
++        frame.set(left, top, right, bottom)
+         clampFrame()
+         invalidate()
+     }
