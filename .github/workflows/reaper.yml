@@ -1,10 +1,19 @@
 name: Reap dead sessions
 
 on:
+  # Instant: a session run that just finished can no longer be serving its
+  # tunnel, so its slot must stop claiming to be live. workflow_run fires the
+  # moment the run reaches a terminal state - including cancellation, which is
+  # exactly the case the job's own `if: always()` steps never get to handle.
+  workflow_run:
+    workflows: ["NPM Hub"]
+    types: [completed]
   schedule:
-    # Every 10 minutes. Deliberately independent of the hub job: this has to
-    # keep working when every session run is dead, which is exactly when the
-    # panel is handing out dead addresses.
+    # Backstop. The event above is the fast path; this one also catches runs
+    # that were already gone before the workflow was added, and repairs any
+    # state a killed runner left behind. Deliberately independent of the hub
+    # job: it has to keep working when every session run is dead, which is
+    # exactly when the panel is handing out dead addresses.
     - cron: "*/10 * * * *"
   workflow_dispatch:
 
@@ -18,6 +27,11 @@ concurrency:
 jobs:
   reap:
     runs-on: ubuntu-latest
+    # workflow_run is delivered through the Actions API, so the job needs to
+    # read runs besides writing the branch.
+    permissions:
+      actions: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
