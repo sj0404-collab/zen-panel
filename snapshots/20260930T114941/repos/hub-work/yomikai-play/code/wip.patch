@@ -1,0 +1,530 @@
+diff --git a/.devcontainer/devcontainer.json b/.devcontainer/devcontainer.json
+index 69bd4ca..59e5b33 100644
+--- a/.devcontainer/devcontainer.json
++++ b/.devcontainer/devcontainer.json
+@@ -1,5 +1,5 @@
+ {
+-  "name": "Yomihon Android Dev",
++  "name": "Yomikai Android Dev",
+   "build": {
+     "dockerfile": "Dockerfile",
+     "options": [
+diff --git a/.github/workflows/release-universal.yml b/.github/workflows/release-universal.yml
+index 4e2a383..d16c73b 100644
+--- a/.github/workflows/release-universal.yml
++++ b/.github/workflows/release-universal.yml
+@@ -19,7 +19,7 @@ on:
+       - 'universal-v*'
+ 
+ env:
+-  MIHON_GITHUB_RELEASE: true
++  YOMIKAI_GITHUB_RELEASE: true
+ 
+ concurrency:
+   group: ${{ github.workflow }}-${{ github.ref }}
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index ba2d0ac..c37019b 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -6,7 +6,7 @@ on:
+       - v*
+ 
+ env:
+-  MIHON_GITHUB_RELEASE: true
++  YOMIKAI_GITHUB_RELEASE: true
+ 
+ concurrency:
+   group: ${{ github.workflow }}-${{ github.ref }}
+diff --git a/MANIFEST.md b/MANIFEST.md
+index 3e27208..7a0880e 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -1,17 +1,17 @@
+-# Репозиторий: sj0404-collab/yomikai
++# Репозиторий: sj0404-collab/yomikai-play
+ 
+ Рабочая папка этого репозитория на раннере. Всё лежит на виду —
+ никакие файлы не прячутся в системном /tmp.
+ 
+-- **Клон (работай здесь):** /home/runner/hub-work/yomikai/code
++- **Клон (работай здесь):** /home/runner/hub-work/yomikai-play/code
+ - **Ветка:** main
+-- **Только твои временные файлы (сборки, кеши, артефакты):** /home/runner/hub-work/yomikai/tmp
+-- **Манифест:** /home/runner/hub-work/yomikai/code/MANIFEST.md
++- **Только твои временные файлы (сборки, кеши, артефакты):** /home/runner/hub-work/yomikai-play/tmp
++- **Манифест:** /home/runner/hub-work/yomikai-play/code/MANIFEST.md
+ 
+ ## Правила для CLI-агентов
+ 1. НИКОГДА не создавай файлы в /tmp или os.tmpdir() — это не твоя папка.
+-2. Временные файлы создавай ТОЛЬКО в /home/runner/hub-work/yomikai/tmp.
+-3. Исходники и изменения делай в /home/runner/hub-work/yomikai/code; пуши в git оттуда.
++2. Временные файлы создавай ТОЛЬКО в /home/runner/hub-work/yomikai-play/tmp.
++3. Исходники и изменения делай в /home/runner/hub-work/yomikai-play/code; пуши в git оттуда.
+ 4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи
+    и не логируй его значение.
+-5. Готовые сборки/артефакты клади в /home/runner/hub-work/yomikai/tmp — их видно вкладкой «Файлы».
++5. Готовые сборки/артефакты клади в /home/runner/hub-work/yomikai-play/tmp — их видно вкладкой «Файлы».
+diff --git a/app/proguard-rules.pro b/app/proguard-rules.pro
+index 00e665d..beae2d6 100644
+--- a/app/proguard-rules.pro
++++ b/app/proguard-rules.pro
+@@ -61,11 +61,10 @@
+ 
+ # --- WebView JavaScript bridge (PWA mode) ---
+ # R8 must keep all @JavascriptInterface methods, otherwise the PWA WebView
+-# sees an empty YomihonBridge object in release builds.
++# sees an empty bridge object in release builds.
+ -keepclassmembers class * {
+     @android.webkit.JavascriptInterface <methods>;
+ }
+--keep class yomikai.ui.reader.html.YomihonWebBridge { public *; }
+ 
+ # sherpa-onnx (ONNX-голоса) вызывается из OnnxTts ТОЛЬКО через рефлексию
+ # (Class.forName("com.k2fsa.sherpa.onnx.…")). Без этого правила R8 в release
+diff --git a/app/src/main/res/values/themes.xml b/app/src/main/res/values/themes.xml
+index 4b58c16..6d54a63 100644
+--- a/app/src/main/res/values/themes.xml
++++ b/app/src/main/res/values/themes.xml
+@@ -11,39 +11,39 @@
+         <item name="android:forceDarkAllowed" tools:targetApi="Q">false</item>
+ 
+         <!-- Theme Colors -->
+-        <item name="colorPrimary">@color/tachiyomi_primary</item>
+-        <item name="colorOnPrimary">@color/tachiyomi_onPrimary</item>
+-        <item name="colorPrimaryContainer">@color/tachiyomi_primaryContainer</item>
+-        <item name="colorOnPrimaryContainer">@color/tachiyomi_onPrimaryContainer</item>
+-        <item name="colorPrimaryInverse">@color/tachiyomi_inversePrimary</item>
+-        <item name="colorSecondary">@color/tachiyomi_secondary</item>
+-        <item name="colorOnSecondary">@color/tachiyomi_onSecondary</item>
+-        <item name="colorSecondaryContainer">@color/tachiyomi_secondaryContainer</item>
+-        <item name="colorOnSecondaryContainer">@color/tachiyomi_onSecondaryContainer</item>
+-        <item name="colorTertiary">@color/tachiyomi_tertiary</item>
+-        <item name="colorOnTertiary">@color/tachiyomi_onTertiary</item>
+-        <item name="colorTertiaryContainer">@color/tachiyomi_tertiaryContainer</item>
+-        <item name="colorOnTertiaryContainer">@color/tachiyomi_onTertiaryContainer</item>
+-        <item name="android:colorBackground">@color/tachiyomi_background</item>
+-        <item name="colorOnBackground">@color/tachiyomi_onBackground</item>
+-        <item name="colorSurface">@color/tachiyomi_surface</item>
+-        <item name="colorOnSurface">@color/tachiyomi_onSurface</item>
+-        <item name="colorSurfaceVariant">@color/tachiyomi_surfaceVariant</item>
+-        <item name="colorOnSurfaceVariant">@color/tachiyomi_onSurfaceVariant</item>
+-        <item name="elevationOverlayColor">@color/tachiyomi_surfaceTint</item>
+-        <item name="colorSurfaceInverse">@color/tachiyomi_inverseSurface</item>
+-        <item name="colorOnSurfaceInverse">@color/tachiyomi_inverseOnSurface</item>
+-        <item name="colorError">@color/tachiyomi_error</item>
+-        <item name="colorOnError">@color/tachiyomi_onError</item>
+-        <item name="colorErrorContainer">@color/tachiyomi_errorContainer</item>
+-        <item name="colorOnErrorContainer">@color/tachiyomi_onErrorContainer</item>
+-        <item name="colorOutline">@color/tachiyomi_outline</item>
+-        <item name="colorOutlineVariant">@color/tachiyomi_outlineVariant</item>
+-        <item name="colorSurfaceContainer">@color/tachiyomi_surfaceContainer</item>
+-        <item name="colorSurfaceContainerHigh">@color/tachiyomi_surfaceContainerHigh</item>
+-        <item name="colorSurfaceContainerHighest">@color/tachiyomi_surfaceContainerHighest</item>
+-        <item name="colorSurfaceContainerLow">@color/tachiyomi_surfaceContainerLow</item>
+-        <item name="colorSurfaceContainerLowest">@color/tachiyomi_surfaceContainerLowest</item>
++        <item name="colorPrimary">@color/yomikai_primary</item>
++        <item name="colorOnPrimary">@color/yomikai_onPrimary</item>
++        <item name="colorPrimaryContainer">@color/yomikai_primaryContainer</item>
++        <item name="colorOnPrimaryContainer">@color/yomikai_onPrimaryContainer</item>
++        <item name="colorPrimaryInverse">@color/yomikai_inversePrimary</item>
++        <item name="colorSecondary">@color/yomikai_secondary</item>
++        <item name="colorOnSecondary">@color/yomikai_onSecondary</item>
++        <item name="colorSecondaryContainer">@color/yomikai_secondaryContainer</item>
++        <item name="colorOnSecondaryContainer">@color/yomikai_onSecondaryContainer</item>
++        <item name="colorTertiary">@color/yomikai_tertiary</item>
++        <item name="colorOnTertiary">@color/yomikai_onTertiary</item>
++        <item name="colorTertiaryContainer">@color/yomikai_tertiaryContainer</item>
++        <item name="colorOnTertiaryContainer">@color/yomikai_onTertiaryContainer</item>
++        <item name="android:colorBackground">@color/yomikai_background</item>
++        <item name="colorOnBackground">@color/yomikai_onBackground</item>
++        <item name="colorSurface">@color/yomikai_surface</item>
++        <item name="colorOnSurface">@color/yomikai_onSurface</item>
++        <item name="colorSurfaceVariant">@color/yomikai_surfaceVariant</item>
++        <item name="colorOnSurfaceVariant">@color/yomikai_onSurfaceVariant</item>
++        <item name="elevationOverlayColor">@color/yomikai_surfaceTint</item>
++        <item name="colorSurfaceInverse">@color/yomikai_inverseSurface</item>
++        <item name="colorOnSurfaceInverse">@color/yomikai_inverseOnSurface</item>
++        <item name="colorError">@color/yomikai_error</item>
++        <item name="colorOnError">@color/yomikai_onError</item>
++        <item name="colorErrorContainer">@color/yomikai_errorContainer</item>
++        <item name="colorOnErrorContainer">@color/yomikai_onErrorContainer</item>
++        <item name="colorOutline">@color/yomikai_outline</item>
++        <item name="colorOutlineVariant">@color/yomikai_outlineVariant</item>
++        <item name="colorSurfaceContainer">@color/yomikai_surfaceContainer</item>
++        <item name="colorSurfaceContainerHigh">@color/yomikai_surfaceContainerHigh</item>
++        <item name="colorSurfaceContainerHighest">@color/yomikai_surfaceContainerHighest</item>
++        <item name="colorSurfaceContainerLow">@color/yomikai_surfaceContainerLow</item>
++        <item name="colorSurfaceContainerLowest">@color/yomikai_surfaceContainerLowest</item>
+ 
+         <item name="android:divider">@color/divider_default</item>
+         <item name="android:listDivider">@drawable/line_divider</item>
+diff --git a/app/src/main/res/xml/s_pen_actions.xml b/app/src/main/res/xml/s_pen_actions.xml
+index fd30a49..49cf1b8 100644
+--- a/app/src/main/res/xml/s_pen_actions.xml
++++ b/app/src/main/res/xml/s_pen_actions.xml
+@@ -3,7 +3,7 @@
+     actionset_label="@string/app_name"
+     version="1.2">
+     <action
+-        id="tachiyomi_next_page"
++        id="yomikai_next_page"
+         label="@string/spen_next_page"
+         priority="1"
+         repeatable="true"
+@@ -14,7 +14,7 @@
+             value="click" />
+     </action>
+     <action
+-        id="tachiyomi_previous_page"
++        id="yomikai_previous_page"
+         label="@string/spen_previous_page"
+         priority="2"
+         repeatable="true"
+@@ -25,7 +25,7 @@
+             value="double_click" />
+     </action>
+     <action
+-        id="tachiyomi_back"
++        id="yomikai_back"
+         label="@string/action_webview_back"
+         priority="3"
+         repeatable="true"
+@@ -36,7 +36,7 @@
+             value="circle_ccw" />
+     </action>
+     <action
+-        id="tachiyomi_next_chapter"
++        id="yomikai_next_chapter"
+         label="@string/action_next_chapter"
+         priority="4"
+         repeatable="true"
+@@ -47,7 +47,7 @@
+             value="swipe_right" />
+     </action>
+     <action
+-        id="tachiyomi_previous_chapter"
++        id="yomikai_previous_chapter"
+         label="@string/action_previous_chapter"
+         priority="5"
+         repeatable="true"
+diff --git a/core/common/src/main/kotlin/yomikai/network/HttpException.kt b/core/common/src/main/kotlin/yomikai/network/HttpException.kt
+index 3b58ff3..fa3069c 100644
+--- a/core/common/src/main/kotlin/yomikai/network/HttpException.kt
++++ b/core/common/src/main/kotlin/yomikai/network/HttpException.kt
+@@ -7,7 +7,6 @@ import okhttp3.Response
+  * Use it to have a standardized error message in the app across the extensions.
+  *
+  * @see Response.isSuccessful
+- * @since tachiyomix 1.6
+  * @param code [Int] the HTTP status code
+  */
+ class HttpException(val code: Int) : IllegalStateException("HTTP error $code")
+diff --git a/presentation-core/src/main/res/values-night/colors_tachiyomi.xml b/presentation-core/src/main/res/values-night/colors_tachiyomi.xml
+deleted file mode 100644
+index 6af256b..0000000
+--- a/presentation-core/src/main/res/values-night/colors_tachiyomi.xml
++++ /dev/null
+@@ -1,46 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!--
+-  ~ Colors for Default theme
+-  ~ M3 colors generated by Material Theme Builder (https://goo.gle/material-theme-builder-web)
+-  ~
+-  ~ Key colors:
+-  ~ Primary #2979FF
+-  ~ Secondary #2979FF
+-  ~ Tertiary #47A84A
+-  ~ Neutral #5E5E62
+--->
+-<resources>
+-    <color name="tachiyomi_primary">#B0C6FF</color>
+-    <color name="tachiyomi_onPrimary">#002D6E</color>
+-    <color name="tachiyomi_primaryContainer">#00429B</color>
+-    <color name="tachiyomi_onPrimaryContainer">#D9E2FF</color>
+-    <color name="tachiyomi_inversePrimary">#0058CA</color>
+-    <color name="tachiyomi_secondary">#B0C6FF</color>
+-    <color name="tachiyomi_onSecondary">#002D6E</color>
+-    <color name="tachiyomi_secondaryContainer">#00429B</color>
+-    <color name="tachiyomi_onSecondaryContainer">#D9E2FF</color>
+-    <color name="tachiyomi_tertiary">#7ADC77</color>
+-    <color name="tachiyomi_onTertiary">#003909</color>
+-    <color name="tachiyomi_tertiaryContainer">#005312</color>
+-    <color name="tachiyomi_onTertiaryContainer">#95F990</color>
+-    <color name="tachiyomi_background">#1B1B1F</color>
+-    <color name="tachiyomi_onBackground">#E3E2E6</color>
+-    <color name="tachiyomi_surface">#1B1B1F</color>
+-    <color name="tachiyomi_onSurface">#E3E2E6</color>
+-    <color name="tachiyomi_surfaceVariant">#211F26</color>
+-    <color name="tachiyomi_onSurfaceVariant">#C5C6D0</color>
+-    <color name="tachiyomi_surfaceTint">#B0C6FF</color>
+-    <color name="tachiyomi_inverseSurface">#E3E2E6</color>
+-    <color name="tachiyomi_inverseOnSurface">#1B1B1F</color>
+-    <color name="tachiyomi_error">#FFB4AB</color>
+-    <color name="tachiyomi_onError">#690005</color>
+-    <color name="tachiyomi_errorContainer">#93000A</color>
+-    <color name="tachiyomi_onErrorContainer">#FFDAD6</color>
+-    <color name="tachiyomi_outline">#8F9099</color>
+-    <color name="tachiyomi_outlineVariant">#44464F</color>
+-    <color name="tachiyomi_surfaceContainerLowest">#1A181D</color>
+-    <color name="tachiyomi_surfaceContainerLow">#1E1C22</color>
+-    <color name="tachiyomi_surfaceContainer">#211F26</color>
+-    <color name="tachiyomi_surfaceContainerHigh">#292730</color>
+-    <color name="tachiyomi_surfaceContainerHighest">#302E38</color>
+-</resources>
+diff --git a/presentation-core/src/main/res/values-night/colors_yomikai.xml b/presentation-core/src/main/res/values-night/colors_yomikai.xml
+new file mode 100644
+index 0000000..9fc574e
+--- /dev/null
++++ b/presentation-core/src/main/res/values-night/colors_yomikai.xml
+@@ -0,0 +1,46 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++  ~ Colors for Default theme
++  ~ M3 colors generated by Material Theme Builder (https://goo.gle/material-theme-builder-web)
++  ~
++  ~ Key colors:
++  ~ Primary #2979FF
++  ~ Secondary #2979FF
++  ~ Tertiary #47A84A
++  ~ Neutral #5E5E62
++-->
++<resources>
++    <color name="yomikai_primary">#B0C6FF</color>
++    <color name="yomikai_onPrimary">#002D6E</color>
++    <color name="yomikai_primaryContainer">#00429B</color>
++    <color name="yomikai_onPrimaryContainer">#D9E2FF</color>
++    <color name="yomikai_inversePrimary">#0058CA</color>
++    <color name="yomikai_secondary">#B0C6FF</color>
++    <color name="yomikai_onSecondary">#002D6E</color>
++    <color name="yomikai_secondaryContainer">#00429B</color>
++    <color name="yomikai_onSecondaryContainer">#D9E2FF</color>
++    <color name="yomikai_tertiary">#7ADC77</color>
++    <color name="yomikai_onTertiary">#003909</color>
++    <color name="yomikai_tertiaryContainer">#005312</color>
++    <color name="yomikai_onTertiaryContainer">#95F990</color>
++    <color name="yomikai_background">#1B1B1F</color>
++    <color name="yomikai_onBackground">#E3E2E6</color>
++    <color name="yomikai_surface">#1B1B1F</color>
++    <color name="yomikai_onSurface">#E3E2E6</color>
++    <color name="yomikai_surfaceVariant">#211F26</color>
++    <color name="yomikai_onSurfaceVariant">#C5C6D0</color>
++    <color name="yomikai_surfaceTint">#B0C6FF</color>
++    <color name="yomikai_inverseSurface">#E3E2E6</color>
++    <color name="yomikai_inverseOnSurface">#1B1B1F</color>
++    <color name="yomikai_error">#FFB4AB</color>
++    <color name="yomikai_onError">#690005</color>
++    <color name="yomikai_errorContainer">#93000A</color>
++    <color name="yomikai_onErrorContainer">#FFDAD6</color>
++    <color name="yomikai_outline">#8F9099</color>
++    <color name="yomikai_outlineVariant">#44464F</color>
++    <color name="yomikai_surfaceContainerLowest">#1A181D</color>
++    <color name="yomikai_surfaceContainerLow">#1E1C22</color>
++    <color name="yomikai_surfaceContainer">#211F26</color>
++    <color name="yomikai_surfaceContainerHigh">#292730</color>
++    <color name="yomikai_surfaceContainerHighest">#302E38</color>
++</resources>
+diff --git a/presentation-core/src/main/res/values/colors_tachiyomi.xml b/presentation-core/src/main/res/values/colors_tachiyomi.xml
+deleted file mode 100644
+index 37f2a9f..0000000
+--- a/presentation-core/src/main/res/values/colors_tachiyomi.xml
++++ /dev/null
+@@ -1,46 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!--
+-  ~ Colors for Default theme
+-  ~ M3 colors generated by Material Theme Builder (https://goo.gle/material-theme-builder-web)
+-  ~
+-  ~ Key colors:
+-  ~ Primary #2979FF
+-  ~ Secondary #2979FF
+-  ~ Tertiary #47A84A
+-  ~ Neutral #5E5E62
+--->
+-<resources>
+-    <color name="tachiyomi_primary">#0058CA</color>
+-    <color name="tachiyomi_onPrimary">#FFFFFF</color>
+-    <color name="tachiyomi_primaryContainer">#D9E2FF</color>
+-    <color name="tachiyomi_onPrimaryContainer">#001945</color>
+-    <color name="tachiyomi_inversePrimary">#B0C6FF</color>
+-    <color name="tachiyomi_secondary">#0058CA</color>
+-    <color name="tachiyomi_onSecondary">#FFFFFF</color>
+-    <color name="tachiyomi_secondaryContainer">#D9E2FF</color>
+-    <color name="tachiyomi_onSecondaryContainer">#001945</color>
+-    <color name="tachiyomi_tertiary">#006E1B</color>
+-    <color name="tachiyomi_onTertiary">#FFFFFF</color>
+-    <color name="tachiyomi_tertiaryContainer">#95F990</color>
+-    <color name="tachiyomi_onTertiaryContainer">#002203</color>
+-    <color name="tachiyomi_background">#FEFBFF</color>
+-    <color name="tachiyomi_onBackground">#1B1B1F</color>
+-    <color name="tachiyomi_surface">#FEFBFF</color>
+-    <color name="tachiyomi_onSurface">#1B1B1F</color>
+-    <color name="tachiyomi_surfaceVariant">#F3EDF7</color>
+-    <color name="tachiyomi_onSurfaceVariant">#44464F</color>
+-    <color name="tachiyomi_surfaceTint">#0058CA</color>
+-    <color name="tachiyomi_inverseSurface">#303034</color>
+-    <color name="tachiyomi_inverseOnSurface">#F2F0F4</color>
+-    <color name="tachiyomi_error">#BA1A1A</color>
+-    <color name="tachiyomi_onError">#FFFFFF</color>
+-    <color name="tachiyomi_errorContainer">#FFDAD6</color>
+-    <color name="tachiyomi_onErrorContainer">#410002</color>
+-    <color name="tachiyomi_outline">#757780</color>
+-    <color name="tachiyomi_outlineVariant">#C5C6D0</color>
+-    <color name="tachiyomi_surfaceContainerLowest">#F5F1F8</color>
+-    <color name="tachiyomi_surfaceContainerLow">#F7F2FA</color>
+-    <color name="tachiyomi_surfaceContainer">#F3EDF7</color>
+-    <color name="tachiyomi_surfaceContainerHigh">#FCF7FF</color>
+-    <color name="tachiyomi_surfaceContainerHighest">#FCF7FF</color>
+-</resources>
+diff --git a/presentation-core/src/main/res/values/colors_yomikai.xml b/presentation-core/src/main/res/values/colors_yomikai.xml
+new file mode 100644
+index 0000000..933e1aa
+--- /dev/null
++++ b/presentation-core/src/main/res/values/colors_yomikai.xml
+@@ -0,0 +1,46 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++  ~ Colors for Default theme
++  ~ M3 colors generated by Material Theme Builder (https://goo.gle/material-theme-builder-web)
++  ~
++  ~ Key colors:
++  ~ Primary #2979FF
++  ~ Secondary #2979FF
++  ~ Tertiary #47A84A
++  ~ Neutral #5E5E62
++-->
++<resources>
++    <color name="yomikai_primary">#0058CA</color>
++    <color name="yomikai_onPrimary">#FFFFFF</color>
++    <color name="yomikai_primaryContainer">#D9E2FF</color>
++    <color name="yomikai_onPrimaryContainer">#001945</color>
++    <color name="yomikai_inversePrimary">#B0C6FF</color>
++    <color name="yomikai_secondary">#0058CA</color>
++    <color name="yomikai_onSecondary">#FFFFFF</color>
++    <color name="yomikai_secondaryContainer">#D9E2FF</color>
++    <color name="yomikai_onSecondaryContainer">#001945</color>
++    <color name="yomikai_tertiary">#006E1B</color>
++    <color name="yomikai_onTertiary">#FFFFFF</color>
++    <color name="yomikai_tertiaryContainer">#95F990</color>
++    <color name="yomikai_onTertiaryContainer">#002203</color>
++    <color name="yomikai_background">#FEFBFF</color>
++    <color name="yomikai_onBackground">#1B1B1F</color>
++    <color name="yomikai_surface">#FEFBFF</color>
++    <color name="yomikai_onSurface">#1B1B1F</color>
++    <color name="yomikai_surfaceVariant">#F3EDF7</color>
++    <color name="yomikai_onSurfaceVariant">#44464F</color>
++    <color name="yomikai_surfaceTint">#0058CA</color>
++    <color name="yomikai_inverseSurface">#303034</color>
++    <color name="yomikai_inverseOnSurface">#F2F0F4</color>
++    <color name="yomikai_error">#BA1A1A</color>
++    <color name="yomikai_onError">#FFFFFF</color>
++    <color name="yomikai_errorContainer">#FFDAD6</color>
++    <color name="yomikai_onErrorContainer">#410002</color>
++    <color name="yomikai_outline">#757780</color>
++    <color name="yomikai_outlineVariant">#C5C6D0</color>
++    <color name="yomikai_surfaceContainerLowest">#F5F1F8</color>
++    <color name="yomikai_surfaceContainerLow">#F7F2FA</color>
++    <color name="yomikai_surfaceContainer">#F3EDF7</color>
++    <color name="yomikai_surfaceContainerHigh">#FCF7FF</color>
++    <color name="yomikai_surfaceContainerHighest">#FCF7FF</color>
++</resources>
+diff --git a/presentation-widget/src/main/res/values/colors_appwidget.xml b/presentation-widget/src/main/res/values/colors_appwidget.xml
+index 92f70a9..f203ac3 100644
+--- a/presentation-widget/src/main/res/values/colors_appwidget.xml
++++ b/presentation-widget/src/main/res/values/colors_appwidget.xml
+@@ -1,10 +1,10 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <color name="appwidget_background">@color/tachiyomi_surface</color>
++    <color name="appwidget_background">@color/yomikai_surface</color>
+     <color name="appwidget_coverscreen_background">#00000000</color>
+-    <color name="appwidget_on_background">@color/tachiyomi_onSurface</color>
+-    <color name="appwidget_surface_variant">@color/tachiyomi_surfaceVariant</color>
+-    <color name="appwidget_on_surface_variant">@color/tachiyomi_onSurfaceVariant</color>
+-    <color name="appwidget_secondary_container">@color/tachiyomi_secondaryContainer</color>
+-    <color name="appwidget_on_secondary_container">@color/tachiyomi_onSecondaryContainer</color>
++    <color name="appwidget_on_background">@color/yomikai_onSurface</color>
++    <color name="appwidget_surface_variant">@color/yomikai_surfaceVariant</color>
++    <color name="appwidget_on_surface_variant">@color/yomikai_onSurfaceVariant</color>
++    <color name="appwidget_secondary_container">@color/yomikai_secondaryContainer</color>
++    <color name="appwidget_on_secondary_container">@color/yomikai_onSecondaryContainer</color>
+ </resources>
+diff --git a/scripts/build_extra_dicts.py b/scripts/build_extra_dicts.py
+index a9a61ee..cb7d300 100644
+--- a/scripts/build_extra_dicts.py
++++ b/scripts/build_extra_dicts.py
+@@ -2,7 +2,7 @@ import json
+ import zipfile
+ import os
+ 
+-dict_dir = "/home/user/yomihon/dictionaries"
++dict_dir = "/home/user/yomikai/dictionaries"
+ os.makedirs(dict_dir, exist_ok=True)
+ 
+ # 1. Russian Explanatory Dictionary (Yomitan format)
+@@ -11,13 +11,13 @@ ru_index = {
+     "format": 3,
+     "revision": "2026.08.15",
+     "sequenced": True,
+-    "author": "Yomihon",
++    "author": "Yomikai",
+     "description": "Толковый словарь терминов и слов русского языка.",
+-    "attribution": "Yomihon Dictionary Collection",
++    "attribution": "Yomikai Dictionary Collection",
+     "sourceLanguage": "ru",
+     "targetLanguage": "ru",
+     "isUpdatable": False,
+-    "downloadUrl": "https://github.com/sj0404-collab/yomihon-custom/raw/main/dictionaries/Russian_Explanatory.zip"
++    "downloadUrl": "https://github.com/sj0404-collab/yomikai/raw/main/dictionaries/Russian_Explanatory.zip"
+ }
+ 
+ ru_terms = [
+@@ -43,13 +43,13 @@ lat_index = {
+     "format": 3,
+     "revision": "2026.08.15",
+     "sequenced": True,
+-    "author": "Yomihon",
++    "author": "Yomikai",
+     "description": "Словарь и таблица транслитерации латинских символов и слов в кириллицу.",
+-    "attribution": "Yomihon Dictionary Collection",
++    "attribution": "Yomikai Dictionary Collection",
+     "sourceLanguage": "en",
+     "targetLanguage": "ru",
+     "isUpdatable": False,
+-    "downloadUrl": "https://github.com/sj0404-collab/yomihon-custom/raw/main/dictionaries/Latin_to_Cyrillic.zip"
++    "downloadUrl": "https://github.com/sj0404-collab/yomikai/raw/main/dictionaries/Latin_to_Cyrillic.zip"
+ }
+ 
+ lat_terms = [
+@@ -58,7 +58,7 @@ lat_terms = [
+     ["mir", "мир", "", "", 0, ["Конвертация латиницы: **мир** (мир/вселенная)"], 0, ""],
+     ["dobro", "добро", "", "", 0, ["Конвертация латиницы: **добро**"], 0, ""],
+     ["manga", "манга", "", "", 0, ["Конвертация латиницы: **манга**"], 0, ""],
+-    ["yomihon", "ёмихон", "", "", 0, ["Конвертация латиницы: **ёмихон**"], 0, ""],
++    ["yomikai", "ёмикай", "", "", 0, ["Конвертация латиницы: **ёмикай**"], 0, ""],
+     ["a", "а", "", "", 0, ["Буква кириллицы: **а**"], 0, ""],
+     ["b", "б", "", "", 0, ["Буква кириллицы: **б**"], 0, ""],
+     ["v", "в", "", "", 0, ["Буква кириллицы: **в**"], 0, ""],
+diff --git a/scripts/package_ocr_models.py b/scripts/package_ocr_models.py
+index 35de913..e380029 100644
+--- a/scripts/package_ocr_models.py
++++ b/scripts/package_ocr_models.py
+@@ -3,7 +3,7 @@ import urllib.request
+ import tarfile
+ import hashlib
+ 
+-ocr_dir = "/home/user/yomihon/ocr_models"
++ocr_dir = "/home/user/yomikai/ocr_models"
+ os.makedirs(ocr_dir, exist_ok=True)
+ 
+ models = [
+diff --git a/tools/remote_tts_server.py b/tools/remote_tts_server.py
+index bd3167f..b6f0902 100644
+--- a/tools/remote_tts_server.py
++++ b/tools/remote_tts_server.py
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env python3
+-"""Локальный TTS-сервер нейроголосов для Yomikai (yomihon-custom).
++"""Локальный TTS-сервер нейроголосов для Yomikai (yomikai).
+ 
+ Нейросетевой синтез (sherpa-onnx + русские Piper-голоса) вынесен из APK сюда:
+ на телефоне его ломали minify/ABI/память, а на ПК или ранере он стабилен.
