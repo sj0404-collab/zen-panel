@@ -1,0 +1,55 @@
+diff --git a/android/app/src/main/java/dev/pocketrun/agent/opencode/ShellText.kt b/android/app/src/main/java/dev/pocketrun/agent/opencode/ShellText.kt
+index 4b6f212..dd397b9 100644
+--- a/android/app/src/main/java/dev/pocketrun/agent/opencode/ShellText.kt
++++ b/android/app/src/main/java/dev/pocketrun/agent/opencode/ShellText.kt
+@@ -257,7 +257,10 @@ internal object ShellText {
+ 
+         val from = expandSet(sets[0])
+         val to = if (sets.size > 1) expandSet(sets[1]) else emptyList()
+-        val (text, exit) = input(args, dir, stdin, resolve)
++        // Only what is left after the sets names a file; `tr -d a` sets a
++        // character, it does not read a file called "a".
++        val files = args.filterNot { it.startsWith("-") }.drop(2)
++        val (text, exit) = input(files, dir, stdin, resolve)
+         if (exit != 0) return MiniShell.Result(exit, text)
+ 
+         val out = StringBuilder()
+@@ -751,11 +754,19 @@ internal object ShellText {
+             }
+             if (c == '%' && format.getOrNull(i + 1) == '%') { out.append('%'); i += 2; continue }
+             if (c == '%') {
++                // Flags, width and precision come before the conversion character,
++                // and it ends the spec: scanning past it would swallow the '-' in
++                // "%s-%s" as a left-align flag and print "ab" for "a-b".
+                 var j = i + 1
+-                while (j < format.length && (format[j].isLetterOrDigit() || format[j] in ".-+ #0")) j++
+-                val spec = format.substring(i + 1, j)
+-                out.append(formatValue(spec, values.getOrNull(argIndex++)))
+-                i = j
++                while (j < format.length && (format[j] in "-+ #0" || format[j].isDigit() || format[j] == '.')) j++
++                if (j < format.length && format[j].isLetter()) {
++                    val spec = format.substring(i + 1, j + 1)
++                    out.append(formatValue(spec, values.getOrNull(argIndex++)))
++                    i = j + 1
++                    continue
++                }
++                out.append(c)
++                i++
+                 continue
+             }
+             out.append(c)
+diff --git a/android/app/src/test/java/dev/pocketrun/agent/opencode/ShellToolsTest.kt b/android/app/src/test/java/dev/pocketrun/agent/opencode/ShellToolsTest.kt
+index eb2e87a..1d81455 100644
+--- a/android/app/src/test/java/dev/pocketrun/agent/opencode/ShellToolsTest.kt
++++ b/android/app/src/test/java/dev/pocketrun/agent/opencode/ShellToolsTest.kt
+@@ -89,8 +89,8 @@ class ShellToolsTest {
+ 
+     @Test
+     fun trTranslatesDeletesAndSqueezes() {
+-        assertEquals("bcd\n", ok("echo abcccd | tr -d a"))
+-        assertEquals("bcccd\n", ok("echo abcccd | tr a b"))
++        assertEquals("bcccd\n", ok("echo abcccd | tr -d a"))
++        assertEquals("bbcccd\n", ok("echo abcccd | tr a b"))
+         assertEquals("abc\n", ok("echo aaa bbb ccc | tr -s ' '"))
+         assertEquals("b\n", ok("echo ab | tr a-z b"))
+     }
