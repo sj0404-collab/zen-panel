@@ -1,0 +1,1361 @@
+diff --git a/MANIFEST.md b/MANIFEST.md
+index cfc8afe24..3e2720833 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -15,9 +15,3 @@
+ 4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи
+    и не логируй его значение.
+ 5. Готовые сборки/артефакты клади в /home/runner/hub-work/yomikai/tmp — их видно вкладкой «Файлы».
+-6. Историю текущего агента храни в этом репозитории (/home/runner/hub-work/yomikai/code), а не во временных папках.
+-7. После внесения исправлений автоматически создавай коммит и отправляй его в текущую ветку репозитория.
+-8. Все сборки запускай через GitHub Actions/workflows; не запускай сборки внутри локального окружения.
+-9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
+-10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
+-11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
+index b738dfbdb..66bde0bdb 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
+@@ -128,6 +128,15 @@ object AiAgent {
+         "check_site" to 90_000L,
+         "web_search" to 90_000L,
+         "web_fetch" to 90_000L,
++        // Озвучка в файл: страница — один OCR плюс синтез, глава — OCR и
++        // синтез КАЖДОЙ страницы по очереди, а wait_idle по условию ждёт
++        // окончания чтения. Общий двухминутный потолок убивал их все.
++        "page_audio" to 5L * 60_000L,
++        "chapter_audio" to 12L * 60_000L,
++        "wait_idle" to 10L * 60_000L,
++        // reader_do покрывает и самые долгие из них — тот же потолок нужен
++        // всему действию, а не только его «голому» имени.
++        "reader_do" to 12L * 60_000L,
+     )
+ 
+     /**
+@@ -199,7 +208,11 @@ object AiAgent {
+             "РАЗНИЦА, не путай: web_fetch отдаёт ТОЛЬКО текст — ни вёрстки, ни цветов, ни картинок он не показывает. " +
+             "see_page смотрит на страницу КНИГИ в читалке и НЕ открывает веб-страницы. " +
+             "Когда читатель просит «посмотри страницу и сделай похожее», речь о ВЕБ-странице: " +
+-            "это web_screenshot (увидеть) + gen_image (нарисовать похожее), а не see_page.\n" +
++            "это web_screenshot (увидеть) + gen_image (нарисовать похожее), а не see_page. " +
++            "И наоборот: gen_image/web_screenshot НИКОГДА не заменяют чтение книги. " +
++            "«Прочитай текущую страницу», «что там написано», «озвучь страницу» — это page_text, " +
++            "see_page и page_audio. Рисовать картинку по описанию, когда человек просил прочитать " +
++            "ЕГО страницу, — ошибка: он получит чужую картинку вместо своего текста.\n" +
+             "@tool book_recall {} — что уже известно о текущей книге (где читать, о чём, как читать, заметки, советы)\n" +
+             "@tool book_remember {\"kind\":\"site|summary|fact|advice|заметка\",\"text\":\"значение\"} — сохранить знание о книге\n" +
+             "@tool book_learn {\"url\":\"https://...\"} — прочитать страницу и сохранить её как источник правил\n" +
+@@ -213,18 +226,42 @@ object AiAgent {
+             "положить знание в память ВНЕ книги: series — термины, имена и перевод для всей серии, " +
+             "global — для всех книг. Порядок чтения и области сюда НЕ кладут: они остаются книжными\n" +
+             "@tool reader_actions {} — какие действия доступны в открытой читалке\n" +
+-            "@tool reader_do {\"action\":\"speak_page\"} — выполнить действие читалки: " +
+-            "speak_page (озвучить текущую страницу), speak_chapter (озвучивать всю главу), " +
+-            "stop_speak (прекратить озвучку), page_text (распознать текст текущей страницы), " +
+-            "see_page (СПРОСИТЬ ВИЖУЩУЮ МОДЕЛЬ про открытую в читалке страницу книги, " +
++            "@tool reader_do {\"action\":\"speak_page\"} — выполнить действие читалки:\n" +
++            "  page_text — распознать ТЕКСТ текущей страницы (тот же OCR, ничего не рисует);\n" +
++            "  page_audio — СОЗДАТЬ MP3 текущей страницы в workspace/audio/, файл придёт карточкой в чат: " +
++            "{\"action\":\"page_audio\",\"name\":\"стр1.mp3\",\"voice\":\"ru-RU-DmitryNeural\"};\n" +
++            "  chapter_audio — СОЗДАТЬ MP3 главы в workspace/audio/: " +
++            "{\"action\":\"chapter_audio\",\"scope\":\"chapter\",\"name\":\"глава1.mp3\",\"max_pages\":20}. " +
++            "scope=page озвучит только текущую страницу. Текста главы у тебя нет, поэтому инструмент " +
++            "САМ собирает его через page_text и turn_page и возвращает книгу на исходную страницу — " +
++            "листать главу вручную не нужно;\n" +
++            "  wait_idle — ДОЖДАТЬСЯ конца текущей озвучки: {\"action\":\"wait_idle\",\"wait_ms\":60000}. " +
++            "Ответ «тишина» (закончилось или не началось) либо «идёт» (ещё звучит). " +
++            "speak_page возвращается мгновенно, а следующий вызов обрывает его озвучку — " +
++            "между страницами ставь wait_idle;\n" +
++            "  speak_page — озвучить страницу В ЧИТАЛКЕ (живой звук, файл не создаётся);\n" +
++            "  speak_chapter — то же для всей главы, с автолистанием;\n" +
++            "  stop_speak — прекратить озвучку;\n" +
++            "  see_page — СПРОСИТЬ ВИЖУЩУЮ МОДЕЛЬ про открытую в читалке страницу книги, " +
+             "обязательно с вопросом: {\"action\":\"see_page\",\"question\":\"что нарисовано на этой странице?\"} — " +
+-            "это твои глаза на КНИГУ, веб-страницу так не посмотреть), " +
+-            "page_count (сколько страниц в главе), " +
+-            "turn_page (ЛИСТАТЬ САМ: {\"action\":\"turn_page\",\"to\":\"next|prev|first|last\"}), " +
+-            "auto_read ({\"action\":\"auto_read\",\"to\":\"on|off\"} — самому включить или " +
+-            "выключить авточтение и читать главу)\n" +
+-            "ВАЖНО: чтобы вести читателя постранично, листай сам через turn_page, а не " +
+-            "проси прислать скриншоты. На каждой странице смотри see_page и page_text.\n" +
++            "это твои глаза на КНИГУ, веб-страницу так не посмотреть;\n" +
++            "  page_count — сколько страниц в главе;\n" +
++            "  turn_page — ЛИСТАТЬ САМ: {\"action\":\"turn_page\",\"to\":\"next|prev|first|last\"};\n" +
++            "  auto_read — {\"action\":\"auto_read\",\"to\":\"on|off\"} — включить/выключить АВТОЧТЕНИЕ.\n" +
++            "ГЛАВНОЕ ПРАВИЛО ОЗВУЧКИ — это три РАЗНЫЕ вещи, не путай их:\n" +
++            "(а) «прочти книгу/главу и ПРИШЛИ МНЕ АУДИОФАЙЛ», «озвучь страницу», «сделай mp3» — " +
++            "это chapter_audio (глава) или page_audio (страница). Читатель получит файл карточкой в чат. " +
++            "auto_read и speak_chapter тут НЕПОДХОДЯТ: они только играют голос в колонке, файла не будет, " +
++            "и фраза «прочитай и пришли» останется невыполненной.\n" +
++            "(б) «прочитай текущую страницу» (без слова «файл») — это page_text (узнать, что написано) " +
++            "и, если читателю нужен звук, page_audio. gen_image и web_screenshot тут НЕ ПОДХОДЯТ: " +
++            "gen_image рисует НОВУЮ картинку по твоему описанию, web_screenshot снимает веб-страницу. " +
++            "Ни то, ни другое не имеет отношения к странице книги, которую читает человек.\n" +
++            "(в) auto_read — ТОЛЬКО когда читатель прямо просит ВКЛЮЧИТЬ авточтение " +
++            "(«включи авточтение», «читай вслух, листая»). Слова «прочти», «озвучь», «пришли аудио» " +
++            "означают файл, а не авточтение.\n" +
++            "(г) чтобы вести читателя постранично: page_text или see_page → (если шла озвучка) wait_idle " +
++            "→ turn_page → снова page_text. Листай САМ через turn_page, а не проси прислать скриншоты.\n" +
+             "@tool list_ext {} — список установленных расширений-источников с их доменами\n" +
+             "@tool filter_ext {\"hide\":\"подстрока\",\"show\":\"подстрока\"} — скрыть/показать источники по имени/языку\n" +
+             "@tool find_manga {\"title\":\"название\"} — найти мангу по включённым источникам, вернёт где реально открывается\n" +
+@@ -286,13 +323,17 @@ object AiAgent {
+             AiChatTools.SYSTEM_PROMPT_LINES.joinToString("\n") { it } + "\n" +
+             "Если пользователь жалуется, что текст распознаётся плохо или не тем порядком, — " +
+             "сначала reader_status, затем ocr_preset с подходящим id (manga/manhwa/comic/balanced).\n" +
+-            "Если пользователь жалуется на озвучку/голоса/синтез (молчит, один голос на всех ролей, " +
+-            "движок «исчез» из списка) — ПЕРВЫМ вызывай tts_status и опирайся на него; " +
+-            "reader_status и plugins_list для голосовых жалоб не подходят.\n" +
++            "Разбирай жалобу ДО tools: «молчит, один голос на всех, движок исчез» — это поломка СИНТЕЗА, " +
++            "и лечится tts_status (движок, голоса, хвост logs/tts.log). А «прочти мне книгу/страницу, " +
++            "пришли аудио» — это НЕ поломка синтеза и tts_status тут не поможет: чинится " +
++            "page_audio/chapter_audio. Не подменяй просьбу «пришли файл» разговором про голоса и роли.\n" +
+             "Если пользователь просит новый инструмент — СОЗДАЙ его через plugin_create и сразу проверь вызовом.\n" +
+-            "НЕЙРО-КНИГИ и НЕЙРО-КОМИКСЫ: пиши книгу по главам через append_file " +
++            "НЕЙРО-КНИГИ и НЕЙРО-КОМИКСЫ (это про НАПИСАНИЕ нового текста, а не про чтение существующей книги): " +
++            "пиши книгу по главам через append_file " +
+             "(book/название.md), перед продолжением читай хвост через read_file — так контекст не теряется. " +
+-            "Для комикса: сцены текстом в comic/сценарий.md + gen_image на каждый кадр.\n" +
++            "Для СВОЕГО комикса: сцены текстом в comic/сценарий.md + gen_image на каждый кадр. " +
++            "gen_image рисует по твоему текстовому описанию и ничего не знает о книге, которую читает " +
++            "человек, — для чтения и озвучки существующих страниц он не применяется.\n" +
+             "Можно несколько @tool в одном ответе. После строк @tool больше ничего не пиши — " +
+             "результаты придут следующим сообщением, тогда и ответишь пользователю.\n" +
+             "ВАРИАНТЫ ВЫБОРА: если уместно предложить пользователю выбор (что делать дальше, " +
+@@ -708,7 +749,7 @@ object AiAgent {
+     private val READER_ACTION_ALIASES = listOf(
+         "speak_page", "speak_chapter", "stop_speak", "page_text",
+         "see_page", "page_count", "turn_page", "auto_read",
+-    )
++    ) + ReaderAudioExport.ACTION_NAMES
+ 
+     private fun knownToolNames(context: Context): Set<String> =
+         setOf(
+@@ -910,6 +951,43 @@ object AiAgent {
+         return stripToolFragments(cleaned)
+     }
+ 
++    /**
++     * Действие читалки: сначала пробуем [ReaderAudioExport] (озвучка в файл и
++     * ожидание тишины), а всё остальное отдаём реестру [ReaderAiActions].
++     *
++     * Разделение нужно потому, что `page_audio`/`chapter_audio`/`wait_idle`
++     * работают на стороне агента: текст страницы они берут из уже
++     * зарегистрированного `page_text`, mp3 синтезируют тем же Edge TTS, что и
++     * `render_audio`. В Activity им регистрироваться нечего, поэтому новые
++     * строки в ReaderActivity для них не требуются.
++     *
++     * Файл из действия возвращается в [ToolResult.fileProduced] — иначе mp3
++     * был бы создан, но читатель не увидел бы его в чате.
++     */
++    private suspend fun readerActionResult(
++        context: Context,
++        toolName: String,
++        action: String,
++        args: JSONObject,
++    ): ToolResult {
++        val outcome = try {
++            ReaderAudioExport.run(context, action, args)
++        } catch (e: kotlinx.coroutines.CancellationException) {
++            throw e
++        } catch (e: Exception) {
++            ReaderAudioExport.Outcome("ОШИБКА действия «$action»: ${e.message?.take(160)}")
++        }
++        if (outcome == null) {
++            return ToolResult(toolName, ReaderAiActions.run(action, args))
++        }
++        return ToolResult(
++            name = toolName,
++            output = outcome.output,
++            fileProduced = outcome.file,
++            status = if (outcome.output.startsWith("ОШИБКА")) "error" else "ok",
++        )
++    }
++
+     private suspend fun execute(
+         context: Context,
+         call: ToolCall,
+@@ -1368,16 +1446,13 @@ object AiAgent {
+ 
+         "reader_do" -> {
+             val action = call.args.optString("action")
+-            ToolResult("reader_do", ReaderAiActions.run(action, call.args))
++            readerActionResult(context, "reader_do", action, call.args)
+         }
+ 
+         // Прямые @tool see_page/turn_page/… идут в тот же реестр, что и
+         // reader_do: промпт называет их отдельными инструментами, и раньше
+         // такие вызовы просто исчезали без результата и без ошибки.
+-        in READER_ACTION_ALIASES -> ToolResult(
+-            call.name,
+-            ReaderAiActions.run(call.name, call.args),
+-        )
++        in READER_ACTION_ALIASES -> readerActionResult(context, call.name, call.name, call.args)
+ 
+         "book_learn" -> {
+             val manga = mangaId
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiChatTools.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiChatTools.kt
+index 05a272bc1..26ae4d4ec 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiChatTools.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiChatTools.kt
+@@ -36,7 +36,7 @@ object AiChatTools {
+ 
+     /** Документация инструментов для системного промпта агента. */
+     val SYSTEM_PROMPT_LINES = listOf(
+-        "@tool render_audio {\"text\":\"текст\",\"voice\":\"ru-RU-SvetlanaNeural\",\"name\":\"имя.mp3\"} — озвучить текст голосом в файл MP3 (workspace/audio/), файл появится в чате готовым",
++        "@tool render_audio {\"text\":\"текст\",\"voice\":\"ru-RU-SvetlanaNeural\",\"name\":\"имя.mp3\"} — озвучить ТЕКСТ голосом в файл MP3 (workspace/audio/), файл появится в чате готовым. ВАЖНО: он берёт только текст, страницу книги им прочитать нельзя — за «прочти книгу/страницу и пришли аудиофайл» отвечают действия читалки reader_do {\"action\":\"page_audio\"} и {\"action\":\"chapter_audio\"}: они распознают страницу тем же OCR и синтезируют mp3 в workspace/audio/, файл приходит карточкой в чат. Не подменяй их render_audio и уж тем более авточтением",
+         "@tool voice_list {} — список голосов Edge TTS и какой сейчас выбран",
+         "@tool voice_preview {\"voice\":\"ru-RU-DmitryNeural\"} — проиграть пробу голоса, чтобы пользователь послушал",
+         "@tool voice_set {\"voice\":\"ru-RU-DmitryNeural\"} — сменить голос озвучки приложения на указанный",
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 607fc40b1..86ad0cf0c 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.tts
+ 
+ import android.content.Context
+ import android.graphics.Bitmap
++import android.net.Uri
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.async
+ import kotlinx.coroutines.channels.Channel
+@@ -790,25 +791,56 @@ class AutoReadEngine(
+         }
+     }
+ 
++    /**
++     * Итог «Скриншот сейчас»: что реально удалось сделать с кадром.
++     *
++     * Существует ради одного требования — тост должен быть честным. Пока
++     * сохранение было одной строкой без результата, кнопка сообщала
++     * «Скриншот сохранён» даже тогда, когда JPEG выбрасывался, и читатель
++     * искал файл, которого нет ни в буфере, ни в галерее.
++     */
++    sealed interface ScreenshotResult {
++        /** Кадр сохранён и во внутренний буфер, и в публичную папку Pictures/Yomikai. */
++        data class SavedInGallery(val galleryUri: Uri) : ScreenshotResult
++
++        /**
++         * Кадр сохранён только во внутренний буфер «Скриншоты»: публичное
++         * хранилище недоступно (нет прав на запись, MediaStore отказал).
++         */
++        data class SavedInAppOnly(val reason: String) : ScreenshotResult
++
++        /** Кадр не сохранён нигде, [reason] объясняет почему. */
++        data class NotSaved(val reason: String) : ScreenshotResult
++    }
++
+     /**
+      * Мгновенный скриншот: распознать текущий кадр выбранным движком (в т.ч.
+-     * Glens) и сохранить в буфер «Скриншоты», НЕ озвучивая и не трогая
+-     * состояние авточтения. Вызывается с плавающей кнопки читалки.
++     * Glens) и сохранить его в буфер «Скриншоты» И в общую галерею
++     * (`Pictures/Yomikai`), НЕ озвучивая и не трогая состояние авточтения.
++     * Вызывается с плавающей кнопки читалки.
+      *
+      * Кадр читается ЗДЕСЬ, на потоке вызывающего, и в фон уходит его копия.
+      * Раньше фоновой задаче отдавался исходный битмап, а вызывающий
+      * переиспользовал его сразу же: гонка приводила к `getPixels` по
+      * переиспользованному битмапу, и приложение падало сразу после сообщения
+      * «Скриншот сохранён» — без всякой ошибки на экране.
++     *
++     * Функция suspend и возвращает [ScreenshotResult]: раньше она молча уходила
++     * в `return@launch` на пяти ветках (выключенный преф, переиспользованный
++     * битмап, не удалось скопировать кадр, таймаут OCR, пустой OCR), а читалка
++     * всё равно показывала «Скриншот сохранён» — и читатель искал файл там,
++     * где его нет. Теперь тост показывается по факту.
+      */
+-    fun captureInstantScreenshot(
++    suspend fun captureInstantScreenshot(
+         bitmap: Bitmap,
+         chapterId: Long,
+         pageIndex: Int,
+         scrollFraction: Float,
+-    ) {
+-        if (!prefs.autoScreenshotEnabled().get()) return
+-        if (bitmap.isRecycled) return
++    ): ScreenshotResult {
++        if (!prefs.autoScreenshotEnabled().get()) {
++            return ScreenshotResult.NotSaved("автоскриншоты выключены в настройках")
++        }
++        if (bitmap.isRecycled) return ScreenshotResult.NotSaved("кадр уже освобождён")
+ 
+         // Фоновой задаче нужна ЕЁ копия. Кадр вызывающего может быть
+         // переиспользован сразу после возврата, а уменьшение не всегда
+@@ -817,26 +849,77 @@ class AutoReadEngine(
+         val scaled = downscaleForScan(bitmap).takeIf { it !== bitmap }
+             ?: runCatching { bitmap.copy(bitmap.config ?: android.graphics.Bitmap.Config.ARGB_8888, false) }
+                 .getOrNull()
+-            ?: return
+-        scope.launch {
+-            try {
+-                val result = try {
+-                    withTimeout(OCR_FRAME_TIMEOUT_MS) {
+-                        scanPageOcr.await(chapterId, pageIndex, scaled.toOcrImage())
+-                    }
+-                } catch (e: TimeoutCancellationException) {
+-                    logcat(LogPriority.WARN) {
+-                        "Instant screenshot OCR timeout (${OCR_FRAME_TIMEOUT_MS}ms)"
+-                    }
+-                    return@launch
++            ?: return ScreenshotResult.NotSaved("не удалось скопировать кадр")
++        return try {
++            // Работа уходит в поток движка, а вызывающий ЖДЁТ результат: тост
++            // должен отражать реальный итог, а не сам факт нажатия. Копия
++            // освобождается внутри фоновой задачи — если вызывающего отменят
++            // (свернули читалку), задача всё равно доработает и уберёт битмап
++            // сама, а не получит его переиспользованным.
++            scope.async {
++                try {
++                    saveInstantScreenshot(scaled, chapterId, pageIndex, scrollFraction)
++                } finally {
++                    // Переиспользуем только копию: кадр вызывающего остаётся его.
++                    if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
+                 }
+-                // JPEG-кадр пишем ДО recycle: после него пикселей не будет.
+-                val jpeg = runCatching { encodeJpeg(scaled, JPEG_QUALITY) }.getOrNull()
+-                val width = scaled.width
+-                val height = scaled.height
+-                if (result.regions.isEmpty()) return@launch
+-                val ordered = orderRegions(
+-                    result.regions.map {
++            }.await()
++        } catch (e: CancellationException) {
++            throw e
++        } catch (e: Exception) {
++            logcat(LogPriority.WARN, e) { "Instant screenshot failed" }
++            ScreenshotResult.NotSaved(e.message ?: "ошибка сохранения")
++        }
++    }
++
++    /**
++     * Само сохранение кадра: JPEG → запись в буфер «Скриншоты» → копия в
++     * публичную галерею.
++     *
++     * Ключевое правило: OCR нужен только ради текста и оверлея регионов, поэтому
++     * его провал (таймаут 25 с, исключение движка, пустой результат) НЕ отменяет
++     * сохранение картинки. Раньше проверка `result.regions.isEmpty()` стояла
++     * после кодирования JPEG и выбрасывала кадр целиком: читатель нажимал
++     * «Скриншот сейчас» на странице, которую OCR не разобрал, и не получал
++     * ничего — ни в буфере, ни в галерее.
++     */
++    private suspend fun saveInstantScreenshot(
++        bitmap: Bitmap,
++        chapterId: Long,
++        pageIndex: Int,
++        scrollFraction: Float,
++    ): ScreenshotResult {
++        val page = try {
++            withTimeout(OCR_FRAME_TIMEOUT_MS) {
++                scanPageOcr.await(
++                    chapterId = chapterId,
++                    pageIndex = pageIndex,
++                    image = bitmap.toOcrImage(),
++                )
++            }
++        } catch (e: TimeoutCancellationException) {
++            logcat(LogPriority.WARN) {
++                "Instant screenshot OCR timeout (${OCR_FRAME_TIMEOUT_MS}ms)"
++            }
++            null
++        } catch (e: CancellationException) {
++            throw e
++        } catch (e: Exception) {
++            logcat(LogPriority.WARN, e) { "Instant screenshot OCR failed" }
++            null
++        }
++
++        // JPEG-кадр пишем ДО recycle: после него пикселей не будет.
++        val jpeg = runCatching { encodeJpeg(bitmap, JPEG_QUALITY) }.getOrNull()
++            ?: return ScreenshotResult.NotSaved("не удалось закодировать кадр")
++        val width = bitmap.width
++        val height = bitmap.height
++
++        val ordered = page?.regions
++            ?.takeIf { it.isNotEmpty() }
++            ?.let { regions ->
++                orderRegions(
++                    regions.map {
+                         Line(
+                             text = it.text,
+                             boundingBox = it.boundingBox,
+@@ -844,31 +927,44 @@ class AutoReadEngine(
+                     },
+                     OcrRegionRules.readingOrderFor(prefs),
+                 )
+-                OcrScreenshotBuffer.add(
+-                    chapterId = chapterId,
+-                    pageIndex = pageIndex,
+-                    scrollFraction = scrollFraction,
+-                    regions = ordered.mapIndexed { idx, line ->
+-                        OcrRegion(
+-                            order = idx,
+-                            text = line.text,
+-                            boundingBox = line.boundingBox,
+-                            textOrientation = OcrTextOrientation.Horizontal,
+-                        )
+-                    },
+-                    engineUsed = result.ocrModel.name.lowercase(),
+-                    imageWidth = width,
+-                    imageHeight = height,
+-                    imageJpeg = jpeg,
+-                )
+-            } catch (e: CancellationException) {
+-                throw e
+-            } catch (e: Exception) {
+-                logcat(LogPriority.WARN, e) { "Instant screenshot OCR failed" }
+-            } finally {
+-                // Переиспользуем только копию: кадр вызывающего остаётся его.
+-                if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
+             }
++            .orEmpty()
++
++        val entry = OcrScreenshotBuffer.add(
++            chapterId = chapterId,
++            pageIndex = pageIndex,
++            scrollFraction = scrollFraction,
++            regions = ordered.mapIndexed { idx, line ->
++                OcrRegion(
++                    order = idx,
++                    text = line.text,
++                    boundingBox = line.boundingBox,
++                    textOrientation = OcrTextOrientation.Horizontal,
++                )
++            },
++            // Без OCR результата виноват выбранный движок — он и остаётся
++            // подписью записи, чтобы читатель видел, каким движком снималось.
++            engineUsed = (page?.ocrModel ?: prefs.ocrModel().get()).name.lowercase(),
++            imageWidth = width,
++            imageHeight = height,
++            imageJpeg = jpeg,
++        )
++        if (entry.imagePath == null) {
++            // JPEG не записался — записи с картинкой не будет, публиковать нечего.
++            return ScreenshotResult.NotSaved("буфер скриншотов недоступен")
++        }
++
++        // Та же самая картинка в Pictures/Yomikai: без неё файл не видно ни в
++        // галерее телефона, ни в «Файлах» — приватный filesDir наружу не отдаёт.
++        val galleryUri = OcrScreenshotBuffer.publishToGallery(
++            context = context,
++            jpeg = jpeg,
++            displayName = OcrScreenshotBuffer.galleryDisplayName(pageIndex),
++        )
++        return if (galleryUri != null) {
++            ScreenshotResult.SavedInGallery(galleryUri)
++        } else {
++            ScreenshotResult.SavedInAppOnly("галерея недоступна")
+         }
+     }
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt
+index 14d05534c..c3f19996c 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt
+@@ -349,7 +349,10 @@ object TtsSpeaker {
+         val raw = voiceSpec?.trim().orEmpty()
+         if (raw.isEmpty()) return "" to ""
+         val sep = raw.indexOf(SPEC_SEPARATOR)
+-        if (sep <= 0) return "" to raw
++        // Разделитель в начале — это «пакета нет, голос задан»: «::ru-ru-…».
++        // Раньше sep <= 0 возвращал такую строку целиком, и имя голоса
++        // оставалось с двоеточиями, а движок его не находил.
++        if (sep < 0) return "" to raw
+         return raw.substring(0, sep).trim() to raw.substring(sep + SPEC_SEPARATOR.length).trim()
+     }
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index 3528a1017..670bad059 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -89,6 +89,7 @@ import eu.kanade.tachiyomi.data.notification.NotificationReceiver
+ import eu.kanade.tachiyomi.data.notification.Notifications
+ import eu.kanade.tachiyomi.data.saver.Image
+ import eu.kanade.tachiyomi.data.saver.ImageSaver
++import eu.kanade.tachiyomi.data.tts.AutoReadEngine
+ import eu.kanade.tachiyomi.databinding.ReaderActivityBinding
+ import eu.kanade.tachiyomi.source.online.HttpSource
+ import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
+@@ -1928,25 +1929,38 @@ class ReaderActivity : BaseActivity() {
+ 
+     /**
+      * «Скриншот сейчас»: захватить текущий видимый кадр страницы и сохранить
+-     * как скриншот в буфер «Скриншоты» (OCR выбранным движком — включая Glens).
+-     * Не влияет на авточтение и озвучку.
++     * как скриншот в буфер «Скриншоты» (OCR выбранным движком — включая Glens)
++     * и в общую папку `Pictures/Yomikai`. Не влияет на авточтение и озвучку.
++     *
++     * Тост соответствует реальному итогу: движок может не сохранить кадр
++     * (выключенный преф, кадр не скопировался, JPEG не закодировался) или
++     * сохранить только внутрь приложения. Раньше здесь стоял безусловный
++     * «Скриншот сохранён», и читатель уходил искать файл, которого нет.
+      */
+     private fun captureInstantScreenshot() {
+         lifecycleScope.launchIO {
+             try {
+                 val root = binding.root
+                 val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+-                val bitmap = cropCurrentSelectionBitmap(fullRect) ?: return@launchIO
++                val bitmap = cropCurrentSelectionBitmap(fullRect)
++                if (bitmap == null) {
++                    withUIContext { toast("Не удалось получить кадр страницы") }
++                    return@launchIO
++                }
+                 val chapterId = viewModel.getCurrentChapter()?.chapter?.id ?: -1L
+                 val pageIndex = (viewModel.state.value.currentPage - 1).coerceAtLeast(0)
+-                autoReadEngine.captureInstantScreenshot(
++                // Итоговый тост ждёт результата движка, а он включает OCR и может
++                // идти секунды: без этого сообщения нажатие выглядит как «ничего не
++                // произошло». Это честное «сохраняю», а не прежнее «сохранён».
++                withUIContext { toast("Сохраняю кадр…") }
++                val result = autoReadEngine.captureInstantScreenshot(
+                     bitmap = bitmap,
+                     chapterId = chapterId,
+                     pageIndex = pageIndex,
+                     scrollFraction = 0f,
+                 )
+                 if (!bitmap.isRecycled) bitmap.recycle()
+-                withUIContext { toast("Скриншот сохранён") }
++                withUIContext { toast(result.toToastText(), Toast.LENGTH_LONG) }
+             } catch (e: Exception) {
+                 logcat(LogPriority.ERROR, e) { "Failed to capture instant screenshot" }
+                 withUIContext { toast("Не удалось сделать скриншот") }
+@@ -1954,6 +1968,16 @@ class ReaderActivity : BaseActivity() {
+         }
+     }
+ 
++    /** Текст тоста по итогу [AutoReadEngine.captureInstantScreenshot]. */
++    private fun AutoReadEngine.ScreenshotResult.toToastText(): String = when (this) {
++        is AutoReadEngine.ScreenshotResult.SavedInGallery ->
++            "Скриншот сохранён: буфер «Скриншоты» и Pictures/Yomikai"
++        is AutoReadEngine.ScreenshotResult.SavedInAppOnly ->
++            "Скриншот сохранён только в приложении: $reason"
++        is AutoReadEngine.ScreenshotResult.NotSaved ->
++            "Скриншот не сохранён: $reason"
++    }
++
+     /** Регион вокруг точки касания (autoclick с удержанием) по центру вьюпорта. */
+     private fun holdRegionAround(point: android.graphics.PointF): android.graphics.RectF {
+         val root = binding.root
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotDetailScreen.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotDetailScreen.kt
+index b6c67d83e..bf06adbe2 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotDetailScreen.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotDetailScreen.kt
+@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
+ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
++import androidx.compose.material.icons.outlined.Download
++import androidx.compose.material.icons.outlined.Share
+ import androidx.compose.material.icons.outlined.SwapHoriz
+ import androidx.compose.material3.ExperimentalMaterial3Api
+ import androidx.compose.material3.Icon
+@@ -29,6 +31,7 @@ import androidx.compose.runtime.collectAsState
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+@@ -38,6 +41,7 @@ import androidx.compose.ui.geometry.Size
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.graphics.nativeCanvas
+ import androidx.compose.ui.layout.ContentScale
++import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.unit.sp
+ import cafe.adriel.voyager.navigator.LocalNavigator
+@@ -73,11 +77,16 @@ class ScreenshotDetailScreen(
+     @Composable
+     override fun Content() {
+         val navigator = LocalNavigator.currentOrThrow
++        val context = LocalContext.current
++        val scope = rememberCoroutineScope()
+         val entries by OcrScreenshotBuffer.entries.collectAsState()
+         val entry = entries.firstOrNull { it.id == entryId }
+         val compareEntry = compareWithId?.let { id -> entries.firstOrNull { it.id == id } }
+         val dateFormat = remember { SimpleDateFormat("HH:mm:ss, dd.MM", Locale.getDefault()) }
+         var showDiff by remember { mutableStateOf(compareEntry != null) }
++        // Кадр лежит в приватном filesDir, поэтому для «Поделиться»/«В галерею»
++        // нужен сам файл: без него кнопок не будет — делить нечего.
++        val imageFile = entry?.imagePath?.let { File(it) }?.takeIf { it.exists() }
+ 
+         Column(modifier = Modifier.fillMaxSize()) {
+             TopAppBar(
+@@ -100,6 +109,14 @@ class ScreenshotDetailScreen(
+                             Icon(Icons.Outlined.SwapHoriz, contentDescription = "Diff")
+                         }
+                     }
++                    if (entry != null && imageFile != null) {
++                        IconButton(onClick = { shareScreenshot(context, imageFile) }) {
++                            Icon(Icons.Outlined.Share, contentDescription = "Поделиться")
++                        }
++                        IconButton(onClick = { saveScreenshotToGallery(scope, context, entry) }) {
++                            Icon(Icons.Outlined.Download, contentDescription = "Сохранить в галерею")
++                        }
++                    }
+                 },
+             )
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
+index 10d58fa9a..096d6e906 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
+@@ -1,5 +1,6 @@
+ package eu.kanade.tachiyomi.ui.screenshots
+ 
++import android.content.Context
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.clickable
+ import androidx.compose.foundation.layout.Arrangement
+@@ -20,6 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.outlined.CameraAlt
+ import androidx.compose.material.icons.outlined.DeleteSweep
++import androidx.compose.material.icons.outlined.Download
++import androidx.compose.material.icons.outlined.Share
+ import androidx.compose.material3.AlertDialog
+ import androidx.compose.material3.ExperimentalMaterial3Api
+ import androidx.compose.material3.Icon
+@@ -32,11 +35,13 @@ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.collectAsState
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.graphics.vector.rememberVectorPainter
+ import androidx.compose.ui.layout.ContentScale
++import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.text.style.TextOverflow
+ import androidx.compose.ui.unit.dp
+ import cafe.adriel.voyager.navigator.LocalNavigator
+@@ -47,6 +52,15 @@ import coil3.compose.AsyncImage
+ import eu.kanade.presentation.util.Tab
+ import eu.kanade.tachiyomi.data.tts.TtsSpeaker
+ import eu.kanade.tachiyomi.ui.main.MainActivity
++import eu.kanade.tachiyomi.util.storage.getUriCompat
++import eu.kanade.tachiyomi.util.system.toShareIntent
++import eu.kanade.tachiyomi.util.system.toast
++import logcat.LogPriority
++import tachiyomi.core.common.util.system.logcat
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
+ import mihon.data.ocr.OcrScreenshotBuffer
+ import mihon.data.ocr.OcrScreenshotEntry
+ import java.io.File
+@@ -80,6 +94,8 @@ data object ScreenshotTab : Tab {
+     @Composable
+     override fun Content() {
+         val navigator = LocalNavigator.currentOrThrow
++        val context = LocalContext.current
++        val scope = rememberCoroutineScope()
+         val entries by OcrScreenshotBuffer.entries.collectAsState()
+         var showClearDialog = remember { androidx.compose.runtime.mutableStateOf(false) }
+ 
+@@ -136,6 +152,8 @@ data object ScreenshotTab : Tab {
+                             onClick = {
+                                 navigator.push(ScreenshotDetailScreen(entry.id))
+                             },
++                            onShare = { shareScreenshot(context, it) },
++                            onSaveToGallery = { saveScreenshotToGallery(scope, context, it) },
+                         )
+                     }
+                 }
+@@ -146,7 +164,13 @@ data object ScreenshotTab : Tab {
+             AlertDialog(
+                 onDismissRequest = { showClearDialog.value = false },
+                 title = { Text("Очистить скриншоты?") },
+-                text = { Text("Все ${entries.size} скриншотов будут удалены.") },
++                text = {
++                    // Честно про границы: удаляются только внутренние копии.
++                    // Опубликованные в Pictures/Yomikai — обычные файлы
++                    // телефона, и «Очистить» их не трогает.
++                    Text("Все ${entries.size} скриншотов будут удалены из приложения. " +
++                        "Копии в Pictures/Yomikai останутся.")
++                },
+                 confirmButton = {
+                     TextButton(onClick = {
+                         OcrScreenshotBuffer.clear()
+@@ -169,8 +193,11 @@ data object ScreenshotTab : Tab {
+ private fun ScreenshotCard(
+     entry: OcrScreenshotEntry,
+     onClick: () -> Unit,
++    onShare: (File) -> Unit,
++    onSaveToGallery: (OcrScreenshotEntry) -> Unit,
+ ) {
+     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
++    val imageFile = entry.imagePath?.let { File(it) }?.takeIf { it.exists() }
+     Row(
+         modifier = Modifier
+             .fillMaxWidth()
+@@ -183,9 +210,9 @@ private fun ScreenshotCard(
+         verticalAlignment = Alignment.Top,
+     ) {
+         // Миниатюра настоящего кадра (если запись сохранила JPEG).
+-        if (entry.imagePath != null && File(entry.imagePath).exists()) {
++        if (imageFile != null) {
+             AsyncImage(
+-                model = File(entry.imagePath),
++                model = imageFile,
+                 contentDescription = null,
+                 modifier = Modifier
+                     .size(width = 72.dp, height = 96.dp)
+@@ -222,6 +249,36 @@ private fun ScreenshotCard(
+                 overflow = TextOverflow.Ellipsis,
+                 color = MaterialTheme.colorScheme.onSurface,
+             )
++            // Кадр без текста распознавания всё равно нужно куда-то выгрузить,
++            // поэтому действия есть у каждой записи с картинкой, а не только у
++            // той, где OCR что-то нашёл.
++            if (imageFile != null) {
++                Row(
++                    horizontalArrangement = Arrangement.spacedBy(4.dp),
++                    verticalAlignment = Alignment.CenterVertically,
++                ) {
++                    IconButton(
++                        onClick = { onShare(imageFile) },
++                        modifier = Modifier.size(36.dp),
++                    ) {
++                        Icon(
++                            Icons.Outlined.Share,
++                            contentDescription = "Поделиться",
++                            modifier = Modifier.size(20.dp),
++                        )
++                    }
++                    IconButton(
++                        onClick = { onSaveToGallery(entry) },
++                        modifier = Modifier.size(36.dp),
++                    ) {
++                        Icon(
++                            Icons.Outlined.Download,
++                            contentDescription = "Сохранить в галерею",
++                            modifier = Modifier.size(20.dp),
++                        )
++                    }
++                }
++            }
+         }
+         Column(horizontalAlignment = Alignment.End) {
+             Text(
+@@ -240,6 +297,55 @@ private fun ScreenshotCard(
+     }
+ }
+ 
++/**
++ * Отдать кадр наружу (мессенджер, облако, «Файлы»).
++ *
++ * Content Uri строит FileProvider — корень `screenshots_images` добавлен в
++ * provider_paths.xml, потому что кадры лежат в приватном filesDir и без
++ * явного корня URI не строится («Failed to find configured root»).
++ */
++fun shareScreenshot(context: Context, file: File) {
++    runCatching {
++        context.startActivity(
++            file.getUriCompat(context).toShareIntent(
++                context = context,
++                type = "image/jpeg",
++                message = file.name,
++            ),
++        )
++    }.onFailure { e ->
++        logcat(LogPriority.WARN, e) { "Share screenshot failed for ${file.name}" }
++        context.toast("Не удалось открыть отправку: ${e.message ?: "нет приложений"}")
++    }
++}
++
++/**
++ * Опубликовать кадр из буфера в общую галерею (`Pictures/Yomikai`) — тот же
++ * путь, что и у «Скриншот сейчас», поэтому имя файла и папка совпадают.
++ * Запись уже лежит файлом, так что кадр не перекодируется заново.
++ *
++ * Чтение файла и вставка в MediaStore идут в IO: на главном потоке это были бы
++ * и лишний кадр в интерфейсе, и риск ANR на большом JPEG.
++ */
++fun saveScreenshotToGallery(
++    scope: CoroutineScope,
++    context: Context,
++    entry: OcrScreenshotEntry,
++) {
++    scope.launch(Dispatchers.IO) {
++        val uri = OcrScreenshotBuffer.publishEntryToGallery(context.applicationContext, entry)
++        withContext(Dispatchers.Main) {
++            context.toast(
++                if (uri != null) {
++                    "Скриншот сохранён в Pictures/Yomikai"
++                } else {
++                    "Не удалось сохранить в галерею: файл не читается или хранилище недоступно"
++                },
++            )
++        }
++    }
++}
++
+ /** Короткая подпись источника записи скриншота. */
+ private fun String?.sourceLabel(): String = when (this) {
+     "selection" -> "Область"
+diff --git a/app/src/main/res/xml/provider_paths.xml b/app/src/main/res/xml/provider_paths.xml
+index 5696ae7b4..7a602400a 100644
+--- a/app/src/main/res/xml/provider_paths.xml
++++ b/app/src/main/res/xml/provider_paths.xml
+@@ -20,6 +20,14 @@
+     <files-path
+         name="files_ai_workspace"
+         path="ai_workspace/" />
++    <!-- Кадры «Скриншот сейчас» лежат в files/screenshots_images — это приватное
++         хранилище, наружу его не отдаёт ни MediaStore, ни галерея. Без files-path
++         кнопка «Поделиться» во вкладке «Скриншоты» падала бы с «Failed to find
++         configured root»: построить content:// URI для кадра было нечем, и
++         отправить его в мессенджер/облако было невозможно. -->
++    <files-path
++        name="files_screenshots_images"
++        path="screenshots_images/" />
+     <!--suppress AndroidElementNotAllowed -->
+     <root-path
+         name="ext_storage"
+diff --git a/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt b/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt
+index 8cad6f89a..eecfae629 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt
+@@ -1,6 +1,15 @@
+ package mihon.data.ocr
+ 
++import android.Manifest
++import android.content.ContentValues
+ import android.content.Context
++import android.content.pm.PackageManager
++import android.media.MediaScannerConnection
++import android.net.Uri
++import android.os.Build
++import android.os.Environment
++import android.provider.MediaStore
++import androidx.core.content.ContextCompat
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.SupervisorJob
+@@ -14,6 +23,9 @@ import logcat.LogPriority
+ import mihon.domain.ocr.model.OcrRegion
+ import tachiyomi.core.common.util.system.logcat
+ import java.io.File
++import java.text.SimpleDateFormat
++import java.util.Date
++import java.util.Locale
+ 
+ /**
+  * Кольцевой буфер скриншотов авточтения — текст регионов (~1-5 KB) плюс
+@@ -32,6 +44,16 @@ object OcrScreenshotBuffer {
+     private const val FILE_NAME = "screenshots.json"
+     private const val IMAGE_DIR_NAME = "screenshots_images"
+ 
++    /** Публичная папка в «Pictures», куда публикуются скриншоты для Галереи. */
++    private const val GALLERY_DIR_NAME = "Yomikai"
++    private const val JPEG_MIME = "image/jpeg"
++
++    /** Префикс имени файла в галерее: по нему кадр узнаётся среди прочих. */
++    private const val GALLERY_NAME_PREFIX = "Yomikai"
++
++    /** Ограничение длины DISPLAY_NAME: длинные имена обрезаются системой. */
++    private const val MAX_GALLERY_NAME_LENGTH = 80
++
+     /** Лимит записей (кольцевой буфер). Меняется через dev-панель. */
+     @kotlin.jvm.Volatile
+     var maxEntries: Int = DEFAULT_MAX_ENTRIES
+@@ -114,6 +136,77 @@ object OcrScreenshotBuffer {
+         return entry
+     }
+ 
++    /**
++     * Опубликовать JPEG-кадр в общем хранилище: `Pictures/Yomikai`, то есть
++     * ровно там, где его видят «Галерея», «Файлы» и любой файловый менеджер.
++     *
++     * Зачем это нужно рядом с [add]: картинки буфера лежат в приватном
++     * `filesDir/screenshots_images/`, куда не смотрят ни MediaStore, ни
++     * FileProvider, ни галерея телефона. Читатель нажимал «Скриншот сейчас» и
++     * не находил файл НИГДЕ. Поэтому тот же JPEG дополнительно уходит в
++     * публичное хранилище, а внутренняя копия остаётся для вкладки «Скриншоты»
++     * (там кадр показывается вместе с оверлеем распознанных регионов).
++     *
++     * На Android 10+ (MediaStore) разрешение на запись не нужно вовсе, а при
++     * targetSdk 36 писать в публичные папки через `File` уже нельзя. Ветка для
++     * API < 29 нужна только для Android 8–9: там пишем файлом, но лишь если
++     * WRITE_EXTERNAL_STORAGE реально выдан — с targetSdk 36 система может не
++     * выдать его вовсе, и тогда возвращаем null, а не падаем.
++     *
++     * Ошибки никогда не пробрасываются: публикация — дополнение, из-за неё
++     * скриншот не должен теряться (в logcat пишем причину).
++     *
++     * @return Uri опубликованного файла или null, если публикация не вышла.
++     */
++    fun publishToGallery(context: Context, jpeg: ByteArray, displayName: String): Uri? {
++        val name = galleryFileName(displayName)
++        return runCatching {
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++                insertIntoMediaStore(context, jpeg, name)
++            } else {
++                writeToPublicPictures(context, jpeg, name)
++            }
++        }.getOrElse { e ->
++            logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: gallery publish failed for $name" }
++            null
++        }
++    }
++
++    /**
++     * Опубликовать в общую галерею JPEG уже сохранённой записи буфера — кнопка
++     * «Сохранить в галерею» во вкладке «Скриншоты» идёт через неё.
++     * Файл не перекодируется: в галерею уходит ровно тот кадр, который видит
++     * читатель (вместе с оверлеем регионов он остаётся во внутренней копии).
++     *
++     * @return Uri опубликованного файла или null — у записи нет картинки, файл
++     * не читается либо публикация не вышла.
++     */
++    fun publishEntryToGallery(context: Context, entry: OcrScreenshotEntry): Uri? {
++        val path = entry.imagePath
++        if (path == null) {
++            logcat(LogPriority.WARN) { "OcrScreenshotBuffer: entry ${entry.id} has no image" }
++            return null
++        }
++        val bytes = runCatching { File(path).readBytes() }.getOrElse { e ->
++            logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: read image failed for $path" }
++            return null
++        }
++        return publishToGallery(context, bytes, galleryDisplayName(entry.pageIndex, entry.timestamp))
++    }
++
++    /**
++     * Читаемое имя файла в галерее: `Yomikai_20260930_143512_p12`.
++     *
++     * Читатель ищет кадр глазами — в «Файлах», в «Галерее», в «Моих файлах» — и
++     * ориентируется по имени. Папка из сотни безликих `image.jpg` ни о чём не
++     * говорит, поэтому в имени есть приложение, дата, время и номер страницы.
++     * Публикуется это же имя, только с расширением `.jpg`.
++     */
++    fun galleryDisplayName(pageIndex: Int, timestamp: Long = System.currentTimeMillis()): String {
++        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(timestamp))
++        return "${GALLERY_NAME_PREFIX}_${stamp}_p${pageIndex + 1}"
++    }
++
+     /** Все скриншоты для конкретной главы (в порядке добавления). */
+     fun forChapter(chapterId: Long): List<OcrScreenshotEntry> =
+         _entries.value.filter { it.chapterId == chapterId }
+@@ -151,6 +244,96 @@ object OcrScreenshotBuffer {
+ 
+     // ---- Внутренние ----
+ 
++    /**
++     * Вставка в MediaStore (Android 10+). Само разрешение на запись в
++     * `Pictures` приложению не нужно — картинка сразу становится видна
++     * Галерее. Если запись в поток не удалась, вставку откатываем: иначе в
++     * `Pictures/Yomikai` остаётся файл нулевого размера, который галерея
++     * показывает как «битую» картинку.
++     */
++    private fun insertIntoMediaStore(context: Context, jpeg: ByteArray, name: String): Uri? {
++        val resolver = context.contentResolver
++        val values = ContentValues().apply {
++            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
++            put(MediaStore.MediaColumns.MIME_TYPE, JPEG_MIME)
++            put(
++                MediaStore.MediaColumns.RELATIVE_PATH,
++                "${Environment.DIRECTORY_PICTURES}/$GALLERY_DIR_NAME",
++            )
++            put(MediaStore.MediaColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000)
++        }
++        val uri = resolver.insert(
++            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
++            values,
++        ) ?: run {
++            logcat(LogPriority.WARN) { "OcrScreenshotBuffer: MediaStore insert returned null for $name" }
++            return null
++        }
++        return try {
++            val output = resolver.openOutputStream(uri, "w")
++            if (output == null) {
++                runCatching { resolver.delete(uri, null, null) }
++                logcat(LogPriority.WARN) { "OcrScreenshotBuffer: openOutputStream returned null for $name" }
++                null
++            } else {
++                output.use { it.write(jpeg) }
++                uri
++            }
++        } catch (e: Exception) {
++            runCatching { resolver.delete(uri, null, null) }
++            throw e
++        }
++    }
++
++    /**
++     * Фолбэк для Android 8–9: публичные «Pictures» ещё пишутся файлом.
++     *
++     * Тут MediaStore ещё не индексирует файл за нас, поэтому после записи
++     * просим сканер перечитать каталог — иначе «Галерея» покажет файл только
++     * после перезагрузки, а это ровно тот случай, когда читатель «не находит
++     * файл НИГДЕ». На Android 10+ MediaStore индексирует вставку сам, там
++     * сканер не нужен.
++     */
++    @Suppress("DEPRECATION")
++    private fun writeToPublicPictures(context: Context, jpeg: ByteArray, name: String): Uri? {
++        if (
++            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
++            PackageManager.PERMISSION_GRANTED
++        ) {
++            logcat(LogPriority.WARN) {
++                "OcrScreenshotBuffer: WRITE_EXTERNAL_STORAGE not granted, skip gallery publish"
++            }
++            return null
++        }
++        val dir = File(
++            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
++            GALLERY_DIR_NAME,
++        )
++        if (!dir.exists() && !dir.mkdirs()) return null
++        val file = File(dir, name)
++        file.outputStream().use { it.write(jpeg) }
++        runCatching {
++            MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), null, null)
++        }.onFailure { e ->
++            logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: media scan failed for ${file.name}" }
++        }
++        return Uri.fromFile(file)
++    }
++
++    /**
++     * Имя файла для галереи: MediaStore не любит слеши и прочие символы пути,
++     * а расширение должно быть ровно `.jpg` — по нему галерея решает, что это
++     * именно изображение, и рисует миниатюру.
++     */
++    private fun galleryFileName(displayName: String): String {
++        val safe = displayName.substringBeforeLast('.')
++            .map { ch -> if (ch.isLetterOrDigit() || ch == '-' || ch == '_') ch else '_' }
++            .joinToString("")
++            .take(MAX_GALLERY_NAME_LENGTH)
++            .trim('_')
++        return "${safe.ifBlank { "screenshot" }}.jpg"
++    }
++
+     private fun deleteImageFile(entry: OcrScreenshotEntry) {
+         entry.imagePath?.let { path ->
+             runCatching { File(path).delete() }.onFailure {
+diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
+index d4828bee8..41e07ccd8 100644
+--- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
++++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
+@@ -183,8 +183,8 @@ class OverlayReaderService : Service() {
+ 
+             // Оверлей держим видимым и «прокачиваем» его перерисовку: это заставляет
+             // компоновщик непрерывно выдавать кадры, и VirtualDisplay видит их
+-            // даже на статичном экране. Панели оверлея в кадр не попадут
+-            // (во время прокачки они не рисуются).
++            // даже на статичном экране. Область захвата лежит между панелями
++            // оверлея, поэтому в кадр они не попадают.
+             val wasHidden = overlayView.visibility != View.VISIBLE
+             if (wasHidden) setPassthrough(false)
+             overlayView.beginCapturePump()
+diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
+index 262a1bafd..5ce9b0726 100644
+--- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
++++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
+@@ -4,6 +4,7 @@ import android.content.Context
+ import android.graphics.Canvas
+ import android.graphics.Color
+ import android.graphics.Paint
++import android.graphics.Path
+ import android.graphics.RectF
+ import android.graphics.Typeface
+ import android.os.Handler
+@@ -51,12 +52,27 @@ class OverlayView(
+     // Публичное состояние, управляется сервисом.
+     var scanning: Boolean = false
+     var statusText: String = ""
++
++    /**
++     * Распознанный текст. Панель результата держится высотой в одну строку статуса,
++     * пока текста нет, и разворачивается на полную высоту вместе с текстом — при
++     * запуске оверлей не занимает низ экрана впустую.
++     */
+     var resultText: String = ""
++        set(value) {
++            if (field == value) return
++            field = value
++            scrollLines = 0
++            scrollAccum = 0f
++            layoutPanel()
++            clampFrame()
++            invalidate()
++        }
+ 
+     // «Прокачка» кадров на время захвата: оверлей постоянно перерисовывается,
+     // поэтому дисплей (а с ним и VirtualDisplay) получает свежие кадры даже на
+-    // полностью статичном экране. Панели при этом не рисуются, чтобы кадр был
+-    // чистым.
++    // полностью статичном экране. Сама графика при этом рисуется как обычно:
++    // область захвата лежит между панелями, поэтому в кадр они не попадают.
+     private var capturePumping = false
+     private val pumpHandler = Handler(Looper.getMainLooper())
+     private val pumpRunnable = object : Runnable {
+@@ -91,7 +107,12 @@ class OverlayView(
+     private var touchY = 0f
+     private var startFrame = RectF()
+     private var scrollLines = 0
++    private var scrollAccum = 0f
+     private var lastPanelY = 0f
++    private var contentLines: List<String> = emptyList()
++    private var visibleLines = 1
++
++    private val path = Path()
+ 
+     private val dimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+@@ -145,10 +166,11 @@ class OverlayView(
+     private fun layoutMetrics(w: Float, h: Float) {
+         viewW = w
+         viewH = h
+-        val toolbarH = dp(44f)
+-        val panelH = dp(132f)
++        // Высоты панелей ограничены долей экрана: на плотных экранах (density 3+)
++        // фиксированные dp съедали бы заметную часть дисплея.
++        val toolbarH = min(dp(44f), h * 0.07f)
+         toolbarRect = RectF(0f, 0f, w, toolbarH)
+-        panelRect = RectF(0f, h - panelH, w, h)
++        layoutPanel()
+ 
+         val pref = Prefs.frame()
+         frame = RectF(
+@@ -170,43 +192,77 @@ class OverlayView(
+         }
+     }
+ 
++    /** Нижняя панель: строка статуса без результата, полная высота с текстом. */
++    private fun layoutPanel() {
++        if (viewH <= 0f) return
++        val collapsed = min(statusPaint.textSize * 2.2f, viewH * 0.09f)
++        val expanded = min(dp(132f), viewH * 0.30f)
++        val h = if (resultText.isBlank()) collapsed else max(collapsed, expanded)
++        panelRect = RectF(0f, viewH - h, viewW, viewH)
++    }
++
+     private fun clampFrame() {
+-        val minSide = dp(48f)
+-        val left = max(frame.left, dp(6f))
+-        val top = max(frame.top, toolbarRect.bottom + dp(6f))
+-        val right = min(frame.right, viewW - dp(6f))
+-        val bottom = min(frame.bottom, panelRect.top - dp(6f))
+-        frame.set(left, top, max(right, left + minSide), max(bottom, top + minSide))
++        if (viewW <= 0f || viewH <= 0f) return
++        val padL = min(dp(6f), viewW * 0.02f)
++        val padT = min(dp(6f), viewH * 0.01f)
++        val boxTop = toolbarRect.bottom + padT
++        val boxBottom = panelRect.top - padT
++        val boxRight = viewW - padL
++        // Минимальная сторона не должна превышать половину доступной высоты,
++        // иначе на низких экранах рамка вылезала бы под панели.
++        val minSide = max(dp(20f), min(dp(48f), (boxBottom - boxTop) * 0.5f))
++
++        val left = frame.left.coerceIn(padL, max(padL, boxRight - minSide))
++        val top = frame.top.coerceIn(boxTop, max(boxTop, boxBottom - minSide))
++        val right = frame.right.coerceIn(left + minSide, max(left + minSide, boxRight))
++        val bottom = frame.bottom.coerceIn(top + minSide, max(top + minSide, boxBottom))
++        frame.set(left, top, right, bottom)
+     }
+ 
+     override fun onDraw(canvas: Canvas) {
+         super.onDraw(canvas)
+-        if (capturePumping) return
+ 
+         val alpha = (Prefs.overlayOpacity().coerceIn(0.1f, 0.9f) * 255).toInt()
+         dimPaint.color = Color.argb(alpha, 4, 8, 20)
+ 
+-        // Затемнение вокруг рамки.
++        // Затемнение вокруг рамки. Четыре прямоугольника идут строго встык, иначе
++        // наложение давало бы участки, затемнённые вдвое.
+         canvas.drawRect(0f, 0f, viewW, toolbarRect.bottom, dimPaint)
+         canvas.drawRect(0f, toolbarRect.bottom, frame.left, frame.top, dimPaint)
+-        canvas.drawRect(frame.right, toolbarRect.bottom, viewW, frame.bottom, dimPaint)
++        canvas.drawRect(frame.right, toolbarRect.bottom, viewW, frame.top, dimPaint)
++        canvas.drawRect(0f, frame.top, frame.left, frame.bottom, dimPaint)
++        canvas.drawRect(frame.right, frame.top, viewW, frame.bottom, dimPaint)
+         canvas.drawRect(0f, frame.bottom, viewW, viewH, dimPaint)
+-        canvas.drawRect(frame.left, frame.bottom, frame.right, viewH, dimPaint)
+-        canvas.drawRect(0f, toolbarRect.bottom, frame.left, viewH, dimPaint)
+ 
+         // Рамка захвата.
+         canvas.drawRoundRect(frame, dp(10f), dp(10f), borderPaint)
+         drawHandles(canvas)
+ 
+-        // Тулбар.
+-        canvas.drawRoundRect(toolbarRect, dp(10f), dp(10f), toolbarPaint)
++        // Тулбар и панель результата.
++        roundRectPath(toolbarRect, 0f, 0f, dp(10f), dp(10f))
++        canvas.drawPath(path, toolbarPaint)
+         drawToolbarButtons(canvas)
+ 
+-        // Панель результата.
+-        canvas.drawRoundRect(panelRect, dp(10f), dp(10f), panelPaint)
++        roundRectPath(panelRect, dp(10f), dp(10f), 0f, 0f)
++        canvas.drawPath(path, panelPaint)
+         drawResultPanel(canvas)
+     }
+ 
++    /** Прямоугольник с независимым радиусом каждого угла (в dp-радиусах — px). */
++    private fun roundRectPath(rect: RectF, tl: Float, tr: Float, br: Float, bl: Float) {
++        path.reset()
++        path.moveTo(rect.left + tl, rect.top)
++        path.lineTo(rect.right - tr, rect.top)
++        path.quadTo(rect.right, rect.top, rect.right, rect.top + tr)
++        path.lineTo(rect.right, rect.bottom - br)
++        path.quadTo(rect.right, rect.bottom, rect.right - br, rect.bottom)
++        path.lineTo(rect.left + bl, rect.bottom)
++        path.quadTo(rect.left, rect.bottom, rect.left, rect.bottom - bl)
++        path.lineTo(rect.left, rect.top + tl)
++        path.quadTo(rect.left, rect.top, rect.left + tl, rect.top)
++        path.close()
++    }
++
+     private fun drawToolbarButtons(canvas: Canvas) {
+         for ((rect, btn) in buttons) {
+             btnPaint.color = if (btn == pressedBtn) Color.parseColor("#FF8A65") else Color.WHITE
+@@ -241,21 +297,28 @@ class OverlayView(
+     private fun drawResultPanel(canvas: Canvas) {
+         val pad = dp(10f)
+         statusPaint.textAlign = Paint.Align.LEFT
+-        canvas.drawText(
+-            if (scanning) "Распознаю текст…" else statusText.ifBlank { "Готово" },
+-            pad,
+-            panelRect.top + dp(18f),
+-            statusPaint,
+-        )
+-        val maxW = (panelRect.width() - pad * 2).toInt()
++        val status = if (scanning) "Распознаю текст…" else statusText.ifBlank { "Готово" }
++        val textMetrics = statusPaint.fontMetrics
++        val statusBaseline = if (resultText.isBlank()) {
++            // Свёрнутая панель — одна строка по центру.
++            panelRect.centerY() - (textMetrics.ascent + textMetrics.descent) / 2f
++        } else {
++            panelRect.top + dp(20f)
++        }
++        canvas.drawText(status, pad, statusBaseline, statusPaint)
++
++        contentLines = emptyList()
++        visibleLines = 0
+         val text = resultText
+         if (text.isNotBlank()) {
++            val maxW = (panelRect.width() - pad * 2).toInt()
+             val lines = wrapText(resultPaint, text, maxW)
+             val lineH = resultPaint.textSize * 1.25f
+             val available = panelRect.height() - dp(34f)
+             val visible = (available / lineH).toInt().coerceAtLeast(1)
+-            val maxScroll = max(0, lines.size - visible)
+-            scrollLines = scrollLines.coerceIn(0, maxScroll)
++            contentLines = lines
++            visibleLines = visible
++            scrollLines = scrollLines.coerceIn(0, max(0, lines.size - visible))
+             var y = panelRect.top + dp(34f) + lineH
+             for (i in scrollLines until min(scrollLines + visible, lines.size)) {
+                 canvas.drawText(lines[i], pad, y, resultPaint)
+@@ -264,6 +327,8 @@ class OverlayView(
+         }
+     }
+ 
++    private fun maxScroll(): Int = max(0, contentLines.size - visibleLines)
++
+     private fun wrapText(paint: Paint, text: String, maxW: Int): List<String> {
+         val words = text.split(" ")
+         val lines = ArrayList<String>()
+@@ -346,19 +411,18 @@ class OverlayView(
+         val dy = y - touchY
+         when (mode) {
+             Mode.MOVE -> {
+-                val newLeft = startFrame.left + dx
+-                val newTop = startFrame.top + dy
+-                val newRight = startFrame.right + dx
+-                val newBottom = startFrame.bottom + dy
+-                val shiftX = newLeft.coerceAtLeast(dp(6f)) - newLeft
+-                val fixedLeft = newLeft + shiftX
+-                val fixedRight = newRight + shiftX
+-                frame.set(
+-                    fixedLeft,
+-                    newTop.coerceIn(toolbarRect.bottom + dp(6f), panelRect.top - frame.height() - dp(6f)),
+-                    fixedRight,
+-                    newTop.coerceIn(toolbarRect.bottom + dp(6f), panelRect.top - frame.height() - dp(6f)) + frame.height(),
+-                )
++                val fw = startFrame.width()
++                val fh = startFrame.height()
++                val pad = dp(6f)
++                // Сдвиг ограничиваем по обеим осям сразу: иначе рамка не доезжала
++                // до левого/верхнего края, зато уезжала за правый/нижний.
++                val maxLeft = viewW - pad - fw
++                val newLeft = (startFrame.left + dx).coerceIn(min(pad, maxLeft), max(pad, maxLeft))
++                val minTop = toolbarRect.bottom + pad
++                val maxTop = panelRect.top - pad - fh
++                val newTop = (startFrame.top + dy).coerceIn(min(minTop, maxTop), max(minTop, maxTop))
++                frame.set(newLeft, newTop, newLeft + fw, newTop + fh)
++                clampFrame()
+                 invalidate()
+             }
+             Mode.CORNER_RESIZE -> {
+@@ -367,8 +431,16 @@ class OverlayView(
+             }
+             Mode.SCROLL -> {
+                 val lineH = resultPaint.textSize * 1.25f
+-                val delta = (y - lastPanelY) / lineH
+-                scrollLines += delta.toInt()
++                // Дробный остаток копится: иначе медленное перетаскивание
++                // (меньше строки за кадр) не листало текст вовсе.
++                scrollAccum += (y - lastPanelY) / lineH
++                val whole = scrollAccum.toInt()
++                if (whole != 0) {
++                    scrollAccum -= whole
++                    val next = (scrollLines + whole).coerceIn(0, maxScroll())
++                    if (next == scrollLines) scrollAccum = 0f
++                    scrollLines = next
++                }
+                 lastPanelY = y
+                 invalidate()
+             }
+@@ -379,7 +451,7 @@ class OverlayView(
+     }
+ 
+     private fun resizeTo(dx: Float, dy: Float) {
+-        val minSide = dp(48f)
++        val minSide = min(dp(48f), max(dp(20f), (panelRect.top - toolbarRect.bottom) * 0.5f))
+         val l = frame.left
+         val t = frame.top
+         val r = frame.right
+@@ -399,12 +471,13 @@ class OverlayView(
+ 
+     private fun onUp() {
+         val btn = pressedBtn
+-        if (btn != null) {
+-            perform(btn)
+-        }
+         pressedBtn = null
+         mode = Mode.NONE
++        // Рамку сохраняем до действия: «Скан» читает Prefs.frame(), и при
++        // прежнем порядке захватывалась старая область, если рамку только что
++        // передвинули.
+         callback.onFrameChanged(bean())
++        if (btn != null) perform(btn)
+         invalidate()
+     }
+ 
+@@ -427,7 +500,16 @@ class OverlayView(
+     )
+ 
+     fun resetFrame() {
+-        frame.set(viewW * 0.06f, toolbarRect.bottom + dp(24f), viewW * 0.94f, viewW * 0.94f * 0.55f + toolbarRect.bottom)
++        val boxTop = toolbarRect.bottom + dp(10f)
++        val boxBottom = panelRect.top - dp(10f)
++        val boxH = max(dp(48f), boxBottom - boxTop)
++        val left = min(viewW * 0.06f, viewW - dp(6f))
++        // Высота рамки считалась от viewW, а не от viewH, — в альбомной
++        // ориентации уезжала далеко за нижнюю панель.
++        val top = min(boxTop + boxH * 0.1f, boxBottom)
++        val right = max(min(viewW * 0.94f, viewW - dp(6f)), left)
++        val bottom = max(min(top + boxH * 0.55f, boxBottom), top)
++        frame.set(left, top, right, bottom)
+         clampFrame()
+         invalidate()
+     }
