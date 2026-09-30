@@ -1,0 +1,28 @@
+name: Reap dead sessions
+
+on:
+  schedule:
+    # Every 10 minutes. Deliberately independent of the hub job: this has to
+    # keep working when every session run is dead, which is exactly when the
+    # panel is handing out dead addresses.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reaper
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Reap slots whose run is gone
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash tools/reap_dead_sessions.sh
