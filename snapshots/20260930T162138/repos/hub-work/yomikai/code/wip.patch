@@ -1,0 +1,1648 @@
+diff --git a/MANIFEST.md b/MANIFEST.md
+index cfc8afe24..3e2720833 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -15,9 +15,3 @@
+ 4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи
+    и не логируй его значение.
+ 5. Готовые сборки/артефакты клади в /home/runner/hub-work/yomikai/tmp — их видно вкладкой «Файлы».
+-6. Историю текущего агента храни в этом репозитории (/home/runner/hub-work/yomikai/code), а не во временных папках.
+-7. После внесения исправлений автоматически создавай коммит и отправляй его в текущую ветку репозитория.
+-8. Все сборки запускай через GitHub Actions/workflows; не запускай сборки внутри локального окружения.
+-9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
+-10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
+-11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt b/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt
+index 6de4ca311..0af063269 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/TtsSettingsDialog.kt
+@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.OutlinedTextField
+ import androidx.compose.material3.RadioButton
+ import androidx.compose.material3.Slider
++import androidx.compose.material3.Switch
+ import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.material3.Text
+@@ -112,6 +113,10 @@ fun TtsSettingsDialog(
+     var elevenKey by remember { mutableStateOf(prefs.elevenApiKey().get()) }
+     var elevenVoice by remember { mutableStateOf(prefs.elevenVoiceId().get()) }
+ 
++    // Фоновая музыка авточтения манги (та же фича, что в читалке книг).
++    var musicEnabled by remember { mutableStateOf(prefs.autoReadMusicEnabled().get()) }
++    var musicVolume by remember { mutableFloatStateOf(prefs.autoReadMusicVolume().get()) }
++
+     var voiceFemale by remember { mutableStateOf(prefs.voiceFemale().get()) }
+     var voiceMale by remember { mutableStateOf(prefs.voiceMale().get()) }
+     var aiGender by remember { mutableStateOf(prefs.aiGenderVoices().get()) }
+@@ -864,6 +869,27 @@ fun TtsSettingsDialog(
+                     valueRange = 0.5f..2f,
+                 )
+ 
++                // Музыка приглушается сама на время реплики, поэтому ползунок
++                // задаёт уровень в паузах — это потолок, а не то, что слышно
++                // поверх голоса.
++                SettingSwitchRow(
++                    label = "Фоновая музыка (авточтение)",
++                    checked = musicEnabled,
++                    onCheckedChange = { musicEnabled = it },
++                )
++                if (musicEnabled) {
++                    Text(
++                        "Громкость музыки",
++                        style = MaterialTheme.typography.labelMedium,
++                    )
++                    Slider(
++                        value = musicVolume,
++                        onValueChange = { musicVolume = it },
++                        valueRange = 0.04f..0.8f,
++                        modifier = Modifier.fillMaxWidth(),
++                    )
++                }
++
+                 when (engine) {
+                     TtsSpeaker.ENGINE_SYSTEM -> {
+                         Row(modifier = Modifier.padding(bottom = 4.dp).horizontalScroll(rememberScrollState())) {
+@@ -1169,6 +1195,8 @@ fun TtsSettingsDialog(
+                     prefs.elevenVoiceId().set(elevenVoice.trim())
+                     prefs.edgeVoice().set(edgeVoice.trim())
+                     prefs.edgeLanguage().set(edgeLanguage.trim())
++                    prefs.autoReadMusicEnabled().set(musicEnabled)
++                    prefs.autoReadMusicVolume().set(musicVolume.coerceIn(0.04f, 0.8f))
+                     context.toast("Настройки озвучки сохранены")
+                     onDismissRequest()
+                 },
+@@ -1197,6 +1225,8 @@ fun TtsSettingsDialog(
+                         prefs.elevenVoiceId().set(elevenVoice.trim())
+                         prefs.edgeVoice().set(edgeVoice.trim())
+                         prefs.edgeLanguage().set(edgeLanguage.trim())
++                        prefs.autoReadMusicEnabled().set(musicEnabled)
++                        prefs.autoReadMusicVolume().set(musicVolume.coerceIn(0.04f, 0.8f))
+                         TtsSpeaker.speak(context, "Проверка выбранного голоса Ёмикай.")
+                     },
+                 ) { Text("Проба") }
+@@ -1206,6 +1236,30 @@ fun TtsSettingsDialog(
+     )
+ }
+ 
++/**
++ * Ряд-тумблер в том же виде, что в читалке книг (BooksReaderScreen): подпись
++ * слева тянется на всю ширину, переключатель прижат вправо. Отдельный
++ * «дизайн» для музыки заводить не нужно — читатель уже знает этот блок.
++ */
++@Composable
++private fun SettingSwitchRow(
++    label: String,
++    checked: Boolean,
++    onCheckedChange: (Boolean) -> Unit,
++) {
++    Row(
++        verticalAlignment = Alignment.CenterVertically,
++        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
++    ) {
++        Text(
++            text = label,
++            style = MaterialTheme.typography.labelMedium,
++            modifier = Modifier.weight(1f),
++        )
++        Switch(checked = checked, onCheckedChange = onCheckedChange)
++    }
++}
++
+ /**
+  * Диалог добавления голосовой роли: имя/метки (для {имя:Аки}), пол, возраст,
+  * необязательный голос из списка и модификаторы питча/темпа.
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 86ad0cf0c..093121c68 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -111,44 +111,133 @@ class AutoReadEngine(
+     val frameRegions = _frameRegions.asStateFlow()
+ 
+     /**
+-     * Слоты голосов ВСЕЙ сессии чтения: пол → последний выданный слот.
+-     * Не сбрасываются между кадрами (только в [stop]), поэтому персонаж,
+-     * начавший реплику в одном кадре и продолживший в следующем (перекрытие
+-     * вебтуна), звучит тем же голосом, а каждый НОВЫЙ персонаж того же пола
+-     * получает следующий свободный голос.
++     * Персонаж сессии чтения и выданный ему слот голоса.
++     *
++     * Раньше слот выдавался ПО ПОЛУ на каждую новую реплику, поэтому
++     * реплики [А♀, Б♀, А♀, Б♀] звучали голосами 0, 1, 2, 3: один и тот же
++     * персонаж посреди сцены менял голос, а на устройстве с 4+ русскими
++     * голосами каждая реплика звучала как новый говорящий — «все голоса
++     * сразу». Теперь слот принадлежит ПЕРСОНАЖУ.
+      */
+-    private val speakerSlots = mutableMapOf<String, Int>()
++    private class TrackedSpeaker(
++        val key: String,
++        val gender: String,
++        val slot: Int,
++        var lastText: String,
++    )
+ 
+-    /** Полы реплик прошлого кадра (в порядке чтения) — для определения
+-     *  продолжения одного персонажа через границу кадров. */
+-    private var prevFrameGenders: List<String?> = emptyList()
++    /**
++     * Персонажи, которых движок помнит с начала чтения. Память нужна только
++     * чтобы отличить «тот же персонаж» от «нового», поэтому она ограничена
++     * (см. [MAX_TRACKED_SPEAKERS]) и живёт через границы кадров: хвост
++     * реплики, начатой на прошлом кадре, обязан звучать тем же голосом.
++     */
++    private val trackedSpeakers = ArrayDeque<TrackedSpeaker>()
+ 
+     /**
+      * Слот голоса для реплики в режиме «много голосов» / «свой голос
+-     * персонажу». frameOccurrence — сколько реплик БОЛЬШЕ ТОГО же пола уже
+-     * прочитано в этом кадре (0 = первый персонаж этого пола в сцене).
+-     *
+-     * Правило:
++     * персонажу». Слот принадлежит персонажу, а не полу, поэтому порядок
++     * такой:
+      *  • null-пол (нарратор) → слот 0 (свой голос нарратора);
+-     *  • продолжение реплики прошлого кадра (текст похож на прошлый кадр,
+-     *    это обычное 65%-перекрытие вебтуна) → ТОТ ЖЕ слот, что и раньше;
+-     *  • иначе (новый персонаж или следующая реплика того же пола) →
+-     *    следующий свободный слот сессии.
++     *  • имя из разметки `{имя:…}` или из подписи «АКИ: …» → тот же слот, что
++     *    у этого имени;
++     *  • продолжение реплики (похожа на последнюю реплику известного
++     *    персонажа — это и перекрытие вебтуна, и длинная реплика из двух
++     *    облачков) → ТОТ ЖЕ слот;
++     *  • иначе новая реплика = новый персонаж = следующий свободный слот
++     *    ВНУТРИ своего пола (нумерация по полам, чтобы слот 0 и слот 1
++     *    означали первого и второго мужчину, а не «первого и третьего»).
+      */
+-    private fun voiceSlotFor(gender: String?, text: String, frameOccurrence: Int): Int {
+-        val key = gender ?: return 0
+-        val current = speakerSlots[key] ?: -1
+-        val continuesPrev = frameOccurrence == 0 &&
+-            prevFrameGenders.lastOrNull() == gender &&
+-            prevFrameLines.any { prev ->
+-                trigramSimilarity(
+-                    prev.lowercase().filter { it.isLetterOrDigit() },
+-                    text.lowercase().filter { it.isLetterOrDigit() },
+-                ) >= 0.45f
+-            }
+-        val next = if (continuesPrev) current else current + 1
+-        speakerSlots[key] = next
+-        return next
++    private fun voiceSlotFor(gender: String?, text: String, speakerName: String?): Int {
++        val g = gender ?: return 0
++        val fingerprint = voiceFingerprint(text)
++        val sameGender = trackedSpeakers.filter { it.gender == g }
++        val byName = speakerName?.takeIf { it.isNotBlank() }
++            ?.let { name -> sameGender.firstOrNull { it.key == speakerKeyByName(name) } }
++        // Короткие реплики («Да!», «Нет!») по 3-граммам неразличимы, поэтому
++        // для них продолжение не ищем: иначе все «Да!» в сцене схлопнулись бы
++        // в одного персонажа.
++        val byText = if (fingerprint.length >= MIN_FINGERPRINT) {
++            sameGender.asSequence()
++                .maxByOrNull { trigramSimilarity(it.lastText, fingerprint) }
++                ?.takeIf { trigramSimilarity(it.lastText, fingerprint) >= CONTINUATION_SIMILARITY }
++        } else {
++            null
++        }
++        val known = byName ?: byText
++        if (known != null) {
++            rememberSpoken(known, fingerprint)
++            return known.slot
++        }
++        val speaker = TrackedSpeaker(
++            key = speakerName?.takeIf { it.isNotBlank() }?.let(::speakerKeyByName)
++                ?: "?" + trackedSpeakers.size + ":" + fingerprint.take(16),
++            gender = g,
++            slot = nextSlotFor(g),
++            lastText = fingerprint,
++        )
++        trackedSpeakers.addLast(speaker)
++        trimTrackedSpeakers()
++        return speaker.slot
++    }
++
++    /** Слот персонажа с учётом режима голоса: в обычном режиме слот не нужен. */
++    private fun speakerSlotFor(
++        roleMode: VoiceModeResolver.Mode,
++        gender: String?,
++        text: String,
++        speakerName: String?,
++    ): Int =
++        if (roleMode == VoiceModeResolver.Mode.MULTI || prefs.perSpeakerVoices().get()) {
++            voiceSlotFor(gender, text, speakerName)
++        } else {
++            0
++        }
++
++    /**
++     * Пол говорящего. Ручной режим важнее автоопределения: читатель выбрал
++     * голос кнопкой и ждёт именно его. Функция общая для обычного цикла и для
++     * потокового прохода — раньше потоковый проход звал speakAndAwait с
++     * gender = null, и первые баблы кадра звучали голосом по умолчанию, пока
++     * хвост читался настоящими ролями (голос прыгал туда-сюда).
++     */
++    private fun speakerGenderFor(
++        roleMode: VoiceModeResolver.Mode,
++        detected: String?,
++    ): String = when {
++        prefs.manualVoiceMode().get() ->
++            prefs.manualVoiceGender().get().takeIf { it.isNotBlank() } ?: "female"
++        roleMode == VoiceModeResolver.Mode.SINGLE -> VoiceModeResolver.narratorGender()
++        else -> detected
++    }
++
++    /** Ключ персонажа по имени: «Аки» и «АКИ» — один и тот же персонаж. */
++    private fun speakerKeyByName(name: String): String = "n:" + name.trim().lowercase()
++
++    /** Текст реплики без знаков и регистра — для сравнения персонажей. */
++    private fun voiceFingerprint(text: String): String =
++        text.lowercase().filter { it.isLetterOrDigit() }
++
++    /** Помечает реплику последней для персонажа и подрезает память. */
++    private fun rememberSpoken(speaker: TrackedSpeaker, fingerprint: String) {
++        speaker.lastText = fingerprint
++        // Переносим в конец: самые недавленные персонажи важнее при подборе
++        // продолжения, иначе память забивается персонажами начала главы.
++        trackedSpeakers.remove(speaker)
++        trackedSpeakers.addLast(speaker)
++        trimTrackedSpeakers()
++    }
++
++    private fun trimTrackedSpeakers() {
++        while (trackedSpeakers.size > MAX_TRACKED_SPEAKERS) trackedSpeakers.removeFirst()
++    }
++
++    /** Следующий свободный слот среди уже известных персонажей этого пола. */
++    private fun nextSlotFor(gender: String): Int {
++        val used = trackedSpeakers.filter { it.gender == gender }.map { it.slot }.toSet()
++        var slot = 0
++        while (slot in used) slot++
++        return slot
+     }
+ 
+     /**
+@@ -640,9 +729,6 @@ class AutoReadEngine(
+                 if (ordered.isNotEmpty()) {
+                     lastFrameText = ordered.joinToString("\n") { it.text }
+                 }
+-                // Полы текущего кадра — для слотов голосов следующего кадра
+-                // (продолжение персонажа через перекрытие вебтуна).
+-                prevFrameGenders = (0 until ordered.size).map { genders.get(it) }
+ 
+                 // 3.7) перевод ВСЕЙ страницы одним запросом (раньше был
+                 // отдельный HTTP-запрос на каждую реплику — на 15 бабблах
+@@ -705,14 +791,19 @@ class AutoReadEngine(
+                     //  • MULTI — как DUAL, но с отдельным слотом каждому
+                     //    персонажу одного пола (см. slot ниже).
+                     val roleMode = VoiceModeResolver.currentMode()
+-                    val gender = when {
+-                        prefs.manualVoiceMode().get() ->
+-                            prefs.manualVoiceGender().get().takeIf { it.isNotBlank() } ?: "female"
+-                        roleMode == VoiceModeResolver.Mode.SINGLE -> VoiceModeResolver.narratorGender()
+-                        else -> genders.get(i) // мог дозаполниться AI пока читали предыдущие
+-                    }
++                    val gender = speakerGenderFor(
++                        roleMode,
++                        genders.get(i), // мог дозаполниться AI пока читали предыдущие
++                    )
+ 
+-                    // Служебные пометки: номер по порядку чтения и пол.
++                    // Имя персонажа: разметка `{имя:…}` (если пришла извне) либо
++                    // подпись в самой реплике («АКИ: …», «Аки — …»). Оно нужно
++                    // сразу двум: слоту голоса (узнать, тот же это персонаж или
++                    // новый) и словарю голосовых ролей, который по имени выбирает
++                    // голос/питч/темп.
++                    val speakerName = SpeechMarkup.speakerNameOrGuess(region.text)
++
++                    // Служебные пометки: номер по порядку чтения, пол и имя.
+                     // Они показываются на экране, но НЕ произносятся —
+                     // SpeechMarkup.strip() снимает их перед синтезом.
+                     val marks = buildString {
+@@ -721,6 +812,7 @@ class AutoReadEngine(
+                             "female" -> append("{ж}")
+                             "male" -> append("{м}")
+                         }
++                        if (speakerName != null) append("{имя:").append(speakerName).append("}")
+                     }
+ 
+                     _currentRegion.value = SpokenRegion(
+@@ -732,22 +824,23 @@ class AutoReadEngine(
+                         marks = marks,
+                     )
+ 
+-                    // Слот говорящего: каждый персонаж одного пола в сцене
+-                    // получает свой голос. Слоты сессионные (переживают кадры):
+-                    // продолжение реплики прошлого кадра звучит тем же голосом,
+-                    // новый персонаж — следующим свободным. В режиме «много
+-                    // голосов» и при «свой голос персонажу» всегда включено.
+-                    val slot = if (
+-                        roleMode == VoiceModeResolver.Mode.MULTI ||
+-                        prefs.perSpeakerVoices().get()
+-                    ) {
+-                        val occurrence = (0 until i).count { genders.get(it) == gender }
+-                        voiceSlotFor(gender, region.text, occurrence)
+-                    } else {
+-                        0
+-                    }
+-
+-                    when (speakAndAwait(SpeechMarkup.strip(speakTextRaw), gender, slot)) {
++                    // Слот говорящего: голос ПРИНАДЛЕЖИТ ПЕРСОНАЖУ, поэтому
++                    // один и тот же герой звучит одинаково через всю главу, а
++                    // каждый новый персонаж того же пола получает следующий
++                    // свободный слот. В режиме «много голосов» и при «свой
++                    // голос персонажу» включено, иначе голос только по полу.
++                    val slot = speakerSlotFor(roleMode, gender, region.text, speakerName)
++
++                    // Имя уезжает вместе с текстом в движок: словарь ролей
++                    // читает его из разметки, а метку снимает
++                    // [SpeechMarkup.strip]. Само слово имени при этом остаётся
++                    // в тексте реплики, поэтому имя звучит ровно один раз —
++                    // как на кадре, а не «метка + слово».
++                    val spokenText = SpeechMarkup.withSpeakerName(
++                        SpeechMarkup.strip(speakTextRaw),
++                        speakerName,
++                    )
++                    when (speakAndAwait(spokenText, gender, slot)) {
+                         SpeakOutcome.SPOKEN, SpeakOutcome.SILENT -> rejectedStreak = 0
+                         SpeakOutcome.NO_ENGINE -> {
+                             blockAutoread(NO_VOICE_MESSAGE)
+@@ -1029,8 +1122,9 @@ class AutoReadEngine(
+ 
+     fun stop() {
+         spokenLines.clear()
+-        speakerSlots.clear()
+-        prevFrameGenders = emptyList()
++        // Голоса персонажей — память сессии: новая глава начинается с нуля,
++        // иначе новый персонаж продолжил бы чужую нумерацию слотов.
++        trackedSpeakers.clear()
+         rejectedStreak = 0
+         _voiceBlock.value = null
+         generation++ // инвалидируем все pending-колбэки
+@@ -1053,13 +1147,17 @@ class AutoReadEngine(
+     fun speakSingle(text: String, gender: String? = null, speakerSlot: Int = 0) {
+         val clean = SpeechMarkup.strip(text).trim()
+         if (clean.isBlank()) return
++        // Имя из подписи реплики («АКИ: …») едет в движок так же, как при
++        // авточтении: одиночный бабл, нажатый значком 🔊, тоже должен уметь
++        // попасть под словарь ролей.
++        val spoken = SpeechMarkup.withSpeakerName(clean, SpeechMarkup.speakerNameOrGuess(text))
+         if (_isReading.value) TtsSpeaker.stop()
+         job?.cancel()
+         val myGen = ++generation
+         job = scope.launch {
+             _isReading.value = true
+             try {
+-                speakAndAwait(clean, gender, speakerSlot)
++                speakAndAwait(spoken, gender, speakerSlot)
+             } finally {
+                 if (generation == myGen) _isReading.value = false
+             }
+@@ -1089,11 +1187,14 @@ class AutoReadEngine(
+      * Озвучивает реплику, распознанную локальным движком, не дожидаясь конца
+      * страницы, и помечает её прочитанной.
+      *
+-     * Потоковый проход сознательно «глупый»: без определения пола по картинке,
+-     * без перевода, без склейки соседних строк в одну реплику. Всё это требует
+-     * знать всю страницу и не может работать на лету. Зато читатель слышит
+-     * первую реплику сразу, а основной конвейер позже дочитывает остальные и
+-     * пропускает уже озвученное через [spokenLines].
++     * Потоковый проход сознательно «глупый»: без перевода и без склейки
++     * соседних строк в одну реплику — всё это требует знать всю страницу и не
++     * может работать на лету. Зато читатель слышит первую реплику сразу, а
++     * основной конвейер позже дочитывает остальные и пропускает уже озвученное
++     * через [spokenLines]. Пол же и слот считаются ТЕМИ ЖЕ функциями, что и в
++     * обычном цикле: раньше первые баблы кадра (порядок ltr/vertical) читались
++     * голосом по умолчанию, а хвост — настоящими ролями, и голос прыгал
++     * туда-сюда на одной странице.
+      *
+      * Номера реплик в потоковом режиме не совпадают с итоговой нумерацией
+      * страницы: итоговую расставляет конвейер ниже, когда страница собрана.
+@@ -1117,7 +1218,17 @@ class AutoReadEngine(
+             FrameRegion.State.CURRENT,
+             text,
+         )
+-        return when (speakAndAwait(text, gender = null)) {
++        val roleMode = VoiceModeResolver.currentMode()
++        val speakerName = SpeechMarkup.speakerNameOrGuess(text)
++        // Пол: та же локальная морфология и словарный фолбэк, что и в обычном
++        // цикле (там они уточняются данными со всей страницы).
++        val gender = speakerGenderFor(
++            roleMode,
++            LocalSpeakerAi.guessGender(text) ?: detectGenderByDictionary(text),
++        )
++        val slot = speakerSlotFor(roleMode, gender, text, speakerName)
++        val spokenText = SpeechMarkup.withSpeakerName(text, speakerName)
++        return when (speakAndAwait(spokenText, gender, slot)) {
+             SpeakOutcome.SPOKEN -> {
+                 spokenLines += lineKey(text)
+                 markSpokenInFrame(text)
+@@ -1170,6 +1281,9 @@ class AutoReadEngine(
+ 
+     /** Озвучка с ожиданием реального окончания фразы. */
+     private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0): SpeakOutcome {
++        // Реплика может прийти с меткой `{имя:…}` (её снимает сам движок), а в
++        // журнал и таймаут разумно класть то, что реально произносится.
++        val spoken = SpeechMarkup.strip(text).ifBlank { text }
+         // Оба флага — MutableStateFlow: onState приходит из потока TTS, а читается
+         // из этой корутины (диспетчер IO). Обычный var здесь означает гонку — цикл
+         // ожидания мог бы не увидеть `started = true` и сочти фразу неозвученной.
+@@ -1180,12 +1294,12 @@ class AutoReadEngine(
+         TtsSpeaker.speakAs(context, text, gender, speakerSlot) { speaking ->
+             if (speaking && !started.value) {
+                 started.value = true
+-                logcat(LogPriority.DEBUG) { "TTS started (${System.currentTimeMillis() - t0}ms): ${text.take(60)}" }
++                logcat(LogPriority.DEBUG) { "TTS started (${System.currentTimeMillis() - t0}ms): ${spoken.take(60)}" }
+             }
+             if (!speaking && started.value) {
+                 done.value = true
+                 logcat(LogPriority.DEBUG) { "TTS done in ${System.currentTimeMillis() - t0}ms" }
+-                OcrHistoryStore.addAutoRead(true, "озвучено (${System.currentTimeMillis() - t0} мс)", text.take(60))
++                OcrHistoryStore.addAutoRead(true, "озвучено (${System.currentTimeMillis() - t0} мс)", spoken.take(60))
+             }
+         }
+         val start = System.currentTimeMillis()
+@@ -1208,9 +1322,9 @@ class AutoReadEngine(
+             val failure = TtsSpeaker.lastFailure
+             val detail = TtsSpeaker.lastFailureDetail
+             logcat(LogPriority.WARN) {
+-                "TTS never started (${failure.name}${if (detail.isBlank()) "" else ": $detail"}): ${text.take(60)}"
++                "TTS never started (${failure.name}${if (detail.isBlank()) "" else ": $detail"}): ${spoken.take(60)}"
+             }
+-            OcrHistoryStore.addAutoRead(false, "TTS не запустился", "${failure.name}: ${text.take(60)}")
++            OcrHistoryStore.addAutoRead(false, "TTS не запустился", "${failure.name}: ${spoken.take(60)}")
+             return when (failure) {
+                 TtsSpeaker.SpeakFailure.NO_ENGINE -> SpeakOutcome.NO_ENGINE
+                 TtsSpeaker.SpeakFailure.REJECTED -> SpeakOutcome.REJECTED
+@@ -1218,7 +1332,7 @@ class AutoReadEngine(
+             }
+         }
+         // Фаза 2: реплика пошла — ждём завершения по onState.
+-        val timeoutMs = ttsTimeoutMs(text.length, prefs.speechRate().get())
++        val timeoutMs = ttsTimeoutMs(spoken.length, prefs.speechRate().get())
+         while (!done.value && System.currentTimeMillis() - start < timeoutMs) {
+             if (job?.isActive != true) {
+                 TtsSpeaker.stop()
+@@ -1229,9 +1343,9 @@ class AutoReadEngine(
+         // Диагностика недоговорённых реплик: TTS мог прерваться без onDone.
+         if (!done.value) {
+             logcat(LogPriority.WARN) {
+-                "TTS timeout without onDone: ${text.take(60)} (waited ${System.currentTimeMillis() - start}ms)"
++                "TTS timeout without onDone: ${spoken.take(60)} (waited ${System.currentTimeMillis() - start}ms)"
+             }
+-            OcrHistoryStore.addAutoRead(false, "TTS без завершения", text.take(60))
++            OcrHistoryStore.addAutoRead(false, "TTS без завершения", spoken.take(60))
+             // onError приходит в том же Boolean-колбэке, что и onDone, поэтому
+             // сбой посреди фразы выглядел как «озвучено». Теперь он виден.
+             if (TtsSpeaker.lastFailure == TtsSpeaker.SpeakFailure.REJECTED) {
+@@ -1619,6 +1733,29 @@ class AutoReadEngine(
+         private const val HISTORY_LIMIT = 600
+         private const val MAX_BUBBLES_PER_FRAME = 40
+ 
++        /**
++         * Сколько последних персонажей движок помнит по полу и имени. Память
++         * нужна только чтобы отличить «тот же персонаж» от «нового»; на длинной
++         * главе она росла бы без границ, и каждая реплика сравнивалась бы со
++         * всеми сразу. Старый персонаж забывается — тогда как раздача его номера
++         * другому не страшна: на такой сцене голосов всё равно больше нет.
++         */
++        private const val MAX_TRACKED_SPEAKERS = 12
++
++        /**
++         * Насколько реплика должна быть похожа на последнюю реплику персонажа,
++         * чтобы считаться её продолжением (3-граммы). Порог тот же, что был у
++         * прежней проверки перекрытия кадров, — он ловит и обрезанный OCR-текст.
++         */
++        private const val CONTINUATION_SIMILARITY = 0.45f
++
++        /**
++         * Короче этого реплики продолжение не ищем: у «Да!»/«Нет!» нет
++         * 3-грамм, иначе все короткие возгласы в сцене схлопнулись бы в одного
++         * персонажа, а разные персонажи — слиплись бы в один голос.
++         */
++        private const val MIN_FINGERPRINT = 12
++
+         /**
+          * Максимальная длинная сторона кадра для OCR: минимальное разрешение,
+          * при котором текст ещё читается. Детектор движка всё равно масштабирует
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/SpeechMarkup.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/SpeechMarkup.kt
+index 1a55b7032..df90bd1ee 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/SpeechMarkup.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/SpeechMarkup.kt
+@@ -21,6 +21,12 @@ package eu.kanade.tachiyomi.data.tts
+  * | `÷`           | разделитель частей реплики (короткая пауза)| нет      |
+  *
+  * Всё, что не в фигурных скобках, читается как обычно.
++ *
++ * Имя говорящего живёт в метке `{имя:Аки}`, но авточтение получает текст из
++ * OCR, где меток нет. Поэтому есть и обратный путь: [speakerNameFromText]
++ * распознаёт подпись персонажа в самой реплике («АКИ: …», «Аки — …»), а
++ * [withSpeakerName] прикрепляет метку обратно. Метка снимается в [strip] и на
++ * экране, и в синтезе, поэтому имя не начинает произноситься дважды.
+  */
+ object SpeechMarkup {
+ 
+@@ -32,6 +38,45 @@ object SpeechMarkup {
+     private val TAG = Regex("""\{[^\{\}]{0,40}\}""")
+     private val DIVIDER = '÷'
+ 
++    /**
++     * Подпись персонажа в начале реплики капсом: «АКИ: …», «АКИ — …»,
++     * «КИМ ЧЕН: …». В комиксах и вебтунах имя набрано прописными, а сама
++     * реплика — строчными, поэтому такой префикс надёжно отличает имя от
++     * обычного слова, даже если OCR не сохранил шрифт.
++     */
++    private val CAPS_NAME = Regex(
++        """^\s*([A-ZА-ЯЁ][A-ZА-ЯЁ'\-]{1,23}(?:\s+[A-ZА-ЯЁ][A-ZА-ЯЁ'\-]{1,23})?)\s*[:—–]\s*(\S.*)$""",
++    )
++
++    /**
++     * Подпись персонажа с одной заглавной буквы: «Аки: …», «Аки — …».
++     * Разрешаем не короче трёх букв: «Нет: я не знаю» и «Помоги — где ты?»
++     * превратились бы в «нового персонажа» с собственным голосом.
++     */
++    private val TITLE_NAME = Regex(
++        """^\s*([А-ЯЁA-Z][а-яёa-z]{2,23}(?:\s+[А-ЯЁA-Z][а-яёa-z]{2,23})?)\s*[:—–]\s*(\S.*)$""",
++    )
++
++    /**
++     * Слова, с которых реплика не может начинаться как с имени. Список
++     * короткий и явный: угадывать «имя» по одной заглавной букве нельзя, иначе
++     * любая короткая реплика («Он ушёл», «Помоги — где ты?») завела бы себе
++     * отдельный голос, а роль из словаря получала бы чужое имя.
++     */
++    private val NOT_A_NAME = setOf(
++        "э", "эй", "ах", "хм", "ну", "о", "а", "и", "у", "не", "нет", "да",
++        "ты", "вы", "он", "она", "мы", "все", "вот", "это", "так", "затем",
++        "потом", "потому", "поэтому", "значит", "вдруг", "опять", "снова",
++        "если", "когда", "чтобы", "ладно", "слушай", "смотри", "боже",
++        "господи", "чёрт", "кто", "что", "где", "куда", "зачем", "привет",
++        "здравствуй", "пока", "прости", "извини", "спасибо", "глава", "том",
++        "помоги", "попробуй", "подожди", "пожалуйста", "иди", "стой", "беги",
++        "неужели", "правда", "точно", "хорошо", "отлично", "увы", "помощь",
++    )
++
++    /** Допустимые символы имени: без фигурных скобок, иначе метка не распарсится. */
++    private val NAME_NOISE = Regex("""[^\p{L}\p{N} ._'’\-]""")
++
+     /** Пол, объявленный разметкой: "female" | "male" | null. */
+     fun genderOf(text: String): String? {
+         val m = TAG.findAll(text).map { it.value.trim('{', '}').lowercase() }
+@@ -79,6 +124,61 @@ object SpeechMarkup {
+         return null
+     }
+ 
++    /**
++     * Имя говорящего из САМОГО текста реплики («АКИ: …», «Аки — …»).
++     *
++     * Зачем это нужно. Метку `{имя:…}` авточтение раньше не собирало, поэтому
++     * словарь голосовых ролей не мог сработать на OCR-чтении вообще: оставался
++     * «только пол», а настроенные роли молча игнорировались. Второе применение
++     * — слот голоса персонажа (см. AutoReadEngine.voiceSlotFor): без имени
++     * третью реплику того же героя не отличить от нового персонажа, и голос
++     * менялся на каждой реплике.
++     */
++    fun speakerNameFromText(text: String): String? {
++        val line = text.trim()
++        if (line.isEmpty()) return null
++        CAPS_NAME.find(line)?.let { match ->
++            val name = cleanName(match.groupValues[1])
++            // Подпись без реплики («АКИ —») — это заголовок панели, а не реплика.
++            if (name != null && match.groupValues[2].isNotBlank()) return name
++        }
++        TITLE_NAME.find(line)?.let { match ->
++            val name = cleanName(match.groupValues[1])
++            if (name != null) return name
++        }
++        return null
++    }
++
++    /** Имя реплики: из разметки, иначе из текста. Порядок важен — разметка точнее. */
++    fun speakerNameOrGuess(text: String): String? =
++        speakerName(text) ?: speakerNameFromText(SpeechMarkup.strip(text))
++
++    /**
++     * Прикрепляет метку `{имя:…}` к реплике, если имени ещё нет. Само слово
++     * имени при этом НЕ вырезается: читатель слышит подпись так же, как видит
++     * её на кадре, а служебная метка снимается в [strip] и не произносится.
++     */
++    fun withSpeakerName(text: String, name: String?): String {
++        if (speakerName(text) != null) return text
++        val clean = cleanName(name) ?: return text
++        return "{имя:$clean} $text"
++    }
++
++    /**
++     * Имя приводится к безопасному виду: без фигурных скобок (иначе метка
++     * распадётся и будет произнесена), без переносов и не длиннее 24 символов
++     * (длина метки в [TAG] ограничена 40 символами вместе со скобками).
++     */
++    private fun cleanName(raw: String?): String? {
++        val cleaned = raw.orEmpty()
++            .replace('\n', ' ')
++            .replace(NAME_NOISE, " ")
++            .replace(Regex("""\s+"""), " ")
++            .trim()
++        if (cleaned.length < 2 || cleaned.lowercase() in NOT_A_NAME) return null
++        return cleaned.take(24)
++    }
++
+     /**
+      * Текст для синтеза: разметка убрана, `÷` заменён на запятую (короткая
+      * пауза), лишние пробелы схлопнуты.
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt
+index c3f19996c..afbfb56f7 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt
+@@ -319,12 +319,18 @@ object TtsSpeaker {
+         speakAs(context, text, gender = null, onState = onState)
+     }
+ 
+-    /** v1.9.40: spec голоса роли («пакет::имя») из слотов настроек. */
+-    fun slotVoiceSpec(role: String): String? = runCatching {
++    /**
++     * v1.9.40: spec голоса роли («пакет::имя») из слотов настроек.
++     *
++     * [text] — сама реплика: роль из словаря ищется не только по имени кнопки,
++     * но и по упоминанию имени в тексте, иначе на карточке распознанного текста
++     * роль «Аки» не находилась ни по чему (в разметке имени нет).
++     */
++    fun slotVoiceSpec(role: String, text: String? = null): String? = runCatching {
+         // Словарь голосовых ролей имеет приоритет над legacy-слотами:
+         // роль из {имя:Аки} или кнопки ♀/♂ может быть описана там точнее.
+         val dictVoice = VoiceRoleDictionary.load(prefs())
+-            .firstOrNull { it.matchesName(role) }
++            .firstOrNull { it.matchesName(role) || (!text.isNullOrBlank() && it.mentionedIn(text)) }
+             ?.voice
+             ?.takeIf { it.isNotBlank() }
+         if (dictVoice != null) return@runCatching dictVoice
+@@ -497,7 +503,7 @@ object TtsSpeaker {
+         role: String,
+         onState: (Boolean) -> Unit = {},
+     ) {
+-        val spec = slotVoiceSpec(role)
++        val spec = slotVoiceSpec(role, SpeechMarkup.strip(text))
+         if (spec != null) {
+             speakWithVoice(context, text, spec, onState)
+             return
+@@ -535,10 +541,12 @@ object TtsSpeaker {
+     }
+ 
+     /**
+-     * Озвучка с учётом пола говорящего: gender = "female" | "male" | null.
++     * Озвучка с учётом роли говорящего: gender = "female" | "male" | null.
+      * Для системного движка используется соответствующий голос из пресетов
+-     * (Настройки озвучки → Женский голос / Мужской голос). Для веб-движка
+-     * пол недоступен (у Google Translate один голос на язык).
++     * (Настройки озвучки → Женский голос / Мужской голос). Сетевые движки тоже
++     * получают роль: у Edge и ElevenLabs есть женские и мужские голоса, а у
++     * удалённого — голос по полу, — раньше всё это терялось, и глава на этих
++     * движках читалась ОДНИМ голосом.
+      */
+     @JvmOverloads
+     fun speakAs(
+@@ -568,7 +576,7 @@ object TtsSpeaker {
+         }.getOrNull()
+         val effectiveGender = manual ?: gender ?: SpeechMarkup.genderOf(text)
+         val slot = if (speakerSlot != 0) speakerSlot else SpeechMarkup.speakerSlot(text)
+-// Имя говорящего ({имя:Аки}) нужно словарю голосовых ролей, чтобы
++        // Имя говорящего ({имя:Аки}) нужно словарю голосовых ролей, чтобы
+         // подобрать голос/питч/темп конкретного персонажа.
+         val speakerName = SpeechMarkup.speakerName(text)
+         // «Только голос телефона» (pref_voice_phone_only, по умолчанию
+@@ -583,14 +591,62 @@ object TtsSpeaker {
+             phoneOnly = phoneOnly,
+             online = online,
+         )
++        // Роль решает, ЧЕМ звучит реплика, и должна быть известна ВСЕМ движкам:
++        // именно её теряли google_web/edge/eleven, поэтому на них читалось всё
++        // одним голосом. Текст реплики нужен потому, что на OCR-чтении имени в
++        // разметке нет — роль опознаётся по упоминанию имени в тексте.
++        val resolvedRole = runCatching {
++            VoiceRoleDictionary.resolve(prefs(), speakerName, effectiveGender, spoken)
++        }.getOrNull()
++        // Ручной режим — выбор читателя, и словарь ролей его не перебивает:
++        // голос и тон из роли на сетевых движках раньше не применялись, и
++        // применять их именно там, где читатель нажал кнопку, значило бы
++        // сломать его выбор. Системный движок ведёт себя как раньше.
++        val role = if (manual != null) null else resolvedRole
++        val roleVoice = role?.voice?.takeIf { it.isNotBlank() }
++        // У сетевых движков важен только сам голос, без пакета: «пакет::имя».
++        val roleSpec = roleVoice?.let { spec ->
++            parseVoiceSpec(spec).second.takeIf { it.isNotBlank() }
++        }
+         when (effective) {
+-            ENGINE_GOOGLE_WEB -> speakGoogleWeb(context, spoken)
+-            ENGINE_EDGE_TTS -> speakEdgeTts(context, spoken)
+-            ENGINE_ELEVENLABS -> speakElevenLabs(context, spoken)
++            // У Google Translate на язык ровно ОДИН голос, поэтому пол и слот
++            // там невыразимы — их и некуда девать. Единственное, чем здесь
++            // может помочь словарь ролей, — СЕТЕВОЙ голос персонажа (Edge):
++            // его веб-движок всё равно не умеет. Локальный голос роли сюда не
++            // маршрутизируем намеренно — проверить, есть ли он на устройстве,
++            // здесь нечем, а вслух тогда не произнеслось бы ничего.
++            ENGINE_GOOGLE_WEB -> if (roleSpec != null && isEdgeVoiceName(roleSpec)) {
++                speakWithEdgeVoice(context, spoken, roleSpec, onState)
++            } else {
++                speakGoogleWeb(context, spoken)
++            }
++            // У Edge женские и мужские голоса настоящие, поэтому пол и слот
++            // персонажа там работают по-настоящему.
++            ENGINE_EDGE_TTS -> speakEdgeTts(
++                context = context,
++                text = spoken,
++                voiceName = roleSpec,
++                gender = effectiveGender,
++                speakerSlot = slot,
++                role = role,
++            )
++            ENGINE_ELEVENLABS -> speakElevenLabs(
++                context = context,
++                text = spoken,
++                roleVoice = roleVoice,
++                gender = effectiveGender,
++            )
+             // legacy-значения pref_voice_engine со сборок с ONNX:
+             // нейроголоса теперь живут на сервере, маршрутизируем туда же.
+-            ENGINE_REMOTE, "onnx_tts", "onnx" -> speakRemote(context, spoken, effectiveGender)
+-            else -> speakSystem(context, spoken, effectiveGender, slot, speakerName)
++            ENGINE_REMOTE, "onnx_tts", "onnx" -> speakRemote(
++                context = context,
++                text = spoken,
++                gender = effectiveGender,
++                roleVoice = roleVoice,
++                speakerSlot = slot,
++                speakerName = speakerName,
++            )
++            else -> speakSystem(context, spoken, effectiveGender, slot, speakerName, role)
+         }
+     }
+ 
+@@ -641,6 +697,11 @@ object TtsSpeaker {
+         gender: String? = null,
+         speakerSlot: Int = 0,
+         speakerName: String? = null,
++        /**
++         * Роль, уже найденная в [speakAs], чтобы не разбирать словарь дважды;
++         * null = определить роль здесь (ручной режим голоса).
++         */
++        resolvedRole: VoiceRole? = null,
+     ) {
+         val slotVoiceRaw = runCatching {
+             val arr = org.json.JSONArray(prefs().voiceSlots().get())
+@@ -650,9 +711,10 @@ object TtsSpeaker {
+         }.getOrDefault("")
+         val savedRawVoice = runCatching { prefs().voiceName().get() }.getOrDefault("")
+         // Словарь голосовых ролей подбирает роль по имени говорящего
+-        // ({имя:Аки}), затем по полу. Голос/питч/темп роли перекрывают
+-        // слоты и пресеты пола, которые работают только по полу.
+-        val role = VoiceRoleDictionary.resolve(prefs(), speakerName, gender)
++        // ({имя:Аки}), затем по имени/метке, упомянутым в самой реплике
++        // (на OCR-чтении разметки нет), затем по полу. Голос/питч/темп роли
++        // перекрывают слоты и пресеты пола, которые работают только по полу.
++        val role = resolvedRole ?: VoiceRoleDictionary.resolve(prefs(), speakerName, gender, text)
+         // ВАЖНО: роль может как задать точный голос, так и только
+         // модификаторы; распознаём оба случая отдельно.
+         val rolePitch = role?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
+@@ -974,17 +1036,38 @@ object TtsSpeaker {
+      * сервере (tools/remote_tts_server.py): приложение шлёт предложение и
+      * проигрывает готовый wav. Нет адреса или сервер молчит — дочитываем
+      * системным голосом (принцип AlReader: текст всегда озвучен).
++     *
++     * Сервер различает голос по полю и по id модели (irina/dmitri/ruslan), а
++     * слот персонажа не понимает: на сервере один женский голос, поэтому пол
++     * и голос роли — всё, что можно передать честно.
+      */
+-    private fun speakRemote(context: Context, text: String, gender: String?) {
++    private fun speakRemote(
++        context: Context,
++        text: String,
++        gender: String?,
++        roleVoice: String? = null,
++        speakerSlot: Int = 0,
++        speakerName: String? = null,
++    ) {
+         val p = prefs()
+         currentJob = scope.launch {
+             setSpeaking(true)
+             val url = p.remoteTtsUrl().get().trim()
++            // Голос: id модели из роли, иначе пол. Сервер для неизвестного
++            // значения молча берёт «irina» (tools/remote_tts_server.py), поэтому
++            // берём только id из ЕГО каталога — иначе голос локального движка
++            // в спеке уронил бы мужскую реплику на женский голос.
++            val serverVoice = roleVoice
++                ?.let { spec -> parseVoiceSpec(spec).second.ifBlank { spec } }
++                ?.takeIf { it.lowercase(Locale.US) in REMOTE_SERVER_VOICE_IDS }
++                ?: gender
+             // Предложения разворачиваются в куски с подачей, чтобы «ааа» и
+             // вздох из ремарки ушли отдельным запросом со своим темпом.
+             val sentences = splitSentences(text).flatMap { splitForRemote(it) }
+             if (url.isBlank()) {
+-                withContext(Dispatchers.Main) { speakSystem(context, text, gender) }
++                withContext(Dispatchers.Main) {
++                    speakSystem(context, text, gender, speakerSlot, speakerName)
++                }
+                 return@launch
+             }
+             var doneUpTo = 0
+@@ -993,14 +1076,24 @@ object TtsSpeaker {
+                 for (sentence in sentences) {
+                     if (currentJob?.isActive != true) break
+                     val trimmed = sentence.text.trim()
+-                    val wav = synthesizeRemote(context, url, trimmed, gender, sentence.rate)
++                    // Словарь интонаций доступен и сетевому движку: сервер
++                    // принимает темп (`speed`) и паузу между кусками, поэтому
++                    // правило «шёпот/крик» меняет подачу реплики и здесь.
++                    val rule = VoiceIntonationDictionary.matchRule(p, trimmed)
++                    val wav = synthesizeRemote(
++                        context = context,
++                        url = url,
++                        text = trimmed,
++                        voice = serverVoice,
++                        rateFactor = sentence.rate * (rule?.rate ?: 1f),
++                    )
+                     if (wav == null) {
+                         failed = true
+                         break
+                     }
+                     playFileBlocking(wav)
+                     doneUpTo++
+-                    kotlinx.coroutines.delay(180L)
++                    kotlinx.coroutines.delay((rule?.pauseMs ?: 0).toLong() + 180L)
+                 }
+             } catch (e: kotlinx.coroutines.CancellationException) {
+                 setSpeaking(false)
+@@ -1012,7 +1105,9 @@ object TtsSpeaker {
+             if (failed && doneUpTo < sentences.size && currentJob?.isActive == true) {
+                 val rest = sentences.drop(doneUpTo).joinToString(" ") { it.text }
+                 logcat(LogPriority.WARN) { "remote TTS fallback to system from sentence $doneUpTo" }
+-                withContext(Dispatchers.Main) { speakSystem(context, rest, gender) }
++                withContext(Dispatchers.Main) {
++                    speakSystem(context, rest, gender, speakerSlot, speakerName)
++                }
+             } else {
+                 setSpeaking(false)
+             }
+@@ -1033,12 +1128,17 @@ object TtsSpeaker {
+         return SpeechCue.deliveries(trimmed).map { RemoteChunk(it.text, it.rate) }
+     }
+ 
+-    /** POST {text, voice, speed} на /tts сервера; ответ — wav-байты. */
++    /**
++     * POST {text, voice, speed} на /tts сервера; ответ — wav-байты.
++     *
++     * [voice] — id модели сервера (irina/dmitri/ruslan) либо пол реплики:
++     * ровно эти два значения сервер понимает (tools/remote_tts_server.py).
++     */
+     private suspend fun synthesizeRemote(
+         context: Context,
+         url: String,
+         text: String,
+-        gender: String?,
++        voice: String?,
+         rateFactor: Float = 1f,
+     ): File? = withContext(Dispatchers.IO) {
+         runCatching {
+@@ -1050,7 +1150,7 @@ object TtsSpeaker {
+             conn.doOutput = true
+             conn.setRequestProperty("Content-Type", "application/json")
+             val speed = (prefs().speechRate().get() * rateFactor).coerceIn(0.5f, 2f)
+-            val body = "{\"text\":${jsonQuote(text)},\"voice\":${jsonQuote(gender ?: "auto")},\"speed\":$speed}"
++            val body = "{\"text\":${jsonQuote(text)},\"voice\":${jsonQuote(voice ?: "auto")},\"speed\":$speed}"
+             conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+             if (conn.responseCode != 200) {
+                 logcat(LogPriority.WARN) { "remote TTS HTTP ${conn.responseCode}" }
+@@ -1072,6 +1172,14 @@ object TtsSpeaker {
+ 
+     // region GOOGLE WEB (без API-ключа)
+ 
++    /**
++     * Озвучка с сайта Google Translate: без ключа, нужен интернет.
++     *
++     * Пол и слот здесь принципиально не выразимы: у этого endpoint ровно ОДИН
++     * голос на язык и нет параметров просодии. Поэтому роль применяется только
++     * тем, что endpoint умеет, — заданным для персонажа голосом (маршрутизация
++     * делается в [speakAs]); если голоса роли нет, звучит как раньше.
++     */
+     private fun speakGoogleWeb(context: Context, text: String) {
+         val lang = prefs().ttsWebLanguage().get().ifBlank { "ru" }
+         currentJob = scope.launch {
+@@ -1101,16 +1209,33 @@ object TtsSpeaker {
+ 
+     /**
+      * Озвучка онлайн-голосами Microsoft Edge (edge-tts). Бесплатно, без
+-     * API-ключа, нужен интернет. Выбранный голос — pref_edge_voice; если
+-     * редактором выбран мультиязычный голос, он читает любой язык.
+-     * Скорость/высота берутся из обычных настроек озвучки.
++     * API-ключа, нужен интернет. Голос выбирается по РОЛИ реплики: у Edge есть
++     * настоящие женские и мужские голоса каждого языка, поэтому пол и слот
++     * персонажа выразимы (см. [edgeVoiceFor]), а не теряются, как было раньше.
++     * Скорость/высота — из настроек озвучки, умноженные на питч/темп роли и
++     * правила словаря интонаций.
+      */
+-    private fun speakEdgeTts(context: Context, text: String, voiceName: String? = null) {
++    private fun speakEdgeTts(
++        context: Context,
++        text: String,
++        voiceName: String? = null,
++        gender: String? = null,
++        speakerSlot: Int = 0,
++        role: VoiceRole? = null,
++    ) {
+         val p = prefs()
+-        val voice = voiceName?.takeIf { it.isNotBlank() }
+-            ?: p.edgeVoice().get().ifBlank { EdgeTts.DEFAULT_VOICE }
+-        val ratePercent = ((p.speechRate().get().coerceIn(0.5f, 2f) - 1f) * 100).toInt().coerceIn(-50, 100)
+-        val pitchHz = ((p.speechPitch().get().coerceIn(0.5f, 2f) - 1f) * 40).toInt().coerceIn(-50, 50)
++        val voice = voiceName?.takeIf { it.isNotBlank() } ?: edgeVoiceFor(gender, speakerSlot)
++        // Правило интонаций ищется по всей реплике: Edge синтезирует её одним
++        // запросом, разбивать её на предложения с разным тоном здесь нельзя.
++        val rule = VoiceIntonationDictionary.matchRule(p, text)
++        val roleRate = role?.rate?.takeIf { it > 0f && it != 1f } ?: 1f
++        val rolePitch = role?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
++        // Prosody Edge — в процентах темпа и в герцах тона (его ratePercent/
++        // pitchHz), поэтому множители роли и интонации пересчитываются туда же.
++        val rate = (p.speechRate().get() * roleRate * (rule?.rate ?: 1f)).coerceIn(0.5f, 2f)
++        val pitch = (p.speechPitch().get() * rolePitch * (rule?.pitch ?: 1f)).coerceIn(0.5f, 2f)
++        val ratePercent = ((rate - 1f) * 100).toInt().coerceIn(-50, 100)
++        val pitchHz = ((pitch - 1f) * 40).toInt().coerceIn(-50, 50)
+         currentJob = scope.launch {
+             var delegated = false
+             setSpeaking(true)
+@@ -1125,7 +1250,12 @@ object TtsSpeaker {
+                 )
+                 if (file == null) {
+                     delegated = true
+-                    withContext(Dispatchers.Main) { speakSystem(context, text) }
++                    // Откат на системный голос с полом и слотом реплики: иначе
++                    // при сбое сети голос бы сбрасывался на общий, и слушатель
++                    // решил бы, что «пол сломался».
++                    withContext(Dispatchers.Main) {
++                        speakSystem(context, text, gender, speakerSlot)
++                    }
+                 } else {
+                     playFileBlocking(file, deleteAfterPlayback = false)
+                 }
+@@ -1134,13 +1264,63 @@ object TtsSpeaker {
+             } catch (e: Exception) {
+                 delegated = true
+                 logcat(LogPriority.WARN, e) { "Edge TTS failed; using system voice" }
+-                withContext(Dispatchers.Main) { speakSystem(context, text) }
++                withContext(Dispatchers.Main) { speakSystem(context, text, gender, speakerSlot) }
+             } finally {
+                 if (!delegated) setSpeaking(false)
+             }
+         }
+     }
+ 
++    /**
++     * Голос Edge под реплику: пол и слот персонажа.
++     *
++     * Порядок выбора:
++     *  1. голос, заданный ролью (словарь ролей) — точнее всех;
++     *  2. голос, явно сохранённый для пола (пресеты Ж/М), если это Edge-голос;
++     *  3. подбор по полу из таблицы: слот персонажа сдвигает выбор, чтобы
++     *     две женщины в сцене звучали по-разному;
++     *  4. голос из настроек и [EdgeTts.DEFAULT_VOICE] — когда пол неизвестен.
++     *
++     * Пункт 3 важнее общего голоса из настроек: один голос на весь текст — это
++     * ровно тот дефект, из-за которого сетевой движок читался «все голоса
++     * сразу» (или одним голосом), и он тем заметнее, что у Edge голоса по полу
++     * настоящие. Кто хочет один конкретный голос — задаёт его ролью.
++     */
++    private fun edgeVoiceFor(gender: String?, speakerSlot: Int): String {
++        val p = prefs()
++        val presetByGender = when (gender) {
++            "female" -> p.voiceFemale().get()
++            "male" -> p.voiceMale().get()
++            else -> ""
++        }.let { parseVoiceSpec(it).second }
++        if (!presetByGender.isNullOrBlank() && isEdgeVoiceName(presetByGender)) {
++            return presetByGender
++        }
++        if (gender == null) {
++            return p.edgeVoice().get().takeIf { it.isNotBlank() } ?: EdgeTts.DEFAULT_VOICE
++        }
++        val lang = edgeLanguage()
++        val pool = EDGE_GENDER_VOICES[lang]?.get(gender)
++            ?: EDGE_GENDER_VOICES[lang]?.values?.firstOrNull()
++            ?: EDGE_MULTILINGUAL_VOICES[gender]?.let(::listOf)
++            ?: listOf(EdgeTts.DEFAULT_VOICE)
++        return pool.getOrNull(speakerSlot.coerceAtLeast(0) % pool.size) ?: EdgeTts.DEFAULT_VOICE
++    }
++
++    /**
++     * Язык Edge-голоса: явный выбор в настройках (`pref_edge_language`), иначе
++     * язык уже выбранного голоса, иначе русский — как у [EdgeTts.DEFAULT_VOICE].
++     */
++    private fun edgeLanguage(): String {
++        val pref = runCatching { prefs().edgeLanguage().get() }.getOrDefault("")
++            .trim().lowercase(Locale.US)
++        if (pref.isNotEmpty() && pref != "auto" && pref != "🌐") return pref
++        val voice = runCatching { prefs().edgeVoice().get() }.getOrDefault("")
++        // «ru-RU-SvetlanaNeural» -> «ru»
++        return voice.substringBefore('-').lowercase(Locale.US)
++            .takeIf { it.isNotEmpty() && it.all(Char::isLetter) } ?: "ru"
++    }
++
+     /** Проба конкретного голоса Edge TTS (кнопка «Проба» в списке голосов). */
+     fun speakEdgeVoiceTest(context: Context, voice: String, onDone: () -> Unit = {}) {
+         stop()
+@@ -1176,7 +1356,18 @@ object TtsSpeaker {
+ 
+     // region ELEVENLABS (API-ключ)
+ 
+-    private fun speakElevenLabs(context: Context, text: String) {
++    /**
++     * Озвучка ElevenLabs. Запрос уходит с ОДНИМ voice_id, поэтому роль
++     * выражается самим голосом: голос из словаря ролей, иначе голос из
++     * настроек, иначе дефолт по полу ([elevenVoiceId]). Раньше пол и слот
++     * терялись, и весь текст звучал одним и тем же голосом.
++     */
++    private fun speakElevenLabs(
++        context: Context,
++        text: String,
++        roleVoice: String? = null,
++        gender: String? = null,
++    ) {
+         val p = prefs()
+         val apiKey = p.elevenApiKey().get()
+         if (apiKey.isBlank()) {
+@@ -1184,7 +1375,7 @@ object TtsSpeaker {
+             speakGoogleWeb(context, text)
+             return
+         }
+-        val voiceId = p.elevenVoiceId().get().ifBlank { "21m00Tcm4TlvDq8ikWAM" }
++        val voiceId = elevenVoiceId(roleVoice, gender)
+         currentJob = scope.launch {
+             setSpeaking(true)
+             try {
+@@ -1217,6 +1408,23 @@ object TtsSpeaker {
+         }
+     }
+ 
++    /**
++     * voice_id для реплики: голос роли → голос из настроек → дефолт по полу.
++     *
++     * Питч и темп сюда НЕ передаются: запрос ElevenLabs собирается только из
++     * text/model_id/voice_id, и выдумывать параметры просодии, которых этот
++     * вызов не отправляет, бессмысленно — они бы просто потерялись.
++     */
++    private fun elevenVoiceId(roleVoice: String?, gender: String?): String {
++        roleVoice?.let { spec ->
++            val id = parseVoiceSpec(spec).second.ifBlank { spec }
++            if (ELEVEN_VOICE_ID.matches(id)) return id
++        }
++        val saved = runCatching { prefs().elevenVoiceId().get() }.getOrDefault("").trim()
++        if (saved.isNotBlank()) return saved
++        return if (gender == "male") ELEVEN_MALE_VOICE else ELEVEN_FEMALE_VOICE
++    }
++
+     /** Фолбэк внутри уже запущенной корутины. */
+     private suspend fun speakGoogleWebInline(context: Context, text: String) {
+         val lang = prefs().ttsWebLanguage().get().ifBlank { "ru" }
+@@ -1387,4 +1595,57 @@ object TtsSpeaker {
+     }
+ 
+     // endregion
++
++    // region Таблицы голосов сетевых движков
++
++    /**
++     * Настоящие женские/мужские голоса Edge по языкам. Слот персонажа сдвигает
++     * выбор по списку, поэтому две женщины (или два мужчины) в одной сцене
++     * говорят разными голосами — ровно то, чего не хватало авточтению.
++     * Имена взяты из публичного каталога edge-tts; неизвестный серверу голос
++     * даёт пустой ответ, и [speakEdgeTts] откатывается на системный.
++     */
++    private val EDGE_GENDER_VOICES: Map<String, Map<String, List<String>>> = mapOf(
++        "ru" to mapOf(
++            "female" to listOf("ru-RU-SvetlanaNeural", "ru-RU-DariyaNeural", "ru-RU-XeniaNeural"),
++            "male" to listOf("ru-RU-DmitryNeural", "ru-RU-MaximNeural"),
++        ),
++        "uk" to mapOf(
++            "female" to listOf("uk-UA-PolinaNeural"),
++            "male" to listOf("uk-UA-VolodymyrNeural"),
++        ),
++        "en" to mapOf(
++            "female" to listOf("en-US-AriaNeural", "en-US-JennyNeural", "en-US-MichelleNeural"),
++            "male" to listOf("en-US-GuyNeural", "en-US-EricNeural", "en-US-ChristopherNeural"),
++        ),
++    )
++
++    /**
++     * Мультиязычные голоса Edge — запасной вариант для языка, на который в
++     * таблице выше голоса нет: они понимают и русский, и восточноазиатские
++     * языки, поэтому озвучка не превращается в «все голоса сразу».
++     */
++    private val EDGE_MULTILINGUAL_VOICES = mapOf(
++        "female" to "en-US-AvaMultilingualNeural",
++        "male" to "en-US-AndrewMultilingualNeural",
++    )
++
++    /** Голоса по умолчанию ElevenLabs из стартовой библиотеки аккаунта. */
++    private const val ELEVEN_FEMALE_VOICE = "21m00Tcm4TlvDq8ikWAM" // Rachel
++    private const val ELEVEN_MALE_VOICE = "VR6AewLTIGv4JNBf1nQv" // Arnold
++
++    /**
++     * id моделей удалённого сервера: ровно эти значения он понимает (плюс
++     * «female»/«male»/«auto»). Список берём из каталога голосов приложения, а
++     * не выдумываем, иначе сервер тихо подставит «irina» всем.
++     */
++    private val REMOTE_SERVER_VOICE_IDS: Set<String> =
++        eu.kanade.tachiyomi.data.voice.VoicePlugins.REMOTE_VOICE_CATALOG_IDS
++            .map { it.lowercase(Locale.US) }
++            .toSet()
++
++    /** voice_id ElevenLabs: буквы и цифры без разделителей. */
++    private val ELEVEN_VOICE_ID = Regex("""[A-Za-z0-9]{16,32}""")
++
++    // endregion
+ }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceIntonations.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceIntonations.kt
+index d5d969bca..7676122b6 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceIntonations.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceIntonations.kt
+@@ -35,6 +35,14 @@ data class VoiceIntonationRule(
+  * Доступ к словарю интонаций: JSON в настройках
+  * ([OcrPreferences.voiceIntonations]). Первое подходящее правило выигрывает;
+  * порядок в списке = приоритет.
++ *
++ * Где и как применяется (это объясняет, почему словарь раньше «не работал»
++ * на части движков): системный движок режет реплику на предложения и ищет
++ * правило для каждого предложения ([TtsSpeaker.speakSystem]), поэтому тон
++ * меняется посередине реплики. Сетевые движки (Edge, удалённый сервер) озвучивают
++ * реплику одним запросом — там правило ищется по всей реплике целиком, и
++ * меняет темп/тон/паузу запроса. Google Web и ElevenLabs параметров просодии не
++ * принимают вовсе, поэтому для них словарь недостижим.
+  */
+ object VoiceIntonationDictionary {
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceRoles.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceRoles.kt
+index 07bc131db..74b06a9a4 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceRoles.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceRoles.kt
+@@ -7,15 +7,18 @@ import mihon.domain.ocr.service.OcrPreferences
+  *
+  * Полноценный словарь поверх прежних трёх слотов ♀/♂/🎙: роль связывает имя
+  * или метки [markers] с голосом, полом, возрастом и модификаторами
+- * питча/темпа. Имя приходит из разметки `{имя:Аки}`, пол — из `{ж}/{м}` или
+- * пресета пользователя.
++ * питча/темпа. Имя приходит из разметки `{имя:Аки}` или из подписи в самом
++ * тексте реплики («АКИ: …»), пол — из `{ж}/{м}` или пресета пользователя.
+  *
+  * Правила подбора, по убыванию приоритета:
+  *  1. имя говорящего совпало с меткой роли (без учёта регистра, подстрока);
+  *  2. имя совпало с [name];
+- *  3. явный пол (male/female) совпал с [gender] роли (клавиши ♀/♂/🎙 и
++ *  3. имя или метка роли упомянуты САМИМ ТЕКСТОМ реплики — единственный путь
++ *     для OCR-чтения, где разметки `{имя:Аки}` нет (иначе все настроенные
++ *     роли молча игнорировались и оставался «только пол»);
++ *  4. явный пол (male/female) совпал с [gender] роли (клавиши ♀/♂/🎙 и
+  *     ручной режим);
+- *  4. пол «auto» — первая роль запасного совпадения только по имени [name]
++ *  5. пол «auto» — первая роль запасного совпадения только по имени [name]
+  *     даже без меток не выбирается (риск ложного срабатывания).
+  *
+  * Все модификаторы перемножаются с пресетами [VoicePreset], поэтому роль
+@@ -50,11 +53,44 @@ data class VoiceRole(
+         return roleGender.equals(gender, ignoreCase = true) || roleGender == "narrator"
+     }
+ 
++    /**
++     * Упомянут ли персонаж в тексте реплики: «АКИ: …», «Аки, помоги!».
++     *
++     * Сравнение идёт ПО СЛОВАМ, а не по подстроке: иначе короткая метка
++     * совпала бы с половиной реплики («Анна» внутри «анна‑виктория»), и роль
++     * перехватывала бы чужие реплики. Метка из нескольких слов должна
++     * присутствовать целиком («Ким Чен», а не одно «ким»), слова короче трёх
++     * букв не сверяем — такие встречаются в любом тексте.
++     */
++    fun mentionedIn(text: String): Boolean {
++        val words = text.lowercase()
++            .split(WORD_BREAK)
++            .filter { it.isNotEmpty() }
++            .toSet()
++        if (words.isEmpty()) return false
++        return mentions().any { marker ->
++            val parts = marker.lowercase().trim()
++                .split(WORD_BREAK)
++                .filter { it.isNotEmpty() }
++            parts.isNotEmpty() &&
++                parts.all { it.length >= 3 && it in words }
++        }
++    }
++
++    /** Имя роли и её метки — всё, чем роль может назвать персонажа. */
++    private fun mentions(): List<String> = buildList {
++        add(name)
++        addAll(markers)
++    }
++
+     companion object {
+         const val GENDER_AUTO = "auto"
+         const val GENDER_MALE = "male"
+         const val GENDER_FEMALE = "female"
+         const val GENDER_NEUTRAL = "neutral"
++
++        /** Разделители слов: всё, кроме букв и цифр. */
++        private val WORD_BREAK = Regex("""[^\p{L}\p{N}]+""")
+     }
+ }
+ 
+@@ -121,23 +157,33 @@ object VoiceRoleDictionary {
+ 
+     /**
+      * Находит роль для реплики. [speakerName] — из `{имя:…}` (приоритет),
+-     * [gender] — явный пол (`{ж}/{м}`, кнопки карточки, ручной режим).
++     * [gender] — явный пол (`{ж}/{м}`, кнопки карточки, ручной режим),
++     * [text] — сама реплика: на OCR-чтении разметки с именем нет, поэтому роль
++     * опознаётся по упоминанию имени/метки прямо в тексте.
+      */
+     fun resolve(
+         roles: List<VoiceRole>,
+         speakerName: String?,
+         gender: String?,
++        text: String? = null,
+     ): VoiceRole? {
+         val named = roles.filter { it.name.isNotBlank() }
+         if (speakerName != null) {
+             named.firstOrNull { it.matchesName(speakerName) }?.let { return it }
+         }
++        if (!text.isNullOrBlank()) {
++            named.firstOrNull { it.mentionedIn(text) }?.let { return it }
++        }
+         if (gender != null && (gender.equals("male", true) || gender.equals("female", true))) {
+             named.firstOrNull { it.matchesGender(gender) }?.let { return it }
+         }
+         return null
+     }
+ 
+-    fun resolve(prefs: OcrPreferences, speakerName: String?, gender: String?): VoiceRole? =
+-        resolve(load(prefs), speakerName, gender)
++    fun resolve(
++        prefs: OcrPreferences,
++        speakerName: String?,
++        gender: String?,
++        text: String? = null,
++    ): VoiceRole? = resolve(load(prefs), speakerName, gender, text)
+ }
+\ No newline at end of file
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
+index 096d6e906..b16294e8b 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
+@@ -314,7 +314,9 @@ fun shareScreenshot(context: Context, file: File) {
+             ),
+         )
+     }.onFailure { e ->
+-        logcat(LogPriority.WARN, e) { "Share screenshot failed for ${file.name}" }
++        // logcat здесь — расширение на Any, поэтому без явного получателя
++        // вызов внутри лямбды не резолвится: e — и приёмник, и исключение.
++        e.logcat(LogPriority.WARN, e) { "Share screenshot failed for ${file.name}" }
+         context.toast("Не удалось открыть отправку: ${e.message ?: "нет приложений"}")
+     }
+ }
+diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+index c7635c10f..62477a5c4 100644
+--- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
++++ b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+@@ -379,6 +379,19 @@ class OcrPreferences(
+      */
+     fun autoReadWebtoonSpeed() = preferenceStore.getString("pref_autoread_webtoon_speed", "normal")
+ 
++    // ---- Авточтение: фоновая музыка ----
++    /**
++     * Фоновая музыка в авточтении манги. Порядок треков тот же, что у читалки
++     * книг (процедурные петли eu.kanade.tachiyomi.data.books.BookAmbience), но
++     * настройки отдельные: манга и книга читаются в разных сессиях, и одна
++     * громкость на всех только мешала бы. Выключено по умолчанию — музыка
++     * включается только осознанно, вместе со звуком чужой речи.
++     */
++    fun autoReadMusicEnabled() = preferenceStore.getBoolean("pref_autoread_music_enabled", false)
++
++    /** Громкость фоновой музыки авточтения (0..1); во время речи приглушается. */
++    fun autoReadMusicVolume() = preferenceStore.getFloat("pref_autoread_music_volume", 0.15f)
++
+     // ---- Веб: сохранение как локальная глава ----
+     /** Сохранять веб-страницы как локальные главы с изоляцией по сайту */
+     fun webSavePerSiteFolder() = preferenceStore.getBoolean("pref_web_per_site_folder", true)
+diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
+index d4828bee8..41e07ccd8 100644
+--- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
++++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
+@@ -183,8 +183,8 @@ class OverlayReaderService : Service() {
+ 
+             // Оверлей держим видимым и «прокачиваем» его перерисовку: это заставляет
+             // компоновщик непрерывно выдавать кадры, и VirtualDisplay видит их
+-            // даже на статичном экране. Панели оверлея в кадр не попадут
+-            // (во время прокачки они не рисуются).
++            // даже на статичном экране. Область захвата лежит между панелями
++            // оверлея, поэтому в кадр они не попадают.
+             val wasHidden = overlayView.visibility != View.VISIBLE
+             if (wasHidden) setPassthrough(false)
+             overlayView.beginCapturePump()
+diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
+index 262a1bafd..5ce9b0726 100644
+--- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
++++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
+@@ -4,6 +4,7 @@ import android.content.Context
+ import android.graphics.Canvas
+ import android.graphics.Color
+ import android.graphics.Paint
++import android.graphics.Path
+ import android.graphics.RectF
+ import android.graphics.Typeface
+ import android.os.Handler
+@@ -51,12 +52,27 @@ class OverlayView(
+     // Публичное состояние, управляется сервисом.
+     var scanning: Boolean = false
+     var statusText: String = ""
++
++    /**
++     * Распознанный текст. Панель результата держится высотой в одну строку статуса,
++     * пока текста нет, и разворачивается на полную высоту вместе с текстом — при
++     * запуске оверлей не занимает низ экрана впустую.
++     */
+     var resultText: String = ""
++        set(value) {
++            if (field == value) return
++            field = value
++            scrollLines = 0
++            scrollAccum = 0f
++            layoutPanel()
++            clampFrame()
++            invalidate()
++        }
+ 
+     // «Прокачка» кадров на время захвата: оверлей постоянно перерисовывается,
+     // поэтому дисплей (а с ним и VirtualDisplay) получает свежие кадры даже на
+-    // полностью статичном экране. Панели при этом не рисуются, чтобы кадр был
+-    // чистым.
++    // полностью статичном экране. Сама графика при этом рисуется как обычно:
++    // область захвата лежит между панелями, поэтому в кадр они не попадают.
+     private var capturePumping = false
+     private val pumpHandler = Handler(Looper.getMainLooper())
+     private val pumpRunnable = object : Runnable {
+@@ -91,7 +107,12 @@ class OverlayView(
+     private var touchY = 0f
+     private var startFrame = RectF()
+     private var scrollLines = 0
++    private var scrollAccum = 0f
+     private var lastPanelY = 0f
++    private var contentLines: List<String> = emptyList()
++    private var visibleLines = 1
++
++    private val path = Path()
+ 
+     private val dimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+@@ -145,10 +166,11 @@ class OverlayView(
+     private fun layoutMetrics(w: Float, h: Float) {
+         viewW = w
+         viewH = h
+-        val toolbarH = dp(44f)
+-        val panelH = dp(132f)
++        // Высоты панелей ограничены долей экрана: на плотных экранах (density 3+)
++        // фиксированные dp съедали бы заметную часть дисплея.
++        val toolbarH = min(dp(44f), h * 0.07f)
+         toolbarRect = RectF(0f, 0f, w, toolbarH)
+-        panelRect = RectF(0f, h - panelH, w, h)
++        layoutPanel()
+ 
+         val pref = Prefs.frame()
+         frame = RectF(
+@@ -170,43 +192,77 @@ class OverlayView(
+         }
+     }
+ 
++    /** Нижняя панель: строка статуса без результата, полная высота с текстом. */
++    private fun layoutPanel() {
++        if (viewH <= 0f) return
++        val collapsed = min(statusPaint.textSize * 2.2f, viewH * 0.09f)
++        val expanded = min(dp(132f), viewH * 0.30f)
++        val h = if (resultText.isBlank()) collapsed else max(collapsed, expanded)
++        panelRect = RectF(0f, viewH - h, viewW, viewH)
++    }
++
+     private fun clampFrame() {
+-        val minSide = dp(48f)
+-        val left = max(frame.left, dp(6f))
+-        val top = max(frame.top, toolbarRect.bottom + dp(6f))
+-        val right = min(frame.right, viewW - dp(6f))
+-        val bottom = min(frame.bottom, panelRect.top - dp(6f))
+-        frame.set(left, top, max(right, left + minSide), max(bottom, top + minSide))
++        if (viewW <= 0f || viewH <= 0f) return
++        val padL = min(dp(6f), viewW * 0.02f)
++        val padT = min(dp(6f), viewH * 0.01f)
++        val boxTop = toolbarRect.bottom + padT
++        val boxBottom = panelRect.top - padT
++        val boxRight = viewW - padL
++        // Минимальная сторона не должна превышать половину доступной высоты,
++        // иначе на низких экранах рамка вылезала бы под панели.
++        val minSide = max(dp(20f), min(dp(48f), (boxBottom - boxTop) * 0.5f))
++
++        val left = frame.left.coerceIn(padL, max(padL, boxRight - minSide))
++        val top = frame.top.coerceIn(boxTop, max(boxTop, boxBottom - minSide))
++        val right = frame.right.coerceIn(left + minSide, max(left + minSide, boxRight))
++        val bottom = frame.bottom.coerceIn(top + minSide, max(top + minSide, boxBottom))
++        frame.set(left, top, right, bottom)
+     }
+ 
+     override fun onDraw(canvas: Canvas) {
+         super.onDraw(canvas)
+-        if (capturePumping) return
+ 
+         val alpha = (Prefs.overlayOpacity().coerceIn(0.1f, 0.9f) * 255).toInt()
+         dimPaint.color = Color.argb(alpha, 4, 8, 20)
+ 
+-        // Затемнение вокруг рамки.
++        // Затемнение вокруг рамки. Четыре прямоугольника идут строго встык, иначе
++        // наложение давало бы участки, затемнённые вдвое.
+         canvas.drawRect(0f, 0f, viewW, toolbarRect.bottom, dimPaint)
+         canvas.drawRect(0f, toolbarRect.bottom, frame.left, frame.top, dimPaint)
+-        canvas.drawRect(frame.right, toolbarRect.bottom, viewW, frame.bottom, dimPaint)
++        canvas.drawRect(frame.right, toolbarRect.bottom, viewW, frame.top, dimPaint)
++        canvas.drawRect(0f, frame.top, frame.left, frame.bottom, dimPaint)
++        canvas.drawRect(frame.right, frame.top, viewW, frame.bottom, dimPaint)
+         canvas.drawRect(0f, frame.bottom, viewW, viewH, dimPaint)
+-        canvas.drawRect(frame.left, frame.bottom, frame.right, viewH, dimPaint)
+-        canvas.drawRect(0f, toolbarRect.bottom, frame.left, viewH, dimPaint)
+ 
+         // Рамка захвата.
+         canvas.drawRoundRect(frame, dp(10f), dp(10f), borderPaint)
+         drawHandles(canvas)
+ 
+-        // Тулбар.
+-        canvas.drawRoundRect(toolbarRect, dp(10f), dp(10f), toolbarPaint)
++        // Тулбар и панель результата.
++        roundRectPath(toolbarRect, 0f, 0f, dp(10f), dp(10f))
++        canvas.drawPath(path, toolbarPaint)
+         drawToolbarButtons(canvas)
+ 
+-        // Панель результата.
+-        canvas.drawRoundRect(panelRect, dp(10f), dp(10f), panelPaint)
++        roundRectPath(panelRect, dp(10f), dp(10f), 0f, 0f)
++        canvas.drawPath(path, panelPaint)
+         drawResultPanel(canvas)
+     }
+ 
++    /** Прямоугольник с независимым радиусом каждого угла (в dp-радиусах — px). */
++    private fun roundRectPath(rect: RectF, tl: Float, tr: Float, br: Float, bl: Float) {
++        path.reset()
++        path.moveTo(rect.left + tl, rect.top)
++        path.lineTo(rect.right - tr, rect.top)
++        path.quadTo(rect.right, rect.top, rect.right, rect.top + tr)
++        path.lineTo(rect.right, rect.bottom - br)
++        path.quadTo(rect.right, rect.bottom, rect.right - br, rect.bottom)
++        path.lineTo(rect.left + bl, rect.bottom)
++        path.quadTo(rect.left, rect.bottom, rect.left, rect.bottom - bl)
++        path.lineTo(rect.left, rect.top + tl)
++        path.quadTo(rect.left, rect.top, rect.left + tl, rect.top)
++        path.close()
++    }
++
+     private fun drawToolbarButtons(canvas: Canvas) {
+         for ((rect, btn) in buttons) {
+             btnPaint.color = if (btn == pressedBtn) Color.parseColor("#FF8A65") else Color.WHITE
+@@ -241,21 +297,28 @@ class OverlayView(
+     private fun drawResultPanel(canvas: Canvas) {
+         val pad = dp(10f)
+         statusPaint.textAlign = Paint.Align.LEFT
+-        canvas.drawText(
+-            if (scanning) "Распознаю текст…" else statusText.ifBlank { "Готово" },
+-            pad,
+-            panelRect.top + dp(18f),
+-            statusPaint,
+-        )
+-        val maxW = (panelRect.width() - pad * 2).toInt()
++        val status = if (scanning) "Распознаю текст…" else statusText.ifBlank { "Готово" }
++        val textMetrics = statusPaint.fontMetrics
++        val statusBaseline = if (resultText.isBlank()) {
++            // Свёрнутая панель — одна строка по центру.
++            panelRect.centerY() - (textMetrics.ascent + textMetrics.descent) / 2f
++        } else {
++            panelRect.top + dp(20f)
++        }
++        canvas.drawText(status, pad, statusBaseline, statusPaint)
++
++        contentLines = emptyList()
++        visibleLines = 0
+         val text = resultText
+         if (text.isNotBlank()) {
++            val maxW = (panelRect.width() - pad * 2).toInt()
+             val lines = wrapText(resultPaint, text, maxW)
+             val lineH = resultPaint.textSize * 1.25f
+             val available = panelRect.height() - dp(34f)
+             val visible = (available / lineH).toInt().coerceAtLeast(1)
+-            val maxScroll = max(0, lines.size - visible)
+-            scrollLines = scrollLines.coerceIn(0, maxScroll)
++            contentLines = lines
++            visibleLines = visible
++            scrollLines = scrollLines.coerceIn(0, max(0, lines.size - visible))
+             var y = panelRect.top + dp(34f) + lineH
+             for (i in scrollLines until min(scrollLines + visible, lines.size)) {
+                 canvas.drawText(lines[i], pad, y, resultPaint)
+@@ -264,6 +327,8 @@ class OverlayView(
+         }
+     }
+ 
++    private fun maxScroll(): Int = max(0, contentLines.size - visibleLines)
++
+     private fun wrapText(paint: Paint, text: String, maxW: Int): List<String> {
+         val words = text.split(" ")
+         val lines = ArrayList<String>()
+@@ -346,19 +411,18 @@ class OverlayView(
+         val dy = y - touchY
+         when (mode) {
+             Mode.MOVE -> {
+-                val newLeft = startFrame.left + dx
+-                val newTop = startFrame.top + dy
+-                val newRight = startFrame.right + dx
+-                val newBottom = startFrame.bottom + dy
+-                val shiftX = newLeft.coerceAtLeast(dp(6f)) - newLeft
+-                val fixedLeft = newLeft + shiftX
+-                val fixedRight = newRight + shiftX
+-                frame.set(
+-                    fixedLeft,
+-                    newTop.coerceIn(toolbarRect.bottom + dp(6f), panelRect.top - frame.height() - dp(6f)),
+-                    fixedRight,
+-                    newTop.coerceIn(toolbarRect.bottom + dp(6f), panelRect.top - frame.height() - dp(6f)) + frame.height(),
+-                )
++                val fw = startFrame.width()
++                val fh = startFrame.height()
++                val pad = dp(6f)
++                // Сдвиг ограничиваем по обеим осям сразу: иначе рамка не доезжала
++                // до левого/верхнего края, зато уезжала за правый/нижний.
++                val maxLeft = viewW - pad - fw
++                val newLeft = (startFrame.left + dx).coerceIn(min(pad, maxLeft), max(pad, maxLeft))
++                val minTop = toolbarRect.bottom + pad
++                val maxTop = panelRect.top - pad - fh
++                val newTop = (startFrame.top + dy).coerceIn(min(minTop, maxTop), max(minTop, maxTop))
++                frame.set(newLeft, newTop, newLeft + fw, newTop + fh)
++                clampFrame()
+                 invalidate()
+             }
+             Mode.CORNER_RESIZE -> {
+@@ -367,8 +431,16 @@ class OverlayView(
+             }
+             Mode.SCROLL -> {
+                 val lineH = resultPaint.textSize * 1.25f
+-                val delta = (y - lastPanelY) / lineH
+-                scrollLines += delta.toInt()
++                // Дробный остаток копится: иначе медленное перетаскивание
++                // (меньше строки за кадр) не листало текст вовсе.
++                scrollAccum += (y - lastPanelY) / lineH
++                val whole = scrollAccum.toInt()
++                if (whole != 0) {
++                    scrollAccum -= whole
++                    val next = (scrollLines + whole).coerceIn(0, maxScroll())
++                    if (next == scrollLines) scrollAccum = 0f
++                    scrollLines = next
++                }
+                 lastPanelY = y
+                 invalidate()
+             }
+@@ -379,7 +451,7 @@ class OverlayView(
+     }
+ 
+     private fun resizeTo(dx: Float, dy: Float) {
+-        val minSide = dp(48f)
++        val minSide = min(dp(48f), max(dp(20f), (panelRect.top - toolbarRect.bottom) * 0.5f))
+         val l = frame.left
+         val t = frame.top
+         val r = frame.right
+@@ -399,12 +471,13 @@ class OverlayView(
+ 
+     private fun onUp() {
+         val btn = pressedBtn
+-        if (btn != null) {
+-            perform(btn)
+-        }
+         pressedBtn = null
+         mode = Mode.NONE
++        // Рамку сохраняем до действия: «Скан» читает Prefs.frame(), и при
++        // прежнем порядке захватывалась старая область, если рамку только что
++        // передвинули.
+         callback.onFrameChanged(bean())
++        if (btn != null) perform(btn)
+         invalidate()
+     }
+ 
+@@ -427,7 +500,16 @@ class OverlayView(
+     )
+ 
+     fun resetFrame() {
+-        frame.set(viewW * 0.06f, toolbarRect.bottom + dp(24f), viewW * 0.94f, viewW * 0.94f * 0.55f + toolbarRect.bottom)
++        val boxTop = toolbarRect.bottom + dp(10f)
++        val boxBottom = panelRect.top - dp(10f)
++        val boxH = max(dp(48f), boxBottom - boxTop)
++        val left = min(viewW * 0.06f, viewW - dp(6f))
++        // Высота рамки считалась от viewW, а не от viewH, — в альбомной
++        // ориентации уезжала далеко за нижнюю панель.
++        val top = min(boxTop + boxH * 0.1f, boxBottom)
++        val right = max(min(viewW * 0.94f, viewW - dp(6f)), left)
++        val bottom = max(min(top + boxH * 0.55f, boxBottom), top)
++        frame.set(left, top, right, bottom)
+         clampFrame()
+         invalidate()
+     }
