@@ -53,7 +53,7 @@ live/session-linux.json
 live/session-windows.json
 live/session-agent.json
 live/session-agent-linux.json
-live/session-agent-agent-windows.json
+live/session-agent-windows.json
 live/session-opencode.json
 live/session-opencode-linux.json
 live/session-opencode-windows.json
@@ -67,17 +67,17 @@ session-windows.json"
 LIVE_STATES='in_progress,queued,requested,waiting,pending'
 
 run_is_alive() {  # $1 = runId -> 0 alive, 1 gone, 2 unknown
-  local id="$1" body status conclusion
+  local id="$1" body status
   body="$(curl -sf -m 20 -H "Authorization: token $TOKEN" \
     "$API/actions/runs/$id" 2>/dev/null)" || return 2
   status="$(printf '%s' "$body" | python3 -c \
     'import json,sys;print(json.load(sys.stdin).get("status",""))' 2>/dev/null)"
-  conclusion="$(printf '%s' "$body" | python3 -c \
-    'import json,sys;print(json.load(sys.stdin).get("conclusion") or "")' 2>/dev/null)"
-  if [ -z "$status" ]; then return 2; fi
+  [ -n "$status" ] || return 2
   case ",$LIVE_STATES," in
     *",$status,"*) return 0 ;;
   esac
+  conclusion="$(printf '%s' "$body" | python3 -c \
+    'import json,sys;print(json.load(sys.stdin).get("conclusion") or "")' 2>/dev/null)"
   echo "[reaper] run $id is $status/$conclusion" >&2
   return 1
 }
