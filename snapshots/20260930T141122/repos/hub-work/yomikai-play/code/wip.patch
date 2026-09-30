@@ -1,0 +1,57 @@
+diff --git a/data/src/main/java/yomikai/data/ui/UiActions.kt b/data/src/main/java/yomikai/data/ui/UiActions.kt
+index 65cfb4b..efa5aed 100644
+--- a/data/src/main/java/yomikai/data/ui/UiActions.kt
++++ b/data/src/main/java/yomikai/data/ui/UiActions.kt
+@@ -228,15 +228,24 @@ object UiActions {
+  * порядок вкладок в навигации.
+  *
+  * @param pinned вкладку нельзя скрыть: без неё приложение останется либо без
+- *   контента ([LIBRARY]), либо без входа в настройки ([MORE]), и вернуть её
+- *   будет нечем.
++ *   контента ([LOCAL_LIBRARY]), либо без входа в настройки ([MORE]), и вернуть
++ *   её будет нечем.
++ * @param inTabBar вкладка есть в таб-баре. [LIBRARY] и [BROWSE] из него убраны
++ *   (расширений в приложении нет, а экран остаётся доступен как цель навигации),
++ *   поэтому их нельзя ни скрыть, ни «показать» снова — [UiTabs.validate]
++ *   отклоняет такой id.
+  */
+-enum class UiTab(val id: String, val title: String, val pinned: Boolean = false) {
+-    LIBRARY("library", "Библиотека", pinned = true),
+-    LOCAL_LIBRARY("local_library", "Локальная библиотека"),
++enum class UiTab(
++    val id: String,
++    val title: String,
++    val pinned: Boolean = false,
++    val inTabBar: Boolean = true,
++) {
++    LIBRARY("library", "Библиотека", inTabBar = false),
++    LOCAL_LIBRARY("local_library", "Локальная библиотека", pinned = true),
+     UPDATES("updates", "Обновления"),
+     HISTORY("history", "История"),
+-    BROWSE("browse", "Каталоги"),
++    BROWSE("browse", "Каталоги", inTabBar = false),
+     BROWSER("browser", "Браузер"),
+     AI("ai", "AI-чат"),
+     SCREENSHOTS("screenshots", "Скриншоты"),
+@@ -258,6 +267,9 @@ object UiTabs {
+     /** Все id в порядке показа. */
+     val IDS: List<String> = UiTab.entries.map { it.id }
+ 
++    /** Id вкладок, которые реально стоят в таб-баре. */
++    val TAB_BAR_IDS: List<String> = UiTab.entries.filter { it.inTabBar }.map { it.id }
++
+     /** Id, которые нельзя скрыть ни через чат, ни правкой файла. */
+     val PROTECTED_IDS: Set<String> = UiTab.entries.filter { it.pinned }.map { it.id }.toSet()
+ 
+@@ -272,8 +284,10 @@ object UiTabs {
+         return when {
+             key.isEmpty() -> "Пустой id вкладки"
+             key !in IDS -> "Неизвестная вкладка «$key». Доступны: ${IDS.joinToString()}"
++            key !in TAB_BAR_IDS ->
++                "Вкладка «$key» убрана из таб-бара. Доступны: ${TAB_BAR_IDS.joinToString()}"
+             key in PROTECTED_IDS ->
+-                "Вкладку «$key» нельзя скрыть: без неё не останется библиотеки или входа в настройки"
++                "Вкладку «$key» нельзя скрыть: без неё не останется контента или входа в настройки"
+             else -> null
+         }
+     }
