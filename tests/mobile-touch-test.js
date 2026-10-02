@@ -192,8 +192,7 @@ check('q31 server ws ping', server.includes("case 'ping'") && server.includes("t
 check('q32 runner ui', mobHtml.includes('id="runner-card"') && deskHtml.includes('id="runner-card"') &&
   mob.includes('async function runnerScan(') && desk.includes('async function runnerScan(') &&
   mob.includes('async function runnerSave(') && desk.includes('async function runnerSave(') &&
-  mob.includes('async function runnerStop(') && desk.includes('async function runnerStop(') &&
-  mob.includes('async function runnerRestart(') && desk.includes('async function runnerRestart('));
+  mob.includes('async function runnerStop(') && desk.includes('async function runnerStop('));
 
 // q33: client heartbeat (ping/pong) + instant reconnect on tab return.
 check('q33 keepalive', mob.includes("type: 'ping'") && desk.includes("type: 'ping'") &&
@@ -246,7 +245,6 @@ const panel = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/assets/pa
 check('q35 panel runner', panel.includes('id="runner-card-panel"') &&
   panel.includes('async function runnerPanelScan(') &&
   panel.includes('async function runnerPanelSave(') &&
-  panel.includes('async function runnerPanelRestart(') &&
   panel.includes('async function runnerPanelStop(') &&
   panel.includes('async function rerunRun('));
 check('q35b panel rerun link', panel.includes('onclick="rerunRun('));
@@ -815,33 +813,68 @@ check('q99 every policy editor offers the switch',
 // one folded "Ещё" - nothing removed, and the fold survives the re-render.
 const hubCss = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/hub.css'), 'utf8');
 const dashApp = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/dashboard-app.js'), 'utf8');
-check('q100 the rare controls are folded away',
-  mob.includes('<details class="more" id="runner-more"') &&
+check('q100 the relay settings are folded away',
   mob.includes('<details class="more" id="ho-more"') &&
-  desk.includes('<details class="more" id="runner-more"') &&
   desk.includes('<details class="more" id="ho-more"') &&
-  dashApp.includes('<details class="more" id="runner-more"') &&
-  panel.includes('<details class="more" id="runner-more">') &&
   panel.includes('<details class="more" id="ho-more">') &&
   hubCss.includes('details.more{') && hubCss.includes('details.more>summary'));
-check('q100 save and stop stay visible, restart is folded',
-  mob.includes('id="runner-save"') && mob.includes('id="runner-stop"') &&
-  mob.indexOf('id="runner-stop"') < mob.indexOf('id="runner-more"') &&
-  mob.indexOf('id="runner-more"') < mob.indexOf('id="runner-restart"') &&
-  panel.indexOf('id="pr-stop"') < panel.indexOf('id="runner-more"') &&
-  panel.indexOf('id="runner-more"') < panel.indexOf('id="pr-restart"'));
-check('q100 the hand-over button and its cancel stay reachable',
-  mob.indexOf('id="ho-more"') > mob.indexOf('id="ho-continue"') &&
-  panel.indexOf('id="ho-more"') > panel.indexOf('id="ho-continue"'));
 check('q100 an opened fold is not closed by the next re-render',
-  mob.includes('RUNNER_MORE') && mob.includes('HO_MORE') &&
-  mob.includes("if (runnerMore && RUNNER_MORE) runnerMore.open = true;") &&
+  mob.includes('HO_MORE') && desk.includes('HO_MORE') &&
   mob.includes("if (hoMore && HO_MORE) hoMore.open = true;") &&
-  desk.includes('RUNNER_MORE') && dashApp.includes('RUNNER_MORE'));
+  desk.includes("if (hoMore && HO_MORE) hoMore.open = true;"));
+// q101: the two buttons nobody ever pressed are gone for good - no markup, no
+// handlers, and the hub keeps answering them for an older APK that still asks.
+check('q101 the never pressed controls are deleted, not just hidden',
+  !mob.includes('runnerRestart') && !desk.includes('runnerRestart') && !dashApp.includes('runnerRestart') &&
+  !panel.includes('runnerPanelRestart') &&
+  !mob.includes('id="runner-restart"') && !desk.includes('id="runner-restart"') &&
+  !dashApp.includes('id="runner-restart"') && !panel.includes('id="pr-restart"') &&
+  !panel.includes('onclick="runnerPanelScan()') && !mob.includes('onclick="runnerScan()') &&
+  !desk.includes('onclick="runnerScan()') && !dashApp.includes('onclick="runnerScan()'));
+check('q101 what is left is the two buttons worth a tap',
+  mob.includes('id="runner-save"') && mob.includes('id="runner-stop"') &&
+  panel.includes('id="pr-save"') && panel.includes('id="pr-stop"') &&
+  dashApp.includes('id="runner-save"') && dashApp.includes('id="runner-stop"') &&
+  server.includes("/api/runner/restart"));
+check('q101 the APK list still loads on its own',
+  mob.includes('async function runnerScan(') && desk.includes('async function runnerScan(') &&
+  dashApp.includes('async function runnerScan(') && panel.includes('async function runnerPanelScan('));
 check('q100 the switch state moved into the fold summary',
   mob.includes("id=\"ho-more-sum\"") && mob.includes("document.getElementById('ho-more-sum')") &&
   !mob.includes("bits.push(p.auto ?") && panel.includes("id=\"ho-more-sum\"") &&
   panel.includes("$('ho-more-sum')") && !panel.includes('bits.push(s.enabled ?'));
+
+// q102: the launcher tab and the background keep-alive. Both exist because
+// leaving the panel for another app used to mean coming back to a reconnect
+// countdown - the process was reclaimable and the WebView went with it.
+const manifest = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/AndroidManifest.xml'), 'utf8');
+const bridge = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/java/dev/zen/panel/ZenBridge.kt'), 'utf8');
+const keepAlive = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/java/dev/zen/panel/KeepAlive.kt'), 'utf8');
+check('q102 the panel has a launcher tab',
+  panel.includes('<button id="t-apps"') && panel.includes('<div class="page" id="p-apps">') &&
+  panel.includes("'acc','repo','files','act','sess','apps','apk'") &&
+  panel.includes('if (p === \'apps\') appsLoad();') &&
+  panel.includes('id="apps-q"') && panel.includes('function appsFilter(') &&
+  panel.includes('function appsOpen('));
+check('q102 the APK answers it with the installed apps',
+  bridge.includes('fun listApps(') && bridge.includes('fun launchApp(') &&
+  bridge.includes('Intent.CATEGORY_LAUNCHER') && bridge.includes('getLaunchIntentForPackage') &&
+  manifest.includes('<category android:name="android.intent.category.LAUNCHER" />') &&
+  manifest.includes('<queries>'));
+check('q102 an app tap opens the app, not the runner',
+  panel.includes('ZenBridge.launchApp(a.pkg)') &&
+  panel.includes('appsFilter()[i]') &&
+  panel.includes('живёт сам, не в раннере'));
+check('q102 the panel is held in the foreground while another app is open',
+  manifest.includes('android.permission.FOREGROUND_SERVICE') &&
+  manifest.includes('android.permission.WAKE_LOCK') &&
+  manifest.includes('android:name=".KeepAlive"') &&
+  manifest.includes('android:foregroundServiceType="dataSync"') &&
+  keepAlive.includes('startForeground(') && keepAlive.includes('PARTIAL_WAKE_LOCK') &&
+  keepAlive.includes('START_STICKY'));
+check('q102 the keep-alive rides the activity, so nothing is left switched on',
+  panelKt.includes('KeepAlive.start(this)') && panelKt.includes('KeepAlive.stop(this)') &&
+  panelKt.indexOf('KeepAlive.start(this)') < panelKt.indexOf('override fun onDestroy()'));
 
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

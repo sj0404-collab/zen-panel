@@ -331,6 +331,37 @@ function stubFetch(url, opts) {
   // expandDesk does not await loadDesks; let it land before close()
   await new Promise(r => setTimeout(r, 400));
 
+  // The «Приложения» tab: a launcher over whatever the phone has installed.
+  // The APK reports it through ZenBridge, so that is what gets stubbed here.
+  const launched = [];
+  dom.window.ZenBridge = {
+    listApps: () => JSON.stringify([
+      { label: 'Telegram', pkg: 'org.telegram.messenger', icon: 'aWNvbg==' },
+      { label: 'Терминал', pkg: 'com.termux' },
+      { label: 'Zen Panel', pkg: 'dev.zen.panel' },
+    ]),
+    launchApp: pkg => launched.push(pkg),
+  };
+  dom.window.go('apps');
+  eq('p50 launcher lists the phone', (document.getElementById('apps-list')?.textContent || '')
+    .includes('Telegram') && (document.getElementById('apps-list')?.textContent || '').includes('org.telegram.messenger'), true);
+  eq('p50b launcher renders the icon', (document.querySelector('#apps-list img')?.getAttribute('src') || '')
+    .startsWith('data:image/png;base64,'), true);
+  eq('p50c the tab is the one lit', document.getElementById('t-apps')?.classList.contains('on'), true);
+  dom.window.eval(`document.getElementById('apps-q').value = 'term'; appsRender();`);
+  eq('p51 launcher filters', (document.getElementById('apps-list')?.textContent || '').includes('Терминал')
+    && !(document.getElementById('apps-list')?.textContent || '').includes('Telegram'), true);
+  // A tap has to open the app that is on screen, not the same row of the
+  // unfiltered list - that is the whole point of filtering.
+  dom.window.appsOpen(0);
+  eq('p51b a tap launches what is shown', JSON.stringify(launched), JSON.stringify(['com.termux']));
+  dom.window.eval(`document.getElementById('apps-q').value = 'zzz'; appsRender();`);
+  eq('p52 a miss says so', (document.getElementById('apps-list')?.textContent || '').includes('Ничего не подходит'), true);
+  // Files is a drill-in of Repos and starts no polling, so this checks the tab
+  // bar hands the light back without leaving a fetch running at close().
+  dom.window.go('files');
+  eq('p52b back to another tab', document.getElementById('t-repo')?.classList.contains('on'), true);
+
   dom.window.close();
   await new Promise(r => setTimeout(r, 500));
   eq('p16 no unhandled rejections', unhandled.length, 0);

@@ -7,7 +7,6 @@
 
 let RUNNER = null;
 let RUNNER_BUSY = false;
-let RUNNER_MORE = false;   // "Ещё" open - it has to survive a re-render
 let serverSessions = [];
 
 async function pageInit() {
@@ -82,21 +81,10 @@ function runnerRender() {
     <div class="runner-btns">
       <button class="btn btn-sm btn-ok" onclick="runnerSave()" id="runner-save" disabled>💾 Сохранить</button>
       <button class="btn btn-sm btn-er" onclick="runnerStop()" id="runner-stop"${onActs ? '' : ' disabled'}>⏻ Выключить</button>
-      <details class="more" id="runner-more" ontoggle="RUNNER_MORE=this.open">
-        <summary>⚙️ Ещё</summary>
-        <div class="runner-btns" style="margin:8px 0 0">
-          <button class="btn btn-sm" onclick="runnerScan()">🔍 Файлы</button>
-          <button class="btn btn-sm btn-ok" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled'}>⟲ Перезапуск</button>
-        </div>
-      </details>
     </div>
     <div id="runner-scan"></div>
     <div id="runner-res"></div>
   </div>`;
-  // The card is rebuilt on every scan and install, so a fold the user opened
-  // would snap shut under their finger. Put it back the way they left it.
-  const runnerMore = document.getElementById('runner-more');
-  if (runnerMore && RUNNER_MORE) runnerMore.open = true;
   if (RUNNER_BUSY) {
     const s = document.getElementById('runner-scan');
     if (s) s.innerHTML = '<div class="runner-busy">работаю…</div>';
@@ -178,17 +166,6 @@ async function runnerStop() {
   const out = document.getElementById('runner-res');
   if (out) out.innerHTML = r.success
     ? '<div class="runner-res">⏻ Остановка принята — ранер сворачивается ~минуту.</div>'
-    : '<div class="runner-err">' + escHtml(r.error || 'не вышло') + '</div>';
-}
-async function runnerRestart() {
-  if (!runnerVisible()) { fmInfo('Кнопки активны только на Actions-раннере.'); return; }
-  if (!(await fmConfirm('Перезапустить ранер? Подстрахуй файлы «💾 Сохранить» — свежий раннер подхватит их из ветки.', 'Перезапустить'))) return;
-  RUNNER_BUSY = true; runnerRender();
-  const r = await fetch('/api/runner/restart', { method: 'POST' }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
-  RUNNER_BUSY = false; runnerRender();
-  const out = document.getElementById('runner-res');
-  if (out) out.innerHTML = r.success
-    ? '<div class="runner-res">⟲ Перезапуск принят: новый ранер поднимается, старый гасится.</div>'
     : '<div class="runner-err">' + escHtml(r.error || 'не вышло') + '</div>';
 }
 
