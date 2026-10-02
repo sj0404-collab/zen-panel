@@ -1,0 +1,445 @@
+diff --git a/app/src/main/assets/panel/index.html b/app/src/main/assets/panel/index.html
+index 160fb17..3575862 100644
+--- a/app/src/main/assets/panel/index.html
++++ b/app/src/main/assets/panel/index.html
+@@ -270,6 +270,8 @@
+     <h2>🔁 Эстафета сессии</h2>
+     <div class="note" style="margin-top:0" id="ho-line">читаю настройки…</div>
+     <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap">
++      <label class="note" style="display:flex;align-items:center;gap:6px">
++        <input id="ho-auto" type="checkbox"> автопередача</label>
+       <label class="note">работает до
+         <input id="ho-age" type="number" min="0" max="720" step="10" inputmode="numeric"
+                style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
+@@ -285,7 +287,10 @@
+       <button class="ghost small" id="ho-start" onclick="handoffPanelStart()">🔁 Передать сейчас</button>
+       <button class="ghost small" id="ho-continue" onclick="handoffPanelContinue()">▶️ Продолжить</button>
+     </div>
+-    <div class="note" id="ho-hint" style="margin-top:6px">
++<div class="note" id="ho-hint" style="margin-top:6px">
++      Без «автопередачи» ничего не запускается само: раннер живёт, пока жив GitHub, и уходит только по кнопке.
++      С галочкой сессия, которой вы реально пользуетесь, заранее переезжает на новый раннер, чтобы не попасть под 6-часовой лимит.
++      Простой — это окно «никто не работает»: внутри него передача разрешена, снаружи раннер просто умрёт от лимита.
+       Лимиты хранятся в control-репозитории, поэтому новый раннер читает их сам.
+       Передача сначала сохраняет всё на GitHub, потом считает 3 минуты; «Продолжить» отменяет.
+       0 = выключено. Если не удалось сохранить — раннер не выключается.
+@@ -2558,9 +2563,12 @@ function handoffPanelRender(doc) {
+   const s = (doc && doc.status) || null;
+   const set = (id, v) => { const el = $(id); if (el && document.activeElement !== el) el.value = v == null ? '' : v; };
+   set('ho-age', p.maxAgeMin); set('ho-idle', p.idleMin); set('ho-count', p.countdownSec);
++  const auto = $('ho-auto');
++  if (auto && document.activeElement !== auto) auto.checked = p.auto === true || p.auto === 1;
+   if (!s) {
+     line.textContent = doc
+-      ? 'раннер ещё не публиковал состояние — лимиты сохранены, передача начнётся сама'
++      ? (p.auto ? 'раннер ещё не публиковал состояние — лимиты сохранены, передача начнётся сама'
++                : 'раннер ещё не публиковал состояние — автопередача выключена, раннер живёт, пока жив GitHub')
+       : 'handoff.json ещё нет: сохрани лимиты, и раннер подхватит их';
+     return;
+   }
+@@ -2575,6 +2583,7 @@ function handoffPanelRender(doc) {
+   if (s.lastError) bits.push('<span class="danger">' + esc(s.lastError) + '</span>');
+   if (s.successor && s.successor.url) bits.push('новый: <a href="' + esc(s.successor.url) + '" target="_blank" rel="noreferrer">' + esc(s.successor.url) + '</a>');
+   if (s.savedIn) bits.push('настройки: ' + (s.savedIn === 'repo' ? 'в репозитории' : 'локально у раннера'));
++  bits.push(s.enabled ? 'автопередача включена' : 'автопередача выключена — сам ничего не запускаю');
+   line.innerHTML = bits.join(' · ');
+   const cont = $('ho-continue');
+   if (cont) cont.disabled = !(s.state === 'countdown' || s.state === 'failed');
+@@ -2588,11 +2597,24 @@ async function handoffPanelPoll() {
+ }
+ async function handoffPanelSave() {
+   const num = (id, def) => { const v = parseInt(($(id) || {}).value, 10); return Number.isFinite(v) ? v : def; };
+-  const policy = { maxAgeMin: num('ho-age', 0), idleMin: num('ho-idle', 0), countdownSec: num('ho-count', 180) };
+   const hint = $('ho-hint');
++  // The saved object replaces the policy wholesale, so carry the fields the
++  // panel does not edit (standby/retry) over instead of resetting them.
++  let old = {};
++  try { const cur = await readHandoffDoc(); old = (cur && cur.policy) || {}; } catch (e) {}
++  const policy = {
++    auto: !!($('ho-auto') || {}).checked,
++    maxAgeMin: num('ho-age', 0),
++    idleMin: num('ho-idle', 0),
++    countdownSec: num('ho-count', 180),
++    standbyMin: old.standbyMin,
++    retryMin: old.retryMin
++  };
+   try {
+     await writeHandoffDoc({ policy });
+-    if (hint) hint.textContent = 'сохранено в control-репозитории — новый раннер прочитает эти лимиты сам';
++    if (hint) hint.textContent = policy.auto
++      ? 'сохранено в control-репозитории — сессия под лимитом переедет сама, пока вы за ней работаете'
++      : 'сохранено: автопередача выключена, без вашего нажатия новый раннер не запустится';
+   } catch (e) {
+     if (hint) hint.textContent = 'не сохранилось: ' + e.message;
+   }
+diff --git a/npm-hub/public/desktop-app.js b/npm-hub/public/desktop-app.js
+index 536be71..1469d9a 100644
+--- a/npm-hub/public/desktop-app.js
++++ b/npm-hub/public/desktop-app.js
+@@ -450,6 +450,7 @@ function runnerRender() {
+     <div class="runner-h" style="margin-top:10px">🔁 Эстафета <span class="runner-dot" id="handoff-dot"></span></div>
+     <div class="runner-line" id="handoff-line">загружаю состояние…</div>
+     <div class="runner-btns">
++      <label class="runner-lbl"><input id="ho-auto" type="checkbox"> автопередача</label>
+       <label class="runner-lbl">работает до <input id="ho-age" class="runner-inp" type="number" min="0" max="720" step="10" inputmode="numeric"> мин</label>
+       <label class="runner-lbl">простой <input id="ho-idle" class="runner-inp" type="number" min="0" max="720" step="5" inputmode="numeric"> мин</label>
+       <label class="runner-lbl">отсчёт <input id="ho-count" class="runner-inp" type="number" min="30" max="1800" step="30" inputmode="numeric"> с</label>
+@@ -513,6 +514,9 @@ function handoffRender() {
+   set('ho-age', p.maxAgeMin == null ? '' : p.maxAgeMin);
+   set('ho-idle', p.idleMin == null ? '' : p.idleMin);
+   set('ho-count', p.countdownSec == null ? '' : p.countdownSec);
++  const autoBox = document.getElementById('ho-auto');
++  if (autoBox && document.activeElement !== autoBox) autoBox.checked = p.auto === true || p.auto === 1;
++  bits.push(p.auto ? 'автопередача включена' : 'автопередача выключена — сам ничего не запускаю');
+   const cont = document.getElementById('ho-continue');
+   if (cont) cont.hidden = !(s.state === 'countdown' || s.state === 'failed');
+   const start = document.getElementById('ho-start');
+@@ -520,7 +524,7 @@ function handoffRender() {
+   const hint = document.getElementById('handoff-hint');
+   if (hint) hint.textContent = !cap.available
+     ? (cap.reason || 'передача недоступна')
+-    : '0 = выключено. Передача сначала сохраняет всё на GitHub и только потом считает 3 минуты; «Продолжить» отменяет.';
++    : '0 = выключено. Без «автопередачи» новый раннер не запускается сам — только по кнопке. всё на GitHub и только потом считает 3 минуты; «Продолжить» отменяет.';
+ }
+ async function handoffPoll() {
+   try {
+@@ -536,7 +540,7 @@ async function handoffSave() {
+   const num = (id, def) => { const v = parseInt((document.getElementById(id) || {}).value, 10); return Number.isFinite(v) ? v : def; };
+   const r = await fetch('/api/handoff/policy', {
+     method: 'POST', headers: { 'Content-Type': 'application/json' },
+-    body: JSON.stringify({ policy: { maxAgeMin: num('ho-age', 0), idleMin: num('ho-idle', 0), countdownSec: num('ho-count', 180) } })
++    body: JSON.stringify({ policy: { auto: !!((document.getElementById('ho-auto') || {}).checked), maxAgeMin: num('ho-age', 0), idleMin: num('ho-idle', 0), countdownSec: num('ho-count', 180) } })
+   }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+   if (r && r.policy) HANDOFF = Object.assign({}, HANDOFF || {}, { policy: r.policy, status: r.status || (HANDOFF && HANDOFF.status) });
+   const hint = document.getElementById('handoff-hint');
+diff --git a/npm-hub/public/mobile-app.js b/npm-hub/public/mobile-app.js
+index 0393a05..33dac67 100644
+--- a/npm-hub/public/mobile-app.js
++++ b/npm-hub/public/mobile-app.js
+@@ -841,6 +841,7 @@ function runnerRender() {
+     <div class="runner-h" style="margin-top:10px">🔁 Эстафета <span class="runner-dot" id="handoff-dot"></span></div>
+     <div class="runner-line" id="handoff-line">загружаю состояние…</div>
+     <div class="runner-btns">
++      <label class="runner-lbl"><input id="ho-auto" type="checkbox"> автопередача</label>
+       <label class="runner-lbl">работает до <input id="ho-age" class="runner-inp" type="number" min="0" max="720" step="10" inputmode="numeric"> мин</label>
+       <label class="runner-lbl">простой <input id="ho-idle" class="runner-inp" type="number" min="0" max="720" step="5" inputmode="numeric"> мин</label>
+       <label class="runner-lbl">отсчёт <input id="ho-count" class="runner-inp" type="number" min="30" max="1800" step="30" inputmode="numeric"> с</label>
+@@ -905,6 +906,9 @@ function handoffRender() {
+   set('ho-age', p.maxAgeMin == null ? '' : p.maxAgeMin);
+   set('ho-idle', p.idleMin == null ? '' : p.idleMin);
+   set('ho-count', p.countdownSec == null ? '' : p.countdownSec);
++  const autoBox = document.getElementById('ho-auto');
++  if (autoBox && document.activeElement !== autoBox) autoBox.checked = p.auto === true || p.auto === 1;
++  bits.push(p.auto ? 'автопередача включена' : 'автопередача выключена — сам ничего не запускаю');
+   const cont = document.getElementById('ho-continue');
+   if (cont) cont.hidden = !(s.state === 'countdown' || s.state === 'failed');
+   const start = document.getElementById('ho-start');
+@@ -912,7 +916,7 @@ function handoffRender() {
+   const hint = document.getElementById('handoff-hint');
+   if (hint) hint.textContent = !cap.available
+     ? (cap.reason || 'передача недоступна')
+-    : '0 = выключено. Передача сначала сохраняет всё на GitHub и только потом считает 3 минуты; «Продолжить» отменяет.';
++    : '0 = выключено. Без «автопередачи» новый раннер не запускается сам — только по кнопке. всё на GitHub и только потом считает 3 минуты; «Продолжить» отменяет.';
+ }
+ async function handoffPoll() {
+   try {
+@@ -928,7 +932,7 @@ async function handoffSave() {
+   const num = (id, def) => { const v = parseInt((document.getElementById(id) || {}).value, 10); return Number.isFinite(v) ? v : def; };
+   const r = await fetch('/api/handoff/policy', {
+     method: 'POST', headers: { 'Content-Type': 'application/json' },
+-    body: JSON.stringify({ policy: { maxAgeMin: num('ho-age', 0), idleMin: num('ho-idle', 0), countdownSec: num('ho-count', 180) } })
++    body: JSON.stringify({ policy: { auto: !!((document.getElementById('ho-auto') || {}).checked), maxAgeMin: num('ho-age', 0), idleMin: num('ho-idle', 0), countdownSec: num('ho-count', 180) } })
+   }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+   if (r && r.policy) HANDOFF = Object.assign({}, HANDOFF || {}, { policy: r.policy, status: r.status || (HANDOFF && HANDOFF.status) });
+   const hint = document.getElementById('handoff-hint');
+diff --git a/npm-hub/src/handoff.js b/npm-hub/src/handoff.js
+index a5cde57..aaf8488 100644
+--- a/npm-hub/src/handoff.js
++++ b/npm-hub/src/handoff.js
+@@ -19,19 +19,32 @@
+ //   6. successor seen                       -> 'stopping'
+ //
+ // POLICY (persisted globally, see /api/handoff/policy)
+-//   maxAgeMin    0 = never; otherwise hand off N minutes after the run started
+-//   idleMin      0 = never; otherwise hand off after N minutes without activity
++//   auto         THE SWITCH THAT MATTERS: automatic relay is OFF until someone
++//                ticks it in the panel. While it is off nothing starts a
++//                successor by itself - only the "Передать сейчас" button does.
++//                A policy saved before this flag existed has no `auto`, so it
++//                normalises to off: the old idle relay (idleMin 45) used to
++//                keep a forgotten hub passing itself to a fresh runner every
++//                45 minutes, forever, with nobody pressing anything.
++//   maxAgeMin    0 = never; otherwise the age at which a session someone is
++//                ACTUALLY USING may hand over (the 6h cap would kill it)
++//   idleMin      0 = never; otherwise how long "nobody is working" counts as
++//                idle - it is the activity window the age rule requires, not a
++//                trigger of its own. An idle hub is left to the 6h cap rather
++//                than paying for a successor nobody asked for.
+ //   countdownSec how long the user has to press "Продолжить"
+ 
+ const DEFAULTS = {
++  auto: false,         // nothing starts on its own until this is turned on
+   maxAgeMin: 330,      // 30 min before the 6h cap kills the runner
+-  idleMin: 45,         // nothing at all for 45 min -> hand the work over
++  idleMin: 45,         // "nobody is working" window the age rule requires
+   countdownSec: 180,   // 3 minutes, as asked for
+   standbyMin: 12,      // wait this long for the successor to show up
+   retryMin: 5          // after a failed save, try again in this many minutes
+ };
+ 
+ const LIMITS = {
++  auto: { min: 0, max: 1 },
+   maxAgeMin: { min: 0, max: 720 },
+   idleMin: { min: 0, max: 720 },
+   countdownSec: { min: 30, max: 1800 },
+@@ -44,12 +57,14 @@ const asInt = (v, fallback) => {
+   return Number.isFinite(n) ? n : fallback;
+ };
+ 
++const asBool = (v) => (v === true || v === 1 || v === '1' || v === 'true' ? 1 : 0);
++
+ function normalizePolicy(input) {
+   const src = (input && typeof input === 'object') ? input : {};
+   const out = {};
+   for (const key of Object.keys(DEFAULTS)) {
+     const lim = LIMITS[key];
+-    let n = asInt(src[key], DEFAULTS[key]);
++    let n = key === 'auto' ? asBool(src[key]) : asInt(src[key], DEFAULTS[key]);
+     if (n < lim.min) n = lim.min;
+     if (n > lim.max) n = lim.max;
+     out[key] = n;
+@@ -83,7 +98,7 @@ function createHandoff(options) {
+   let successor = null;     // { runId, url } once dispatch succeeded
+   let attempts = 0;
+ 
+-  const policyOn = () => policy.maxAgeMin > 0 || policy.idleMin > 0;
++  const policyOn = () => policy.auto === 1 && (policy.maxAgeMin > 0 || policy.idleMin > 0);
+ 
+   // A limit fired, or the user pressed the button. Only ever leaves 'idle'.
+   const begin = (why, ts) => {
+@@ -202,8 +217,14 @@ function createHandoff(options) {
+       if (state === IDLE) {
+         if (!policyOn()) return null;
+         const ageMin = (t - startedAtMs) / 60000;
+-        if (policy.maxAgeMin > 0 && ageMin >= policy.maxAgeMin) return begin('age', t);
+-        if (policy.idleMin > 0 && (t - activityAt) / 60000 >= policy.idleMin) return begin('idle', t);
++        const idleFor = (t - activityAt) / 60000;
++        if (policy.maxAgeMin > 0 && ageMin >= policy.maxAgeMin) {
++          // Only a session someone is really using is worth a successor. An
++          // idle hub is left to the 6h cap: handing it over would only buy the
++          // next runner so that one can hand over again, with nobody there.
++          if (policy.idleMin > 0 && idleFor >= policy.idleMin) return null;
++          return begin('age', t);
++        }
+         return null;
+       }
+       if (state === FAILED) {
+@@ -239,6 +260,7 @@ function createHandoff(options) {
+         state,
+         reason,
+         enabled: policyOn(),
++        auto: policy.auto === 1,
+         policy: { ...policy },
+         ageMin: Math.max(0, Math.round((t - startedAtMs) / 60000)),
+         idleMin: policy.idleMin > 0 ? Math.max(0, Math.round((t - activityAt) / 60000)) : 0,
+diff --git a/npm-hub/src/server.js b/npm-hub/src/server.js
+index 6de2238..be3010c 100644
+--- a/npm-hub/src/server.js
++++ b/npm-hub/src/server.js
+@@ -1665,7 +1665,13 @@ app.get('/api/handoff', (req, res) => {
+ // that takes over next already knows them before the panel is opened.
+ app.post('/api/handoff/policy', express.json({ limit: '32kb' }), async (req, res) => {
+   try {
+-    const policy = handoff.setPolicy((req.body && req.body.policy) || req.body || {});
++    const incoming = (req.body && req.body.policy) || req.body || {};
++    // Merge, don't clobber: an older client build knows nothing about `auto`
++    // (or standby/retry), and it must not be able to flip the master switch
++    // by omission - only by saying so.
++    const merged = Object.assign({}, handoff.policy);
++    for (const key of Object.keys(incoming)) merged[key] = incoming[key];
++    const policy = handoff.setPolicy(merged);
+     handoffPolicy = policy;
+     // The status travels with the policy in the same write: the panel reads one
+     // file, and a freshly created handoff.json should not look "empty".
+diff --git a/tests/handoff-test.js b/tests/handoff-test.js
+index d177832..5450c05 100644
+--- a/tests/handoff-test.js
++++ b/tests/handoff-test.js
+@@ -12,9 +12,12 @@ function check(name, cond, extra) {
+ const MIN = 60000;
+ 
+ // h1: the defaults protect the runner without surprising anyone: hand over 30
+-// minutes before the 6h cap, after 45 idle minutes, with a 3 minute warning.
++// minutes before the 6h cap, after 45 idle minutes, with a 3 minute warning -
++// but only when the user ticked "автопередача". The switch is off by default:
++// a hub nobody is using must not keep buying itself successors.
+ const def = H.normalizePolicy({});
+ check('h1 default policy', def.maxAgeMin === 330 && def.idleMin === 45 && def.countdownSec === 180, def);
++check('h1 automatic relay is off by default', def.auto === 0 && H.createHandoff({}).isEnabled() === false, def);
+ check('h1 policy is clamped', H.normalizePolicy({ maxAgeMin: -5, idleMin: 99999, countdownSec: 3 }).maxAgeMin === 0 &&
+   H.normalizePolicy({ maxAgeMin: -5, idleMin: 99999, countdownSec: 3 }).idleMin === 720 &&
+   H.normalizePolicy({ maxAgeMin: -5, idleMin: 99999, countdownSec: 3 }).countdownSec === 30);
+@@ -22,16 +25,19 @@ check('h1 policy is clamped', H.normalizePolicy({ maxAgeMin: -5, idleMin: 99999,
+ // h2: nothing happens while the user is within both limits.
+ let t = 1000 * MIN;
+ const mk = (policy, startedAt) => H.createHandoff({ startedAtMs: startedAt, policy, now: () => t });
+-let h = mk({ maxAgeMin: 100, idleMin: 30 }, t);
++let h = mk({ auto: true, maxAgeMin: 100, idleMin: 30 }, t);
+ check('h2 quiet before the limits', h.tick() === null && h.state === 'idle');
+ h.noteActivity(t);
+ t += 10 * MIN;
+ check('h2 activity keeps it alive', h.tick() === null, h.status());
+ 
+-// h3: idle too long -> save first, never a shutdown straight away.
+-t += 25 * MIN; // 35 min since the last activity
++// h3: the age limit fires for a session someone is actually using - and it
++// saves first, never a shutdown straight away.
++h = mk({ auto: true, maxAgeMin: 100, idleMin: 30 }, t - 100 * MIN);
++h.noteActivity(t);
++t += 5 * MIN; // still inside the 30 min activity window
+ const save = h.tick();
+-check('h3 idle triggers a save', save && save.type === 'save' && save.reason === 'idle', save);
++check('h3 age triggers a save', save && save.type === 'save' && save.reason === 'age', save);
+ check('h3 state is saving', h.state === 'saving');
+ check('h3 a save is requested again', h.tick() === null);
+ 
+@@ -57,7 +63,7 @@ check('h5 countdown zero dispatches', dispatch && dispatch.type === 'dispatch',
+ check('h5 state is dispatching', h.state === 'dispatching');
+ 
+ // h6: "Продолжить" cancels the countdown and the runner keeps running.
+-h = mk({ maxAgeMin: 10, idleMin: 0 }, t);
++h = mk({ auto: true, maxAgeMin: 10, idleMin: 0 }, t);
+ h.request('manual', t);
+ h.saveOk(t);
+ const cancelled = h.continueWork(t + 5000);
+@@ -67,7 +73,7 @@ const afterContinue = h.tick();
+ check('h6 no dispatch after continue', afterContinue === null || afterContinue.type === 'save', afterContinue);
+ 
+ // h7: real activity also cancels - nobody gets shut off mid-task.
+-h = mk({ maxAgeMin: 10, idleMin: 0 }, t);
++h = mk({ auto: true, maxAgeMin: 10, idleMin: 0 }, t);
+ h.request('manual', t);
+ h.saveOk(t);
+ h.noteActivity(t + 1000);
+@@ -75,7 +81,7 @@ check('h7 activity cancels the countdown', h.state === 'idle' && h.status().canc
+ 
+ // h8: the age limit fires even while the user is active.
+ t = 0;
+-h = H.createHandoff({ startedAtMs: 0, policy: { maxAgeMin: 60, idleMin: 600 }, now: () => t });
++h = H.createHandoff({ startedAtMs: 0, policy: { auto: true, maxAgeMin: 60, idleMin: 600 }, now: () => t });
+ t = 59 * MIN;
+ h.noteActivity(t);
+ check('h8 nothing at 59 min', h.tick() === null);
+@@ -115,20 +121,79 @@ h.successorSeen('1001', 'https://next2.example', t);
+ check('h11 successor seen means stop', h.state === 'stopping', h.status());
+ 
+ // h12: turning the limits off while a countdown runs cancels it.
+-h = mk({ maxAgeMin: 10, idleMin: 5 }, 0);
++h = mk({ auto: true, maxAgeMin: 10, idleMin: 5 }, 0);
+ h.request('manual', 0);
+ h.saveOk(0);
+ check('h12 countdown running', h.state === 'countdown');
+-h.setPolicy({ maxAgeMin: 0, idleMin: 0 });
++h.setPolicy({ auto: false, maxAgeMin: 10, idleMin: 5 });
+ check('h12 disabling the policy cancels', h.state === 'idle' && h.status().cancelledBy === 'policy', h.status());
+ check('h12 disabled means no work', h.isEnabled() === false && h.tick() === null);
+ 
+ // h13: the UI needs an absolute deadline to render a countdown.
+-h = mk({ maxAgeMin: 100, idleMin: 30 }, t);
++h = mk({ auto: true, maxAgeMin: 100, idleMin: 30 }, t);
+ h.request('manual', t);
+ h.saveOk(t);
+ const st = h.status(t + 5000);
+ check('h13 deadline is absolute', st.deadlineAt === t + 180000 && st.leftSec === 175, st);
+ 
++// h14: THE POINT OF THE WHOLE CHANGE. With the switch off, a hub nobody is
++// using never dispatches a successor - not when it goes idle, not when it
++// grows old. Measured 2026-10-02: idleMin 45 meant a forgotten hub handed
++// itself to a fresh runner every 45 minutes, all day, with nobody pressing
++// anything (44 dispatches in three days).
++t = 0;
++h = H.createHandoff({ startedAtMs: 0, policy: { auto: false, maxAgeMin: 330, idleMin: 45 }, now: () => t });
++t = 8 * 60 * MIN; // eight hours old, eight hours idle
++check('h14 old and idle, auto off: nothing', h.tick() === null && h.state === 'idle', h.status());
++check('h14 status says the relay is off', h.isEnabled() === false && h.status().auto === false, h.status());
++t = 24 * 60 * MIN;
++check('h14 still nothing a whole day later', h.tick() === null, h.status());
++
++// h15: a policy saved before the switch existed normalises to OFF, so the old
++// idle relay cannot be resurrected by the file on session-state.
++const legacy = H.normalizePolicy({ maxAgeMin: 330, idleMin: 45, countdownSec: 180, standbyMin: 12, retryMin: 5 });
++check('h15 legacy policy has no auto', legacy.auto === 0, legacy);
++t = 0;
++h = H.createHandoff({ startedAtMs: 0, policy: legacy, now: () => t });
++t = 400 * MIN;
++check('h15 legacy policy stays quiet', h.tick() === null && h.isEnabled() === false, h.status());
++
++// h16: with the switch ON, a session in use still gets rescued before the 6h
++// cap - the feature exists, it just has to be asked for.
++t = 0;
++h = H.createHandoff({ startedAtMs: 0, policy: { auto: true, maxAgeMin: 330, idleMin: 45 }, now: () => t });
++t = 340 * MIN;
++h.noteActivity(t);
++const autoSave = h.tick();
++check('h16 auto on + in use hands over', autoSave && autoSave.reason === 'age', autoSave);
++
++// h17: with the switch ON but nobody working, there is nothing to rescue: the
++// runner is left to the 6h cap instead of paying for a successor that would
++// only do the same again.
++t = 0;
++h = H.createHandoff({ startedAtMs: 0, policy: { auto: true, maxAgeMin: 330, idleMin: 45 }, now: () => t });
++t = 340 * MIN; // old, but activity was at 0
++check('h17 auto on but idle: no successor', h.tick() === null && h.state === 'idle', h.status());
++
++// h18: the button keeps working with the switch off - that is the whole point
++// of "nothing happens without a press".
++t = 0;
++h = H.createHandoff({ startedAtMs: 0, policy: {}, now: () => t });
++const manual = h.request('manual', t);
++check('h18 manual handover works', manual && manual.type === 'save' && manual.reason === 'manual', manual);
++h.saveOk(t);
++t += 180000;
++check('h18 manual handover dispatches', (h.tick() || {}).type === 'dispatch', h.status());
++
++// h19: un-ticking mid-countdown stops the pending handover.
++t = 0;
++h = H.createHandoff({ startedAtMs: 0, policy: { auto: true, maxAgeMin: 10, idleMin: 45 }, now: () => t });
++h.request('manual', t);
++h.saveOk(t);
++h.setPolicy({ auto: false, maxAgeMin: 10, idleMin: 45 });
++check('h19 auto off cancels a pending handover', h.state === 'idle' && h.status().cancelledBy === 'policy', h.status());
++t += 200000;
++check('h19 nothing is dispatched after that', h.tick() === null);
++
+ console.log(`HANDOFF: ${pass} passed, ${fail} failed`);
+ process.exit(fail ? 1 : 0);
+diff --git a/tests/mobile-touch-test.js b/tests/mobile-touch-test.js
+index ff5507a..bf308fe 100644
+--- a/tests/mobile-touch-test.js
++++ b/tests/mobile-touch-test.js
+@@ -789,5 +789,25 @@ check('q98 dual tunnels with automatic reserve failover',
+   hubApkIdx.includes('sessionBases') && hubApkIdx.includes('s.url2') &&
+   hubApkIdx.includes('резервным адресом') === false && hubApkIdx.includes('резервный адрес'));
+ 
++// q99: no runner without a press. The relay used to be on by default
++// (idleMin 45), so a hub nobody touched kept dispatching a successor every 45
++// minutes - 44 dispatches in three days on 2026-10-02, none of them from a
++// button. Now `auto` is the master switch and it defaults to off, an old
++// policy file cannot turn it back on, and every surface that writes a policy
++// carries the checkbox.
++const H = require(path.join(__dirname, '..', 'npm-hub', 'src', 'handoff.js'));
++check('q99 the relay is off by default and cannot be resurrected',
++  handoffMod.includes('auto: false') &&
++  handoffMod.includes('policy.auto === 1 &&') &&
++  handoffMod.includes("if (policy.idleMin > 0 && idleFor >= policy.idleMin) return null;") &&
++  H.normalizePolicy({ maxAgeMin: 330, idleMin: 45 }).auto === 0);
++check('q99 an old client cannot flip the switch by omission',
++  server.includes('const merged = Object.assign({}, handoff.policy);') &&
++  server.includes('for (const key of Object.keys(incoming)) merged[key] = incoming[key];'));
++check('q99 every policy editor offers the switch',
++  panel.includes('id="ho-auto"') && panel.includes('auto: !!($(\'ho-auto\') || {}).checked') &&
++  mob.includes('id="ho-auto"') && mob.includes("auto: !!((document.getElementById('ho-auto') || {}).checked)") &&
++  desk.includes('id="ho-auto"'));
++
+ console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
+ process.exit(fail ? 1 : 0);

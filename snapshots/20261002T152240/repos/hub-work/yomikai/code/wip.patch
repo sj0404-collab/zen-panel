@@ -643,6 +643,75 @@ index 018cd0a6e..5ef131ecf 100644
                  aiRefine?.cancel()
                  _currentRegion.value = null
                  _frameRegions.value = emptyList()
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index 705f584c6..abcc5c7a6 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -326,16 +326,24 @@ class ReaderActivity : BaseActivity() {
+         )
+     }
+ 
+-    private fun dialogRootRectToScreenRect(rect: android.graphics.RectF): android.graphics.RectF {
+-        val location = IntArray(2)
+-        binding.root.getLocationOnScreen(location)
+-        return android.graphics.RectF(
+-            rect.left + location[0],
+-            rect.top + location[1],
+-            rect.right + location[0],
+-            rect.bottom + location[1],
+-        )
+-    }
++    /**
++     * Переводит прямоугольник диалога в координаты экрана.
++     *
++     * suspend не украшение: `getLocationOnScreen` — API представления, его
++     * читают только с главного потока, а зовут эту функцию из фоновых
++     * корутин захвата (OCR области, скриншот мгновенно, ИИ `see_page`).
++     */
++    private suspend fun dialogRootRectToScreenRect(rect: android.graphics.RectF): android.graphics.RectF =
++        withUIContext {
++            val location = IntArray(2)
++            binding.root.getLocationOnScreen(location)
++            android.graphics.RectF(
++                rect.left + location[0],
++                rect.top + location[1],
++                rect.right + location[0],
++                rect.bottom + location[1],
++            )
++        }
+ 
+     var isScrollingThroughPages = false
+         private set
+@@ -1868,8 +1876,12 @@ class ReaderActivity : BaseActivity() {
+         autoReadLoop?.cancel()
+         autoReadLoop = lifecycleScope.launchIO {
+             try {
+-                val root = binding.root
+-                val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
++                // Размеры корневого представления — тоже API View: читаем
++                // их на главном потоке, иначе гонка с компоновкой.
++                val fullRect = withUIContext {
++                    val root = binding.root
++                    android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
++                }
+                 val frame = cropCurrentSelectionFrame(fullRect)
+                 if (frame == null) {
+                     withUIContext { toast("Не удалось захватить страницу") }
+@@ -2033,8 +2045,12 @@ class ReaderActivity : BaseActivity() {
+     private fun captureInstantScreenshot() {
+         lifecycleScope.launchIO {
+             try {
+-                val root = binding.root
+-                val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
++                // Размеры корневого представления — тоже API View: читаем
++                // их на главном потоке, иначе гонка с компоновкой.
++                val fullRect = withUIContext {
++                    val root = binding.root
++                    android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
++                }
+                 val frame = cropCurrentSelectionFrame(fullRect)
+                 if (frame == null) {
+                     withUIContext { toast("Не удалось получить кадр страницы") }
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
 index 90e082542..1ed1be819 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
@@ -714,7 +783,7 @@ index 90e082542..1ed1be819 100644
              val currChapters = state.value.viewerChapters
              if (currChapters != null) {
 diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
-index d4828bee8..41e07ccd8 100644
+index d4828bee8..4a73a41dd 100644
 --- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
 +++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
 @@ -183,8 +183,8 @@ class OverlayReaderService : Service() {
@@ -728,8 +797,47 @@ index d4828bee8..41e07ccd8 100644
              val wasHidden = overlayView.visibility != View.VISIBLE
              if (wasHidden) setPassthrough(false)
              overlayView.beginCapturePump()
+@@ -249,6 +249,7 @@ class OverlayReaderService : Service() {
+             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
++                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+             PixelFormat.TRANSLUCENT,
+         )
+@@ -282,9 +283,17 @@ class OverlayReaderService : Service() {
+             }
+ 
+             override fun onTouchEvent(event: MotionEvent): Boolean {
+-                if (event.actionMasked == MotionEvent.ACTION_UP) {
+-                    togglePassthrough()
+-                    return true
++                // Пузырь — обычный View, он не кликабелен, и ACTION_DOWN уходил
++                // в super, который возвращает false. Дальше событие до пузыря
++                // не доходило: ACTION_UP не приходил никогда, а вместе с ним и
++                // возврат из режима пропуска касаний.
++                when (event.actionMasked) {
++                    MotionEvent.ACTION_DOWN -> return true
++                    MotionEvent.ACTION_UP -> {
++                        togglePassthrough()
++                        return true
++                    }
++                    MotionEvent.ACTION_CANCEL -> return true
+                 }
+                 return super.onTouchEvent(event)
+             }
+@@ -295,7 +304,8 @@ class OverlayReaderService : Service() {
+             size,
+             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
++                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
++                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+             PixelFormat.TRANSLUCENT,
+         ).apply {
+             gravity = Gravity.TOP or Gravity.END
 diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
-index 262a1bafd..5ce9b0726 100644
+index 262a1bafd..e0d62a0da 100644
 --- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
 +++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
 @@ -4,6 +4,7 @@ import android.content.Context
@@ -938,7 +1046,26 @@ index 262a1bafd..5ce9b0726 100644
      private fun wrapText(paint: Paint, text: String, maxW: Int): List<String> {
          val words = text.split(" ")
          val lines = ArrayList<String>()
-@@ -346,19 +411,18 @@ class OverlayView(
+@@ -293,10 +358,17 @@ class OverlayView(
+         when (event.actionMasked) {
+             MotionEvent.ACTION_DOWN -> return onDown(x, y)
+             MotionEvent.ACTION_MOVE -> { onMove(x, y); return true }
+-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
++            MotionEvent.ACTION_UP -> {
+                 onUp()
+                 return true
+             }
++            MotionEvent.ACTION_CANCEL -> {
++                // Отмена (перехват другим окном, палец вне области) — это не
++                // нажатие: кнопку жать нельзя, рамку не надо сохранять.
++                // Раньше CANCEL шёл тем же путём, что UP, и включал скан.
++                cancelTouch()
++                return true
++            }
+         }
+         return true
+     }
+@@ -346,19 +418,18 @@ class OverlayView(
          val dy = y - touchY
          when (mode) {
              Mode.MOVE -> {
@@ -970,7 +1097,7 @@ index 262a1bafd..5ce9b0726 100644
                  invalidate()
              }
              Mode.CORNER_RESIZE -> {
-@@ -367,8 +431,16 @@ class OverlayView(
+@@ -367,8 +438,16 @@ class OverlayView(
              }
              Mode.SCROLL -> {
                  val lineH = resultPaint.textSize * 1.25f
@@ -989,7 +1116,7 @@ index 262a1bafd..5ce9b0726 100644
                  lastPanelY = y
                  invalidate()
              }
-@@ -379,7 +451,7 @@ class OverlayView(
+@@ -379,7 +458,7 @@ class OverlayView(
      }
  
      private fun resizeTo(dx: Float, dy: Float) {
@@ -998,8 +1125,16 @@ index 262a1bafd..5ce9b0726 100644
          val l = frame.left
          val t = frame.top
          val r = frame.right
-@@ -399,12 +471,13 @@ class OverlayView(
+@@ -397,14 +476,21 @@ class OverlayView(
+         clampFrame()
+     }
  
++    private fun cancelTouch() {
++        pressedBtn = null
++        mode = Mode.NONE
++        invalidate()
++    }
++
      private fun onUp() {
          val btn = pressedBtn
 -        if (btn != null) {
@@ -1007,16 +1142,36 @@ index 262a1bafd..5ce9b0726 100644
 -        }
          pressedBtn = null
          mode = Mode.NONE
+-        callback.onFrameChanged(bean())
 +        // Рамку сохраняем до действия: «Скан» читает Prefs.frame(), и при
 +        // прежнем порядке захватывалась старая область, если рамку только что
 +        // передвинули.
-         callback.onFrameChanged(bean())
++        bean()?.let { callback.onFrameChanged(it) }
 +        if (btn != null) perform(btn)
          invalidate()
      }
  
-@@ -427,7 +500,16 @@ class OverlayView(
-     )
+@@ -419,15 +505,29 @@ class OverlayView(
+         }
+     }
+ 
+-    private fun bean(): RectFBean = RectFBean(
+-        left = (frame.left / viewW).coerceIn(0f, 1f),
+-        top = (frame.top / viewH).coerceIn(0f, 1f),
+-        right = (frame.right / viewW).coerceIn(0f, 1f),
+-        bottom = (frame.bottom / viewH).coerceIn(0f, 1f),
+-    )
++    // Делим только на ненулевые размеры: до первой компоновки viewW/viewH
++    // равны нулю, и в bean() попадали NaN, которые coerceIn не лечит.
++    private fun bean(): RectFBean? {
++        if (viewW <= 0f || viewH <= 0f) return null
++        return RectFBean(
++            left = (frame.left / viewW).coerceIn(0f, 1f),
++            top = (frame.top / viewH).coerceIn(0f, 1f),
++            right = (frame.right / viewW).coerceIn(0f, 1f),
++            bottom = (frame.bottom / viewH).coerceIn(0f, 1f),
++        )
++    }
  
      fun resetFrame() {
 -        frame.set(viewW * 0.06f, toolbarRect.bottom + dp(24f), viewW * 0.94f, viewW * 0.94f * 0.55f + toolbarRect.bottom)
