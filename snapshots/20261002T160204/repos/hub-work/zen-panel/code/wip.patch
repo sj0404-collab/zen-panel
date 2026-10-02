@@ -1,0 +1,72 @@
+diff --git a/app/src/main/assets/panel/index.html b/app/src/main/assets/panel/index.html
+index 3575862..d0ebcf5 100644
+--- a/app/src/main/assets/panel/index.html
++++ b/app/src/main/assets/panel/index.html
+@@ -257,11 +257,16 @@
+     <h2>Раннер / файлы</h2>
+     <div class="note" id="runner-line" style="margin-top:0">Живой хаб не найден — файлы пакаются там же, в хабе.</div>
+     <div class="row" style="margin-top:8px">
+-      <button class="ghost small" onclick="runnerPanelScan()">🔍 Файлы</button>
+       <button class="ghost small" id="pr-save" onclick="runnerPanelSave()" disabled>💾 Сохранить</button>
+-      <button class="ghost small" id="pr-restart" onclick="runnerPanelRestart()" disabled>⟲ Перезапустить</button>
+       <button class="ghost small" id="pr-stop" onclick="runnerPanelStop()" disabled>⏻ Выключить</button>
+     </div>
++    <details class="more" id="runner-more">
++      <summary>⚙️ Ещё — файлы и перезапуск</summary>
++      <div class="row" style="margin-top:8px">
++        <button class="ghost small" onclick="runnerPanelScan()">🔍 Файлы</button>
++        <button class="ghost small" id="pr-restart" onclick="runnerPanelRestart()" disabled>⟲ Перезапустить</button>
++      </div>
++    </details>
+     <div id="runner-scan" style="margin-top:8px"></div>
+     <div id="runner-res"></div>
+   </div>
+@@ -269,24 +274,26 @@
+   <div class="card" id="handoff-card">
+     <h2>🔁 Эстафета сессии</h2>
+     <div class="note" style="margin-top:0" id="ho-line">читаю настройки…</div>
+-    <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap">
+-      <label class="note" style="display:flex;align-items:center;gap:6px">
+-        <input id="ho-auto" type="checkbox"> автопередача</label>
+-      <label class="note">работает до
+-        <input id="ho-age" type="number" min="0" max="720" step="10" inputmode="numeric"
+-               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
+-      <label class="note">простой
+-        <input id="ho-idle" type="number" min="0" max="720" step="5" inputmode="numeric"
+-               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
+-      <label class="note">отсчёт
+-        <input id="ho-count" type="number" min="30" max="1800" step="30" inputmode="numeric"
+-               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> с</label>
+-    </div>
+     <div class="row" style="margin-top:8px">
+-      <button class="small" onclick="handoffPanelSave()">💾 Сохранить</button>
+       <button class="ghost small" id="ho-start" onclick="handoffPanelStart()">🔁 Передать сейчас</button>
+       <button class="ghost small" id="ho-continue" onclick="handoffPanelContinue()">▶️ Продолжить</button>
+     </div>
++    <details class="more" id="ho-more">
++      <summary id="ho-more-sum">⚙️ Автопередача и лимиты</summary>
++      <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap">
++        <label class="note" style="display:flex;align-items:center;gap:6px">
++          <input id="ho-auto" type="checkbox"> автопередача</label>
++        <label class="note">работает до
++          <input id="ho-age" type="number" min="0" max="720" step="10" inputmode="numeric"
++                 style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
++        <label class="note">простой
++          <input id="ho-idle" type="number" min="0" max="720" step="5" inputmode="numeric"
++                 style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
++        <label class="note">отсчёт
++          <input id="ho-count" type="number" min="30" max="1800" step="30" inputmode="numeric"
++                 style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> с</label>
++        <button class="small" onclick="handoffPanelSave()">💾 Сохранить</button>
++      </div>
+ <div class="note" id="ho-hint" style="margin-top:6px">
+       Без «автопередачи» ничего не запускается само: раннер живёт, пока жив GitHub, и уходит только по кнопке.
+       С галочкой сессия, которой вы реально пользуетесь, заранее переезжает на новый раннер, чтобы не попасть под 6-часовой лимит.
+@@ -295,6 +302,7 @@
+       Передача сначала сохраняет всё на GitHub, потом считает 3 минуты; «Продолжить» отменяет.
+       0 = выключено. Если не удалось сохранить — раннер не выключается.
+     </div>
++    </details>
+   </div>
+ 
+   <div class="card">
