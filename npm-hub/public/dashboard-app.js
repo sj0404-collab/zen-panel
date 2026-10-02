@@ -7,6 +7,7 @@
 
 let RUNNER = null;
 let RUNNER_BUSY = false;
+let RUNNER_MORE = false;   // "Ещё" open - it has to survive a re-render
 let serverSessions = [];
 
 async function pageInit() {
@@ -79,14 +80,23 @@ function runnerRender() {
     <div class="runner-h">🎛 Раннер <span class="runner-dot${onActs ? ' on' : ''}"></span></div>
     <div class="runner-line">${info}</div>
     <div class="runner-btns">
-      <button class="btn btn-sm" onclick="runnerScan()">🔍 Файлы</button>
       <button class="btn btn-sm btn-ok" onclick="runnerSave()" id="runner-save" disabled>💾 Сохранить</button>
-      <button class="btn btn-sm btn-ok" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled'}>⟲ Перезапуск</button>
       <button class="btn btn-sm btn-er" onclick="runnerStop()" id="runner-stop"${onActs ? '' : ' disabled'}>⏻ Выключить</button>
+      <details class="more" id="runner-more" ontoggle="RUNNER_MORE=this.open">
+        <summary>⚙️ Ещё</summary>
+        <div class="runner-btns" style="margin:8px 0 0">
+          <button class="btn btn-sm" onclick="runnerScan()">🔍 Файлы</button>
+          <button class="btn btn-sm btn-ok" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled'}>⟲ Перезапуск</button>
+        </div>
+      </details>
     </div>
     <div id="runner-scan"></div>
     <div id="runner-res"></div>
   </div>`;
+  // The card is rebuilt on every scan and install, so a fold the user opened
+  // would snap shut under their finger. Put it back the way they left it.
+  const runnerMore = document.getElementById('runner-more');
+  if (runnerMore && RUNNER_MORE) runnerMore.open = true;
   if (RUNNER_BUSY) {
     const s = document.getElementById('runner-scan');
     if (s) s.innerHTML = '<div class="runner-busy">работаю…</div>';

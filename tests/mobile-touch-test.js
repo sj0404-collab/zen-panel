@@ -809,5 +809,39 @@ check('q99 every policy editor offers the switch',
   mob.includes('id="ho-auto"') && mob.includes("auto: !!((document.getElementById('ho-auto') || {}).checked)") &&
   desk.includes('id="ho-auto"'));
 
+// q100: the hub cards had eleven controls for a feature nobody presses: files,
+// save, restart, stop, plus the relay's checkbox, three numbers, limits, hand
+// over and continue. Two stay on the surface (save, stop) and the rest sit in
+// one folded "Ещё" - nothing removed, and the fold survives the re-render.
+const hubCss = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/hub.css'), 'utf8');
+const dashApp = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/dashboard-app.js'), 'utf8');
+check('q100 the rare controls are folded away',
+  mob.includes('<details class="more" id="runner-more"') &&
+  mob.includes('<details class="more" id="ho-more"') &&
+  desk.includes('<details class="more" id="runner-more"') &&
+  desk.includes('<details class="more" id="ho-more"') &&
+  dashApp.includes('<details class="more" id="runner-more"') &&
+  panel.includes('<details class="more" id="runner-more">') &&
+  panel.includes('<details class="more" id="ho-more">') &&
+  hubCss.includes('details.more{') && hubCss.includes('details.more>summary'));
+check('q100 save and stop stay visible, restart is folded',
+  mob.includes('id="runner-save"') && mob.includes('id="runner-stop"') &&
+  mob.indexOf('id="runner-stop"') < mob.indexOf('id="runner-more"') &&
+  mob.indexOf('id="runner-more"') < mob.indexOf('id="runner-restart"') &&
+  panel.indexOf('id="pr-stop"') < panel.indexOf('id="runner-more"') &&
+  panel.indexOf('id="runner-more"') < panel.indexOf('id="pr-restart"'));
+check('q100 the hand-over button and its cancel stay reachable',
+  mob.indexOf('id="ho-more"') > mob.indexOf('id="ho-continue"') &&
+  panel.indexOf('id="ho-more"') > panel.indexOf('id="ho-continue"'));
+check('q100 an opened fold is not closed by the next re-render',
+  mob.includes('RUNNER_MORE') && mob.includes('HO_MORE') &&
+  mob.includes("if (runnerMore && RUNNER_MORE) runnerMore.open = true;") &&
+  mob.includes("if (hoMore && HO_MORE) hoMore.open = true;") &&
+  desk.includes('RUNNER_MORE') && dashApp.includes('RUNNER_MORE'));
+check('q100 the switch state moved into the fold summary',
+  mob.includes("id=\"ho-more-sum\"") && mob.includes("document.getElementById('ho-more-sum')") &&
+  !mob.includes("bits.push(p.auto ?") && panel.includes("id=\"ho-more-sum\"") &&
+  panel.includes("$('ho-more-sum')") && !panel.includes('bits.push(s.enabled ?'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

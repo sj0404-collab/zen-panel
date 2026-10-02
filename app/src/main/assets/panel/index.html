@@ -60,6 +60,17 @@
   }
   .row { display: flex; gap: 8px; flex-wrap: wrap; }
   .row > * { flex: 1 1 150px; }
+  /* The rarely pressed controls live in here: one line instead of six, and
+     nothing is lost - tap the summary and they are all still there. */
+  details.more { margin-top: 8px; }
+  details.more > summary {
+    color: var(--dim); font-size: 12.5px; font-weight: 600;
+    padding: 8px 0; cursor: pointer; list-style: none;
+  }
+  details.more > summary::-webkit-details-marker { display: none; }
+  details.more > summary::before { content: '▸ '; }
+  details.more[open] > summary::before { content: '▾ '; }
+  details.more[open] > summary { color: var(--cyan); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   td { padding: 8px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
   td:first-child { color: var(--dim); white-space: nowrap; width: 1%; padding-right: 12px; }
@@ -257,11 +268,16 @@
     <h2>Раннер / файлы</h2>
     <div class="note" id="runner-line" style="margin-top:0">Живой хаб не найден — файлы пакаются там же, в хабе.</div>
     <div class="row" style="margin-top:8px">
-      <button class="ghost small" onclick="runnerPanelScan()">🔍 Файлы</button>
       <button class="ghost small" id="pr-save" onclick="runnerPanelSave()" disabled>💾 Сохранить</button>
-      <button class="ghost small" id="pr-restart" onclick="runnerPanelRestart()" disabled>⟲ Перезапустить</button>
       <button class="ghost small" id="pr-stop" onclick="runnerPanelStop()" disabled>⏻ Выключить</button>
     </div>
+    <details class="more" id="runner-more">
+      <summary>⚙️ Ещё — файлы и перезапуск</summary>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost small" onclick="runnerPanelScan()">🔍 Файлы</button>
+        <button class="ghost small" id="pr-restart" onclick="runnerPanelRestart()" disabled>⟲ Перезапустить</button>
+      </div>
+    </details>
     <div id="runner-scan" style="margin-top:8px"></div>
     <div id="runner-res"></div>
   </div>
@@ -269,24 +285,26 @@
   <div class="card" id="handoff-card">
     <h2>🔁 Эстафета сессии</h2>
     <div class="note" style="margin-top:0" id="ho-line">читаю настройки…</div>
-    <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap">
-      <label class="note" style="display:flex;align-items:center;gap:6px">
-        <input id="ho-auto" type="checkbox"> автопередача</label>
-      <label class="note">работает до
-        <input id="ho-age" type="number" min="0" max="720" step="10" inputmode="numeric"
-               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
-      <label class="note">простой
-        <input id="ho-idle" type="number" min="0" max="720" step="5" inputmode="numeric"
-               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
-      <label class="note">отсчёт
-        <input id="ho-count" type="number" min="30" max="1800" step="30" inputmode="numeric"
-               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> с</label>
-    </div>
     <div class="row" style="margin-top:8px">
-      <button class="small" onclick="handoffPanelSave()">💾 Сохранить</button>
       <button class="ghost small" id="ho-start" onclick="handoffPanelStart()">🔁 Передать сейчас</button>
       <button class="ghost small" id="ho-continue" onclick="handoffPanelContinue()">▶️ Продолжить</button>
     </div>
+    <details class="more" id="ho-more">
+      <summary id="ho-more-sum">⚙️ Автопередача и лимиты</summary>
+      <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap">
+        <label class="note" style="display:flex;align-items:center;gap:6px">
+          <input id="ho-auto" type="checkbox"> автопередача</label>
+        <label class="note">работает до
+          <input id="ho-age" type="number" min="0" max="720" step="10" inputmode="numeric"
+                 style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
+        <label class="note">простой
+          <input id="ho-idle" type="number" min="0" max="720" step="5" inputmode="numeric"
+                 style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
+        <label class="note">отсчёт
+          <input id="ho-count" type="number" min="30" max="1800" step="30" inputmode="numeric"
+                 style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> с</label>
+        <button class="small" onclick="handoffPanelSave()">💾 Сохранить</button>
+      </div>
 <div class="note" id="ho-hint" style="margin-top:6px">
       Без «автопередачи» ничего не запускается само: раннер живёт, пока жив GitHub, и уходит только по кнопке.
       С галочкой сессия, которой вы реально пользуетесь, заранее переезжает на новый раннер, чтобы не попасть под 6-часовой лимит.
@@ -295,6 +313,7 @@
       Передача сначала сохраняет всё на GitHub, потом считает 3 минуты; «Продолжить» отменяет.
       0 = выключено. Если не удалось сохранить — раннер не выключается.
     </div>
+    </details>
   </div>
 
   <div class="card">
@@ -2582,9 +2601,14 @@ function handoffPanelRender(doc) {
   if (s.reason) bits.push(esc(HO_WHY[s.reason] || s.reason));
   if (s.lastError) bits.push('<span class="danger">' + esc(s.lastError) + '</span>');
   if (s.successor && s.successor.url) bits.push('новый: <a href="' + esc(s.successor.url) + '" target="_blank" rel="noreferrer">' + esc(s.successor.url) + '</a>');
-  if (s.savedIn) bits.push('настройки: ' + (s.savedIn === 'repo' ? 'в репозитории' : 'локально у раннера'));
-  bits.push(s.enabled ? 'автопередача включена' : 'автопередача выключена — сам ничего не запускаю');
+  if (s.ageMin != null) bits.push('раннер живёт ' + esc(s.ageMin) + ' мин');
   line.innerHTML = bits.join(' · ');
+  // The switch lives inside the folded block, so the summary carries its state:
+  // that way the panel still says "nothing runs on its own" without adding a
+  // fourth line of text to the card.
+  const sum = $('ho-more-sum');
+  if (sum) sum.textContent = '⚙️ Автопередача и лимиты — ' + (s.enabled ? 'включена' : 'выключена') +
+    (s.savedIn ? ' · ' + (s.savedIn === 'repo' ? 'в репозитории' : 'локально') : '');
   const cont = $('ho-continue');
   if (cont) cont.disabled = !(s.state === 'countdown' || s.state === 'failed');
   const start = $('ho-start');
