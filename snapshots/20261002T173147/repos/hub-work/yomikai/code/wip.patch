@@ -1,0 +1,193 @@
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrSelectionOverlay.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrSelectionOverlay.kt
+index c7d2b0e5f..80923038a 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrSelectionOverlay.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrSelectionOverlay.kt
+@@ -2,7 +2,6 @@ package eu.kanade.presentation.reader
+ 
+ import androidx.compose.foundation.Canvas
+ import androidx.compose.foundation.background
+-import androidx.compose.foundation.gestures.detectTapGestures
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.foundation.layout.padding
+@@ -16,15 +15,23 @@ import androidx.compose.ui.geometry.Size
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.graphics.asComposePath
+ import androidx.compose.ui.graphics.drawscope.Stroke
+-import androidx.compose.ui.input.pointer.pointerInput
+ import androidx.compose.ui.text.AnnotatedString
+ import androidx.compose.ui.unit.dp
+ import kotlin.math.abs
+ import kotlin.math.min
+ 
+ @Composable
++/**
++ * Рамка выделения области для OCR.
++ *
++ * Параметра «отмена» здесь нет намеренно: касания в режиме выделения
++ * перехватывает `ReaderActivity.dispatchTouchEvent` — он возвращает true, не
++ * вызывая `super`, поэтому до Compose они не доходят. Рамку рисует и
++ * отменяет по тапу сам Activity (ветка `isTapExitEnabled`). Раньше здесь стоял
++ * `detectTapGestures(onTap = onCancel)`, который был недостижим: две
++ * независимые ветки владения жестом, из которых работала одна.
++ */
+ fun OcrSelectionOverlay(
+-    onCancel: () -> Unit,
+     instructionText: AnnotatedString,
+     startPoint: Offset?,
+     endPoint: Offset?,
+@@ -34,12 +41,7 @@ fun OcrSelectionOverlay(
+     Box(
+         modifier = modifier
+             .fillMaxSize()
+-            .background(Color.Black.copy(alpha = 0.5f))
+-            .pointerInput(Unit) {
+-                detectTapGestures(
+-                    onTap = { onCancel() },
+-                )
+-            },
++            .background(Color.Black.copy(alpha = 0.5f)),
+     ) {
+         // Draw the selection rectangle
+         if (startPoint != null && endPoint != null) {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index abcc5c7a6..4e4b4a957 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -704,7 +704,12 @@ class ReaderActivity : BaseActivity() {
+     }
+ 
+     override fun onPause() {
+-        // Сворачивание/уход с экрана — голос не должен продолжать звучать
++        // Сворачивание/уход с экрана — голос не должен продолжать звучать.
++        // Запоминаем, что авточтение было включено САМИМ читателем: после
++        // возврата его надо продолжить. Раньше оно глухлось навсегда, а
++        // LaunchedEffect автостарта не перезапускался — ключи (глава, вьювер)
++        // не менялись, поэтому опция «Автостарт чтения» работала один раз.
++        resumeAutoReadOnResume = autoReadActive
+         stopAutoReadLoop()
+         lifecycleScope.launchNonCancellable {
+             viewModel.updateHistory()
+@@ -720,6 +725,12 @@ class ReaderActivity : BaseActivity() {
+         super.onResume()
+         viewModel.restartReadTimer()
+         setMenuVisibility(viewModel.state.value.menuVisible)
++        if (resumeAutoReadOnResume) {
++            resumeAutoReadOnResume = false
++            if (viewModel.state.value.viewer != null) {
++                startAutoReadLoop()
++            }
++        }
+     }
+ 
+     /**
+@@ -1210,7 +1221,6 @@ class ReaderActivity : BaseActivity() {
+                 // OCR selection overlay
+                 if (state.ocrSelectionMode) {
+                     OcrSelectionOverlay(
+-                        onCancel = ::exitOcrMode,
+                         instructionText = when (selectionAction) {
+                             SelectionAction.ProcessOcr -> AnnotatedString(stringResource(MR.strings.ocr_select_region))
+                             is SelectionAction.ExportImageToAnki -> AnnotatedString(
+@@ -1823,6 +1833,10 @@ class ReaderActivity : BaseActivity() {
+     @Volatile
+     private var autoReadActive = false
+ 
++    /** Авточтение было включено читателем до ухода со screen — вернуть его в onResume. */
++    @Volatile
++    private var resumeAutoReadOnResume = false
++
+     fun stopAutoReadLoop() {
+         autoReadActive = false
+         autoReadLoop?.cancel()
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/loader/HttpPageLoader.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/loader/HttpPageLoader.kt
+index f9da3945d..b697e24c8 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/loader/HttpPageLoader.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/loader/HttpPageLoader.kt
+@@ -15,8 +15,10 @@ import kotlinx.coroutines.flow.filter
+ import kotlinx.coroutines.flow.flow
+ import kotlinx.coroutines.runInterruptible
+ import kotlinx.coroutines.suspendCancellableCoroutine
++import logcat.LogPriority
+ import tachiyomi.core.common.util.lang.launchIO
+ import tachiyomi.core.common.util.lang.withIOContext
++import tachiyomi.core.common.util.system.logcat
+ import uy.kohesive.injekt.Injekt
+ import uy.kohesive.injekt.api.get
+ import java.util.concurrent.PriorityBlockingQueue
+@@ -131,20 +133,24 @@ internal class HttpPageLoader(
+ 
+     override fun recycle() {
+         super.recycle()
++
++        // Списком страниц делимся до отмены scope: дальше этот список уже никто
++        // не переживёт вместе с загрузчиком.
++        val pagesToSave = chapter.pages?.map { Page(it.index, it.url, it.imageUrl) }
++
+         scope.cancel()
+         queue.clear()
+ 
+-        // Cache current page list progress for online chapters to allow a faster reopen
+-        chapter.pages?.let { pages ->
++        // Cache current page list progress for online chapters to allow a faster reopen.
++        // Запись уходит в GlobalScope (top-level launchIO), иначе scope уже отменён.
++        pagesToSave?.let { pages ->
+             launchIO {
+                 try {
+-                    // Convert to pages without reader information
+-                    val pagesToSave = pages.map { Page(it.index, it.url, it.imageUrl) }
+-                    chapterCache.putPageListToCache(chapter.chapter.toDomainChapter()!!, pagesToSave)
+-                } catch (e: Throwable) {
+-                    if (e is CancellationException) {
+-                        throw e
+-                    }
++                    chapterCache.putPageListToCache(chapter.chapter.toDomainChapter()!!, pages)
++                } catch (e: CancellationException) {
++                    throw e
++                } catch (e: Exception) {
++                    logcat(LogPriority.WARN, e) { "HttpPageLoader failed to cache page list" }
+                 }
+             }
+         }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
+index df480b6c0..32410f18d 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
+@@ -282,7 +282,17 @@ class PagerPageHolder(
+             return
+         }
+ 
+-        panelDetectionJob = scope.launchIO {
++        // Битмап отдаётся сюда из loadResult, и освобождать его больше некому.
++        // try/finally внутри launch не спасает: если задание отменили ДО старта
++        // тела корутины, оно не выполняется вовсе, и нативный битмап утекал на
++        // каждое такое событие. Поэтому освобождение вешаем на завершение задания.
++        val released = java.util.concurrent.atomic.AtomicBoolean(false)
++        val releaseBitmap = {
++            if (released.compareAndSet(false, true) && !decoded.bitmap.isRecycled) {
++                decoded.bitmap.recycle()
++            }
++        }
++        val job = scope.launchIO {
+             val result = try {
+                 detectPanels.await(
+                     cacheKey = cacheKey,
+@@ -292,7 +302,7 @@ class PagerPageHolder(
+                     direction = readingDirection(),
+                 )
+             } finally {
+-                decoded.bitmap.recycle()
++                releaseBitmap()
+             }
+ 
+             withUIContext {
+@@ -317,6 +327,9 @@ class PagerPageHolder(
+                 }
+             }
+         }
++        panelDetectionJob = job
++        // Страховка на отмену до старта тела корутины: finally тогда не выполняется.
++        job.invokeOnCompletion { releaseBitmap() }
+     }
+ 
+     private fun decodePanelBitmap(source: BufferedSource): DecodedPanelBitmap? {
