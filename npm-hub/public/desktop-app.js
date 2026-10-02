@@ -450,6 +450,7 @@ function runnerRender() {
     <div class="runner-h" style="margin-top:10px">🔁 Эстафета <span class="runner-dot" id="handoff-dot"></span></div>
     <div class="runner-line" id="handoff-line">загружаю состояние…</div>
     <div class="runner-btns">
+      <label class="runner-lbl"><input id="ho-auto" type="checkbox"> автопередача</label>
       <label class="runner-lbl">работает до <input id="ho-age" class="runner-inp" type="number" min="0" max="720" step="10" inputmode="numeric"> мин</label>
       <label class="runner-lbl">простой <input id="ho-idle" class="runner-inp" type="number" min="0" max="720" step="5" inputmode="numeric"> мин</label>
       <label class="runner-lbl">отсчёт <input id="ho-count" class="runner-inp" type="number" min="30" max="1800" step="30" inputmode="numeric"> с</label>
@@ -513,6 +514,9 @@ function handoffRender() {
   set('ho-age', p.maxAgeMin == null ? '' : p.maxAgeMin);
   set('ho-idle', p.idleMin == null ? '' : p.idleMin);
   set('ho-count', p.countdownSec == null ? '' : p.countdownSec);
+  const autoBox = document.getElementById('ho-auto');
+  if (autoBox && document.activeElement !== autoBox) autoBox.checked = p.auto === true || p.auto === 1;
+  bits.push(p.auto ? 'автопередача включена' : 'автопередача выключена — сам ничего не запускаю');
   const cont = document.getElementById('ho-continue');
   if (cont) cont.hidden = !(s.state === 'countdown' || s.state === 'failed');
   const start = document.getElementById('ho-start');
@@ -520,7 +524,7 @@ function handoffRender() {
   const hint = document.getElementById('handoff-hint');
   if (hint) hint.textContent = !cap.available
     ? (cap.reason || 'передача недоступна')
-    : '0 = выключено. Передача сначала сохраняет всё на GitHub и только потом считает 3 минуты; «Продолжить» отменяет.';
+    : '0 = выключено. Без «автопередачи» новый раннер не запускается сам — только по кнопке. всё на GitHub и только потом считает 3 минуты; «Продолжить» отменяет.';
 }
 async function handoffPoll() {
   try {
@@ -536,7 +540,7 @@ async function handoffSave() {
   const num = (id, def) => { const v = parseInt((document.getElementById(id) || {}).value, 10); return Number.isFinite(v) ? v : def; };
   const r = await fetch('/api/handoff/policy', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ policy: { maxAgeMin: num('ho-age', 0), idleMin: num('ho-idle', 0), countdownSec: num('ho-count', 180) } })
+    body: JSON.stringify({ policy: { auto: !!((document.getElementById('ho-auto') || {}).checked), maxAgeMin: num('ho-age', 0), idleMin: num('ho-idle', 0), countdownSec: num('ho-count', 180) } })
   }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
   if (r && r.policy) HANDOFF = Object.assign({}, HANDOFF || {}, { policy: r.policy, status: r.status || (HANDOFF && HANDOFF.status) });
   const hint = document.getElementById('handoff-hint');

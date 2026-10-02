@@ -270,6 +270,8 @@
     <h2>🔁 Эстафета сессии</h2>
     <div class="note" style="margin-top:0" id="ho-line">читаю настройки…</div>
     <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap">
+      <label class="note" style="display:flex;align-items:center;gap:6px">
+        <input id="ho-auto" type="checkbox"> автопередача</label>
       <label class="note">работает до
         <input id="ho-age" type="number" min="0" max="720" step="10" inputmode="numeric"
                style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
@@ -285,7 +287,10 @@
       <button class="ghost small" id="ho-start" onclick="handoffPanelStart()">🔁 Передать сейчас</button>
       <button class="ghost small" id="ho-continue" onclick="handoffPanelContinue()">▶️ Продолжить</button>
     </div>
-    <div class="note" id="ho-hint" style="margin-top:6px">
+<div class="note" id="ho-hint" style="margin-top:6px">
+      Без «автопередачи» ничего не запускается само: раннер живёт, пока жив GitHub, и уходит только по кнопке.
+      С галочкой сессия, которой вы реально пользуетесь, заранее переезжает на новый раннер, чтобы не попасть под 6-часовой лимит.
+      Простой — это окно «никто не работает»: внутри него передача разрешена, снаружи раннер просто умрёт от лимита.
       Лимиты хранятся в control-репозитории, поэтому новый раннер читает их сам.
       Передача сначала сохраняет всё на GitHub, потом считает 3 минуты; «Продолжить» отменяет.
       0 = выключено. Если не удалось сохранить — раннер не выключается.
@@ -2558,9 +2563,12 @@ function handoffPanelRender(doc) {
   const s = (doc && doc.status) || null;
   const set = (id, v) => { const el = $(id); if (el && document.activeElement !== el) el.value = v == null ? '' : v; };
   set('ho-age', p.maxAgeMin); set('ho-idle', p.idleMin); set('ho-count', p.countdownSec);
+  const auto = $('ho-auto');
+  if (auto && document.activeElement !== auto) auto.checked = p.auto === true || p.auto === 1;
   if (!s) {
     line.textContent = doc
-      ? 'раннер ещё не публиковал состояние — лимиты сохранены, передача начнётся сама'
+      ? (p.auto ? 'раннер ещё не публиковал состояние — лимиты сохранены, передача начнётся сама'
+                : 'раннер ещё не публиковал состояние — автопередача выключена, раннер живёт, пока жив GitHub')
       : 'handoff.json ещё нет: сохрани лимиты, и раннер подхватит их';
     return;
   }
@@ -2575,6 +2583,7 @@ function handoffPanelRender(doc) {
   if (s.lastError) bits.push('<span class="danger">' + esc(s.lastError) + '</span>');
   if (s.successor && s.successor.url) bits.push('новый: <a href="' + esc(s.successor.url) + '" target="_blank" rel="noreferrer">' + esc(s.successor.url) + '</a>');
   if (s.savedIn) bits.push('настройки: ' + (s.savedIn === 'repo' ? 'в репозитории' : 'локально у раннера'));
+  bits.push(s.enabled ? 'автопередача включена' : 'автопередача выключена — сам ничего не запускаю');
   line.innerHTML = bits.join(' · ');
   const cont = $('ho-continue');
   if (cont) cont.disabled = !(s.state === 'countdown' || s.state === 'failed');
@@ -2588,11 +2597,24 @@ async function handoffPanelPoll() {
 }
 async function handoffPanelSave() {
   const num = (id, def) => { const v = parseInt(($(id) || {}).value, 10); return Number.isFinite(v) ? v : def; };
-  const policy = { maxAgeMin: num('ho-age', 0), idleMin: num('ho-idle', 0), countdownSec: num('ho-count', 180) };
   const hint = $('ho-hint');
+  // The saved object replaces the policy wholesale, so carry the fields the
+  // panel does not edit (standby/retry) over instead of resetting them.
+  let old = {};
+  try { const cur = await readHandoffDoc(); old = (cur && cur.policy) || {}; } catch (e) {}
+  const policy = {
+    auto: !!($('ho-auto') || {}).checked,
+    maxAgeMin: num('ho-age', 0),
+    idleMin: num('ho-idle', 0),
+    countdownSec: num('ho-count', 180),
+    standbyMin: old.standbyMin,
+    retryMin: old.retryMin
+  };
   try {
     await writeHandoffDoc({ policy });
-    if (hint) hint.textContent = 'сохранено в control-репозитории — новый раннер прочитает эти лимиты сам';
+    if (hint) hint.textContent = policy.auto
+      ? 'сохранено в control-репозитории — сессия под лимитом переедет сама, пока вы за ней работаете'
+      : 'сохранено: автопередача выключена, без вашего нажатия новый раннер не запустится';
   } catch (e) {
     if (hint) hint.textContent = 'не сохранилось: ' + e.message;
   }
