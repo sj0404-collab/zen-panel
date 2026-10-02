@@ -789,5 +789,25 @@ check('q98 dual tunnels with automatic reserve failover',
   hubApkIdx.includes('sessionBases') && hubApkIdx.includes('s.url2') &&
   hubApkIdx.includes('резервным адресом') === false && hubApkIdx.includes('резервный адрес'));
 
+// q99: no runner without a press. The relay used to be on by default
+// (idleMin 45), so a hub nobody touched kept dispatching a successor every 45
+// minutes - 44 dispatches in three days on 2026-10-02, none of them from a
+// button. Now `auto` is the master switch and it defaults to off, an old
+// policy file cannot turn it back on, and every surface that writes a policy
+// carries the checkbox.
+const H = require(path.join(__dirname, '..', 'npm-hub', 'src', 'handoff.js'));
+check('q99 the relay is off by default and cannot be resurrected',
+  handoffMod.includes('auto: false') &&
+  handoffMod.includes('policy.auto === 1 &&') &&
+  handoffMod.includes("if (policy.idleMin > 0 && idleFor >= policy.idleMin) return null;") &&
+  H.normalizePolicy({ maxAgeMin: 330, idleMin: 45 }).auto === 0);
+check('q99 an old client cannot flip the switch by omission',
+  server.includes('const merged = Object.assign({}, handoff.policy);') &&
+  server.includes('for (const key of Object.keys(incoming)) merged[key] = incoming[key];'));
+check('q99 every policy editor offers the switch',
+  panel.includes('id="ho-auto"') && panel.includes('auto: !!($(\'ho-auto\') || {}).checked') &&
+  mob.includes('id="ho-auto"') && mob.includes("auto: !!((document.getElementById('ho-auto') || {}).checked)") &&
+  desk.includes('id="ho-auto"'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

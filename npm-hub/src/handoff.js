@@ -19,19 +19,32 @@
 //   6. successor seen                       -> 'stopping'
 //
 // POLICY (persisted globally, see /api/handoff/policy)
-//   maxAgeMin    0 = never; otherwise hand off N minutes after the run started
-//   idleMin      0 = never; otherwise hand off after N minutes without activity
+//   auto         THE SWITCH THAT MATTERS: automatic relay is OFF until someone
+//                ticks it in the panel. While it is off nothing starts a
+//                successor by itself - only the "Передать сейчас" button does.
+//                A policy saved before this flag existed has no `auto`, so it
+//                normalises to off: the old idle relay (idleMin 45) used to
+//                keep a forgotten hub passing itself to a fresh runner every
+//                45 minutes, forever, with nobody pressing anything.
+//   maxAgeMin    0 = never; otherwise the age at which a session someone is
+//                ACTUALLY USING may hand over (the 6h cap would kill it)
+//   idleMin      0 = never; otherwise how long "nobody is working" counts as
+//                idle - it is the activity window the age rule requires, not a
+//                trigger of its own. An idle hub is left to the 6h cap rather
+//                than paying for a successor nobody asked for.
 //   countdownSec how long the user has to press "Продолжить"
 
 const DEFAULTS = {
+  auto: false,         // nothing starts on its own until this is turned on
   maxAgeMin: 330,      // 30 min before the 6h cap kills the runner
-  idleMin: 45,         // nothing at all for 45 min -> hand the work over
+  idleMin: 45,         // "nobody is working" window the age rule requires
   countdownSec: 180,   // 3 minutes, as asked for
   standbyMin: 12,      // wait this long for the successor to show up
   retryMin: 5          // after a failed save, try again in this many minutes
 };
 
 const LIMITS = {
+  auto: { min: 0, max: 1 },
   maxAgeMin: { min: 0, max: 720 },
   idleMin: { min: 0, max: 720 },
   countdownSec: { min: 30, max: 1800 },
@@ -44,12 +57,14 @@ const asInt = (v, fallback) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+const asBool = (v) => (v === true || v === 1 || v === '1' || v === 'true' ? 1 : 0);
+
 function normalizePolicy(input) {
   const src = (input && typeof input === 'object') ? input : {};
   const out = {};
   for (const key of Object.keys(DEFAULTS)) {
     const lim = LIMITS[key];
-    let n = asInt(src[key], DEFAULTS[key]);
+    let n = key === 'auto' ? asBool(src[key]) : asInt(src[key], DEFAULTS[key]);
     if (n < lim.min) n = lim.min;
     if (n > lim.max) n = lim.max;
     out[key] = n;
@@ -83,7 +98,7 @@ function createHandoff(options) {
   let successor = null;     // { runId, url } once dispatch succeeded
   let attempts = 0;
 
-  const policyOn = () => policy.maxAgeMin > 0 || policy.idleMin > 0;
+  const policyOn = () => policy.auto === 1 && (policy.maxAgeMin > 0 || policy.idleMin > 0);
 
   // A limit fired, or the user pressed the button. Only ever leaves 'idle'.
   const begin = (why, ts) => {
@@ -202,8 +217,14 @@ function createHandoff(options) {
       if (state === IDLE) {
         if (!policyOn()) return null;
         const ageMin = (t - startedAtMs) / 60000;
-        if (policy.maxAgeMin > 0 && ageMin >= policy.maxAgeMin) return begin('age', t);
-        if (policy.idleMin > 0 && (t - activityAt) / 60000 >= policy.idleMin) return begin('idle', t);
+        const idleFor = (t - activityAt) / 60000;
+        if (policy.maxAgeMin > 0 && ageMin >= policy.maxAgeMin) {
+          // Only a session someone is really using is worth a successor. An
+          // idle hub is left to the 6h cap: handing it over would only buy the
+          // next runner so that one can hand over again, with nobody there.
+          if (policy.idleMin > 0 && idleFor >= policy.idleMin) return null;
+          return begin('age', t);
+        }
         return null;
       }
       if (state === FAILED) {
@@ -239,6 +260,7 @@ function createHandoff(options) {
         state,
         reason,
         enabled: policyOn(),
+        auto: policy.auto === 1,
         policy: { ...policy },
         ageMin: Math.max(0, Math.round((t - startedAtMs) / 60000)),
         idleMin: policy.idleMin > 0 ? Math.max(0, Math.round((t - activityAt) / 60000)) : 0,

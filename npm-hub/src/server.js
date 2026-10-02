@@ -1665,7 +1665,13 @@ app.get('/api/handoff', (req, res) => {
 // that takes over next already knows them before the panel is opened.
 app.post('/api/handoff/policy', express.json({ limit: '32kb' }), async (req, res) => {
   try {
-    const policy = handoff.setPolicy((req.body && req.body.policy) || req.body || {});
+    const incoming = (req.body && req.body.policy) || req.body || {};
+    // Merge, don't clobber: an older client build knows nothing about `auto`
+    // (or standby/retry), and it must not be able to flip the master switch
+    // by omission - only by saying so.
+    const merged = Object.assign({}, handoff.policy);
+    for (const key of Object.keys(incoming)) merged[key] = incoming[key];
+    const policy = handoff.setPolicy(merged);
     handoffPolicy = policy;
     // The status travels with the policy in the same write: the panel reads one
     // file, and a freshly created handoff.json should not look "empty".
