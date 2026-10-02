@@ -814,6 +814,27 @@
     </div>
   </div>
 
+  <!-- Delete Repo Confirm Modal: the same guard the desktop hub and the
+       standalone git page use - the repo name has to be typed out, because
+       there is no undo on the other side of this button. -->
+  <div class="modal-bg" id="modal-delrepo">
+    <div class="modal" style="width:420px">
+      <h2 style="color:var(--err)">Удалить репозиторий?</h2>
+      <div id="delrepo-info" style="font-size:12px;color:var(--t2);margin-bottom:12px"></div>
+      <div style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.3);border-radius:8px;padding:10px;font-size:11px;color:var(--err);margin-bottom:12px">
+        Это действие необратимо. Репозиторий и все его данные будут удалены навсегда.
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="font-size:10px;color:var(--t2)">Введите имя репозитория для подтверждения:</label>
+        <input type="text" id="delrepo-confirm" placeholder="user/repo-name" style="width:100%;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none;margin-top:4px">
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('modal-delrepo')">Отмена</button>
+        <button class="btn btn-er" id="delrepo-btn" onclick="confirmDeleteRepo()" disabled>Удалить навсегда</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Model Menu (mobile bottom sheet) -->
   <div class="apply-menu" id="model-menu" style="min-width:unset"></div>
 
