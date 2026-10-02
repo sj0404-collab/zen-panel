@@ -40,8 +40,17 @@ check "final once always publishes" "$([ "$before" != "$(git -C "$TMP/remote.git
 echo "second distinct edit" >> "$TMP/home/proj/committed.txt"
 mkdir -p "$TMP/home/.npm-hub/sessions"
 printf '%s\n' '{"id":"term_1","toolId":"opencode"}' > "$TMP/home/.npm-hub/sessions/npmhub-term_1.meta.json"
+# Снимок экрана лежит рядом с дескриптором и обязан ехать тем же снапшотом:
+# именно он показывает последнее известное состояние, когда терминал
+# открывается после падения туннеля или рестарта раннера. Хвост прерванной
+# записи (.tmp) — мусор, в бэкап он не годится.
+printf 'opencode TUI state\n' > "$TMP/home/.npm-hub/sessions/npmhub-term_1.snapshot"
+printf 'half written\n' > "$TMP/home/.npm-hub/sessions/npmhub-term_1.snapshot.tmp"
 sleep 1
 bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
+DESC_STAMP="$(git -C "$TMP/remote.git" show work-backup:latest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"])')"
+check "TUI snapshot published with the descriptors" "$(git --git-dir="$TMP/remote.git" cat-file -e "work-backup:snapshots/$DESC_STAMP/descriptors/npmhub-term_1.snapshot" 2>/dev/null && echo 1 || echo 0)"
+check "interrupted snapshot write is not published" "$([ "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only work-backup | grep -c '\.snapshot\.tmp$')" = 0 ] && echo 1 || echo 0)"
 
 export WORK_BACKUP_KEEP=2
 for i in 1 2 3; do
@@ -131,6 +140,10 @@ check "migration is idempotent" "$(SESSION_STATE_URL="$TMP/old.git" bash "$TOOLS
 # Wipe and rebuild.
 cd /
 rm -rf "$TMP/home"; mkdir -p "$TMP/home"
+# A snapshot with no descriptor belongs to a session nothing can attach to
+# (killed mid-restore, or a hand-made file). It must not survive as clutter.
+mkdir -p "$TMP/home/.npm-hub/sessions"
+printf 'screen of a session that no longer exists\n' > "$TMP/home/.npm-hub/sessions/npmhub-term_9.snapshot"
 bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
 check "committed content restored" "$(grep -q '^base$' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
 check "uncommitted change restored" "$(grep -q 'wip change' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
@@ -140,6 +153,8 @@ check "latest content edit restored" "$(grep -q 'second distinct edit' "$TMP/hom
 check "newer run backup survives old runner" "$(grep -q 'newer-run-marker' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
 check "older run cannot overwrite backup" "$(! grep -q 'older-run-marker' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
 check "session descriptor restored" "$([ -f "$TMP/home/.npm-hub/sessions/npmhub-term_1.meta.json" ] && echo 1 || echo 0)"
+check "TUI snapshot restored with its descriptor" "$(grep -q 'opencode TUI state' "$TMP/home/.npm-hub/sessions/npmhub-term_1.snapshot" 2>/dev/null && echo 1 || echo 0)"
+check "orphan snapshot dropped on restore" "$([ ! -f "$TMP/home/.npm-hub/sessions/npmhub-term_9.snapshot" ] && echo 1 || echo 0)"
 check "ignored file not restored" "$([ ! -f "$TMP/home/proj/build/out.o" ] && echo 1 || echo 0)"
 # Loose $HOME files are out of the snapshot scope by design now (user rule:
 # only the repo folder + opencode sessions/settings ride the snapshot). The

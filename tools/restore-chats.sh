@@ -62,7 +62,7 @@ import_bundle() {
   [ -d "$repo_dir" ] || { echo "restore-chats: missing repo dir $repo_dir" >&2; return 1; }
   [ -s "$bundle" ] || { echo "restore-chats: empty bundle $bundle" >&2; return 1; }
   CHAT_ONLY="${CHAT_ONLY:-}" CHAT_REPO_DIR="$repo_dir" BUNDLE="$bundle" python3 - <<'PY'
-import json, os, subprocess, sys, tempfile
+import json, os, re, subprocess, sys, tempfile, time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -105,14 +105,28 @@ def import_one(s):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
-        proc = subprocess.run(["opencode", "import", path], cwd=repo_dir,
-                              capture_output=True, timeout=180)
-        out = (proc.stdout or b"").decode("utf-8", "replace").strip()
-        err = (proc.stderr or b"").decode("utf-8", "replace").strip()
-        if proc.returncode == 0:
-            say("restore-chats: imported %s" % (sid or "?"))
-            return True
-        say("restore-chats: %s import failed: %s" % (sid, (err or out)[:200]), err=True)
+        # Every import writes into the SAME opencode sqlite database, so the
+        # pool above can lose a race for the write lock. That is not a broken
+        # bundle: the retry below only fires on a lock/busy error, where the
+        # session was NOT written - retrying an import that actually succeeded
+        # would duplicate the session in the panel.
+        transient = re.compile(r"database is locked|database table is locked|"
+                               r"SQLITE_BUSY|busy|try again", re.I)
+        for attempt in range(2):
+            proc = subprocess.run(["opencode", "import", path], cwd=repo_dir,
+                                  capture_output=True, timeout=180)
+            out = (proc.stdout or b"").decode("utf-8", "replace").strip()
+            err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+            if proc.returncode == 0:
+                say("restore-chats: imported %s" % (sid or "?"))
+                return True
+            detail = err or out
+            if attempt == 0 and transient.search(detail):
+                say("restore-chats: %s hit the db lock, retrying once" % sid, err=True)
+                time.sleep(2)
+                continue
+            say("restore-chats: %s import failed: %s" % (sid, detail[:200]), err=True)
+            return False
         return False
     except Exception as e:
         say("restore-chats: %s import error: %s" % (sid, e), err=True)

@@ -513,6 +513,11 @@ PY
   if [ -d "$ROOT/.npm-hub/sessions" ]; then
     mkdir -p "$stage/descriptors" || return 1
     cp -a "$ROOT/.npm-hub/sessions/." "$stage/descriptors/" || return 1
+    # Хвост прерванной записи снимка экрана (writeSessionSnapshot пишет
+    # .tmp и переименовывает). Это мусор: он меняется на каждом такте, и
+    # backup-work заметил бы «новое изменение» только чтобы закоммитить
+    # обрезок, который никто никогда не прочитает.
+    find "$stage/descriptors" -maxdepth 1 -name '*.tmp' -type f -delete 2>/dev/null || true
   fi
   # Last thing before publishing: make sure every file in the stage is
   # something GitHub will actually accept. One oversized blob and the whole

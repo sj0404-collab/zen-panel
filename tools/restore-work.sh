@@ -479,6 +479,11 @@ PY
   fi
 fi
 
+# Descriptors and TUI snapshots of the sessions. cp -n: whatever the fresh
+# runner wrote itself is newer and must survive; everything missing comes back.
+# Then the counts, because a silent restore here is indistinguishable from
+# «the user has no unfinished sessions» - and the snapshot is exactly what
+# makes a reopened terminal show the last known screen instead of a black one.
 if [ -d "$SNAP/descriptors" ]; then
   mkdir -p "$ROOT/.npm-hub/sessions" 2>/dev/null || failed=1
   if ! cp -a -n "$SNAP/descriptors/." "$ROOT/.npm-hub/sessions/" 2>/dev/null; then
@@ -487,6 +492,27 @@ if [ -d "$SNAP/descriptors" ]; then
   else
     log "restored durable session descriptors"
   fi
+  session_dir="$ROOT/.npm-hub/sessions"
+  metas=0; snaps=0
+  if [ -d "$session_dir" ]; then
+    metas="$(find "$session_dir" -maxdepth 1 -name 'npmhub-*.meta.json' -type f 2>/dev/null | wc -l | tr -d ' ')"
+    # A snapshot without its descriptor is unusable: there is no session to
+    # attach it to, so nothing would ever read it. Drop it instead of leaving
+    # a file that only costs restore time and confuses the next backup.
+    for snap_file in "$session_dir"/npmhub-*.snapshot; do
+      [ -f "$snap_file" ] || continue
+      base="${snap_file%.snapshot}"
+      if [ -f "$base.meta.json" ]; then
+        snaps=$((snaps + 1))
+      else
+        rm -f "$snap_file" 2>/dev/null || true
+        log "dropped orphan TUI snapshot $(basename "$snap_file") (no descriptor)"
+      fi
+    done
+    # Tail of a snapshot write that a dead runner never finished.
+    find "$session_dir" -maxdepth 1 -name '*.snapshot.tmp' -type f -delete 2>/dev/null || true
+  fi
+  log "sessions available after restore: $metas descriptor(s), $snaps TUI snapshot(s)"
 fi
 
 log "done: $restored repo(s) restored"
