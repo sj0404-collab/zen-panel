@@ -110,6 +110,11 @@ class MainActivity : ComponentActivity() {
 
         if (savedInstanceState == null) web.loadUrl(startUrl)
         else web.restoreState(savedInstanceState)
+
+        // The panel outlives other apps: without this the process is a candidate
+        // for reclamation the moment the user leaves, and coming back means a
+        // reconnect countdown instead of a live hub.
+        KeepAlive.start(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -443,6 +448,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        KeepAlive.stop(this)
         (web.parent as? ViewGroup)?.removeView(web)
         web.destroy()
         super.onDestroy()

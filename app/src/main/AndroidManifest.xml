@@ -9,6 +9,23 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- The panel keeps the hub connection alive while another app is in the
+         foreground, so the process must not be reclaimed behind the user's
+         back and the WebView must keep running its timers. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Android 11+ hides other packages by default. The «Приложения» tab is a
+         launcher: it lists what is installed here and starts it, which is
+         exactly the visibility this one intent asks for. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -29,5 +46,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Started with the panel and stopped with it. Its whole job is to
+             keep the process (and the WebView inside it) alive while the user
+             is off doing something else, so returning to the panel finds the
+             hub connection still up instead of a reconnect countdown. -->
+        <service
+            android:name=".KeepAlive"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

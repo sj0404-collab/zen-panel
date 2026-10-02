@@ -100,9 +100,11 @@
     position: fixed; left: 0; right: 0; bottom: 0; display: flex;
     background: #101018; border-top: 1px solid var(--line);
     padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); z-index: 20;
+    overflow-x: auto;
   }
   .tabs button {
-    flex: 1; background: transparent; color: var(--dim); margin: 0;
+    flex: 1 0 auto; min-width: 52px; white-space: nowrap;
+    background: transparent; color: var(--dim); margin: 0;
     font-size: 11.5px; font-weight: 600; padding: 6px 2px; min-height: 44px;
     border-radius: 8px; line-height: 1.25;
   }
@@ -116,6 +118,12 @@
   }
   .item:last-child { border-bottom: 0; }
   .item .ico { width: 20px; text-align: center; color: var(--dim); flex: 0 0 20px; }
+  /* Launcher icons get their own column: 20px is for a glyph, not for a real
+     app icon. */
+  .item .appico {
+    width: 34px; height: 34px; flex: 0 0 34px;
+    border-radius: 8px; object-fit: cover; background: #1d1d29;
+  }
   .item .grow { flex: 1; min-width: 0; }
   .item .name { font-size: 13.5px; word-break: break-word; }
   .item .meta { color: var(--dim); font-size: 11.5px; }
@@ -271,13 +279,6 @@
       <button class="ghost small" id="pr-save" onclick="runnerPanelSave()" disabled>💾 Сохранить</button>
       <button class="ghost small" id="pr-stop" onclick="runnerPanelStop()" disabled>⏻ Выключить</button>
     </div>
-    <details class="more" id="runner-more">
-      <summary>⚙️ Ещё — файлы и перезапуск</summary>
-      <div class="row" style="margin-top:8px">
-        <button class="ghost small" onclick="runnerPanelScan()">🔍 Файлы</button>
-        <button class="ghost small" id="pr-restart" onclick="runnerPanelRestart()" disabled>⟲ Перезапустить</button>
-      </div>
-    </details>
     <div id="runner-scan" style="margin-top:8px"></div>
     <div id="runner-res"></div>
   </div>
@@ -384,11 +385,24 @@
   </div>
 </div>
 
+<div class="page" id="p-apps">
+  <div class="card">
+    <h2>Приложения телефона</h2>
+    <input id="apps-q" placeholder="поиск" autocomplete="off" oninput="appsRender()">
+    <div id="apps-list"><span class="spin">смотрю установки …</span></div>
+    <div class="note">
+      Это лаунчер: список того, что установлено на телефоне — апп запускается как обычное, живёт сам на телефоне, не в раннере и не по ресурсу его.
+      Панель при этом держит связь с хабом и спит в увенном режиме — возвращаясь к активной сессии.
+    </div>
+  </div>
+</div>
+
 <div class="tabs">
   <button id="t-acc"  onclick="go('acc')"><b>◉</b>Аккаунт</button>
   <button id="t-repo" onclick="go('repo')"><b>▤</b>Репо</button>
   <button id="t-act"  onclick="go('act')"><b>▶</b>Actions</button>
   <button id="t-sess" onclick="go('sess')"><b>⬢</b>Сессии</button>
+  <button id="t-apps" onclick="go('apps')"><b>▦</b>Прилож.</button>
   <button id="t-apk"  onclick="go('apk')"><b>⬇</b>APK</button>
 </div>
 
@@ -828,7 +842,7 @@ function unbanHint(r) {
 let page = 'sess';
 function go(p) {
   page = p;
-  for (const id of ['acc','repo','files','act','sess','apk']) {
+  for (const id of ['acc','repo','files','act','sess','apps','apk']) {
     const el = $('p-' + id); if (el) el.classList.toggle('on', id === p);
     const tb = $('t-' + id); if (tb) tb.classList.remove('on');
   }
@@ -840,6 +854,7 @@ function go(p) {
   if (p === 'repo') loadRepos();
   if (p === 'act')  { loadActions(); pollWatch(); }
   if (p === 'sess') refresh();
+  if (p === 'apps') appsLoad();
   if (p === 'apk')  { refresh(); loadPanelApk(); }
 }
 
@@ -2451,8 +2466,7 @@ async function runnerPanelScan() {
     </select>
   </div>`).join('');
   const onActs = !!(r.actions);
-  const rs = $('pr-restart'), sp = $('pr-stop');
-  if (rs) rs.disabled = !onActs;
+  const sp = $('pr-stop');
   if (sp) sp.disabled = !onActs;
   if (onActs === false && line) line.innerHTML += ' <span class="note">(локальный запуск — кнопки управления живут на Actions-раннере)</span>';
   if (save) save.disabled = false;
@@ -2506,16 +2520,6 @@ async function runnerPanelStop() {
   const out = $('runner-res');
   if (out) out.innerHTML = r.success
     ? '<span class="ok">⏻ Остановка принята — ранер сворачивается ~минуту.</span>'
-    : `<span class="danger">${esc(r.error || 'не вышло')}</span>`;
-}
-async function runnerPanelRestart() {
-  if (!(confirm('Перезапустить ранер? Несохранённое пропадёт.'))) return;
-  const base = runnerBase();
-  const r = await fetch(`${base}/api/runner/restart`, { method: 'POST' })
-    .then(x => x.json()).catch(e => ({ success: false, error: e.message }));
-  const out = $('runner-res');
-  if (out) out.innerHTML = r.success
-    ? '<span class="ok">⟲ Перезапуск принят: новый ранер поднимается, старый гасится.</span>'
     : `<span class="danger">${esc(r.error || 'не вышло')}</span>`;
 }
 
@@ -2870,6 +2874,61 @@ function releaseCode(rel) {
   const tag = String((rel && rel.tag_name) || '');
   const m = tag.match(/v?1\.(\d+)/) || tag.match(/(\d+)/);
   return m ? parseInt(m[1], 10) : 0;
+}
+
+// ── ПРИЛОЖЕНИЯ ───────────────────────────────────
+// Список установленных приложений только в APK. Андроид не вкаатывает чужое приложение в вебвюд - так и есть только
+// запуск нагрузина. Запуск идёт на самом телефоне и живёт сам, не в раннере.
+let APPS = null;
+function appsLoad() {
+  const box = $('apps-list');
+  if (typeof ZenBridge === 'undefined' || !ZenBridge.listApps) {
+    if (box) box.innerHTML = '<span class="note">Список есть только в APK-оболочке. В браузере этой вкладки не будет.</span>';
+    return;
+  }
+  try {
+    APPS = JSON.parse(ZenBridge.listApps());
+  } catch (e) {
+    if (box) box.innerHTML = '<span class="danger">Список не ответился: ' + esc(String(e.message || e)) + '</span>';
+    return;
+  }
+  appsRender();
+}
+function appsFilter() {
+  const q = String(($('apps-q') && $('apps-q').value) || '').trim().toLowerCase();
+  const all = APPS || [];
+  if (!q) return all;
+  return all.filter(a => a.label.toLowerCase().indexOf(q) >= 0
+    || String(a.pkg || '').toLowerCase().indexOf(q) >= 0);
+}
+function appsRender() {
+  const box = $('apps-list');
+  if (!box || !APPS) return;
+  const list = appsFilter();
+  if (!list.length) {
+    box.innerHTML = '<span class="note">' + (APPS.length ? 'Ничего не подходит.' : 'Ничего не найдено.') + '</span>';
+    return;
+  }
+  box.innerHTML = list.map((a, i) => `<div class="item" onclick="appsOpen(${i})">
+    ${a.icon
+      ? '<img class="appico" src="data:image/png;base64,' + esc(a.icon) + '" alt="">'
+      : '<div class="ico">▦</div>'}
+    <div class="grow">
+      <div class="name">${esc(a.label)}</div>
+      <div class="meta">${esc(a.pkg || '')}</div>
+    </div>
+  </div>`).join('');
+}
+// The list is filtered on every keystroke, so a tap has to find the app in the
+// filtered view rather than in the original array.
+function appsOpen(i) {
+  const a = appsFilter()[i];
+  if (!a || !a.pkg) return;
+  try {
+    ZenBridge.launchApp(a.pkg);
+  } catch (e) {
+    alert('Не открылось: ' + (e.message || e));
+  }
 }
 
 async function loadPanelApk() {
