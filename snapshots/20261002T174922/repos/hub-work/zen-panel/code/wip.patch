@@ -1,0 +1,142 @@
+diff --git a/npm-hub/public/mobile-app.js b/npm-hub/public/mobile-app.js
+index 5658ca0..6a9d515 100644
+--- a/npm-hub/public/mobile-app.js
++++ b/npm-hub/public/mobile-app.js
+@@ -450,6 +450,7 @@ async function ghLoadRepos() {
+           <span style="margin-left:auto;display:flex;gap:4px">
+             <button class="btn btn-sm btn-p" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); ghQuickClone('${escAttr(r.full_name)}')" title="Клонировать и открыть в любом агенте (как в Файлах)">📂</button>
+             <button class="btn btn-sm" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); browserOpenDesktop('https://github.com/${escAttr(r.full_name)}')" title="Открыть на github.com в браузере">🌐</button>
++            <button class="btn btn-sm btn-er" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); ghDeleteRepoModal('${escAttr(r.full_name)}')" title="Удалить репозиторий навсегда">🗑</button>
+           </span>
+         </div>
+       </div>
+@@ -522,6 +523,56 @@ async function ghCloneAndOpen(toolId){
+     }
+   }catch(e){ if(typeof fmInfo==='function') fmInfo('❌ '+e.message); }
+ }
++// Удаление репозитория — то же, что и на десктопе, но здесь есть
++// повод копия. Поэтому имя репозитория нада #1ывает нет, пока имя
++// совпадает с ним.
++let ghDeleteFullName = null;
++function ghDeleteRepoModal(fullName) {
++  ghDeleteFullName = fullName;
++  const info = document.getElementById('delrepo-info');
++  if (info) info.textContent = 'Вы уверены, что хотите удалить ' + fullName + '?';
++  const input = document.getElementById('delrepo-confirm');
++  const btn = document.getElementById('delrepo-btn');
++  if (input) { input.value = ''; input.oninput = function () { btn.disabled = this.value.trim() !== fullName; }; }
++  if (btn) { btn.disabled = true; btn.textContent = 'Удалить навсегда'; }
++  const bg = document.getElementById('modal-delrepo');
++  if (bg) bg.classList.add('on');
++  // The backdrop is wired once for every modal at the bottom of this file, so
++  // tapping outside closes this one too.
++  if (input) setTimeout(() => input.focus(), 50);
++}
++async function confirmDeleteRepo() {
++  const btn = document.getElementById('delrepo-btn');
++  if (!btn || !ghDeleteFullName) return;
++  const target = ghDeleteFullName;
++  btn.disabled = true;
++  btn.textContent = 'Удаляю...';
++  try {
++    const r = await fetch('/api/gh/delete-repo', {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ full_name: target })
++    });
++    const d = await r.json();
++    closeModal('modal-delrepo');
++    if (d.success) {
++      // В списке бы мог открываемуся - иначе увидим выше, что больше не выжидается
++      // на месте и не доводит до конца работы.
++      if (ghCurrentRepo === target) ghBackToList();
++      if (typeof fmInfo === 'function') fmInfo('✅ Репозиторий ' + target + ' удалён.');
++      ghLoadRepos();
++    } else {
++      if (typeof fmInfo === 'function') fmInfo('❌ ' + (d.error || 'не удалось'));
++      btn.textContent = 'Удалить навсегда';
++      btn.disabled = false;
++    }
++  } catch (e) {
++    if (typeof fmInfo === 'function') fmInfo('❌ ' + e.message);
++    btn.textContent = 'Удалить навсегда';
++    btn.disabled = false;
++  }
++}
++
+ async function ghQuickClone(full_name){
+   ghCurrentRepo=full_name;
+   // Для списка — сразу Terminal (быстро), а выбор — через деталку
+diff --git a/npm-hub/public/mobile.html b/npm-hub/public/mobile.html
+index 95da1cf..10cf6df 100644
+--- a/npm-hub/public/mobile.html
++++ b/npm-hub/public/mobile.html
+@@ -814,6 +814,27 @@
+     </div>
+   </div>
+ 
++  <!-- Delete Repo Confirm Modal: the same guard the desktop hub and the
++       standalone git page use - the repo name has to be typed out, because
++       there is no undo on the other side of this button. -->
++  <div class="modal-bg" id="modal-delrepo">
++    <div class="modal" style="width:420px">
++      <h2 style="color:var(--err)">Удалить репозиторий?</h2>
++      <div id="delrepo-info" style="font-size:12px;color:var(--t2);margin-bottom:12px"></div>
++      <div style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.3);border-radius:8px;padding:10px;font-size:11px;color:var(--err);margin-bottom:12px">
++        Это действие необратимо. Репозиторий и все его данные будут удалены навсегда.
++      </div>
++      <div style="margin-bottom:12px">
++        <label style="font-size:10px;color:var(--t2)">Введите имя репозитория для подтверждения:</label>
++        <input type="text" id="delrepo-confirm" placeholder="user/repo-name" style="width:100%;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;font-family:monospace;outline:none;margin-top:4px">
++      </div>
++      <div class="modal-actions">
++        <button class="btn" onclick="closeModal('modal-delrepo')">Отмена</button>
++        <button class="btn btn-er" id="delrepo-btn" onclick="confirmDeleteRepo()" disabled>Удалить навсегда</button>
++      </div>
++    </div>
++  </div>
++
+   <!-- Model Menu (mobile bottom sheet) -->
+   <div class="apply-menu" id="model-menu" style="min-width:unset"></div>
+ 
+diff --git a/tests/mobile-touch-test.js b/tests/mobile-touch-test.js
+index fc5156f..87a4e40 100644
+--- a/tests/mobile-touch-test.js
++++ b/tests/mobile-touch-test.js
+@@ -876,5 +876,36 @@ check('q102 the keep-alive rides the activity, so nothing is left switched on',
+   panelKt.includes('KeepAlive.start(this)') && panelKt.includes('KeepAlive.stop(this)') &&
+   panelKt.indexOf('KeepAlive.start(this)') < panelKt.indexOf('override fun onDestroy()'));
+ 
++// q103: deleting a repository is the one thing in the Git tab that cannot be
++// taken back, so every surface that lists repos offers it and none of them
++// skips the typed-name guard.
++const mobHtml2 = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/mobile.html'), 'utf8');
++const gitApp = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/git-app.js'), 'utf8');
++const gitHtml = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/git.html'), 'utf8');
++const deskHtml2 = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/desktop.html'), 'utf8');
++check('q103 every repo list offers a delete button',
++  mob.includes("ghDeleteRepoModal('${escAttr(r.full_name)}')") &&
++  desk.includes("ghDeleteRepoModal('${escAttr(r.full_name)}')") &&
++  gitApp.includes("ghDeleteRepoModal('${escAttr(r.full_name)}')"));
++check('q103 the button is on the card, not only on the opened repo',
++  mob.indexOf("ghDeleteRepoModal('${escAttr(r.full_name)}')") < mob.indexOf('async function ghOpenRepo(') &&
++  desk.indexOf("ghDeleteRepoModal('${escAttr(r.full_name)}')") < desk.indexOf('async function ghOpenRepo('));
++check('q103 deleting needs the repo name typed out',
++  [mob, desk, gitApp].every(c => c.includes('this.value.trim() !== fullName')) &&
++  [mobHtml2, deskHtml2, gitHtml].every(h => h.includes('id="delrepo-confirm"') && h.includes('id="delrepo-btn"') &&
++    h.includes('onclick="confirmDeleteRepo()"') && h.includes('id="modal-delrepo"')));
++check('q103 the mobile hub got the guard too, not just the modal',
++  mob.includes('function ghDeleteRepoModal(') && mob.includes('async function confirmDeleteRepo(') &&
++  mob.includes("fetch('/api/gh/delete-repo'") && mob.includes('ghDeleteFullName = null') &&
++  mobHtml2.includes('id="modal-delrepo"'));
++check('q103 a deleted repo leaves the open view before the list reloads',
++  mob.includes('if (ghCurrentRepo === target) ghBackToList();') &&
++  mob.includes('ghLoadRepos();') &&
++  mob.indexOf('if (ghCurrentRepo === target) ghBackToList();') < mob.indexOf('    ghLoadRepos();'));
++check('q103 the server owns the call, not the page',
++  server.includes("app.post('/api/gh/delete-repo'") &&
++  server.includes("method: 'DELETE'") &&
++  server.includes('if (r.status === 204)'));
++
+ console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
+ process.exit(fail ? 1 : 0);
