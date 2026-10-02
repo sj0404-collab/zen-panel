@@ -1,3 +1,17 @@
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+index 1c296c1..90c5148 100644
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -31,6 +31,9 @@ jobs:
+       - name: Gradle
+         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+ 
++      - name: Тесты (разбор ZIP)
++        run: sh gradlew test
++
+       - name: Собрать release без подписи
+         run: sh gradlew assembleRelease
+ 
 diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
 index d3a6e75..212614c 100644
 --- a/.github/workflows/release.yml
@@ -58,8 +72,37 @@ index 94c08a9..39715a8 100644
  
  ## Чего нет и почему
  
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 5152f80..0b747b9 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -87,6 +87,16 @@ android {
+ 
+ }
+ 
++// Разбор ZIP проверяется на JVM (нужен только FileChannel), поэтому тесты
++// запускаются обычной задачей test — без устройства и без Robolectric.
++tasks.withType<Test>().configureEach {
++    useJUnitPlatform()
++    testLogging {
++        events("failed")
++        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
++    }
++}
++
+ dependencies {
+     implementation(libs.androidx.core.ktx)
+     implementation(libs.androidx.activity)
+@@ -97,4 +107,7 @@ dependencies {
+     implementation(libs.androidx.webkit)
+ 
+     testImplementation(libs.junit.jupiter)
++    // Gradle запускает тесты через JUnit Platform Launcher, и без него задача
++    // падает ещё до первого теста.
++    testRuntimeOnly(libs.junit.platform.launcher)
+ }
 diff --git a/app/src/main/assets/web/app.css b/app/src/main/assets/web/app.css
-index be8aa69..b4c3409 100644
+index be8aa69..606608c 100644
 --- a/app/src/main/assets/web/app.css
 +++ b/app/src/main/assets/web/app.css
 @@ -65,6 +65,10 @@ input[type=text], input[type=password], textarea, select {
@@ -73,11 +116,143 @@ index be8aa69..b4c3409 100644
  
  ul { list-style: none; margin: 0; padding: 0; }
  li.item {
+@@ -80,6 +84,8 @@ li.item {
+ li.item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ li.item .meta { color: var(--muted); font-size: 12px; }
+ li.item.dir .name { color: var(--accent); }
++/* Чтение папки целиком: тап по строке открывает папку, эта кнопка — читает. */
++button.read { padding: 5px 10px; font-size: 12px; border-color: var(--accent); color: var(--accent); }
+ 
+ .hint { color: var(--muted); font-size: 13px; padding: 10px 2px; }
+ .error { color: var(--error); font-size: 13px; padding: 8px 2px; }
 diff --git a/app/src/main/assets/web/app.js b/app/src/main/assets/web/app.js
-index fa6081d..1c2c297 100644
+index fa6081d..a524b21 100644
 --- a/app/src/main/assets/web/app.js
 +++ b/app/src/main/assets/web/app.js
-@@ -347,10 +347,45 @@ async function renderSettings() {
+@@ -29,7 +29,8 @@ const TITLES = {
+ 
+ const state = {
+   uri: null,        // текущая папка
+-  archive: null,    // текущий архив
++  archive: null,    // открытый архив
++  source: null,     // что читаем: {kind: title|archive|file, name}
+   pages: [],
+   page: 0,
+ };
+@@ -132,6 +133,15 @@ async function renderList() {
+     onclick: () => (node.dir ? enterDir(node) : openItem(node)),
+   }, [
+     el('span', { class: 'name', text: node.name }),
++    // Тап по строке открывает папку, а эта кнопка — читает её целиком: все
++    // главы подряд, без захода в каждый архив отдельно.
++    node.dir
++      ? el('button', {
++        class: 'read',
++        text: 'Читать',
++        onclick: (e) => { e.stopPropagation(); openTitle(node); },
++      })
++      : null,
+     el('span', { class: 'meta', text: node.dir ? 'папка' : humanSize(node.size) }),
+   ])));
+   view.appendChild(list);
+@@ -143,15 +153,53 @@ function enterDir(node) {
+   renderList();
+ }
+ 
++/**
++ * Читать тайтл целиком: папка раскладывается на главы (архивы) и отдельные
++ * картинки, страницы сходятся в один список и идут подряд. Это то, чего не
++ * хватало при чтении по архиву: зашёл в папку тайтла — получил все главы.
++ */
++async function openTitle(node) {
++  state.archive = null;
++  state.pages = [];
++  state.page = 0;
++  state.source = { kind: 'title', name: node.name };
++  setTitle(TITLES.reader);
++  setStatus('Собираю главы…');
++  view.replaceChildren(el('div', { class: 'hint', text: 'Читаю папку с главами: ' + node.name }));
++  try {
++    const pages = await api('/api/title', { uri: node.uri });
++    if (!pages.length) {
++      showError('В папке нет ни архива, ни картинки — читать нечего.');
++      return;
++    }
++    state.pages = pages.map(toPage);
++    state.page = 0;
++    await renderReader();
++  } catch (e) {
++    showError('Главы не собраны: ' + e.message);
++  }
++}
++
++function toPage(p) {
++  return {
++    name: p.name,
++    url: p.kind === 'zip' ? entryUrl(p.uri, p.entry) : fileUrl(p.uri),
++  };
++}
++
+ async function openItem(node) {
+   if (ARCHIVES.includes(node.ext)) {
+     state.archive = node;
++    state.source = { kind: 'archive', name: node.name };
++    state.pages = [];
++    state.page = 0;
+     await renderReader();
+     return;
+   }
+   if (IMAGES.includes(node.ext)) {
+     // Одиночная картинка: показываем как одностраничную «главу».
+     state.archive = null;
++    state.source = { kind: 'file', name: node.name };
+     state.pages = [{ name: node.name, url: fileUrl(node.uri) }];
+     state.page = 0;
+     await renderReader();
+@@ -159,6 +207,7 @@ async function openItem(node) {
+   }
+   if (['pdf', 'epub', 'fb2', 'txt', 'md', 'docx'].includes(node.ext)) {
+     state.archive = null;
++    state.source = { kind: 'file', name: node.name };
+     state.pages = [{ name: node.name, url: fileUrl(node.uri), book: true }];
+     state.page = 0;
+     await renderReader();
+@@ -173,8 +222,8 @@ const entryUrl = (uri, name) =>
+ 
+ async function renderReader() {
+   setTitle(TITLES.reader);
+-  if (!state.archive && !state.pages.length) {
+-    view.replaceChildren(el('div', { class: 'hint', text: 'Откройте архив или картинку в библиотеке.' }));
++  if (!state.source && !state.pages.length) {
++    view.replaceChildren(el('div', { class: 'hint', text: 'Откройте архив, картинку или нажмите «Читать» на папке с тайтлом.' }));
+     return;
+   }
+   if (state.archive && !state.pages.length) {
+@@ -192,10 +241,13 @@ async function renderReader() {
+     return;
+   }
+   state.page = Math.min(state.page, state.pages.length - 1);
+-  setStatus(state.archive ? state.archive.name : '');
++  setStatus(state.source ? state.source.name : '');
++  // Полоса страниц у тайтла длинная (это все главы), поэтому подсказка с названием
++  // главы и страницы живёт в статусной строке, а не только цифрами на кнопках.
+   view.replaceChildren(el('div', { id: 'pages' }, state.pages.map((p, i) => el('button', {
+     class: i === state.page ? 'active' : '',
+     text: String(i + 1),
++    title: p.name,
+     onclick: () => { state.page = i; showPage(); },
+   }))));
+ 
+@@ -229,7 +281,7 @@ function showPage() {
+   box.replaceChildren(el('img', { src: current.url, alt: current.name }));
+   document.querySelectorAll('#pages button').forEach((b, i) => b.classList.toggle('active', i === state.page));
+   if (ocr) ocr.textContent = '';
+-  setStatus((state.page + 1) + ' / ' + state.pages.length);
++  setStatus((state.page + 1) + ' / ' + state.pages.length + ' · ' + current.name);
+ }
+ 
+ /**
+@@ -347,10 +399,45 @@ async function renderSettings() {
          onchange: (e) => Yomi.setPref('ui.ocr.showPages', e.target.checked ? '1' : '0'),
        }),
      ]),
@@ -123,7 +298,7 @@ index fa6081d..1c2c297 100644
  /* --- маршрутизация ------------------------------------------------------- */
  
  const ROUTES = {
-@@ -363,6 +398,12 @@ const ROUTES = {
+@@ -363,6 +450,12 @@ const ROUTES = {
  window.YomiShell = {
    event(name) {
      if (name === 'library:roots-changed') renderLibrary();
@@ -137,18 +312,10 @@ index fa6081d..1c2c297 100644
  };
  
 diff --git a/app/src/main/java/app/yomikai/shell/MainActivity.kt b/app/src/main/java/app/yomikai/shell/MainActivity.kt
-index 00cbb3f..95c1d23 100644
+index 00cbb3f..248c84e 100644
 --- a/app/src/main/java/app/yomikai/shell/MainActivity.kt
 +++ b/app/src/main/java/app/yomikai/shell/MainActivity.kt
-@@ -2,7 +2,6 @@ package app.yomikai.shell
- 
- import android.annotation.SuppressLint
- import android.content.Intent
--import android.net.Uri
- import android.os.Bundle
- import android.view.Gravity
- import android.view.View
-@@ -23,6 +22,7 @@ import app.yomikai.shell.bridge.OnlineModels
+@@ -23,6 +23,7 @@ import app.yomikai.shell.bridge.OnlineModels
  import app.yomikai.shell.bridge.ShellBridge
  import app.yomikai.shell.net.LocalServer
  import app.yomikai.shell.storage.DeviceLibrary
@@ -156,7 +323,7 @@ index 00cbb3f..95c1d23 100644
  import org.json.JSONArray
  import org.json.JSONObject
  import java.io.ByteArrayInputStream
-@@ -35,13 +35,18 @@ import java.net.URLEncoder
+@@ -35,13 +36,18 @@ import java.net.URLEncoder
   * Таб-бар остаётся нативным намеренно — он должен открываться мгновенно и не
   * зависеть ни от сети, ни от веб-слоя. Вкладка «Браузер» тоже нативная: это
   * системный WebView плюс адресная строка. Всё остальное — веб-интерфейс,
@@ -176,7 +343,7 @@ index 00cbb3f..95c1d23 100644
      private lateinit var bridge: ShellBridge
      private lateinit var tabBar: LinearLayout
      private lateinit var browserBar: LinearLayout
-@@ -51,9 +56,6 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+@@ -51,9 +57,6 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
      private val online by lazy { OnlineModels(this) }
      private var currentTab = TAB_LIBRARY
  
@@ -186,7 +353,7 @@ index 00cbb3f..95c1d23 100644
      private val pickTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
          if (uri == null) return@registerForActivityResult
          val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-@@ -61,11 +63,16 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+@@ -61,11 +64,16 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
          val name = uri.lastPathSegment?.substringAfterLast(':')?.takeIf { it.isNotBlank() } ?: "Корень"
          library.addRoot(uri.toString(), name)
          tellWeb("'library:roots-changed'")
@@ -203,7 +370,7 @@ index 00cbb3f..95c1d23 100644
          setContentView(buildLayout())
          server = LocalServer(this, this)
          server.start()
-@@ -74,6 +81,8 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+@@ -74,6 +82,8 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
              serverUrlProvider = { server.baseUrl },
              pickTree = pickTree,
              online = online,
@@ -212,7 +379,7 @@ index 00cbb3f..95c1d23 100644
          )
          setupWebView()
          installBackHandler()
-@@ -166,15 +175,36 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+@@ -166,15 +176,36 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
              button.setTextColor(if (button.tag == id) ACCENT else MUTED)
          }
          if (id == TAB_BROWSER) {
@@ -249,7 +416,7 @@ index 00cbb3f..95c1d23 100644
      private fun loadAddress(raw: String) {
          val value = raw.trim()
          if (value.isEmpty()) return
-@@ -218,7 +248,6 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+@@ -218,7 +249,6 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
              javaScriptCanOpenWindowsAutomatically = false
              setSupportMultipleWindows(false)
          }
@@ -257,7 +424,7 @@ index 00cbb3f..95c1d23 100644
      }
  
      private fun installBackHandler() {
-@@ -241,13 +270,7 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+@@ -241,19 +271,15 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
  
      // --- сервер: ассеты -----------------------------------------------------
  
@@ -272,7 +439,124 @@ index 00cbb3f..95c1d23 100644
  
      // --- сервер: устройство -------------------------------------------------
  
-@@ -324,10 +347,15 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+     override fun device(uri: String, rangeStart: Long, rangeLength: Long): LocalServer.DeviceStream? =
+         runCatching {
+-            val bytes = library.readBytes(uri) ?: return null
++            val bytes = pageCache[keyOf("file", uri)] ?: library.readBytes(uri)?.also {
++                pageCache[keyOf("file", uri)] = it
++            } ?: return null
+             streamSlice(bytes, rangeStart, mimeOf(uri))
+         }.getOrNull()
+ 
+@@ -268,24 +294,103 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+         }
+     }.getOrNull()
+ 
++    /**
++     * Страницы тайтла: папка разбирается на архивы и картинки, главы идут в
++     * естественном порядке, страницы — в порядке архива. Глубина папок — одна
++     * (вложенные «том/том/глава» встречаются, но глубже разбирать уже не про
++     * тайтл), число страниц ограничено [DeviceLibrary.MAX_TITLE_PAGES].
++     */
++    override fun titlePages(uri: String): String? = runCatching {
++        val out = JSONArray()
++        collectTitle(Uri.parse(uri), "", out)
++        out.toString()
++    }.getOrNull()
++
++    private fun collectTitle(dir: Uri, prefix: String, out: JSONArray) {
++        if (out.length() >= DeviceLibrary.MAX_TITLE_PAGES) return
++        val nodes = runCatching { library.list(dir.toString()) }.getOrDefault(emptyList())
++        val archives = nodes.filter { node ->
++            !node.isDirectory && DeviceLibrary.extensionOf(node.name) in CHAPTER_EXTENSIONS
++        }.sortedBy { it.name }
++
++        for (node in archives) {
++            if (out.length() >= DeviceLibrary.MAX_TITLE_PAGES) return
++            val (channel, size) = library.openChannel(node.uri) ?: continue
++            val entries = runCatching {
++                openZip(channel, size).use { zip -> zip.imageEntries(DeviceLibrary.IMAGE_EXTENSIONS) }
++            }.getOrDefault(emptyList())
++            entries.forEach { entry ->
++                if (out.length() >= DeviceLibrary.MAX_TITLE_PAGES) return
++                out.put(
++                    JSONObject()
++                        .put("name", "$prefix${node.name}/${entry.name}")
++                        .put("uri", node.uri)
++                        .put("entry", entry.name)
++                        .put("kind", "zip"),
++                )
++            }
++        }
++
++        // Подпапки — продолжение тайтла («Том 1», «Том 2»): их главы идут после
++        // архивов рядом, но разбираются раньше следующего уровня.
++        nodes.filter { it.isDirectory }.sortedBy { it.name }.forEach { sub ->
++            collectTitle(Uri.parse(sub.uri), "$prefix${sub.name}/", out)
++        }
++        // Отдельные картинки рядом с главами — тоже страницы тайтла.
++        nodes.filter { node ->
++            !node.isDirectory && DeviceLibrary.extensionOf(node.name) in DeviceLibrary.IMAGE_EXTENSIONS
++        }.sortedBy { it.name }.forEach { node ->
++            if (out.length() >= DeviceLibrary.MAX_TITLE_PAGES) return
++            out.put(
++                JSONObject()
++                    .put("name", "$prefix${node.name}")
++                    .put("uri", node.uri)
++                    .put("kind", "file"),
++            )
++        }
++    }
++
+     override fun archiveEntry(
+         uri: String,
+         entry: String,
+         rangeStart: Long,
+         rangeLength: Long,
+     ): LocalServer.DeviceStream? = runCatching {
++        // Кэш держит только текущую страницу: возврат назад по кнопке «‹» не
++        // должен заново распаковывать запись из архива.
++        val key = keyOf("zip", uri, entry)
++        val cached = pageCache[key]
++        if (cached != null) return@runCatching streamSlice(cached, rangeStart, mimeOf(entry))
+         val (channel, size) = library.openChannel(uri) ?: return null
+         openZip(channel, size).use { zip ->
+             val found = zip.find(entry) ?: return null
+-            streamSlice(zip.read(found), rangeStart, mimeOf(entry))
++            val bytes = zip.read(found)
++            pageCache[key] = bytes
++            streamSlice(bytes, rangeStart, mimeOf(entry))
+         }
+     }.getOrNull()
+ 
++    /**
++     * Кэш страниц: две записи, чтобы «‹» и «›» не распаковывали архив заново.
++     * Больше держать нечего — тайтл на 200 страниц это сотни мегабайт, а
++     * Chromium всё равно декодирует картинку у себя. Обёртка синхронная:
++     * страницы запрашивают шесть потоков сервера сразу.
++     */
++    private val pageCache: MutableMap<String, ByteArray> = java.util.Collections.synchronizedMap(
++        object : LinkedHashMap<String, ByteArray>(4, 0.75f, true) {
++            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>?): Boolean =
++                size > 2
++        },
++    )
++
++    /** Ключ кэша страниц: NUL в URI и в имени записи не встречается. */
++    private fun keyOf(kind: String, uri: String, entry: String? = null): String =
++        entry?.let { "$kind:$uri\u0000$it" } ?: "$kind:$uri"
++
+     /**
+      * Chromium шлёт Range на каждую картинку, поэтому Range поддержан честно.
+-     * Файл целиком в памяти: это страница comics-архива, то есть картинка на
+-     * сотни килобайт — держать её целику дешевле, чем городить потоковое чтение
+-     * со смещением.
++     * Страница отдаётся из памяти целиком: распаковывать запись со смещением
++     * дороже, чем отдать её разом.
+      */
+     private fun streamSlice(bytes: ByteArray, from: Long, mime: String): LocalServer.DeviceStream {
+         val start = from.coerceIn(0, bytes.size.toLong()).toInt()
+@@ -324,10 +429,15 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
      override fun onResume() {
          super.onResume()
          webView.onResume()
@@ -288,7 +572,7 @@ index 00cbb3f..95c1d23 100644
          webView.destroy()
          super.onDestroy()
      }
-@@ -338,6 +366,15 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+@@ -338,6 +448,15 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
          }
      }
  
@@ -304,7 +588,7 @@ index 00cbb3f..95c1d23 100644
      private fun mimeOf(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
          "jpg", "jpeg" -> "image/jpeg"
          "png" -> "image/png"
-@@ -352,6 +389,7 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+@@ -352,12 +471,21 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
      private data class TabDef(val id: String, val title: Int)
  
      private companion object {
@@ -312,8 +596,22 @@ index 00cbb3f..95c1d23 100644
          const val TAB_LIBRARY = "library"
          const val TAB_BROWSER = "browser"
          const val START_PAGE = "https://duckduckgo.com"
+         val BACKGROUND = 0xFF0B0B0F.toInt()
+         val ACCENT = 0xFF7C4DFF.toInt()
+         val MUTED = 0xFF8A8A96.toInt()
++
++        /**
++         * Что считается главой тайтла. Только zip/cbz: остальное (cbr, 7z, rar)
++         * читается нативной библиотекой, которой в оболочке нет, и глава из
++         * такого архива молча пропустила бы страницы.
++         */
++        val CHAPTER_EXTENSIONS = setOf("zip", "cbz")
++
+         val TABS = listOf(
+             TabDef(TAB_LIBRARY, R.string.tab_library),
+             TabDef("reader", R.string.tab_reader),
 diff --git a/app/src/main/java/app/yomikai/shell/archive/ZipReader.kt b/app/src/main/java/app/yomikai/shell/archive/ZipReader.kt
-index 4cfc1fc..f4e173e 100644
+index 4cfc1fc..2e8ab0a 100644
 --- a/app/src/main/java/app/yomikai/shell/archive/ZipReader.kt
 +++ b/app/src/main/java/app/yomikai/shell/archive/ZipReader.kt
 @@ -16,9 +16,10 @@ import java.nio.channels.FileChannel
@@ -330,7 +628,13 @@ index 4cfc1fc..f4e173e 100644
   */
  class ZipReader internal constructor(
      private val channel: FileChannel,
-@@ -49,9 +50,14 @@ class ZipReader internal constructor(
+@@ -44,14 +45,19 @@ class ZipReader internal constructor(
+     /** Записи, отсортированные естественно (2, 10, а не 2, 10-1, 2). */
+     fun imageEntries(extensions: Set<String>): List<Entry> = entries
+         .filter { !it.isDirectory && it.name.substringAfterLast('.', "").lowercase() in extensions }
+-        .sortedWith(naturalKey())
++        .sortedWith { a, b -> naturalOrder(a.name, b.name) }
+ 
      /**
       * Байты записи. Метод 0 — без сжатия (копируем как есть), 8 — deflate
       * (разжимаем потоком из того же дескриптора, без записи на диск).
@@ -347,6 +651,106 @@ index 4cfc1fc..f4e173e 100644
              throw IOException("Запись ${entry.name} больше лимита (${entry.compressedSize} байт)")
          }
          val header = readAt(entry.dataOffset, 30)
+@@ -83,7 +89,7 @@ class ZipReader internal constructor(
+                 } else {
+                     out.write(buffer, 0, n)
+                 }
+-                if (out.size() > maxBytes) throw IOException("Распакованный ${entry.name} больше лимита")
++                if (out.size() > MAX_ENTRY_BYTES) throw IOException("Распакованный ${entry.name} больше лимита")
+             }
+             return out.toByteArray()
+         } catch (e: java.util.zip.DataFormatException) {
+@@ -157,49 +163,56 @@ class ZipReader internal constructor(
+         const val CENTRAL_SIG = 0x02014b50
+         const val LOCAL_HEADER_SIG = 0x04034b50
+ 
++        /** Потолок одной страницы: это страховка от битого архива, не от тяжёлой. */
++        const val MAX_ENTRY_BYTES = 512L * 1024 * 1024
++
+         fun int4(b: ByteArray, off: Int): Int =
+             ((b[off].toInt() and 0xFF) or ((b[off + 1].toInt() and 0xFF) shl 8) or
+                 ((b[off + 2].toInt() and 0xFF) shl 16) or ((b[off + 3].toInt() and 0xFF) shl 24))
+ 
+         fun int2(b: ByteArray, off: Int): Short =
+             (((b[off].toInt() and 0xFF) or ((b[off + 1].toInt() and 0xFF) shl 8)).toShort())
++    }
++}
+ 
+-        /** Ключ естественной сортировки: «стр2» идёт раньше «стр10». */
+-        fun naturalKey(): Comparator<Entry> = Comparator { a, b ->
+-            val ai = a.name
+-            val bi = b.name
+-            var x = 0
+-            var y = 0
+-            while (x < ai.length && y < bi.length) {
+-                val ac = ai[x]
+-                val bc = bi[y]
+-                if (ac.isDigit() && bc.isDigit()) {
+-                    var ax = x
+-                    var ay = y
+-                    while (ax < ai.length && ai[ax] == '0') ax++
+-                    while (ay < bi.length && bi[ay] == '0') ay++
+-                    val as0 = ax
+-                    val bs0 = ay
+-                    while (ax < ai.length && ai[ax].isDigit()) ax++
+-                    while (ay < bi.length && bi[ay].isDigit()) ay++
+-                    val al = ai.substring(as0, ax)
+-                    val bl = bi.substring(bs0, ay)
+-                    val cmp = al.trimStart('0').length.compareTo(bl.trimStart('0').length)
+-                    if (cmp != 0) return@Comparator cmp
+-                    val cmp2 = al.compareTo(bl)
+-                    if (cmp2 != 0) return@Comparator cmp2
+-                    x = ax
+-                    y = ay
+-                } else {
+-                    val cmp = ac.lowercaseChar().compareTo(bc.lowercaseChar())
+-                    if (cmp != 0) return@Comparator cmp
+-                    x++
+-                    y++
+-                }
+-            }
+-            (ai.length - x).compareTo(bi.length - y)
++/**
++ * Ключ естественной сортировки: «стр2» идёт раньше «стр10», регистр не важен.
++ * Общий для записей архива и для папок с главами — глава 2 обязана идти раньше
++ * главы 10, иначе тайтл читается не по порядку.
++ */
++fun naturalOrder(first: String, second: String): Int {
++    val ai = first
++    val bi = second
++    var x = 0
++    var y = 0
++    while (x < ai.length && y < bi.length) {
++        val ac = ai[x]
++        val bc = bi[y]
++        if (ac.isDigit() && bc.isDigit()) {
++            var ax = x
++            var ay = y
++            while (ax < ai.length && ai[ax] == '0') ax++
++            while (ay < bi.length && bi[ay] == '0') ay++
++            val as0 = ax
++            val bs0 = ay
++            while (ax < ai.length && ai[ax].isDigit()) ax++
++            while (ay < bi.length && bi[ay].isDigit()) ay++
++            val al = ai.substring(as0, ax)
++            val bl = bi.substring(bs0, ay)
++            val cmp = al.trimStart('0').length.compareTo(bl.trimStart('0').length)
++            if (cmp != 0) return cmp
++            val cmp2 = al.compareTo(bl)
++            if (cmp2 != 0) return cmp2
++            x = ax
++            y = ay
++        } else {
++            val cmp = ac.lowercaseChar().compareTo(bc.lowercaseChar())
++            if (cmp != 0) return cmp
++            x++
++            y++
+         }
+     }
++    return (ai.length - x).compareTo(bi.length - y)
+ }
+ 
+ /**
 diff --git a/app/src/main/java/app/yomikai/shell/bridge/ShellBridge.kt b/app/src/main/java/app/yomikai/shell/bridge/ShellBridge.kt
 index 4619650..1b28a07 100644
 --- a/app/src/main/java/app/yomikai/shell/bridge/ShellBridge.kt
@@ -398,7 +802,7 @@ index 4619650..1b28a07 100644
          }
          return out.toString()
 diff --git a/app/src/main/java/app/yomikai/shell/net/LocalServer.kt b/app/src/main/java/app/yomikai/shell/net/LocalServer.kt
-index 3e9d5ec..e10c00b 100644
+index 3e9d5ec..bc9c901 100644
 --- a/app/src/main/java/app/yomikai/shell/net/LocalServer.kt
 +++ b/app/src/main/java/app/yomikai/shell/net/LocalServer.kt
 @@ -24,14 +24,16 @@ import java.util.concurrent.atomic.AtomicBoolean
@@ -420,6 +824,34 @@ index 3e9d5ec..e10c00b 100644
          fun asset(path: String): Pair<InputStream, Long>?
  
          /** Отдать поток с устройства по URI. */
+@@ -43,13 +45,17 @@ class LocalServer(
+         /** Содержимое папки как JSON. */
+         fun listJson(uri: String?): String
+ 
+-        /** Список ZIP-записей архива как JSON. */
++/** Список ZIP-записей архива как JSON. */
+         fun archiveEntries(uri: String): String?
+ 
+-        /** Байт из архива. */
++        /** Страницы тайтла (папка со главами) как JSON. */
++        fun titlePages(uri: String): String?
++
++        /** Байты из архива. */
+         fun archiveEntry(uri: String, entry: String, rangeStart: Long, rangeLength: Long): DeviceStream?
+     }
+ 
++
+     data class DeviceStream(val stream: InputStream, val length: Long, val mime: String)
+ 
+     private val token = java.util.UUID.randomUUID().toString().replace("-", "")
+@@ -131,6 +137,7 @@ class LocalServer(
+                 target == "/api/list" -> json(socket.getOutputStream(), routes.listJson(query["uri"]))
+                 target == "/api/file" -> serveDevice(socket, query, method)
+                 target == "/api/zip/list" -> json(socket.getOutputStream(), routes.archiveEntries(query["uri"].orEmpty()) ?: "[]")
++                target == "/api/title" -> json(socket.getOutputStream(), routes.titlePages(query["uri"].orEmpty()) ?: "[]")
+                 target == "/api/zip/entry" -> serveArchiveEntry(socket, query, method)
+                 else -> writeSimple(socket.getOutputStream(), 404, "text/plain; charset=utf-8", "нет такого")
+             }
 diff --git a/app/src/main/java/app/yomikai/shell/storage/DeviceLibrary.kt b/app/src/main/java/app/yomikai/shell/storage/DeviceLibrary.kt
 index 156b324..ccd0953 100644
 --- a/app/src/main/java/app/yomikai/shell/storage/DeviceLibrary.kt
@@ -545,3 +977,23 @@ index 156b324..ccd0953 100644
          fun extensionOf(name: String): String = name.substringAfterLast('.', "").lowercase()
      }
  }
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 1d7abe8..07a5da0 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -7,6 +7,7 @@ androidx-activity = "1.11.0"
+ androidx-appcompat = "1.7.1"
+ androidx-webkit = "1.14.0"
+ junit = "5.11.4"
++junit-platform = "1.11.4"
+ 
+ [libraries]
+ androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
+@@ -14,6 +15,7 @@ androidx-activity = { module = "androidx.activity:activity-ktx", version.ref = "
+ androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "androidx-appcompat" }
+ androidx-webkit = { module = "androidx.webkit:webkit", version.ref = "androidx-webkit" }
+ junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
++junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit-platform" }
+ 
+ [plugins]
+ android-application = { id = "com.android.application", version.ref = "agp" }
