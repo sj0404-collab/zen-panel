@@ -450,6 +450,7 @@ async function ghLoadRepos() {
           <span style="margin-left:auto;display:flex;gap:4px">
             <button class="btn btn-sm btn-p" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); ghQuickClone('${escAttr(r.full_name)}')" title="Клонировать и открыть в любом агенте (как в Файлах)">📂</button>
             <button class="btn btn-sm" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); browserOpenDesktop('https://github.com/${escAttr(r.full_name)}')" title="Открыть на github.com в браузере">🌐</button>
+            <button class="btn btn-sm btn-er" style="font-size:10px;padding:4px 6px" onclick="event.stopPropagation(); ghDeleteRepoModal('${escAttr(r.full_name)}')" title="Удалить репозиторий навсегда">🗑</button>
           </span>
         </div>
       </div>
@@ -522,6 +523,56 @@ async function ghCloneAndOpen(toolId){
     }
   }catch(e){ if(typeof fmInfo==='function') fmInfo('❌ '+e.message); }
 }
+// Удаление репозитория — то же, что и на десктопе, но здесь есть
+// повод копия. Поэтому имя репозитория нада #1ывает нет, пока имя
+// совпадает с ним.
+let ghDeleteFullName = null;
+function ghDeleteRepoModal(fullName) {
+  ghDeleteFullName = fullName;
+  const info = document.getElementById('delrepo-info');
+  if (info) info.textContent = 'Вы уверены, что хотите удалить ' + fullName + '?';
+  const input = document.getElementById('delrepo-confirm');
+  const btn = document.getElementById('delrepo-btn');
+  if (input) { input.value = ''; input.oninput = function () { btn.disabled = this.value.trim() !== fullName; }; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Удалить навсегда'; }
+  const bg = document.getElementById('modal-delrepo');
+  if (bg) bg.classList.add('on');
+  // The backdrop is wired once for every modal at the bottom of this file, so
+  // tapping outside closes this one too.
+  if (input) setTimeout(() => input.focus(), 50);
+}
+async function confirmDeleteRepo() {
+  const btn = document.getElementById('delrepo-btn');
+  if (!btn || !ghDeleteFullName) return;
+  const target = ghDeleteFullName;
+  btn.disabled = true;
+  btn.textContent = 'Удаляю...';
+  try {
+    const r = await fetch('/api/gh/delete-repo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ full_name: target })
+    });
+    const d = await r.json();
+    closeModal('modal-delrepo');
+    if (d.success) {
+      // В списке бы мог открываемуся - иначе увидим выше, что больше не выжидается
+      // на месте и не доводит до конца работы.
+      if (ghCurrentRepo === target) ghBackToList();
+      if (typeof fmInfo === 'function') fmInfo('✅ Репозиторий ' + target + ' удалён.');
+      ghLoadRepos();
+    } else {
+      if (typeof fmInfo === 'function') fmInfo('❌ ' + (d.error || 'не удалось'));
+      btn.textContent = 'Удалить навсегда';
+      btn.disabled = false;
+    }
+  } catch (e) {
+    if (typeof fmInfo === 'function') fmInfo('❌ ' + e.message);
+    btn.textContent = 'Удалить навсегда';
+    btn.disabled = false;
+  }
+}
+
 async function ghQuickClone(full_name){
   ghCurrentRepo=full_name;
   // Для списка — сразу Terminal (быстро), а выбор — через деталку

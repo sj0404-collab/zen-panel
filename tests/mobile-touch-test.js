@@ -876,5 +876,36 @@ check('q102 the keep-alive rides the activity, so nothing is left switched on',
   panelKt.includes('KeepAlive.start(this)') && panelKt.includes('KeepAlive.stop(this)') &&
   panelKt.indexOf('KeepAlive.start(this)') < panelKt.indexOf('override fun onDestroy()'));
 
+// q103: deleting a repository is the one thing in the Git tab that cannot be
+// taken back, so every surface that lists repos offers it and none of them
+// skips the typed-name guard.
+const mobHtml2 = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/mobile.html'), 'utf8');
+const gitApp = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/git-app.js'), 'utf8');
+const gitHtml = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/git.html'), 'utf8');
+const deskHtml2 = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/desktop.html'), 'utf8');
+check('q103 every repo list offers a delete button',
+  mob.includes("ghDeleteRepoModal('${escAttr(r.full_name)}')") &&
+  desk.includes("ghDeleteRepoModal('${escAttr(r.full_name)}')") &&
+  gitApp.includes("ghDeleteRepoModal('${escAttr(r.full_name)}')"));
+check('q103 the button is on the card, not only on the opened repo',
+  mob.indexOf("ghDeleteRepoModal('${escAttr(r.full_name)}')") < mob.indexOf('async function ghOpenRepo(') &&
+  desk.indexOf("ghDeleteRepoModal('${escAttr(r.full_name)}')") < desk.indexOf('async function ghOpenRepo('));
+check('q103 deleting needs the repo name typed out',
+  [mob, desk, gitApp].every(c => c.includes('this.value.trim() !== fullName')) &&
+  [mobHtml2, deskHtml2, gitHtml].every(h => h.includes('id="delrepo-confirm"') && h.includes('id="delrepo-btn"') &&
+    h.includes('onclick="confirmDeleteRepo()"') && h.includes('id="modal-delrepo"')));
+check('q103 the mobile hub got the guard too, not just the modal',
+  mob.includes('function ghDeleteRepoModal(') && mob.includes('async function confirmDeleteRepo(') &&
+  mob.includes("fetch('/api/gh/delete-repo'") && mob.includes('ghDeleteFullName = null') &&
+  mobHtml2.includes('id="modal-delrepo"'));
+check('q103 a deleted repo leaves the open view before the list reloads',
+  mob.includes('if (ghCurrentRepo === target) ghBackToList();') &&
+  mob.includes('ghLoadRepos();') &&
+  mob.indexOf('if (ghCurrentRepo === target) ghBackToList();') < mob.indexOf('    ghLoadRepos();'));
+check('q103 the server owns the call, not the page',
+  server.includes("app.post('/api/gh/delete-repo'") &&
+  server.includes("method: 'DELETE'") &&
+  server.includes('if (r.status === 204)'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
