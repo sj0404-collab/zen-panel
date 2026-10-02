@@ -1,0 +1,951 @@
+diff --git a/MANIFEST.md b/MANIFEST.md
+index cfc8afe24..3e2720833 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -15,9 +15,3 @@
+ 4. GitHub-токен доступен в переменной окружения $GH_TOKEN — никогда не выводи
+    и не логируй его значение.
+ 5. Готовые сборки/артефакты клади в /home/runner/hub-work/yomikai/tmp — их видно вкладкой «Файлы».
+-6. Историю текущего агента храни в этом репозитории (/home/runner/hub-work/yomikai/code), а не во временных папках.
+-7. После внесения исправлений автоматически создавай коммит и отправляй его в текущую ветку репозитория.
+-8. Все сборки запускай через GitHub Actions/workflows; не запускай сборки внутри локального окружения.
+-9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
+-10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
+-11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt
+index 28d1734ac..a98d6d182 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt
+@@ -567,8 +567,15 @@ fun ReaderAiChatOverlay(
+                                 }
+                             },
+                             onDelete = {
+-                                history.remove(msg)
+-                                AiHistoryManager.save(context, history, mangaId, historyChannel)
++                                // Пока идёт ход, ответ ещё будет дописан в
++                                // историю — и удалённое сообщение вернулось бы
++                                // вместе с ним.
++                                if (!loading) {
++                                    history.remove(msg)
++                                    scope.launch {
++                                        AiHistoryManager.save(context, history.toList(), mangaId, historyChannel)
++                                    }
++                                }
+                             },
+                             onSpeak = {
+                                 TtsSpeaker.speak(context, msg.text)
+@@ -691,10 +698,20 @@ fun ReaderAiChatOverlay(
+             text = { Text("История этой книги будет удалена навсегда. Это действие нельзя отменить.") },
+             confirmButton = {
+                 Button(onClick = {
+-                    history.clear()
+-                    AiHistoryManager.save(context, history, mangaId, historyChannel)
+-                    showClearConfirm = false
+-                    showToast("История очищена")
++                    // «Удалено навсегда» должно означать навсегда: во время
++                    // хода ответ агента дописывается в тот же список и
++                    // перезаписывает файл, возвращая историю с ответом.
++                    if (loading) {
++                        showToast("Дождитесь окончания ответа")
++                        showClearConfirm = false
++                    } else {
++                        history.clear()
++                        scope.launch {
++                            AiHistoryManager.save(context, history.toList(), mangaId, historyChannel)
++                        }
++                        showClearConfirm = false
++                        showToast("История очищена")
++                    }
+                 }) {
+                     Text("Очистить")
+                 }
+@@ -726,12 +743,14 @@ private fun sendMessage(
+     /** Вызывается после сохранения ответа: пора перечитать сводку сессии. */
+     onDone: () -> Unit = {},
+ ): kotlinx.coroutines.Job {
+-    AiHistoryManager.append(context, history, Msg(role = "user", text = input), mangaId, historyChannel)
+     loading(true)
+     onActivity("Запрос к модели…")
+     // Job возвращаем наружу, чтобы кнопка «Стоп» действительно прерывала ход:
+     // раньше ссылка на него не хранилась, и `cancel()` был вызовом в пустоту.
+     return scope.launch {
++        // Запись вопроса в историю — внутри корутины: файл истории на диске,
++        // а синхронный writeText на главном потоке ронял кадры на каждом ходе.
++        AiHistoryManager.append(context, history, Msg(role = "user", text = input), mangaId, historyChannel)
+         val reply = try {
+             chatOnce(
+                 context = context,
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
+index 66bde0bdb..be6944f27 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
+@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.data.ui.UiActionRegistry
+ import eu.kanade.tachiyomi.data.ui.UiTabRegistry
+ import eu.kanade.tachiyomi.source.CatalogueSource
+ import eu.kanade.tachiyomi.source.online.HttpSource
++import kotlinx.coroutines.CancellationException
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.withContext
+ import kotlinx.coroutines.withTimeoutOrNull
+@@ -368,7 +369,15 @@ object AiAgent {
+     ): AiAssistant.ChatReply? {
+         var reply: AiAssistant.ChatReply? = null
+         for (attempt in 0 until 3) {
+-            reply = runCatching { chat(prompt, systemPrompt) }.getOrNull()
++            // Отмена не считается сбоем модели: иначе «Стоп» ждал бы паузу
++            // перед следующей попыткой и мог бы вернуть частичный ответ.
++            reply = try {
++                chat(prompt, systemPrompt)
++            } catch (e: CancellationException) {
++                throw e
++            } catch (e: Exception) {
++                null
++            }
+             if (reply != null) break
+             kotlinx.coroutines.delay(800L * (attempt + 1))
+         }
+@@ -637,15 +646,21 @@ object AiAgent {
+                 // ограничитель убивал их всегда, то есть эти инструменты не
+                 // могли succeed НИКОГДА.
+                 val limit = TOOL_TIMEOUT_MS[call.name] ?: DEFAULT_TOOL_TIMEOUT_MS
+-                val r = runCatching {
++                // runCatching ловит и CancellationException: «Стоп» в чате лишь превращался
++                // в текст ошибки, а цикл продолжал крутить инструменты и API.
++                // Отмену пробрасываем наверх, ловим только обычные сбои.
++                val r = try {
+                     withTimeoutOrNull(limit) { execute(context, call, chat, mangaId, onProgress) }
+                         ?: ToolResult(
+                             call.name,
+                             "ОШИБКА: инструмент не ответил за ${humanMs(limit)}",
+                             status = "error",
+                         )
++                } catch (e: CancellationException) {
++                    throw e
++                } catch (e: Exception) {
++                    ToolResult(call.name, "ОШИБКА: ${e.message?.take(160)}", status = "error")
+                 }
+-                    .getOrElse { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}", status = "error") }
+                     .copy(
+                         args = call.args.toString().take(200),
+                         round = round,
+@@ -1302,10 +1317,15 @@ object AiAgent {
+                         }
+                         // Шаг за шагом: следующий может работать с файлом,
+                         // который создал предыдущий, а после ошибки — уже нет.
+-                        val r = runCatching { execute(context, AiSkills.toCall(step), chatFn, mangaId) }
+-                            .getOrElse { e ->
+-                                AiAgent.ToolResult(step.tool, "ОШИБКА: ${e.message?.take(160)}", status = "error")
+-                            }
++                        // Отмену («Стоп») пробрасываем, а не прячем в текст ошибки — иначе
++                        // отменённый ход продолжал бы жечь лимиты и время.
++                        val r = try {
++                            execute(context, AiSkills.toCall(step), chatFn, mangaId)
++                        } catch (e: CancellationException) {
++                            throw e
++                        } catch (e: Exception) {
++                            AiAgent.ToolResult(step.tool, "ОШИБКА: ${e.message?.take(160)}", status = "error")
++                        }
+                         produced += listOfNotNull(r.fileProduced)
+                         val isError = r.status == "error"
+                         lines += "${index + 1}/${steps.size} ${step.tool}" +
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAssistant.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAssistant.kt
+index dc928e455..0d4e68205 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAssistant.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAssistant.kt
+@@ -488,6 +488,11 @@ object AiAssistant {
+         maxTokens: Int = 500,
+     ): Outcome {
+         val startedAt = System.currentTimeMillis()
++        // Соединение живёт вне try: disconnect обязан сработать и на таймауте,
++        // и на SSL-ошибке, и на 5xx — иначе сокет и буферы висели до сборки GC.
++        // На мобильной сети это почти каждый второй запрос, а на модель
++        // делается до трёх попыток с ротацией — утечка накапливалась за ход.
++        var conn: HttpURLConnection? = null
+         return try {
+             // Эндпоинт и форма запроса зависят от семейства модели: Claude
+             // ждёт /messages, GPT и Muse — /responses, Gemini — свой путь.
+@@ -502,19 +507,19 @@ object AiAssistant {
+                 url
+             }
+ 
+-            val conn = openConnection(actualUrl)
+-            conn.requestMethod = "POST"
+-            conn.doOutput = true
+-            conn.connectTimeout = 15_000
+-            conn.readTimeout = 90_000
+-            conn.setRequestProperty("Content-Type", "application/json")
+-            if (apiKey.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer $apiKey")
+-
+-            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+-            val code = conn.responseCode
+-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
++            val rawConn = openConnection(actualUrl)
++            conn = rawConn
++            rawConn.requestMethod = "POST"
++            rawConn.doOutput = true
++            rawConn.connectTimeout = 15_000
++            rawConn.readTimeout = 90_000
++            rawConn.setRequestProperty("Content-Type", "application/json")
++            if (apiKey.isNotBlank()) rawConn.setRequestProperty("Authorization", "Bearer $apiKey")
++
++            rawConn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
++            val code = rawConn.responseCode
++            val text = (if (code in 200..299) rawConn.inputStream else rawConn.errorStream)
+                 ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+-            conn.disconnect()
+             if (code !in 200..299) {
+                 // Отдельная судьба для «бесплатных» моделей Zen: OpenCode
+                 // отдаёт их только своему же клиенту (проверка по User-Agent),
+@@ -575,6 +580,8 @@ object AiAssistant {
+             // Сетевые исключения (SocketTimeout, ConnectException, SSL,
+             // UnknownHost, обрыв прокси) — ВРЕМЕННЫЕ: модель не виновата
+             Outcome.Transient
++        } finally {
++            conn?.disconnect()
+         }
+     }
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
+index 2b7e0bda7..e3ae1c42b 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHistoryManager.kt
+@@ -1,6 +1,9 @@
+ package eu.kanade.tachiyomi.data.ai
+ 
+ import android.content.Context
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.withContext
+ import kotlinx.serialization.Serializable
+ import kotlinx.serialization.encodeToString
+ import kotlinx.serialization.json.Json
+@@ -119,47 +122,59 @@ object AiHistoryManager {
+      */
+     private fun aiWorkspaceDir(context: Context): File = AiWorkspace.root(context)
+ 
+-    fun load(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): MutableList<Msg> {
+-        val f = historyFile(context, mangaId, channel)
+-        if (!f.exists()) return mutableListOf()
+-        return try {
+-            val raw = f.readText()
+-            val list = json.decodeFromString<List<Msg>>(raw)
+-            // Обрезаем до лимита при загрузке
+-            val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
+-            list.takeLast(limit).toMutableList()
+-        } catch (e: Exception) {
+-            logcat(LogPriority.WARN, e) { "AiHistoryManager load failed" }
+-            mutableListOf()
++    suspend fun load(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): MutableList<Msg> =
++        withContext(Dispatchers.IO) {
++            val f = historyFile(context, mangaId, channel)
++            if (!f.exists()) return@withContext mutableListOf()
++            try {
++                val raw = f.readText()
++                val list = json.decodeFromString<List<Msg>>(raw)
++                // Обрезаем до лимита при загрузке
++                val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
++                list.takeLast(limit).toMutableList()
++            } catch (e: CancellationException) {
++                throw e
++            } catch (e: Exception) {
++                logcat(LogPriority.WARN, e) { "AiHistoryManager load failed" }
++                mutableListOf()
++            }
+         }
+-    }
+ 
+     private val saveLock = Any()
+ 
+-    fun save(context: Context, history: List<Msg>, mangaId: Long? = null, channel: String = CHANNEL_CHAT) {
+-        // Пишем через временный файл и переименовываем. Раньше шли три
+-        // несинхронизированных writeText() на один и тот же файл (append плюс
+-        // два вызова из UI), и оборванная запись оставляла битый JSON — после
+-        // него load() молча отдавал пустую историю, то есть вся переписка
+-        // исчезала без единого слова читателю.
+-        synchronized(saveLock) {
+-            try {
+-                val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
+-                val toSave = history.takeLast(limit)
+-                val target = historyFile(context, mangaId, channel)
+-                val tmp = File(target.parentFile, target.name + ".tmp")
+-                tmp.writeText(json.encodeToString(toSave))
+-                if (!tmp.renameTo(target)) {
+-                    target.writeText(tmp.readText())
+-                    tmp.delete()
++    suspend fun save(context: Context, history: List<Msg>, mangaId: Long? = null, channel: String = CHANNEL_CHAT) =
++        withContext(Dispatchers.IO) {
++            // Пишем через временный файл и переименовываем. Раньше шли три
++            // несинхронизированных writeText() на один и тот же файл (append плюс
++            // два вызова из UI), и оборванная запись оставляла битый JSON — после
++            // него load() молча отдавал пустую историю, то есть вся переписка
++            // исчезала без единого слова читателю.
++            synchronized(saveLock) {
++                try {
++                    val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
++                    val toSave = history.takeLast(limit)
++                    val target = historyFile(context, mangaId, channel)
++                    val tmp = File(target.parentFile, target.name + ".tmp")
++                    tmp.writeText(json.encodeToString(toSave))
++                    if (!tmp.renameTo(target)) {
++                        target.writeText(tmp.readText())
++                        tmp.delete()
++                    }
++                } catch (e: CancellationException) {
++                    throw e
++                } catch (e: Exception) {
++                    logcat(LogPriority.WARN, e) { "AiHistoryManager save failed" }
+                 }
+-            } catch (e: Exception) {
+-                logcat(LogPriority.WARN, e) { "AiHistoryManager save failed" }
+             }
+         }
+-    }
+ 
+-    fun append(
++    /**
++     * Добавляет сообщение и подрезает историю. Список правится в потоке
++     * вызова (это SnapshotStateList в UI — с IO его трогать нельзя), а на
++     * диск уходит уже готовая копия, поэтому синхронный дисковый ввод-вывод
++     * больше не стоит на главном потоке.
++ */
++suspend fun append(
+         context: Context,
+         history: MutableList<Msg>,
+         msg: Msg,
+@@ -179,7 +194,7 @@ object AiHistoryManager {
+             }
+             history.add(0, Msg(role = "ai", text = summary, time = System.currentTimeMillis()))
+         }
+-        save(context, history, mangaId, channel)
++        save(context, history.toList(), mangaId, channel)
+     }
+ 
+     /**
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHttpServer.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHttpServer.kt
+index 5fc83180e..8bcd86fa0 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHttpServer.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiHttpServer.kt
+@@ -19,6 +19,9 @@ import java.net.ServerSocket
+ import java.net.Socket
+ import java.net.URLDecoder
+ import java.util.UUID
++import java.util.concurrent.ExecutorService
++import java.util.concurrent.Executors
++import java.util.concurrent.RejectedExecutionException
+ import uy.kohesive.injekt.Injekt
+ import uy.kohesive.injekt.api.get
+ 
+@@ -43,6 +46,13 @@ object AiHttpServer {
+ 
+     const val PORT = 8765
+ 
++    /**
++     * Потолок одновременных клиентов. Сервер слушает 0.0.0.0, то есть доступен
++     * всей локальной сети, а разбор запроса идёт целиком в потоке соединения —
++     * без ограничения любой сосед исчерпывал потоки и память приложения.
++     */
++    private const val MAX_CONCURRENT_CLIENTS = 8
++
+     fun tokenFor(context: Context): String {
+         val prefs = Injekt.get<OcrPreferences>()
+         val existing = prefs.aiHttpToken().get()
+@@ -57,6 +67,11 @@ object AiHttpServer {
+     private var server: ServerSocket? = null
+     private var thread: Thread? = null
+ 
++    /** Потоки запросов: потолок держит число одновременных клиентов. */
++    private val workers: ExecutorService = Executors.newFixedThreadPool(MAX_CONCURRENT_CLIENTS) { r ->
++        Thread(r, "AiHttpServer-worker").apply { isDaemon = true }
++    }
++
+     val isRunning: Boolean get() = server?.isClosed == false
+ 
+     @Synchronized
+@@ -72,7 +87,16 @@ object AiHttpServer {
+             while (!ss.isClosed) {
+                 try {
+                     val client = ss.accept()
+-                    Thread { handle(appContext, client) }.start()
++                    // Пул с ограниченным размером: раньше на каждое принятое
++                    // соединение поднимался свой поток без счётчика. Любой
++                    // из той же Wi-Fi мог открыть их сколько угодно и держать
++                    // до 180 с — это ANR, а потом OOM-смерть процесса.
++                    try {
++                        workers.execute { handle(appContext, client) }
++                    } catch (e: RejectedExecutionException) {
++                        logcat(LogPriority.WARN) { "AiHttpServer busy, dropping connection" }
++                        runCatching { client.close() }
++                    }
+                 } catch (e: Exception) {
+                     if (!ss.isClosed) logcat(LogPriority.WARN, e) { "AiHttpServer accept failed" }
+                 }
+@@ -95,13 +119,32 @@ object AiHttpServer {
+     private fun handle(context: Context, socket: Socket) {
+         socket.use { s ->
+             runCatching {
+-                s.soTimeout = 180_000
+                 val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
+                 val requestLine = reader.readLine() ?: return
+                 val parts = requestLine.split(" ")
+                 if (parts.size < 2) return
+                 val method = parts[0]
+                 val fullPath = parts[1]
++
++                // Ключ лежит в строке запроса, поэтому проверяем его ПЕРВЫМ
++                // делом — до чтения заголовков и, главное, тела. Раньше 401
++                // отдавался после megабайтного буфера и 180-секундного чтения,
++                // то есть любой сосед по сети мог держать поток и память.
++                val key = queryParam(fullPath.substringAfter('?', ""), "key")
++                if (key == null || key != tokenFor(context)) {
++                    s.soTimeout = 15_000
++                    val denied = s.getOutputStream()
++                    respond(
++                        denied,
++                        401,
++                        "text/plain; charset=utf-8",
++                        "401 Unauthorized\n\nОткройте ссылку с ключом из приложения:\nвкладка AI — блок «Доступ из внешнего браузера».".toByteArray(),
++                    )
++                    return
++                }
++
++                // Дальше клиент проверен — можно ждать его дольше.
++                s.soTimeout = 180_000
+                 var contentLength = 0
+                 while (true) {
+                     val h = reader.readLine() ?: break
+@@ -125,16 +168,6 @@ object AiHttpServer {
+ 
+                 val out = s.getOutputStream()
+ 
+-                if (queryParam(fullPath.substringAfter('?', ""), "key") != tokenFor(context)) {
+-                    respond(
+-                        out,
+-                        401,
+-                        "text/plain; charset=utf-8",
+-                        "401 Unauthorized\n\nОткройте ссылку с ключом из приложения:\nвкладка AI — блок «Доступ из внешнего браузера».".toByteArray(),
+-                    )
+-                    return
+-                }
+-
+                 val path = fullPath.substringBefore('?')
+                 val query = fullPath.substringAfter('?', "")
+                 when {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/RunnerLlm.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/RunnerLlm.kt
+index 84e3b7443..f8dae6414 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/RunnerLlm.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/RunnerLlm.kt
+@@ -653,22 +653,27 @@ object RunnerLlm {
+             val answer = runCatching {
+                 // Туннель cloudflared тоже может требовать прокси (как chat.try.ai).
+                 val conn = AiAssistant.openConnection("$url/v1/chat/completions") as HttpURLConnection
+-                conn.requestMethod = "POST"
+-                conn.doOutput = true
+-                conn.connectTimeout = 20_000
+-                conn.readTimeout = 180_000
+-                conn.setRequestProperty("Content-Type", "application/json")
+-                conn.setRequestProperty("Authorization", "Bearer $key")
+-                val body = JSONObject()
+-                    .put("model", session.model)
+-                    .put("messages", messages)
+-                    .put("max_tokens", 800)
+-                conn.outputStream.use { it.write(body.toString().toByteArray()) }
+-                val text = (if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream)
+-                    ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+-                conn.disconnect()
+-                JSONObject(text).optJSONArray("choices")?.optJSONObject(0)
+-                    ?.optJSONObject("message")?.optString("content")?.trim()
++                try {
++                    conn.requestMethod = "POST"
++                    conn.doOutput = true
++                    conn.connectTimeout = 20_000
++                    conn.readTimeout = 180_000
++                    conn.setRequestProperty("Content-Type", "application/json")
++                    conn.setRequestProperty("Authorization", "Bearer $key")
++                    val body = JSONObject()
++                        .put("model", session.model)
++                        .put("messages", messages)
++                        .put("max_tokens", 800)
++                    conn.outputStream.use { it.write(body.toString().toByteArray()) }
++                    val text = (if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream)
++                        ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
++                    JSONObject(text).optJSONArray("choices")?.optJSONObject(0)
++                        ?.optJSONObject("message")?.optString("content")?.trim()
++                } finally {
++                    // Таймаут в 180с на мобильной сети — норма, а disconnect()
++                    // внутри блока не доходил до конца именно на ней.
++                    conn.disconnect()
++                }
+             }.onFailure {
+                 logcat(LogPriority.WARN, it) { "Runner LLM chat failed" }
+             }.getOrNull()
+@@ -687,12 +692,14 @@ object RunnerLlm {
+         val url = session.url ?: return@withContext false
+         runCatching {
+             val conn = AiAssistant.openConnection("$url/health") as HttpURLConnection
+-            conn.connectTimeout = 8_000
+-            conn.readTimeout = 8_000
+-            session.apiKey?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
+-            val ok = conn.responseCode in 200..299
+-            conn.disconnect()
+-            ok
++            try {
++                conn.connectTimeout = 8_000
++                conn.readTimeout = 8_000
++                session.apiKey?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
++                conn.responseCode in 200..299
++            } finally {
++                conn.disconnect()
++            }
+         }.getOrDefault(false)
+     }
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 018cd0a6e..5ef131ecf 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -434,6 +434,20 @@ class AutoReadEngine(
+         job = scope.launch {
+             _isReading.value = true
+             var aiRefine: Job? = null
++            // Кадр передан сюда вызывающей стороной (полноэкранный снимок, до
++            // нескольких МБ), и освобождать его больше некому. Раньше recycle
++            // стоял только на счастливом пути, поэтому отмена чтения (пауза,
++            // уход в фон), отсутствие голоса или любая ошибка OCR оставляли
++            // битмап на сборку GC на каждом кадре.
++            val released = java.util.concurrent.atomic.AtomicBoolean(false)
++            var scanBitmap: Bitmap? = null
++            val releaseFrame = {
++                if (released.compareAndSet(false, true)) {
++                    if (!bitmap.isRecycled) bitmap.recycle()
++                    val scan = scanBitmap
++                    if (scan != null && scan !== bitmap && !scan.isRecycled) scan.recycle()
++                }
++            }
+             try {
+                 // Озвучивать нечем — не тратим время на распознавание кадра и
+                 // не листаем страницы: читатель должен увидеть причину сразу.
+@@ -445,8 +459,9 @@ class AutoReadEngine(
+                 // (детектор движка всё равно жмёт всё до ~736px). Так конвертация
+                 // пикселей и онлайн-вызовы выполняются мгновенно в фоне, а текст
+                 // остаётся читаемым.
+-                val scanBitmap = downscaleForScan(bitmap)
+-                val ocrBitmap = scanBitmap
++                val scan = downscaleForScan(bitmap)
++                scanBitmap = scan
++                val ocrBitmap = scan
+                 val pixels = IntArray(ocrBitmap.width * ocrBitmap.height)
+                 ocrBitmap.getPixels(pixels, 0, ocrBitmap.width, 0, 0, ocrBitmap.width, ocrBitmap.height)
+                 val image = OcrImage(ocrBitmap.width, ocrBitmap.height, pixels)
+@@ -636,8 +651,9 @@ class AutoReadEngine(
+                     runCatching { encodeJpeg(ocrBitmap, JPEG_QUALITY) }.getOrNull()
+                 } else null
+ 
+-                if (!bitmap.isRecycled) bitmap.recycle()
+-                if (scanBitmap !== bitmap && !scanBitmap.isRecycled) scanBitmap.recycle()
++                // Пиксели больше не нужны — освобождаем сразу, не дожидаясь
++                // конца кадра (releaseFrame идемпотентен, finally его подстрахует).
++                releaseFrame()
+ 
+                 // Локальный OCR (Cyrillic PP-OCR) отдаёт регион на КАЖДУЮ
+                 // строку: реплика из двух строк распадалась на два разных
+@@ -899,6 +915,10 @@ class AutoReadEngine(
+                 logcat(LogPriority.ERROR, e) { "AutoRead frame failed" }
+                 OcrHistoryStore.addAutoRead(false, "сбой страницы", e.message ?: e.javaClass.simpleName)
+             } finally {
++                // Кадр освобождаем на ЛЮБОМ выходе, включая отмену: иначе
++                // каждый прерванный кадр авточтения оставлял после себя
++                // полноэкранный битмап.
++                releaseFrame()
+                 aiRefine?.cancel()
+                 _currentRegion.value = null
+                 _frameRegions.value = emptyList()
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+index 90e082542..1ed1be819 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+@@ -43,7 +43,6 @@ import eu.kanade.tachiyomi.util.lang.takeBytes
+ import eu.kanade.tachiyomi.util.ocr.toOcrImage
+ import eu.kanade.tachiyomi.util.storage.DiskUtil
+ import kotlinx.coroutines.CancellationException
+-import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.TimeoutCancellationException
+ import kotlinx.coroutines.channels.Channel
+ import kotlinx.coroutines.flow.MutableStateFlow
+@@ -243,7 +242,20 @@ class ReaderViewModel @JvmOverloads constructor(
+             }
+             .run {
+                 if (basePreferences.downloadedOnly.get()) {
+-                    filterDownloaded(manga)
++                    // Ту же гарантию, что и выше: открытая глава обязана
++                    // остаться в списке. Иначе chapterList.first { } ниже
++                    // падал, а в loadChapter индекс становился -1 и «следующая
++                    // глава» молча превращалась в первую главу книги.
++                    val downloaded = filterDownloaded(manga)
++                    if (downloaded.any { it.id == chapterId }) {
++                        downloaded
++                    } else {
++                        // Добавленная глава встаёт в конец, поэтому порядок
++                        // приходится восстанавливать: от него зависят
++                        // «предыдущая»/«следующая» в читалке.
++                        (downloaded + selectedChapter)
++                            .sortedWith(getChapterSort(manga, sortDescending = false))
++                    }
+                 } else {
+                     this
+                 }
+@@ -349,11 +361,18 @@ class ReaderViewModel @JvmOverloads constructor(
+         loader.loadChapter(chapter)
+ 
+         val chapterPos = chapterList.indexOf(chapter)
+-        val newChapters = ViewerChapters(
+-            chapter,
+-            chapterList.getOrNull(chapterPos - 1),
+-            chapterList.getOrNull(chapterPos + 1),
+-        )
++        val newChapters = if (chapterPos < 0) {
++            // Глава выпала из списка (фильтр, гонка со списком глав). Раньше
++            // индекс -1 молча давал «предыдущую = null», а «следующую =
++            // первую главу книги» — читатель терял место.
++            ViewerChapters(chapter, null, null)
++        } else {
++            ViewerChapters(
++                chapter,
++                chapterList.getOrNull(chapterPos - 1),
++                chapterList.getOrNull(chapterPos + 1),
++            )
++        }
+ 
+         withUIContext {
+             mutableState.update {
+@@ -714,7 +733,10 @@ class ReaderViewModel @JvmOverloads constructor(
+      */
+     fun setMangaReadingMode(readingMode: ReadingMode) {
+         val manga = manga ?: return
+-        runBlocking(Dispatchers.IO) {
++        // Не runBlocking: eventChannel — rendezvous-канал, и его единственный
++        // получатель собирается на Main. Блокировка Main здесь делала send()
++        // невозможным — дедлок на каждой смене режима чтения.
++        viewModelScope.launchIO {
+             setMangaViewerFlags.awaitSetReadingMode(manga.id, readingMode.flagValue.toLong())
+             val currChapters = state.value.viewerChapters
+             if (currChapters != null) {
+diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
+index d4828bee8..41e07ccd8 100644
+--- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
++++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
+@@ -183,8 +183,8 @@ class OverlayReaderService : Service() {
+ 
+             // Оверлей держим видимым и «прокачиваем» его перерисовку: это заставляет
+             // компоновщик непрерывно выдавать кадры, и VirtualDisplay видит их
+-            // даже на статичном экране. Панели оверлея в кадр не попадут
+-            // (во время прокачки они не рисуются).
++            // даже на статичном экране. Область захвата лежит между панелями
++            // оверлея, поэтому в кадр они не попадают.
+             val wasHidden = overlayView.visibility != View.VISIBLE
+             if (wasHidden) setPassthrough(false)
+             overlayView.beginCapturePump()
+diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
+index 262a1bafd..5ce9b0726 100644
+--- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
++++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
+@@ -4,6 +4,7 @@ import android.content.Context
+ import android.graphics.Canvas
+ import android.graphics.Color
+ import android.graphics.Paint
++import android.graphics.Path
+ import android.graphics.RectF
+ import android.graphics.Typeface
+ import android.os.Handler
+@@ -51,12 +52,27 @@ class OverlayView(
+     // Публичное состояние, управляется сервисом.
+     var scanning: Boolean = false
+     var statusText: String = ""
++
++    /**
++     * Распознанный текст. Панель результата держится высотой в одну строку статуса,
++     * пока текста нет, и разворачивается на полную высоту вместе с текстом — при
++     * запуске оверлей не занимает низ экрана впустую.
++     */
+     var resultText: String = ""
++        set(value) {
++            if (field == value) return
++            field = value
++            scrollLines = 0
++            scrollAccum = 0f
++            layoutPanel()
++            clampFrame()
++            invalidate()
++        }
+ 
+     // «Прокачка» кадров на время захвата: оверлей постоянно перерисовывается,
+     // поэтому дисплей (а с ним и VirtualDisplay) получает свежие кадры даже на
+-    // полностью статичном экране. Панели при этом не рисуются, чтобы кадр был
+-    // чистым.
++    // полностью статичном экране. Сама графика при этом рисуется как обычно:
++    // область захвата лежит между панелями, поэтому в кадр они не попадают.
+     private var capturePumping = false
+     private val pumpHandler = Handler(Looper.getMainLooper())
+     private val pumpRunnable = object : Runnable {
+@@ -91,7 +107,12 @@ class OverlayView(
+     private var touchY = 0f
+     private var startFrame = RectF()
+     private var scrollLines = 0
++    private var scrollAccum = 0f
+     private var lastPanelY = 0f
++    private var contentLines: List<String> = emptyList()
++    private var visibleLines = 1
++
++    private val path = Path()
+ 
+     private val dimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+@@ -145,10 +166,11 @@ class OverlayView(
+     private fun layoutMetrics(w: Float, h: Float) {
+         viewW = w
+         viewH = h
+-        val toolbarH = dp(44f)
+-        val panelH = dp(132f)
++        // Высоты панелей ограничены долей экрана: на плотных экранах (density 3+)
++        // фиксированные dp съедали бы заметную часть дисплея.
++        val toolbarH = min(dp(44f), h * 0.07f)
+         toolbarRect = RectF(0f, 0f, w, toolbarH)
+-        panelRect = RectF(0f, h - panelH, w, h)
++        layoutPanel()
+ 
+         val pref = Prefs.frame()
+         frame = RectF(
+@@ -170,43 +192,77 @@ class OverlayView(
+         }
+     }
+ 
++    /** Нижняя панель: строка статуса без результата, полная высота с текстом. */
++    private fun layoutPanel() {
++        if (viewH <= 0f) return
++        val collapsed = min(statusPaint.textSize * 2.2f, viewH * 0.09f)
++        val expanded = min(dp(132f), viewH * 0.30f)
++        val h = if (resultText.isBlank()) collapsed else max(collapsed, expanded)
++        panelRect = RectF(0f, viewH - h, viewW, viewH)
++    }
++
+     private fun clampFrame() {
+-        val minSide = dp(48f)
+-        val left = max(frame.left, dp(6f))
+-        val top = max(frame.top, toolbarRect.bottom + dp(6f))
+-        val right = min(frame.right, viewW - dp(6f))
+-        val bottom = min(frame.bottom, panelRect.top - dp(6f))
+-        frame.set(left, top, max(right, left + minSide), max(bottom, top + minSide))
++        if (viewW <= 0f || viewH <= 0f) return
++        val padL = min(dp(6f), viewW * 0.02f)
++        val padT = min(dp(6f), viewH * 0.01f)
++        val boxTop = toolbarRect.bottom + padT
++        val boxBottom = panelRect.top - padT
++        val boxRight = viewW - padL
++        // Минимальная сторона не должна превышать половину доступной высоты,
++        // иначе на низких экранах рамка вылезала бы под панели.
++        val minSide = max(dp(20f), min(dp(48f), (boxBottom - boxTop) * 0.5f))
++
++        val left = frame.left.coerceIn(padL, max(padL, boxRight - minSide))
++        val top = frame.top.coerceIn(boxTop, max(boxTop, boxBottom - minSide))
++        val right = frame.right.coerceIn(left + minSide, max(left + minSide, boxRight))
++        val bottom = frame.bottom.coerceIn(top + minSide, max(top + minSide, boxBottom))
++        frame.set(left, top, right, bottom)
+     }
+ 
+     override fun onDraw(canvas: Canvas) {
+         super.onDraw(canvas)
+-        if (capturePumping) return
+ 
+         val alpha = (Prefs.overlayOpacity().coerceIn(0.1f, 0.9f) * 255).toInt()
+         dimPaint.color = Color.argb(alpha, 4, 8, 20)
+ 
+-        // Затемнение вокруг рамки.
++        // Затемнение вокруг рамки. Четыре прямоугольника идут строго встык, иначе
++        // наложение давало бы участки, затемнённые вдвое.
+         canvas.drawRect(0f, 0f, viewW, toolbarRect.bottom, dimPaint)
+         canvas.drawRect(0f, toolbarRect.bottom, frame.left, frame.top, dimPaint)
+-        canvas.drawRect(frame.right, toolbarRect.bottom, viewW, frame.bottom, dimPaint)
++        canvas.drawRect(frame.right, toolbarRect.bottom, viewW, frame.top, dimPaint)
++        canvas.drawRect(0f, frame.top, frame.left, frame.bottom, dimPaint)
++        canvas.drawRect(frame.right, frame.top, viewW, frame.bottom, dimPaint)
+         canvas.drawRect(0f, frame.bottom, viewW, viewH, dimPaint)
+-        canvas.drawRect(frame.left, frame.bottom, frame.right, viewH, dimPaint)
+-        canvas.drawRect(0f, toolbarRect.bottom, frame.left, viewH, dimPaint)
+ 
+         // Рамка захвата.
+         canvas.drawRoundRect(frame, dp(10f), dp(10f), borderPaint)
+         drawHandles(canvas)
+ 
+-        // Тулбар.
+-        canvas.drawRoundRect(toolbarRect, dp(10f), dp(10f), toolbarPaint)
++        // Тулбар и панель результата.
++        roundRectPath(toolbarRect, 0f, 0f, dp(10f), dp(10f))
++        canvas.drawPath(path, toolbarPaint)
+         drawToolbarButtons(canvas)
+ 
+-        // Панель результата.
+-        canvas.drawRoundRect(panelRect, dp(10f), dp(10f), panelPaint)
++        roundRectPath(panelRect, dp(10f), dp(10f), 0f, 0f)
++        canvas.drawPath(path, panelPaint)
+         drawResultPanel(canvas)
+     }
+ 
++    /** Прямоугольник с независимым радиусом каждого угла (в dp-радиусах — px). */
++    private fun roundRectPath(rect: RectF, tl: Float, tr: Float, br: Float, bl: Float) {
++        path.reset()
++        path.moveTo(rect.left + tl, rect.top)
++        path.lineTo(rect.right - tr, rect.top)
++        path.quadTo(rect.right, rect.top, rect.right, rect.top + tr)
++        path.lineTo(rect.right, rect.bottom - br)
++        path.quadTo(rect.right, rect.bottom, rect.right - br, rect.bottom)
++        path.lineTo(rect.left + bl, rect.bottom)
++        path.quadTo(rect.left, rect.bottom, rect.left, rect.bottom - bl)
++        path.lineTo(rect.left, rect.top + tl)
++        path.quadTo(rect.left, rect.top, rect.left + tl, rect.top)
++        path.close()
++    }
++
+     private fun drawToolbarButtons(canvas: Canvas) {
+         for ((rect, btn) in buttons) {
+             btnPaint.color = if (btn == pressedBtn) Color.parseColor("#FF8A65") else Color.WHITE
+@@ -241,21 +297,28 @@ class OverlayView(
+     private fun drawResultPanel(canvas: Canvas) {
+         val pad = dp(10f)
+         statusPaint.textAlign = Paint.Align.LEFT
+-        canvas.drawText(
+-            if (scanning) "Распознаю текст…" else statusText.ifBlank { "Готово" },
+-            pad,
+-            panelRect.top + dp(18f),
+-            statusPaint,
+-        )
+-        val maxW = (panelRect.width() - pad * 2).toInt()
++        val status = if (scanning) "Распознаю текст…" else statusText.ifBlank { "Готово" }
++        val textMetrics = statusPaint.fontMetrics
++        val statusBaseline = if (resultText.isBlank()) {
++            // Свёрнутая панель — одна строка по центру.
++            panelRect.centerY() - (textMetrics.ascent + textMetrics.descent) / 2f
++        } else {
++            panelRect.top + dp(20f)
++        }
++        canvas.drawText(status, pad, statusBaseline, statusPaint)
++
++        contentLines = emptyList()
++        visibleLines = 0
+         val text = resultText
+         if (text.isNotBlank()) {
++            val maxW = (panelRect.width() - pad * 2).toInt()
+             val lines = wrapText(resultPaint, text, maxW)
+             val lineH = resultPaint.textSize * 1.25f
+             val available = panelRect.height() - dp(34f)
+             val visible = (available / lineH).toInt().coerceAtLeast(1)
+-            val maxScroll = max(0, lines.size - visible)
+-            scrollLines = scrollLines.coerceIn(0, maxScroll)
++            contentLines = lines
++            visibleLines = visible
++            scrollLines = scrollLines.coerceIn(0, max(0, lines.size - visible))
+             var y = panelRect.top + dp(34f) + lineH
+             for (i in scrollLines until min(scrollLines + visible, lines.size)) {
+                 canvas.drawText(lines[i], pad, y, resultPaint)
+@@ -264,6 +327,8 @@ class OverlayView(
+         }
+     }
+ 
++    private fun maxScroll(): Int = max(0, contentLines.size - visibleLines)
++
+     private fun wrapText(paint: Paint, text: String, maxW: Int): List<String> {
+         val words = text.split(" ")
+         val lines = ArrayList<String>()
+@@ -346,19 +411,18 @@ class OverlayView(
+         val dy = y - touchY
+         when (mode) {
+             Mode.MOVE -> {
+-                val newLeft = startFrame.left + dx
+-                val newTop = startFrame.top + dy
+-                val newRight = startFrame.right + dx
+-                val newBottom = startFrame.bottom + dy
+-                val shiftX = newLeft.coerceAtLeast(dp(6f)) - newLeft
+-                val fixedLeft = newLeft + shiftX
+-                val fixedRight = newRight + shiftX
+-                frame.set(
+-                    fixedLeft,
+-                    newTop.coerceIn(toolbarRect.bottom + dp(6f), panelRect.top - frame.height() - dp(6f)),
+-                    fixedRight,
+-                    newTop.coerceIn(toolbarRect.bottom + dp(6f), panelRect.top - frame.height() - dp(6f)) + frame.height(),
+-                )
++                val fw = startFrame.width()
++                val fh = startFrame.height()
++                val pad = dp(6f)
++                // Сдвиг ограничиваем по обеим осям сразу: иначе рамка не доезжала
++                // до левого/верхнего края, зато уезжала за правый/нижний.
++                val maxLeft = viewW - pad - fw
++                val newLeft = (startFrame.left + dx).coerceIn(min(pad, maxLeft), max(pad, maxLeft))
++                val minTop = toolbarRect.bottom + pad
++                val maxTop = panelRect.top - pad - fh
++                val newTop = (startFrame.top + dy).coerceIn(min(minTop, maxTop), max(minTop, maxTop))
++                frame.set(newLeft, newTop, newLeft + fw, newTop + fh)
++                clampFrame()
+                 invalidate()
+             }
+             Mode.CORNER_RESIZE -> {
+@@ -367,8 +431,16 @@ class OverlayView(
+             }
+             Mode.SCROLL -> {
+                 val lineH = resultPaint.textSize * 1.25f
+-                val delta = (y - lastPanelY) / lineH
+-                scrollLines += delta.toInt()
++                // Дробный остаток копится: иначе медленное перетаскивание
++                // (меньше строки за кадр) не листало текст вовсе.
++                scrollAccum += (y - lastPanelY) / lineH
++                val whole = scrollAccum.toInt()
++                if (whole != 0) {
++                    scrollAccum -= whole
++                    val next = (scrollLines + whole).coerceIn(0, maxScroll())
++                    if (next == scrollLines) scrollAccum = 0f
++                    scrollLines = next
++                }
+                 lastPanelY = y
+                 invalidate()
+             }
+@@ -379,7 +451,7 @@ class OverlayView(
+     }
+ 
+     private fun resizeTo(dx: Float, dy: Float) {
+-        val minSide = dp(48f)
++        val minSide = min(dp(48f), max(dp(20f), (panelRect.top - toolbarRect.bottom) * 0.5f))
+         val l = frame.left
+         val t = frame.top
+         val r = frame.right
+@@ -399,12 +471,13 @@ class OverlayView(
+ 
+     private fun onUp() {
+         val btn = pressedBtn
+-        if (btn != null) {
+-            perform(btn)
+-        }
+         pressedBtn = null
+         mode = Mode.NONE
++        // Рамку сохраняем до действия: «Скан» читает Prefs.frame(), и при
++        // прежнем порядке захватывалась старая область, если рамку только что
++        // передвинули.
+         callback.onFrameChanged(bean())
++        if (btn != null) perform(btn)
+         invalidate()
+     }
+ 
+@@ -427,7 +500,16 @@ class OverlayView(
+     )
+ 
+     fun resetFrame() {
+-        frame.set(viewW * 0.06f, toolbarRect.bottom + dp(24f), viewW * 0.94f, viewW * 0.94f * 0.55f + toolbarRect.bottom)
++        val boxTop = toolbarRect.bottom + dp(10f)
++        val boxBottom = panelRect.top - dp(10f)
++        val boxH = max(dp(48f), boxBottom - boxTop)
++        val left = min(viewW * 0.06f, viewW - dp(6f))
++        // Высота рамки считалась от viewW, а не от viewH, — в альбомной
++        // ориентации уезжала далеко за нижнюю панель.
++        val top = min(boxTop + boxH * 0.1f, boxBottom)
++        val right = max(min(viewW * 0.94f, viewW - dp(6f)), left)
++        val bottom = max(min(top + boxH * 0.55f, boxBottom), top)
++        frame.set(left, top, right, bottom)
+         clampFrame()
+         invalidate()
+     }
