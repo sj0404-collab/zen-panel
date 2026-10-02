@@ -3,8 +3,8 @@
   "sz_tip": "chats",
   "repo": "sj0404-collab/zen-panel",
   "repoName": "zen-panel",
-  "workdir": "/home/runner/hub-work/zen-panel/code",
-  "updatedAt": "2026-10-02T18:43:24Z",
+  "workdir": "/home/runner/work/zen-panel/zen-panel/fork",
+  "updatedAt": "2026-10-02T18:50:26Z",
   "count": 23,
   "sessions": [
     {
@@ -12,7 +12,7 @@
       "title": "Обзор Zen.md",
       "slug": "tidy-canyon",
       "directory": "/home/runner/hub-work/zen-panel/code/agent",
-      "timeUpdated": 1790963984896,
+      "timeUpdated": 1790967025407,
       "export": {
         "info": {
           "id": "ses_f02ffbb93ffeRIB1q4jSKc235d",
@@ -36,7 +36,7 @@
           "cost": 0,
           "time": {
             "created": 1790951048300,
-            "updated": 1790963984896
+            "updated": 1790967025407
           }
         },
         "messages": [
@@ -28237,6 +28237,668 @@
                 "messageID": "msg_0fdc58b54001i93FZ42TbqwYNb"
               }
             ]
+          },
+          {
+            "info": {
+              "role": "user",
+              "time": {
+                "created": 1790966934550
+              },
+              "agent": "build",
+              "model": {
+                "providerID": "opencode",
+                "modelID": "space-bunny-free",
+                "variant": "max"
+              },
+              "summary": {
+                "diffs": []
+              },
+              "id": "msg_0fdf2ac14001L09mAQ8piD7Axh",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "type": "text",
+                "text": "также каждый раз посточнно експортируй сессии в отдельную папку в work либо runner",
+                "id": "prt_0fdf2ac24001IkesgliqifIKJ3",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf2ac14001L09mAQ8piD7Axh"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fdf2ac14001L09mAQ8piD7Axh",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/zen-panel/code/agent",
+                "root": "/home/runner/hub-work/zen-panel/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790966935662,
+                "completed": 1790966951869
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fdf2b06d001lThXcxEeEsm8Ia",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-start",
+                "id": "prt_0fdf2d3c8001YXKyjHST0jQrfb",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf2b06d001lThXcxEeEsm8Ia"
+              },
+              {
+                "type": "reasoning",
+                "text": "The user asks: \"также каждый раз постоянно экспортируй сессии в отдельную папку в work либо runner\" — \"also constantly/always export sessions into a separate folder in work or on the runner\".\n\nInterpretation: They want sessions (the chat/agent sessions) continuously exported to a separate folder — either in `work` (the phone/local work dir?) or on the runner. Recall the panel text: \"Наполни вкладку «Файлы» в хабе, потом сканируй\" and earlier the removed \"🔍 Файлы\" button scanned `~/hub-work` and found APKs and folders. Also the hub has a \"work\" concept: `~/hub-work` on the runner. And there's `work-backup-test.sh` test — \"work-backup: 62 passed\". So there's an existing work backup feature.\n\nSo the request: continuously export sessions to a separate folder in the work dir (on the runner) — i.e., a live mirror of sessions into a folder so it's not tied to the runner's death.\n\nI need to explore: what is \"work\" here? `~/hub-work` on the runner. Is there an existing feature that writes sessions to work? Let me look at `work-backup-test.sh` and search for `hub-work`.\n\nLet me explore first, then ask a clarifying question if needed (which folder name, cadence, what exactly — full session JSON? markdown transcript?).\n\nLet me investigate the existing infrastructure.",
+                "time": {
+                  "start": 1790966944721,
+                  "end": 1790966950263
+                },
+                "id": "prt_0fdf2d3d1001kqOTTjR32PR1M1",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf2b06d001lThXcxEeEsm8Ia"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a0fdf2e90670998a9e8707",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/zen-panel/code && grep -rn \"hub-work\" --include=*.js --include=*.sh --include=*.yml npm-hub/src .github app/src 2>/dev/null | grep -v node_modules | head -20 && echo \"=== work-backup test ===\" && head -40 tests/work-backup-test.sh"
+                  },
+                  "output": "npm-hub/src/storage/manager.js:79:    devices.push({ type: 'local', id: path.join(HOME, 'hub-work'), name: 'hub-work', icon: '📁' });\nnpm-hub/src/server.js:69:const WORK_DIR = process.env.HUB_WORK_DIR || path.join(HOME, 'hub-work');\nnpm-hub/src/server.js:755:  const hubWork = path.join(HOME, 'hub-work');\nnpm-hub/src/server.js:1235:  // Heavy folders in the work dir (hub-work itself first, then its children).\nnpm-hub/src/server.js:1244:      if (s != null && s > 20 * 1024 * 1024) sizes.push({ name: d === WORK_DIR ? 'hub-work' : path.basename(d), path: d, size: s, isDir: true });\nnpm-hub/src/server.js:2383:// the saved repository identity against the durable hub-work directory.\nnpm-hub/src/server.js:3606:            await runOnDisplay(`setsid nohup ${JSON.stringify(launcher)} \"$HOME/hub-work\" >/dev/null 2>&1 &`, 3000);\nnpm-hub/src/server.js:3610:        if (!launched) await runOnDisplay(`(pcmanfm || nautilus || xdg-open ~/hub-work) &`, 3000);\nnpm-hub/src/server.js:3795:// POST /api/gh/clone — clone a repo into hub-work using the linked GH_TOKEN\nnpm-hub/src/vnc-keepalive.js:387:  { name: 'Файлы',      exec: 'hub-files $HOME/hub-work',                       glyph: 'F',    c1: '#bb8009', c2: '#7d5e05', icon: 'system-file-manager' },\nnpm-hub/src/vnc-keepalive.js:395:  { name: 'Проекты',    exec: 'hub-files $HOME/hub-work',                        glyph: 'P',    c1: '#3fb950', c2: '#1b6d2c', icon: 'folder' }\nnpm-hub/src/vnc-keepalive.js:671:    'target=\"${1:-$HOME/hub-work}\"',\nnpm-hub/src/vnc-keepalive.js:1036:  // desktop script in ~/hub-work and silently skip the always-on screen.\n.github/workflows/agent.yml:462:          mkdir -p \"$HOME/hub-work\" \"$HOME/.npm-hub/logs\"\n.github/workflows/agent.yml:467:            bash \"$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh\" \"$HOME/hub-work\"\n.github/workflows/hub.yml:177:          export HUB_LOGS=\"$HOME/.npm-hub/logs\"; mkdir -p ~/hub-work \"$HUB_LOGS\" 2>/dev/null || true; mkdir -p ~/.npm-hub/logs\n.github/workflows/hub.yml:204:          # run together; the hub-work chats import below waits for the repos,\n.github/workflows/hub.yml:218:          wait \"$WORK_PID\" || echo \"::warning::hub-work restore failed\"\n.github/workflows/hub.yml:220:          # hub-work call gets RESTORE_CHATS_ALL=1 so every repo the Files tab\n.github/workflows/hub.yml:224:            bash \"$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh\" \"$HOME/hub-work\" 2>&1 | tee -a \"$HUB_LOGS/restore-hubwork.log\" || echo \"::warning::hub-work chats restore failed\"\n=== work-backup test ===\n#!/usr/bin/env bash\n# Round-trip test for tools/backup-work.sh + tools/restore-work.sh, using a\n# local bare repo as the \"work-backup\" remote. No network, no GitHub.\nset -uo pipefail\nHERE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nTOOLS=\"$HERE/../tools\"\nTMP=\"$(mktemp -d)\"\ntrap 'cd /; rm -rf \"$TMP\"' EXIT\npass=0; fail=0\ncheck() { if [ \"$2\" = 1 ]; then pass=$((pass+1)); echo \"PASS $1\"; else fail=$((fail+1)); echo \"FAIL $1\"; fi; }\n\ngit init -q --bare \"$TMP/remote.git\"\nmkdir -p \"$TMP/home/proj/sub\" \"$TMP/home/loose\"\n( cd \"$TMP/home/proj\"\n  git init -q; git config user.email t@t; git config user.name t\n  echo base > committed.txt; printf 'build/\\n' > .gitignore\n  git add -A; git commit -qm base\n  echo \"wip change\" >> committed.txt\n  echo \"staged\" > newfile.txt; git add newfile.txt\n  echo \"untracked\" > sub/scratch.txt\n  echo \"manifest\" > MANIFEST.md\n  mkdir -p build; echo junk > build/out.o )\n\necho \"hello loose\" > \"$TMP/home/loose/note.txt\"\n\nREPO_COUNT=$(find \"$TMP/home\" -type d -name .git | wc -l | tr -d ' ')\nCHAT_REPOS=$(CHAT_ALL_ROOT=\"$TMP/home\" OPENCODE_DB=\"$TMP/missing.db\" PUBLISH=0 bash \"$TOOLS/export-chats.sh\" --all 2>&1 | grep -c '^export-chats: --- ' || true)\ncheck \"chat export finds every repo\" \"$([ \"$REPO_COUNT\" = \"$CHAT_REPOS\" ] && echo 1 || echo 0)\"\n\nexport SESSION_STATE_URL=\"$TMP/remote.git\" WORK_BACKUP_ROOT=\"$TMP/home\"\nexport WORK_BACKUP_STATE=\"$TMP/home/.npm-hub/work-backup-state\" HUB_LOGS=\"$TMP/logs\"\nbash \"$TOOLS/backup-work.sh\" --once >/dev/null 2>&1\ncheck \"snapshot published\" \"$([ -n \"$(git -C \"$TMP/remote.git\" ls-tree -r --name-only work-backup)\" ] && echo 1 || echo 0)\"\ncheck \"manifest lists proj\" \"$(git -C \"$TMP/remote.git\" show work-backup:latest.json | grep -q '\"rel\": \"proj\"' && echo 1 || echo 0)\"\nbefore=\"$(git -C \"$TMP/remote.git\" rev-parse work-backup)\"\nsleep 1\nbash \"$TOOLS/backup-work.sh\" --once >/dev/null 2>&1\ncheck \"final once always publishes\" \"$([ \"$before\" != \"$(git -C \"$TMP/remote.git\" rev-parse work-backup)\" ] && echo 1 || echo 0)\"\n\necho \"second distinct edit\" >> \"$TMP/home/proj/committed.txt\"\n",
+                  "metadata": {
+                    "output": "npm-hub/src/storage/manager.js:79:    devices.push({ type: 'local', id: path.join(HOME, 'hub-work'), name: 'hub-work', icon: '📁' });\nnpm-hub/src/server.js:69:const WORK_DIR = process.env.HUB_WORK_DIR || path.join(HOME, 'hub-work');\nnpm-hub/src/server.js:755:  const hubWork = path.join(HOME, 'hub-work');\nnpm-hub/src/server.js:1235:  // Heavy folders in the work dir (hub-work itself first, then its children).\nnpm-hub/src/server.js:1244:      if (s != null && s > 20 * 1024 * 1024) sizes.push({ name: d === WORK_DIR ? 'hub-work' : path.basename(d), path: d, size: s, isDir: true });\nnpm-hub/src/server.js:2383:// the saved repository identity against the durable hub-work directory.\nnpm-hub/src/server.js:3606:            await runOnDisplay(`setsid nohup ${JSON.stringify(launcher)} \"$HOME/hub-work\" >/dev/null 2>&1 &`, 3000);\nnpm-hub/src/server.js:3610:        if (!launched) await runOnDisplay(`(pcmanfm || nautilus || xdg-open ~/hub-work) &`, 3000);\nnpm-hub/src/server.js:3795:// POST /api/gh/clone — clone a repo into hub-work using the linked GH_TOKEN\nnpm-hub/src/vnc-keepalive.js:387:  { name: 'Файлы',      exec: 'hub-files $HOME/hub-work',                       glyph: 'F',    c1: '#bb8009', c2: '#7d5e05', icon: 'system-file-manager' },\nnpm-hub/src/vnc-keepalive.js:395:  { name: 'Проекты',    exec: 'hub-files $HOME/hub-work',                        glyph: 'P',    c1: '#3fb950', c2: '#1b6d2c', icon: 'folder' }\nnpm-hub/src/vnc-keepalive.js:671:    'target=\"${1:-$HOME/hub-work}\"',\nnpm-hub/src/vnc-keepalive.js:1036:  // desktop script in ~/hub-work and silently skip the always-on screen.\n.github/workflows/agent.yml:462:          mkdir -p \"$HOME/hub-work\" \"$HOME/.npm-hub/logs\"\n.github/workflows/agent.yml:467:            bash \"$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh\" \"$HOME/hub-work\"\n.github/workflows/hub.yml:177:          export HUB_LOGS=\"$HOME/.npm-hub/logs\"; mkdir -p ~/hub-work \"$HUB_LOGS\" 2>/dev/null || true; mkdir -p ~/.npm-hub/logs\n.github/workflows/hub.yml:204:          # run together; the hub-work chats import below waits for the repos,\n.github/workflows/hub.yml:218:          wait \"$WORK_PID\" || echo \"::warning::hub-work restore failed\"\n.github/workflows/hub.yml:220:          # hub-work call gets RESTORE_CHATS_ALL=1 so every repo the Files tab\n.github/workflows/hub.yml:224:            bash \"$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh\" \"$HOME/hub-work\" 2>&1 | tee -a \"$HUB_LOGS/restore-hubwork.log\" || echo \"::warning::hub-work chats restore failed\"\n=== work-backup test ===\n#!/usr/bin/env bash\n# Round-trip test for tools/backup-work.sh + tools/restore-work.sh, using a\n# local bare repo as the \"work-backup\" remote. No network, no GitHub.\nset -uo pipefail\nHERE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nTOOLS=\"$HERE/../tools\"\nTMP=\"$(mktemp -d)\"\ntrap 'cd /; rm -rf \"$TMP\"' EXIT\npass=0; fail=0\ncheck() { if [ \"$2\" = 1 ]; then pass=$((pass+1)); echo \"PASS $1\"; else fail=$((fail+1)); echo \"FAIL $1\"; fi; }\n\ngit init -q --bare \"$TMP/remote.git\"\nmkdir -p \"$TMP/home/proj/sub\" \"$TMP/home/loose\"\n( cd \"$TMP/home/proj\"\n  git init -q; git config user.email t@t; git config user.name t\n  echo base > committed.txt; printf 'build/\\n' > .gitignore\n  git add -A; git commit -qm base\n  echo \"wip change\" >> committed.txt\n  echo \"staged\" > newfile.txt; git add newfile.txt\n  echo \"untracked\" > sub/scratch.txt\n  echo \"manifest\" > MANIFEST.md\n  mkdir -p build; echo junk > build/out.o )\n\necho \"hello loose\" > \"$TMP/home/loose/note.txt\"\n\nREPO_COUNT=$(find \"$TMP/home\" -type d -name .git | wc -l | tr -d ' ')\nCHAT_REPOS=$(CHAT_ALL_ROOT=\"$TMP/home\" OPENCODE_DB=\"$TMP/missing.db\" PUBLISH=0 bash \"$TOOLS/export-chats.sh\" --all 2>&1 | grep -c '^export-chats: --- ' || true)\ncheck \"chat export finds every repo\" \"$([ \"$REPO_COUNT\" = \"$CHAT_REPOS\" ] && echo 1 || echo 0)\"\n\nexport SESSION_STATE_URL=\"$TMP/remote.git\" WORK_BACKUP_ROOT=\"$TMP/home\"\nexport WORK_BACKUP_STATE=\"$TMP/home/.npm-hub/work-backup-state\" HUB_LOGS=\"$TMP/logs\"\nbash \"$TOOLS/backup-work.sh\" --once >/dev/null 2>&1\ncheck \"snapshot published\" \"$([ -n \"$(git -C \"$TMP/remote.git\" ls-tree -r --name-only work-backup)\" ] && echo 1 || echo 0)\"\ncheck \"manifest lists proj\" \"$(git -C \"$TMP/remote.git\" show work-backup:latest.json | grep -q '\"rel\": \"proj\"' && echo 1 || echo 0)\"\nbefore=\"$(git -C \"$TMP/remote.git\" rev-parse work-backup)\"\nsleep 1\nbash \"$TOOLS/backup-work.sh\" --once >/dev/null 2>&1\ncheck \"final once always publishes\" \"$([ \"$before\" != \"$(git -C \"$TMP/remote.git\" rev-parse work-backup)\" ] && echo 1 || echo 0)\"\n\necho \"second distinct edit\" >> \"$TMP/home/proj/committed.txt\"\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/zen-panel/code && grep -rn \"hub-work\" --include=*.js --include=*.sh --include=*.yml npm-hub/src .github app/src 2>/dev/null | grep -v node_modules | head -20 && echo \"=== work-backup test ===\" && head -40 tests/work-backup-test.sh",
+                  "time": {
+                    "start": 1790966950682,
+                    "end": 1790966951071
+                  }
+                },
+                "id": "prt_0fdf2e998001f4DLek3FFFQ6nm",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf2b06d001lThXcxEeEsm8Ia"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fdf2ee2e001YGY948dIPfpC9r",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf2b06d001lThXcxEeEsm8Ia"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fdf2ac14001L09mAQ8piD7Axh",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/zen-panel/code/agent",
+                "root": "/home/runner/hub-work/zen-panel/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790966951994,
+                "completed": 1790966958184
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fdf2f03a001vpt5it0yj9Ro78",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-start",
+                "id": "prt_0fdf302910019gBpXN7q1nXpPU",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf2f03a001vpt5it0yj9Ro78"
+              },
+              {
+                "type": "reasoning",
+                "text": "There's already an export-chats.sh tool and backup-work.sh. So \"экспортируй сессии в отдельную папку в work либо runner\" — export sessions into a separate folder in work (on the runner).\n\nLet me look at tools/export-chats.sh and see what it does, and whether there's a periodic export. The user wants: \"каждый раз постоянно\" = constantly/always — i.e., a continuous export loop.\n\nLet me exploretools/.",
+                "time": {
+                  "start": 1790966956705,
+                  "end": 1790966957429
+                },
+                "id": "prt_0fdf302a1001JyQbgC4snDEWV5",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf2f03a001vpt5it0yj9Ro78"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a0fdf30541744fb791f078",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/zen-panel/code && ls tools/ && echo \"=== export-chats head ===\" && head -60 tools/export-chats.sh"
+                  },
+                  "output": "_oc_settings_pack.sh\nbackup-chat-history.sh\nbackup-work.sh\nbuild_win.sh\nexport-chats.sh\nhandoff.sh\nhub_control.sh\nmigrate_session_state.sh\noc_first_prompt.py\noc_gh_auth.sh\noc_lan_start.sh\noc_lan_stop.sh\nopen_tunnel.sh\npublish_session.sh\nreap_dead_sessions.sh\nrescue_ssh.sh\nrestore-chats.sh\nrestore-work.sh\nrestore_audit_code.sh\nsession_resume_report.sh\nsnapshot-audit-code.sh\nstart_desktop.sh\ntunnel_health.sh\ntunnel_keeper.sh\n=== export-chats head ===\n#!/usr/bin/env bash\n# Export the opencode chat sessions that belong to a repository into one\n# bundle, and (unless PUBLISH=0) publish it to the session-state branch as\n#   chats/<repoName>.json\n# The bundle carries the full `opencode export` payload of every session, so\n# restore-chats.sh can import them back - into the same repository.\n#\n# Why a folder of its own: saved/ is a rolling mailbox of {session, models}\n# snapshots and is confusing to read as history. chats/ holds one stable file\n# per repo, always the current set, easy to fetch back by name.\n#\n# By default it exports for ONE repository (the one given by CHAT_REPO_DIR or\n# the current directory). With `--all` (or CHAT_ALL_ROOT=<root>) it walks every\n# git repository under the root - the hub's fork clone plus everything cloned\n# from the Files tab into hub-work/ - and publishes chats/<name>.json for each,\n# so a runner that dies with unpushed sessions loses none of them.\n#\n# Env:\n#   CHAT_REPO_DIR   repo working tree (default GITHUB_WORKSPACE or cwd)\n#   CHAT_REPO       owner/name (default GITHUB_REPOSITORY or git origin)\n#   CHAT_MAX        max sessions to keep, newest first (default 30)\n#   CHAT_MAX_BYTES  size budget for the bundle (default 40 MiB)\n#   CHAT_BUNDLE_OUT local output path (default under ~/.local/share/opencode/history)\n#   CHAT_ALL_ROOT   root to scan for repos in --all mode (default $HOME)\n#   PUBLISH=0       build the bundle only, do not push\nset -uo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nDB=\"${OPENCODE_DB:-$HOME/.local/share/opencode/opencode.db}\"\nexport DB\n\nALL=\"\"\nif [ \"${1:-}\" = \"--all\" ] || [ \"${1:-}\" = \"--all=true\" ] || [ \"${1:-}\" = \"--all=1\" ]; then ALL=1; fi\n[ -n \"${CHAT_ALL_ROOT:-}\" ] && ALL=1\n\nexport CHAT_MAX=\"${CHAT_MAX:-30}\"\nexport CHAT_MAX_BYTES=\"${CHAT_MAX_BYTES:-41943040}\"\n\n# Heavy/generated dirs to skip while scanning for repos (same spirit as\n# backup-work.sh). node_modules and the toolchain caches are huge and slow.\nfind_repos() {\n  local root=\"$1\" args=() e\n  for e in .cache .nvm .npm .gradle .m2 .cargo .rustup .local/share/opencode .zen-agent node_modules .venv venv; do\n    args+=( -path \"*/$e/*\" -prune -o )\n  done\n  find \"$root\" -maxdepth 8 \"${args[@]}\" -type d -name .git -print 2>/dev/null\n}\n\n# Export + publish the sessions of ONE repository. Everything a later runner\n# needs (import into the same directory) is rebuilt on the other side from this\n# bundle.\nexport_one() {\n  local repo_dir=\"$1\"\n  [ -d \"$repo_dir/.git\" ] || [ -f \"$repo_dir/.git\" ] || return 0\n  local repo_full\n  repo_full=\"$(git -C \"$repo_dir\" remote get-url origin 2>/dev/null || true)\"\n  [ -n \"$repo_full\" ] || repo_full=\"$repo_dir\"\n  local repo_name\n  repo_name=\"${repo_full##*/}\"; repo_name=\"${repo_name%.git}\"\n  [ -n \"$repo_name\" ] || repo_name=\"$(basename \"$repo_dir\")\"\n",
+                  "metadata": {
+                    "output": "_oc_settings_pack.sh\nbackup-chat-history.sh\nbackup-work.sh\nbuild_win.sh\nexport-chats.sh\nhandoff.sh\nhub_control.sh\nmigrate_session_state.sh\noc_first_prompt.py\noc_gh_auth.sh\noc_lan_start.sh\noc_lan_stop.sh\nopen_tunnel.sh\npublish_session.sh\nreap_dead_sessions.sh\nrescue_ssh.sh\nrestore-chats.sh\nrestore-work.sh\nrestore_audit_code.sh\nsession_resume_report.sh\nsnapshot-audit-code.sh\nstart_desktop.sh\ntunnel_health.sh\ntunnel_keeper.sh\n=== export-chats head ===\n#!/usr/bin/env bash\n# Export the opencode chat sessions that belong to a repository into one\n# bundle, and (unless PUBLISH=0) publish it to the session-state branch as\n#   chats/<repoName>.json\n# The bundle carries the full `opencode export` payload of every session, so\n# restore-chats.sh can import them back - into the same repository.\n#\n# Why a folder of its own: saved/ is a rolling mailbox of {session, models}\n# snapshots and is confusing to read as history. chats/ holds one stable file\n# per repo, always the current set, easy to fetch back by name.\n#\n# By default it exports for ONE repository (the one given by CHAT_REPO_DIR or\n# the current directory). With `--all` (or CHAT_ALL_ROOT=<root>) it walks every\n# git repository under the root - the hub's fork clone plus everything cloned\n# from the Files tab into hub-work/ - and publishes chats/<name>.json for each,\n# so a runner that dies with unpushed sessions loses none of them.\n#\n# Env:\n#   CHAT_REPO_DIR   repo working tree (default GITHUB_WORKSPACE or cwd)\n#   CHAT_REPO       owner/name (default GITHUB_REPOSITORY or git origin)\n#   CHAT_MAX        max sessions to keep, newest first (default 30)\n#   CHAT_MAX_BYTES  size budget for the bundle (default 40 MiB)\n#   CHAT_BUNDLE_OUT local output path (default under ~/.local/share/opencode/history)\n#   CHAT_ALL_ROOT   root to scan for repos in --all mode (default $HOME)\n#   PUBLISH=0       build the bundle only, do not push\nset -uo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nDB=\"${OPENCODE_DB:-$HOME/.local/share/opencode/opencode.db}\"\nexport DB\n\nALL=\"\"\nif [ \"${1:-}\" = \"--all\" ] || [ \"${1:-}\" = \"--all=true\" ] || [ \"${1:-}\" = \"--all=1\" ]; then ALL=1; fi\n[ -n \"${CHAT_ALL_ROOT:-}\" ] && ALL=1\n\nexport CHAT_MAX=\"${CHAT_MAX:-30}\"\nexport CHAT_MAX_BYTES=\"${CHAT_MAX_BYTES:-41943040}\"\n\n# Heavy/generated dirs to skip while scanning for repos (same spirit as\n# backup-work.sh). node_modules and the toolchain caches are huge and slow.\nfind_repos() {\n  local root=\"$1\" args=() e\n  for e in .cache .nvm .npm .gradle .m2 .cargo .rustup .local/share/opencode .zen-agent node_modules .venv venv; do\n    args+=( -path \"*/$e/*\" -prune -o )\n  done\n  find \"$root\" -maxdepth 8 \"${args[@]}\" -type d -name .git -print 2>/dev/null\n}\n\n# Export + publish the sessions of ONE repository. Everything a later runner\n# needs (import into the same directory) is rebuilt on the other side from this\n# bundle.\nexport_one() {\n  local repo_dir=\"$1\"\n  [ -d \"$repo_dir/.git\" ] || [ -f \"$repo_dir/.git\" ] || return 0\n  local repo_full\n  repo_full=\"$(git -C \"$repo_dir\" remote get-url origin 2>/dev/null || true)\"\n  [ -n \"$repo_full\" ] || repo_full=\"$repo_dir\"\n  local repo_name\n  repo_name=\"${repo_full##*/}\"; repo_name=\"${repo_name%.git}\"\n  [ -n \"$repo_name\" ] || repo_name=\"$(basename \"$repo_dir\")\"\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/zen-panel/code && ls tools/ && echo \"=== export-chats head ===\" && head -60 tools/export-chats.sh",
+                  "time": {
+                    "start": 1790966957495,
+                    "end": 1790966957726
+                  }
+                },
+                "id": "prt_0fdf30585001hpwqIUjkv1G6Ik",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf2f03a001vpt5it0yj9Ro78"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fdf307e2001f2MQ5svpR2jDWm",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf2f03a001vpt5it0yj9Ro78"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fdf2ac14001L09mAQ8piD7Axh",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/zen-panel/code/agent",
+                "root": "/home/runner/hub-work/zen-panel/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790966958336,
+                "completed": 1790966972533
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fdf30900001tVQYNY4a6CtaaW",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-start",
+                "id": "prt_0fdf31255001AEZmf3yTNgktDW",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf30900001tVQYNY4a6CtaaW"
+              },
+              {
+                "type": "reasoning",
+                "text": "So there's already a chat export mechanism that publishes to the session-state branch (`chats/<repo>.json`). The user now wants: \"каждый раз постоянно экспортируй сессии в отдельную папку в work либо runner\" — always/constantly export sessions into a separate folder in work (i.e., `~/hub-work/...`) or on the runner.\n\nInterpretation: They want a plain folder on disk — inside `hub-work` (which survives/appears in the Files tab) — where sessions are continuously mirrored, one file per session/repo, updated periodically (\"каждый раз постоянно\"). The existing mechanism publishes to a git branch (durable but slow, needs commits), not to a folder.\n\nSo the ask: a continuous background export into a folder under `~/hub-work/` (visible in the Files tab, so they can read/copy it), plus optional publish.\n\nAmbiguity worth clarifying:\n1. Where exactly: `~/hub-work/sessions-export/` on the runner? Or in the control repo branch (already exists)?\n2. Cadence: every N minutes? On every change?\n3. Format: one file per session (markdown/json) vs one bundle per repo (as today)?\n\nThe user's phrasing \"в work либо runner\" suggests either place is fine — the durable one is the control-repo branch; the visible one is hub-work on the runner. Given \"каждый раз постоянно\" (always), a periodic loop.\n\nI should ask 2-3 focused questions, as before, since the design has real forks. But maybe I can make a sensible decision: do BOTH — a periodic export into `~/hub-work/sessions/` (one markdown per session + a JSON bundle), which is cheap and local, and it's exactly \"отдельная папка в work\". Plus it gets published by the existing backup-work.sh? Hmm, backup-work.sh pushes hub-work to a branch already? Let me check what backup-work.sh does — it pushes `work-backup` branch snapshots of WORK_BACKUP_ROOT (hub-work). If so, a folder in hub-work is automatically backed up to the control repo. That's elegant: export into hub-work/sessions → backup-work.sh carries it.\n\nLet me check backup-work.sh root and whether it includes hub-work.\n\nLet me check quickly: WORK_BACKUP_ROOT default.",
+                "time": {
+                  "start": 1790966960737,
+                  "end": 1790966971655
+                },
+                "id": "prt_0fdf31261001MwYn1qGJ08op7A",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf30900001tVQYNY4a6CtaaW"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a0fdf33c8a75358db85700",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/zen-panel/code && grep -n \"WORK_BACKUP_ROOT\\|WORK_BACKUP_STATE\\|^# \\|interval\\|sleep\\|while true\" tools/backup-work.sh | head -25"
+                  },
+                  "output": "2:# Snapshot every working repository under $HOME to the `work-backup` branch.\n4:# WHY\n5:#   The runner disk is ephemeral. When the job ends - or the agent restarts the\n6:#   hub and the working tree is reset - every uncommitted change and every repo\n7:#   that was never pushed disappears for good. This script keeps a durable copy\n8:#   on GitHub: for each repo it stores a git bundle of ALL refs plus the\n9:#   uncommitted diff and the untracked files, so restore-work.sh can rebuild the\n10:#   tree on the next run. Files that are not inside a repo are archived too.\n12:# SELF-CONTAINED SNAPSHOTS\n13:#   Every published snapshot holds every repo, not only the ones that changed,\n14:#   so restoring from the newest snapshot is always complete. Idle work costs\n15:#   nothing because a global signature (all repo HEAD/status digests plus the\n16:#   loose-file listing) is compared first and the run stops before packing.\n18:# WHAT IS SKIPPED\n19:#   Heavy, regenerable paths (node_modules, caches, toolchains, the runner's own\n20:#   checkout, the opencode database) are excluded by name.\n22:# BIG FILES\n23:#   A file over WORK_BACKUP_MAX_FILE_MB used to be dropped from the snapshot\n24:#   without a word - a 150 MB dataset, a video, a big log simply never reached\n25:#   the next runner. GitHub refuses any blob over 100 MB (\"exceeds 100 MiB\"),\n26:#   so such a file cannot be committed whole either: it is split into chunks of\n27:#   WORK_BACKUP_CHUNK_MB and restore-work.sh glues them back together.\n29:# BIG BLOBS (the same limit, one level up)\n30:#   The snapshot itself grows blobs: files.tar.gz of the loose home files, and\n31:#   a repo.bundle of a big repository. Those are not \"big files\" - they are the\n",
+                  "metadata": {
+                    "output": "2:# Snapshot every working repository under $HOME to the `work-backup` branch.\n4:# WHY\n5:#   The runner disk is ephemeral. When the job ends - or the agent restarts the\n6:#   hub and the working tree is reset - every uncommitted change and every repo\n7:#   that was never pushed disappears for good. This script keeps a durable copy\n8:#   on GitHub: for each repo it stores a git bundle of ALL refs plus the\n9:#   uncommitted diff and the untracked files, so restore-work.sh can rebuild the\n10:#   tree on the next run. Files that are not inside a repo are archived too.\n12:# SELF-CONTAINED SNAPSHOTS\n13:#   Every published snapshot holds every repo, not only the ones that changed,\n14:#   so restoring from the newest snapshot is always complete. Idle work costs\n15:#   nothing because a global signature (all repo HEAD/status digests plus the\n16:#   loose-file listing) is compared first and the run stops before packing.\n18:# WHAT IS SKIPPED\n19:#   Heavy, regenerable paths (node_modules, caches, toolchains, the runner's own\n20:#   checkout, the opencode database) are excluded by name.\n22:# BIG FILES\n23:#   A file over WORK_BACKUP_MAX_FILE_MB used to be dropped from the snapshot\n24:#   without a word - a 150 MB dataset, a video, a big log simply never reached\n25:#   the next runner. GitHub refuses any blob over 100 MB (\"exceeds 100 MiB\"),\n26:#   so such a file cannot be committed whole either: it is split into chunks of\n27:#   WORK_BACKUP_CHUNK_MB and restore-work.sh glues them back together.\n29:# BIG BLOBS (the same limit, one level up)\n30:#   The snapshot itself grows blobs: files.tar.gz of the loose home files, and\n31:#   a repo.bundle of a big repository. Those are not \"big files\" - they are the\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/zen-panel/code && grep -n \"WORK_BACKUP_ROOT\\|WORK_BACKUP_STATE\\|^# \\|interval\\|sleep\\|while true\" tools/backup-work.sh | head -25",
+                  "time": {
+                    "start": 1790966971704,
+                    "end": 1790966971787
+                  }
+                },
+                "id": "prt_0fdf33d0f001msX9UtVJQMK7o3",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf30900001tVQYNY4a6CtaaW"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fdf33f69001m3vCD7mHEwKd1s",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf30900001tVQYNY4a6CtaaW"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fdf2ac14001L09mAQ8piD7Axh",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/zen-panel/code/agent",
+                "root": "/home/runner/hub-work/zen-panel/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790966972713,
+                "completed": 1790966991581
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fdf34129001VBKLZ9ekqbJq9F",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-start",
+                "id": "prt_0fdf381ec001v7Cr00qmzCVhsM",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf34129001VBKLZ9ekqbJq9F"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a0fdf3874e70a1b9b09feb",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/zen-panel/code && grep -n \"WORK_BACKUP_ROOT=\\|WORK_BACKUP_ROOT:-\\|SKIP\\|work-backup\\b\" tools/backup-work.sh | head -20 && echo \"=== how often backup-work runs ===\" && grep -rn \"backup-work.sh\" .github/workflows/*.yml npm-hub/src/*.js | head"
+                  },
+                  "output": "2:# Snapshot every working repository under $HOME to the `work-backup` branch.\n18:# WHAT IS SKIPPED\n57:#   WORK_BACKUP_BRANCH      destination branch      (default work-backup)\n69:ROOT=\"${WORK_BACKUP_ROOT:-$HOME}\"\n75:BRANCH=\"${WORK_BACKUP_BRANCH:-work-backup}\"\n96:STATE_DIR=\"${WORK_BACKUP_STATE:-$HOME/.npm-hub/work-backup-state}\"\n104:  printf '%s\\n' \"work-backup: cannot create log or state directory\" >&2\n107:log() { echo \"[work-backup $(date -u '+%H:%M:%S')] $*\" | tee -a \"$HUB_LOGS/work-backup.log\"; }\n318:SKIP = {'big-blobs.json', 'manifest.json', 'latest.json', 'tree.txt',\n326:        if name in SKIP:\n354:    json.dump({'kind': 'work-backup-blobs', 'blobs': manifest}, w,\n563:    log \"newer work-backup run already owns $BRANCH; left alone\"\n594:data = {\"kind\": \"work-backup\", \"stamp\": stamp, \"snapshot\": snap, \"repos\": repos,\n634:  git config user.email \"work-backup@symbiosis\" || { rm -rf \"$work\"; return 1; }\n640:  git commit -q -m \"work-backup $stamp\" || { rm -rf \"$work\"; return 1; }\n647:    echo \"work-backup: push attempt $attempt failed; refreshing $BRANCH\" >&2\n651:        log \"newer work-backup run already owns $BRANCH; left alone\"\n660:      git commit -q -m \"work-backup $stamp\" 2>/dev/null || { rm -rf \"$work\"; return 1; }\n=== how often backup-work runs ===\n.github/workflows/agent.yml:716:            bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" --once \\\n.github/workflows/hub.yml:279:          nohup env GH_TOKEN=\"${{ secrets.GITHUB_TOKEN }}\" GITHUB_TOKEN=\"${{ secrets.GITHUB_TOKEN }}\" WORK_BACKUP_ROOT=\"$HOME\" WORK_BACKUP_INTERVAL=300 bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" >> \"$HUB_LOGS/work-backup.log\" 2>&1 &\n.github/workflows/hub.yml:513:            bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" --once \\\n.github/workflows/hub.yml:914:            bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" --once \\\n.github/workflows/opencode.yml:127:            bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" >> \"$HUB_LOGS/work-backup.log\" 2>&1 &\n.github/workflows/opencode.yml:247:            bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" --once \\\n.github/workflows/opencode.yml:556:          bash \"$env:GITHUB_WORKSPACE/fork/tools/backup-work.sh\" --once 2>&1 | Tee-Object -FilePath \"$env:TEMP\\work-backup.log\"\nnpm-hub/src/server.js:135:// work-backup (backup-work.sh → descriptors/) и возвращается на следующем\nnpm-hub/src/server.js:2215:// backup-work.sh копирует в descriptors/ — поэтому он автоматически едет в\n",
+                  "metadata": {
+                    "output": "2:# Snapshot every working repository under $HOME to the `work-backup` branch.\n18:# WHAT IS SKIPPED\n57:#   WORK_BACKUP_BRANCH      destination branch      (default work-backup)\n69:ROOT=\"${WORK_BACKUP_ROOT:-$HOME}\"\n75:BRANCH=\"${WORK_BACKUP_BRANCH:-work-backup}\"\n96:STATE_DIR=\"${WORK_BACKUP_STATE:-$HOME/.npm-hub/work-backup-state}\"\n104:  printf '%s\\n' \"work-backup: cannot create log or state directory\" >&2\n107:log() { echo \"[work-backup $(date -u '+%H:%M:%S')] $*\" | tee -a \"$HUB_LOGS/work-backup.log\"; }\n318:SKIP = {'big-blobs.json', 'manifest.json', 'latest.json', 'tree.txt',\n326:        if name in SKIP:\n354:    json.dump({'kind': 'work-backup-blobs', 'blobs': manifest}, w,\n563:    log \"newer work-backup run already owns $BRANCH; left alone\"\n594:data = {\"kind\": \"work-backup\", \"stamp\": stamp, \"snapshot\": snap, \"repos\": repos,\n634:  git config user.email \"work-backup@symbiosis\" || { rm -rf \"$work\"; return 1; }\n640:  git commit -q -m \"work-backup $stamp\" || { rm -rf \"$work\"; return 1; }\n647:    echo \"work-backup: push attempt $attempt failed; refreshing $BRANCH\" >&2\n651:        log \"newer work-backup run already owns $BRANCH; left alone\"\n660:      git commit -q -m \"work-backup $stamp\" 2>/dev/null || { rm -rf \"$work\"; return 1; }\n=== how often backup-work runs ===\n.github/workflows/agent.yml:716:            bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" --once \\\n.github/workflows/hub.yml:279:          nohup env GH_TOKEN=\"${{ secrets.GITHUB_TOKEN }}\" GITHUB_TOKEN=\"${{ secrets.GITHUB_TOKEN }}\" WORK_BACKUP_ROOT=\"$HOME\" WORK_BACKUP_INTERVAL=300 bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" >> \"$HUB_LOGS/work-backup.log\" 2>&1 &\n.github/workflows/hub.yml:513:            bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" --once \\\n.github/workflows/hub.yml:914:            bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" --once \\\n.github/workflows/opencode.yml:127:            bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" >> \"$HUB_LOGS/work-backup.log\" 2>&1 &\n.github/workflows/opencode.yml:247:            bash \"$GITHUB_WORKSPACE/fork/tools/backup-work.sh\" --once \\\n.github/workflows/opencode.yml:556:          bash \"$env:GITHUB_WORKSPACE/fork/tools/backup-work.sh\" --once 2>&1 | Tee-Object -FilePath \"$env:TEMP\\work-backup.log\"\nnpm-hub/src/server.js:135:// work-backup (backup-work.sh → descriptors/) и возвращается на следующем\nnpm-hub/src/server.js:2215:// backup-work.sh копирует в descriptors/ — поэтому он автоматически едет в\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/zen-panel/code && grep -n \"WORK_BACKUP_ROOT=\\|WORK_BACKUP_ROOT:-\\|SKIP\\|work-backup\\b\" tools/backup-work.sh | head -20 && echo \"=== how often backup-work runs ===\" && grep -rn \"backup-work.sh\" .github/workflows/*.yml npm-hub/src/*.js | head",
+                  "time": {
+                    "start": 1790966990907,
+                    "end": 1790966991048
+                  }
+                },
+                "id": "prt_0fdf38826001xPSyz4oCOjxH0b",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf34129001VBKLZ9ekqbJq9F"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fdf389ca0018I1W12T4jnHW4e",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf34129001VBKLZ9ekqbJq9F"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fdf2ac14001L09mAQ8piD7Axh",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/zen-panel/code/agent",
+                "root": "/home/runner/hub-work/zen-panel/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790966991833,
+                "completed": 1790967008606
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fdf38bd9001oiUdhezm9tTDjV",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-start",
+                "id": "prt_0fdf3984c001dbtHYvyIrPiS6d",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf38bd9001oiUdhezm9tTDjV"
+              },
+              {
+                "type": "reasoning",
+                "text": "Key insight: `backup-work.sh` runs with `WORK_BACKUP_ROOT=\"$HOME\"` every 300s (hub) — it snapshots every repo under $HOME plus loose files, and pushes to `work-backup` branch. So:\n\n- If I export sessions into a **plain folder** (not a git repo) under `$HOME` (e.g. `$HOME/hub-work/sessions/`), it becomes \"loose files\" and gets archived into the snapshot → automatically durable every 5 minutes.\n- The existing `export-chats.sh --all` writes into a bundle path (`CHAT_BUNDLE_OUT`, default under ~/.local/share/opencode/history) — and that path is *excluded* from backup? It skips `.local/share/opencode`. So today's export lives only in the chat DB + the control branch.\n\nThe user wants a **separate folder in work** with continuous export. That's simple and matches: `$HOME/hub-work/sessions/` — visible in the Files tab (hub-files $HOME/hub-work) and picked up by backup-work as loose files every 5 min.\n\nDesign decisions to make:\n1. Folder: `~/hub-work/sessions-export/` (visible in the Files tab as a folder, downloadable to the phone).\n2. Content: for each session, a readable `.md` transcript + a machine `.json`; plus one index file. Which format? `opencode export` gives JSON payload. Let me check what export-chats.sh produces and whether there's a `--format md`.\n3. Cadence: a daemon loop (`--watch`, default interval 120s?) alongside backup-work.sh's 300s. \"каждый раз постоянно\" = always.\n\nGiven this is a decent-sized feature with real forks (format, cadence, location), and the user's request is short, I should ask a compact set of questions. Earlier the user was receptive (answered 3 questions quickly). Let me ask 2-3 questions:\n\nQ1: Формат в папке: markdown-транскрипты (читаемо) / JSON (как сейчас) / оба.\nQ2: Как часто: раз в 2 минуты / раз в 5 минут / по событию+таймер.\nQ3: Куда: `~/hub-work/sessions/` (видно в «Файлы», переживает раннер через work-backup) / в control-репо ветку (уже есть, но медленно) / оба.\n\nAlso: the runner dies — the export is local to the runner; durability comes from work-backup (300s) which pushes to the work-backup branch. Should I also publish to the session-state branch `chats/`? That's existing via publish_session/export-chats with PUBLISH=1. Doing both = max durability.\n\nI'll ask the questions now.\n\nActually, wait. Let me first check whether the hub already has a live session exporter running periodically, so I don't duplicate. Let me grep for export-chats in workflows.",
+                "time": {
+                  "start": 1790966995033,
+                  "end": 1790967007946
+                },
+                "id": "prt_0fdf39859001yLrBBV86VGTqCG",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf38bd9001oiUdhezm9tTDjV"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a0fdf3ca9072619adb263e",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/zen-panel/code && grep -rn \"export-chats.sh\" .github/workflows/*.yml npm-hub/src/*.js | head && echo \"=== CHAT_BUNDLE_OUT / publish ===\" && grep -n \"CHAT_BUNDLE_OUT\\|publish_session.sh\\|chats/\" tools/export-chats.sh | head"
+                  },
+                  "output": ".github/workflows/hub.yml:964:            bash \"$GITHUB_WORKSPACE/fork/tools/export-chats.sh\" --all \\\n=== CHAT_BUNDLE_OUT / publish ===\n4:#   chats/<repoName>.json\n9:# snapshots and is confusing to read as history. chats/ holds one stable file\n15:# from the Files tab into hub-work/ - and publishes chats/<name>.json for each,\n23:#   CHAT_BUNDLE_OUT local output path (default under ~/.local/share/opencode/history)\n65:  out=\"${CHAT_BUNDLE_OUT:-$HOME/.local/share/opencode/history/chats-$repo_name-$stamp.json}\"\n195:    publish_output=\"$(bash \"$SCRIPT_DIR/publish_session.sh\" \\\n196:      file=\"chats/$repo_name.json\" \\\n",
+                  "metadata": {
+                    "output": ".github/workflows/hub.yml:964:            bash \"$GITHUB_WORKSPACE/fork/tools/export-chats.sh\" --all \\\n=== CHAT_BUNDLE_OUT / publish ===\n4:#   chats/<repoName>.json\n9:# snapshots and is confusing to read as history. chats/ holds one stable file\n15:# from the Files tab into hub-work/ - and publishes chats/<name>.json for each,\n23:#   CHAT_BUNDLE_OUT local output path (default under ~/.local/share/opencode/history)\n65:  out=\"${CHAT_BUNDLE_OUT:-$HOME/.local/share/opencode/history/chats-$repo_name-$stamp.json}\"\n195:    publish_output=\"$(bash \"$SCRIPT_DIR/publish_session.sh\" \\\n196:      file=\"chats/$repo_name.json\" \\\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/zen-panel/code && grep -rn \"export-chats.sh\" .github/workflows/*.yml npm-hub/src/*.js | head && echo \"=== CHAT_BUNDLE_OUT / publish ===\" && grep -n \"CHAT_BUNDLE_OUT\\|publish_session.sh\\|chats/\" tools/export-chats.sh | head",
+                  "time": {
+                    "start": 1790967007971,
+                    "end": 1790967008056
+                  }
+                },
+                "id": "prt_0fdf3cad0001B7fJ3nZcitsMS1",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf38bd9001oiUdhezm9tTDjV"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fdf3cc6c001XgkeLkV7kXl6kV",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf38bd9001oiUdhezm9tTDjV"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fdf2ac14001L09mAQ8piD7Axh",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/zen-panel/code/agent",
+                "root": "/home/runner/hub-work/zen-panel/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790967008702,
+                "completed": 1790967012747
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fdf3cdbe001B8Pjz4KbMK73FX",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-start",
+                "id": "prt_0fdf3db09001AkOY2CGZgCEHem",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf3cdbe001B8Pjz4KbMK73FX"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a0fdf3dc2d724bac876cec",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/zen-panel/code && sed -n '955,975p' .github/workflows/hub.yml && echo \"=== opencode.yml chat export? ===\" && grep -n \"export-chats\\|CHAT_\" .github/workflows/opencode.yml | head"
+                  },
+                  "output": "\n      - name: Export OpenCode chats for all repositories\n        # Runs even on a cancelled/expired job so the NEXT windows run can\n        # restore every repo's sessions (chats/<name>.json -> session-state).\n        if: always()\n        shell: bash\n        run: |\n          export HUB_LOGS=\"$HOME/.npm-hub/logs\"; mkdir -p \"$HUB_LOGS\" 2>/dev/null || true\n          GH_TOKEN=\"${{ secrets.GITHUB_TOKEN }}\" CHAT_ALL_ROOT=\"$HOME\" PUBLISH=1 \\\n            bash \"$GITHUB_WORKSPACE/fork/tools/export-chats.sh\" --all \\\n            2>&1 | tee -a \"$HUB_LOGS/export-chats.log\"\n\n      - name: Record the run in the history\n        if: always()\n        shell: pwsh\n        run: |\n          # history/<YYYY-MM-DD>/<Wd>/run-<runNumber>.json - see the Linux step.\n          $env:GH_TOKEN = \"${{ secrets.GITHUB_TOKEN }}\"\n          bash \"$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh\" journal=1 `\n            \"slot=hub-windows\" \"kind=NPM-Hub\" \"os=windows\" `\n            \"conclusion=${{ job.status }}\" \"endedAt=$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))\" `\n=== opencode.yml chat export? ===\n",
+                  "metadata": {
+                    "output": "\n      - name: Export OpenCode chats for all repositories\n        # Runs even on a cancelled/expired job so the NEXT windows run can\n        # restore every repo's sessions (chats/<name>.json -> session-state).\n        if: always()\n        shell: bash\n        run: |\n          export HUB_LOGS=\"$HOME/.npm-hub/logs\"; mkdir -p \"$HUB_LOGS\" 2>/dev/null || true\n          GH_TOKEN=\"${{ secrets.GITHUB_TOKEN }}\" CHAT_ALL_ROOT=\"$HOME\" PUBLISH=1 \\\n            bash \"$GITHUB_WORKSPACE/fork/tools/export-chats.sh\" --all \\\n            2>&1 | tee -a \"$HUB_LOGS/export-chats.log\"\n\n      - name: Record the run in the history\n        if: always()\n        shell: pwsh\n        run: |\n          # history/<YYYY-MM-DD>/<Wd>/run-<runNumber>.json - see the Linux step.\n          $env:GH_TOKEN = \"${{ secrets.GITHUB_TOKEN }}\"\n          bash \"$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh\" journal=1 `\n            \"slot=hub-windows\" \"kind=NPM-Hub\" \"os=windows\" `\n            \"conclusion=${{ job.status }}\" \"endedAt=$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))\" `\n=== opencode.yml chat export? ===\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/zen-panel/code && sed -n '955,975p' .github/workflows/hub.yml && echo \"=== opencode.yml chat export? ===\" && grep -n \"export-chats\\|CHAT_\" .github/workflows/opencode.yml | head",
+                  "time": {
+                    "start": 1790967012462,
+                    "end": 1790967012519
+                  }
+                },
+                "id": "prt_0fdf3dc5a001OveCJCJsAighLe",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf3cdbe001B8Pjz4KbMK73FX"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fdf3dcdd0016jo9Zv5yO4SS84",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf3cdbe001B8Pjz4KbMK73FX"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fdf2ac14001L09mAQ8piD7Axh",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/zen-panel/code/agent",
+                "root": "/home/runner/hub-work/zen-panel/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790967012888,
+                "completed": 1790967020746
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fdf3de18001PJ66EiYdKZwls2",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-start",
+                "id": "prt_0fdf3e95f0018MbOeIUROyomKp",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf3de18001PJ66EiYdKZwls2"
+              },
+              {
+                "type": "reasoning",
+                "text": "Confirmed: today sessions are exported **only at the end of a run** (`if: always()` step in hub.yml), not continuously. That's exactly the gap: if the runner dies mid-session, nothing was exported.\n\nSo the feature: a continuous exporter writing into a folder under `hub-work` (so backup-work's 5-min snapshot carries it to the work-backup branch → survives the runner), plus optionally publishing to session-state `chats/`.\n\nNow let me ask the clarifying questions — format, cadence, place — because they materially change the implementation. Keep it to 3 questions.\n\nActually, let me reconsider: maybe I should minimize questions and just pick sensible defaults? The instructions favor asking when unsure. The user gave a fairly clear directive (\"в отдельную папку в work\"). The main real fork is format (readable md vs json) and cadence. I'll ask 3 quick questions — the user has been responsive.\n\nLet me check what `opencode export` produces to know if md is easy. Let me peek at export-chats.sh's export_one to see the payload structure, and whether there's a markdown conversionavailable.",
+                "time": {
+                  "start": 1790967015778,
+                  "end": 1790967019188
+                },
+                "id": "prt_0fdf3e9620014uIspLW6U25bdG",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf3de18001PJ66EiYdKZwls2"
+              },
+              {
+                "type": "text",
+                "text": "Сейчас сессии экспортируются **только в конце прогона** (`if: always()` в hub.yml) — если раннер умер посреди работы, экспорта не было. Проверю формат данных, чтобы выбрать содержимое папки:",
+                "time": {
+                  "start": 1790967019218,
+                  "end": 1790967020204
+                },
+                "id": "prt_0fdf3f6c6001iNRKJgwPCkAR8a",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf3de18001PJ66EiYdKZwls2"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a0fdf3fa44747f84452c38",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/zen-panel/code && sed -n '60,130p' tools/export-chats.sh"
+                  },
+                  "output": "  [ -n \"$repo_name\" ] || repo_name=\"$(basename \"$repo_dir\")\"\n  repo_name=\"$(printf '%s' \"$repo_name\" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-80)\"\n\n  local stamp out\n  stamp=\"$(date -u '+%Y%m%dT%H%M%S')\"\n  out=\"${CHAT_BUNDLE_OUT:-$HOME/.local/share/opencode/history/chats-$repo_name-$stamp.json}\"\n\n  if [ ! -f \"$DB\" ]; then\n    echo \"export-chats: no opencode.db at $DB\" >&2\n    return 0\n  fi\n  if ! command -v opencode >/dev/null 2>&1; then\n    echo \"export-chats: opencode CLI not on PATH\" >&2\n    return 1\n  fi\n\n  mkdir -p \"$(dirname \"$out\")\"\n\n  REPO_DIR=\"$repo_dir\" REPO_NAME=\"$repo_name\" REPO_FULL=\"$repo_full\" \\\n  OUT=\"$out\" python3 - <<'PY'\nimport datetime, json, os, sqlite3, subprocess, sys, tempfile\n\nrepo_dir = os.path.realpath(os.environ[\"REPO_DIR\"])\nrepo_name = os.environ[\"REPO_NAME\"]\nrepo_full = os.environ[\"REPO_FULL\"]\nmax_sessions = int(os.environ.get(\"CHAT_MAX\") or 30)\nmax_bytes = int(os.environ.get(\"CHAT_MAX_BYTES\") or 40 * 1024 * 1024)\ndb = os.environ[\"DB\"]\nout = os.environ[\"OUT\"]\n\ndef belongs(directory):\n    if not directory:\n        return False\n    try:\n        rp = os.path.realpath(directory)\n    except Exception:\n        return False\n    # The session ran in this repo if its directory is the repo (or below it).\n    # The name test is a fallback for machines where the checkout moved.\n    return rp == repo_dir or rp.startswith(repo_dir + os.sep) or repo_name in rp.split(os.sep)\n\ntry:\n    con = sqlite3.connect(db)\n    con.row_factory = sqlite3.Row\n    rows = con.execute(\n        \"SELECT id, title, slug, directory, path, time_updated\"\n        \" FROM session ORDER BY time_updated DESC\").fetchall()\nexcept Exception as e:\n    print(\"export-chats: db read failed: %s\" % e, file=sys.stderr)\n    sys.exit(0)\n\npicked = [r for r in rows if belongs(r[\"directory\"])][:max_sessions]\nbundle = {\n    \"kind\": \"opencode-chats\",\n    \"sz_tip\": \"chats\",\n    \"repo\": repo_full,\n    \"repoName\": repo_name,\n    \"workdir\": repo_dir,\n    \"updatedAt\": datetime.datetime.now(datetime.timezone.utc)\n        .replace(microsecond=0).isoformat().replace(\"+00:00\", \"Z\"),\n    \"count\": 0,\n    \"sessions\": [],\n}\n\ntotal = 0\nfailed = 0\nfor r in picked:\n    sid = r[\"id\"]\n    # Capture stdout through a real file, not a pipe: the opencode CLI is a\n    # Node process and truncates large stdout when its output is a pipe (it\n    # exits before the pipe drains). A regular file gets the whole export.\n",
+                  "metadata": {
+                    "output": "  [ -n \"$repo_name\" ] || repo_name=\"$(basename \"$repo_dir\")\"\n  repo_name=\"$(printf '%s' \"$repo_name\" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-80)\"\n\n  local stamp out\n  stamp=\"$(date -u '+%Y%m%dT%H%M%S')\"\n  out=\"${CHAT_BUNDLE_OUT:-$HOME/.local/share/opencode/history/chats-$repo_name-$stamp.json}\"\n\n  if [ ! -f \"$DB\" ]; then\n    echo \"export-chats: no opencode.db at $DB\" >&2\n    return 0\n  fi\n  if ! command -v opencode >/dev/null 2>&1; then\n    echo \"export-chats: opencode CLI not on PATH\" >&2\n    return 1\n  fi\n\n  mkdir -p \"$(dirname \"$out\")\"\n\n  REPO_DIR=\"$repo_dir\" REPO_NAME=\"$repo_name\" REPO_FULL=\"$repo_full\" \\\n  OUT=\"$out\" python3 - <<'PY'\nimport datetime, json, os, sqlite3, subprocess, sys, tempfile\n\nrepo_dir = os.path.realpath(os.environ[\"REPO_DIR\"])\nrepo_name = os.environ[\"REPO_NAME\"]\nrepo_full = os.environ[\"REPO_FULL\"]\nmax_sessions = int(os.environ.get(\"CHAT_MAX\") or 30)\nmax_bytes = int(os.environ.get(\"CHAT_MAX_BYTES\") or 40 * 1024 * 1024)\ndb = os.environ[\"DB\"]\nout = os.environ[\"OUT\"]\n\ndef belongs(directory):\n    if not directory:\n        return False\n    try:\n        rp = os.path.realpath(directory)\n    except Exception:\n        return False\n    # The session ran in this repo if its directory is the repo (or below it).\n    # The name test is a fallback for machines where the checkout moved.\n    return rp == repo_dir or rp.startswith(repo_dir + os.sep) or repo_name in rp.split(os.sep)\n\ntry:\n    con = sqlite3.connect(db)\n    con.row_factory = sqlite3.Row\n    rows = con.execute(\n        \"SELECT id, title, slug, directory, path, time_updated\"\n        \" FROM session ORDER BY time_updated DESC\").fetchall()\nexcept Exception as e:\n    print(\"export-chats: db read failed: %s\" % e, file=sys.stderr)\n    sys.exit(0)\n\npicked = [r for r in rows if belongs(r[\"directory\"])][:max_sessions]\nbundle = {\n    \"kind\": \"opencode-chats\",\n    \"sz_tip\": \"chats\",\n    \"repo\": repo_full,\n    \"repoName\": repo_name,\n    \"workdir\": repo_dir,\n    \"updatedAt\": datetime.datetime.now(datetime.timezone.utc)\n        .replace(microsecond=0).isoformat().replace(\"+00:00\", \"Z\"),\n    \"count\": 0,\n    \"sessions\": [],\n}\n\ntotal = 0\nfailed = 0\nfor r in picked:\n    sid = r[\"id\"]\n    # Capture stdout through a real file, not a pipe: the opencode CLI is a\n    # Node process and truncates large stdout when its output is a pipe (it\n    # exits before the pipe drains). A regular file gets the whole export.\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/zen-panel/code && sed -n '60,130p' tools/export-chats.sh",
+                  "time": {
+                    "start": 1790967020184,
+                    "end": 1790967020303
+                  }
+                },
+                "id": "prt_0fdf3fa7b001WVrRUW1OsuFQYG",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf3de18001PJ66EiYdKZwls2"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fdf3fc3200123PL29Xf2Q22NM",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf3de18001PJ66EiYdKZwls2"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fdf2ac14001L09mAQ8piD7Axh",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/zen-panel/code/agent",
+                "root": "/home/runner/hub-work/zen-panel/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790967020912,
+                "completed": 1790967025279
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fdf3fd6f001noGcsA9G3HI3Kj",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-start",
+                "id": "prt_0fdf40c110017hykztSNOpwDKn",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf3fd6f001noGcsA9G3HI3Kj"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a0fdf40cb472dba021451a",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/zen-panel/code && sed -n '130,200p' tools/export-chats.sh"
+                  },
+                  "output": "    # exits before the pipe drains). A regular file gets the whole export.\n    fd, exp_path = tempfile.mkstemp(suffix=\".json\", prefix=\"oc-export-\")\n    try:\n        with os.fdopen(fd, \"wb\") as sink:\n            proc = subprocess.run([\"opencode\", \"export\", sid], stdout=sink,\n                                  stderr=subprocess.PIPE, timeout=120)\n        with open(exp_path, \"r\", encoding=\"utf-8\", errors=\"replace\") as f:\n            raw = f.read().strip()\n    except Exception as e:\n        print(\"export-chats: %s export failed: %s\" % (sid, e), file=sys.stderr)\n        failed += 1\n        continue\n    finally:\n        try:\n            os.unlink(exp_path)\n        except Exception:\n            pass\n    start = raw.find(\"{\")\n    if start > 0:\n        raw = raw[start:]\n    try:\n        data = json.loads(raw)\n    except Exception as e:\n        print(\"export-chats: %s is not JSON: %s\" % (sid, e), file=sys.stderr)\n        failed += 1\n        continue\n    entry = {\n        \"id\": sid,\n        \"title\": r[\"title\"],\n        \"slug\": r[\"slug\"],\n        \"directory\": r[\"directory\"],\n        \"timeUpdated\": r[\"time_updated\"],\n        \"export\": data,\n    }\n    size = len(json.dumps(entry, ensure_ascii=False))\n    if bundle[\"sessions\"] and total + size > max_bytes:\n        print(\"export-chats: size budget reached, dropping older sessions\", file=sys.stderr)\n        break\n    bundle[\"sessions\"].append(entry)\n    total += size\n\nbundle[\"count\"] = len(bundle[\"sessions\"])\nwith open(out, \"w\", encoding=\"utf-8\") as f:\n    json.dump(bundle, f, ensure_ascii=False)\nprint(\"export-chats: %d sessions, %.1f MiB -> %s\" % (bundle[\"count\"], total / 1048576.0, out))\nif failed:\n    sys.exit(1)\nPY\n  python_status=$?\n  if [ \"$python_status\" -ne 0 ]; then\n    rm -f \"$out\"\n    return 1\n  fi\n\n  [ -s \"$out\" ] || { echo \"export-chats: bundle empty\" >&2; return 0; }\n  # Skip empty bundles: no sessions in this repo, nothing worth publishing.\n  if ! grep -q '\"count\": *[1-9]' \"$out\" 2>/dev/null; then\n    echo \"export-chats: no sessions for $repo_name; nothing published\"\n    rm -f \"$out\"\n    return 0\n  fi\n\n  if [ \"${PUBLISH:-1}\" = \"1\" ] && [ -n \"${GH_TOKEN:-}${GITHUB_TOKEN:-}\" ]; then\n    export GH_TOKEN=\"${GH_TOKEN:-${GITHUB_TOKEN:-}}\"\n    local publish_output publish_status\n    publish_output=\"$(bash \"$SCRIPT_DIR/publish_session.sh\" \\\n      file=\"chats/$repo_name.json\" \\\n      json=\"$out\" \\\n      kind=opencode-chats \\\n      state=updated \\\n      stamp=\"$stamp\" 2>&1)\"\n",
+                  "metadata": {
+                    "output": "    # exits before the pipe drains). A regular file gets the whole export.\n    fd, exp_path = tempfile.mkstemp(suffix=\".json\", prefix=\"oc-export-\")\n    try:\n        with os.fdopen(fd, \"wb\") as sink:\n            proc = subprocess.run([\"opencode\", \"export\", sid], stdout=sink,\n                                  stderr=subprocess.PIPE, timeout=120)\n        with open(exp_path, \"r\", encoding=\"utf-8\", errors=\"replace\") as f:\n            raw = f.read().strip()\n    except Exception as e:\n        print(\"export-chats: %s export failed: %s\" % (sid, e), file=sys.stderr)\n        failed += 1\n        continue\n    finally:\n        try:\n            os.unlink(exp_path)\n        except Exception:\n            pass\n    start = raw.find(\"{\")\n    if start > 0:\n        raw = raw[start:]\n    try:\n        data = json.loads(raw)\n    except Exception as e:\n        print(\"export-chats: %s is not JSON: %s\" % (sid, e), file=sys.stderr)\n        failed += 1\n        continue\n    entry = {\n        \"id\": sid,\n        \"title\": r[\"title\"],\n        \"slug\": r[\"slug\"],\n        \"directory\": r[\"directory\"],\n        \"timeUpdated\": r[\"time_updated\"],\n        \"export\": data,\n    }\n    size = len(json.dumps(entry, ensure_ascii=False))\n    if bundle[\"sessions\"] and total + size > max_bytes:\n        print(\"export-chats: size budget reached, dropping older sessions\", file=sys.stderr)\n        break\n    bundle[\"sessions\"].append(entry)\n    total += size\n\nbundle[\"count\"] = len(bundle[\"sessions\"])\nwith open(out, \"w\", encoding=\"utf-8\") as f:\n    json.dump(bundle, f, ensure_ascii=False)\nprint(\"export-chats: %d sessions, %.1f MiB -> %s\" % (bundle[\"count\"], total / 1048576.0, out))\nif failed:\n    sys.exit(1)\nPY\n  python_status=$?\n  if [ \"$python_status\" -ne 0 ]; then\n    rm -f \"$out\"\n    return 1\n  fi\n\n  [ -s \"$out\" ] || { echo \"export-chats: bundle empty\" >&2; return 0; }\n  # Skip empty bundles: no sessions in this repo, nothing worth publishing.\n  if ! grep -q '\"count\": *[1-9]' \"$out\" 2>/dev/null; then\n    echo \"export-chats: no sessions for $repo_name; nothing published\"\n    rm -f \"$out\"\n    return 0\n  fi\n\n  if [ \"${PUBLISH:-1}\" = \"1\" ] && [ -n \"${GH_TOKEN:-}${GITHUB_TOKEN:-}\" ]; then\n    export GH_TOKEN=\"${GH_TOKEN:-${GITHUB_TOKEN:-}}\"\n    local publish_output publish_status\n    publish_output=\"$(bash \"$SCRIPT_DIR/publish_session.sh\" \\\n      file=\"chats/$repo_name.json\" \\\n      json=\"$out\" \\\n      kind=opencode-chats \\\n      state=updated \\\n      stamp=\"$stamp\" 2>&1)\"\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/zen-panel/code && sed -n '130,200p' tools/export-chats.sh",
+                  "time": {
+                    "start": 1790967024893,
+                    "end": 1790967024949
+                  }
+                },
+                "id": "prt_0fdf40cee001k5EhJBnsPfot3x",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf3fd6f001noGcsA9G3HI3Kj"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fdf40df8001tfKiiuOoq1wka8",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf3fd6f001noGcsA9G3HI3Kj"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fdf2ac14001L09mAQ8piD7Axh",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/zen-panel/code/agent",
+                "root": "/home/runner/hub-work/zen-panel/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790967025393
+              },
+              "id": "msg_0fdf40ef1001DnQ2ilywV07Tj6",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "6712402ca8327f1df9bf678e58930a3a7fba5584",
+                "type": "step-start",
+                "id": "prt_0fdf416c1001u5e738PqggZUm7",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf40ef1001DnQ2ilywV07Tj6"
+              },
+              {
+                "type": "reasoning",
+                "text": "",
+                "time": {
+                  "start": 1790967027432
+                },
+                "id": "prt_0fdf416e800116XxVb88ygE1kB",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_0fdf40ef1001DnQ2ilywV07Tj6"
+              }
+            ]
           }
         ]
       }
@@ -30170,8 +30832,8 @@
     }
   ],
   "state": "updated",
-  "stamp": "20261002T184324",
-  "startedAt": "2026-10-02T18:44:45Z",
+  "stamp": "20261002T185026",
+  "startedAt": "2026-10-02T18:51:38Z",
   "runId": "37008353501",
   "runNumber": "359"
 }
