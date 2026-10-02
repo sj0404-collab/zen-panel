@@ -12,6 +12,216 @@ index cfc8afe24..3e2720833 100644
 -9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
 -10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
 -11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAssistant.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAssistant.kt
+index dc928e455..0d4e68205 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAssistant.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAssistant.kt
+@@ -488,6 +488,11 @@ object AiAssistant {
+         maxTokens: Int = 500,
+     ): Outcome {
+         val startedAt = System.currentTimeMillis()
++        // Соединение живёт вне try: disconnect обязан сработать и на таймауте,
++        // и на SSL-ошибке, и на 5xx — иначе сокет и буферы висели до сборки GC.
++        // На мобильной сети это почти каждый второй запрос, а на модель
++        // делается до трёх попыток с ротацией — утечка накапливалась за ход.
++        var conn: HttpURLConnection? = null
+         return try {
+             // Эндпоинт и форма запроса зависят от семейства модели: Claude
+             // ждёт /messages, GPT и Muse — /responses, Gemini — свой путь.
+@@ -502,19 +507,19 @@ object AiAssistant {
+                 url
+             }
+ 
+-            val conn = openConnection(actualUrl)
+-            conn.requestMethod = "POST"
+-            conn.doOutput = true
+-            conn.connectTimeout = 15_000
+-            conn.readTimeout = 90_000
+-            conn.setRequestProperty("Content-Type", "application/json")
+-            if (apiKey.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer $apiKey")
+-
+-            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+-            val code = conn.responseCode
+-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
++            val rawConn = openConnection(actualUrl)
++            conn = rawConn
++            rawConn.requestMethod = "POST"
++            rawConn.doOutput = true
++            rawConn.connectTimeout = 15_000
++            rawConn.readTimeout = 90_000
++            rawConn.setRequestProperty("Content-Type", "application/json")
++            if (apiKey.isNotBlank()) rawConn.setRequestProperty("Authorization", "Bearer $apiKey")
++
++            rawConn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
++            val code = rawConn.responseCode
++            val text = (if (code in 200..299) rawConn.inputStream else rawConn.errorStream)
+                 ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+-            conn.disconnect()
+             if (code !in 200..299) {
+                 // Отдельная судьба для «бесплатных» моделей Zen: OpenCode
+                 // отдаёт их только своему же клиенту (проверка по User-Agent),
+@@ -575,6 +580,8 @@ object AiAssistant {
+             // Сетевые исключения (SocketTimeout, ConnectException, SSL,
+             // UnknownHost, обрыв прокси) — ВРЕМЕННЫЕ: модель не виновата
+             Outcome.Transient
++        } finally {
++            conn?.disconnect()
+         }
+     }
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/RunnerLlm.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/RunnerLlm.kt
+index 84e3b7443..f8dae6414 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/RunnerLlm.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/RunnerLlm.kt
+@@ -653,22 +653,27 @@ object RunnerLlm {
+             val answer = runCatching {
+                 // Туннель cloudflared тоже может требовать прокси (как chat.try.ai).
+                 val conn = AiAssistant.openConnection("$url/v1/chat/completions") as HttpURLConnection
+-                conn.requestMethod = "POST"
+-                conn.doOutput = true
+-                conn.connectTimeout = 20_000
+-                conn.readTimeout = 180_000
+-                conn.setRequestProperty("Content-Type", "application/json")
+-                conn.setRequestProperty("Authorization", "Bearer $key")
+-                val body = JSONObject()
+-                    .put("model", session.model)
+-                    .put("messages", messages)
+-                    .put("max_tokens", 800)
+-                conn.outputStream.use { it.write(body.toString().toByteArray()) }
+-                val text = (if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream)
+-                    ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+-                conn.disconnect()
+-                JSONObject(text).optJSONArray("choices")?.optJSONObject(0)
+-                    ?.optJSONObject("message")?.optString("content")?.trim()
++                try {
++                    conn.requestMethod = "POST"
++                    conn.doOutput = true
++                    conn.connectTimeout = 20_000
++                    conn.readTimeout = 180_000
++                    conn.setRequestProperty("Content-Type", "application/json")
++                    conn.setRequestProperty("Authorization", "Bearer $key")
++                    val body = JSONObject()
++                        .put("model", session.model)
++                        .put("messages", messages)
++                        .put("max_tokens", 800)
++                    conn.outputStream.use { it.write(body.toString().toByteArray()) }
++                    val text = (if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream)
++                        ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
++                    JSONObject(text).optJSONArray("choices")?.optJSONObject(0)
++                        ?.optJSONObject("message")?.optString("content")?.trim()
++                } finally {
++                    // Таймаут в 180с на мобильной сети — норма, а disconnect()
++                    // внутри блока не доходил до конца именно на ней.
++                    conn.disconnect()
++                }
+             }.onFailure {
+                 logcat(LogPriority.WARN, it) { "Runner LLM chat failed" }
+             }.getOrNull()
+@@ -687,12 +692,14 @@ object RunnerLlm {
+         val url = session.url ?: return@withContext false
+         runCatching {
+             val conn = AiAssistant.openConnection("$url/health") as HttpURLConnection
+-            conn.connectTimeout = 8_000
+-            conn.readTimeout = 8_000
+-            session.apiKey?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
+-            val ok = conn.responseCode in 200..299
+-            conn.disconnect()
+-            ok
++            try {
++                conn.connectTimeout = 8_000
++                conn.readTimeout = 8_000
++                session.apiKey?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
++                conn.responseCode in 200..299
++            } finally {
++                conn.disconnect()
++            }
+         }.getOrDefault(false)
+     }
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 018cd0a6e..5ef131ecf 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -434,6 +434,20 @@ class AutoReadEngine(
+         job = scope.launch {
+             _isReading.value = true
+             var aiRefine: Job? = null
++            // Кадр передан сюда вызывающей стороной (полноэкранный снимок, до
++            // нескольких МБ), и освобождать его больше некому. Раньше recycle
++            // стоял только на счастливом пути, поэтому отмена чтения (пауза,
++            // уход в фон), отсутствие голоса или любая ошибка OCR оставляли
++            // битмап на сборку GC на каждом кадре.
++            val released = java.util.concurrent.atomic.AtomicBoolean(false)
++            var scanBitmap: Bitmap? = null
++            val releaseFrame = {
++                if (released.compareAndSet(false, true)) {
++                    if (!bitmap.isRecycled) bitmap.recycle()
++                    val scan = scanBitmap
++                    if (scan != null && scan !== bitmap && !scan.isRecycled) scan.recycle()
++                }
++            }
+             try {
+                 // Озвучивать нечем — не тратим время на распознавание кадра и
+                 // не листаем страницы: читатель должен увидеть причину сразу.
+@@ -445,8 +459,9 @@ class AutoReadEngine(
+                 // (детектор движка всё равно жмёт всё до ~736px). Так конвертация
+                 // пикселей и онлайн-вызовы выполняются мгновенно в фоне, а текст
+                 // остаётся читаемым.
+-                val scanBitmap = downscaleForScan(bitmap)
+-                val ocrBitmap = scanBitmap
++                val scan = downscaleForScan(bitmap)
++                scanBitmap = scan
++                val ocrBitmap = scan
+                 val pixels = IntArray(ocrBitmap.width * ocrBitmap.height)
+                 ocrBitmap.getPixels(pixels, 0, ocrBitmap.width, 0, 0, ocrBitmap.width, ocrBitmap.height)
+                 val image = OcrImage(ocrBitmap.width, ocrBitmap.height, pixels)
+@@ -636,8 +651,9 @@ class AutoReadEngine(
+                     runCatching { encodeJpeg(ocrBitmap, JPEG_QUALITY) }.getOrNull()
+                 } else null
+ 
+-                if (!bitmap.isRecycled) bitmap.recycle()
+-                if (scanBitmap !== bitmap && !scanBitmap.isRecycled) scanBitmap.recycle()
++                // Пиксели больше не нужны — освобождаем сразу, не дожидаясь
++                // конца кадра (releaseFrame идемпотентен, finally его подстрахует).
++                releaseFrame()
+ 
+                 // Локальный OCR (Cyrillic PP-OCR) отдаёт регион на КАЖДУЮ
+                 // строку: реплика из двух строк распадалась на два разных
+@@ -899,6 +915,10 @@ class AutoReadEngine(
+                 logcat(LogPriority.ERROR, e) { "AutoRead frame failed" }
+                 OcrHistoryStore.addAutoRead(false, "сбой страницы", e.message ?: e.javaClass.simpleName)
+             } finally {
++                // Кадр освобождаем на ЛЮБОМ выходе, включая отмену: иначе
++                // каждый прерванный кадр авточтения оставлял после себя
++                // полноэкранный битмап.
++                releaseFrame()
+                 aiRefine?.cancel()
+                 _currentRegion.value = null
+                 _frameRegions.value = emptyList()
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+index 90e082542..2b7160ed9 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+@@ -43,7 +43,6 @@ import eu.kanade.tachiyomi.util.lang.takeBytes
+ import eu.kanade.tachiyomi.util.ocr.toOcrImage
+ import eu.kanade.tachiyomi.util.storage.DiskUtil
+ import kotlinx.coroutines.CancellationException
+-import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.TimeoutCancellationException
+ import kotlinx.coroutines.channels.Channel
+ import kotlinx.coroutines.flow.MutableStateFlow
+@@ -714,7 +713,10 @@ class ReaderViewModel @JvmOverloads constructor(
+      */
+     fun setMangaReadingMode(readingMode: ReadingMode) {
+         val manga = manga ?: return
+-        runBlocking(Dispatchers.IO) {
++        // Не runBlocking: eventChannel — rendezvous-канал, и его единственный
++        // получатель собирается на Main. Блокировка Main здесь делала send()
++        // невозможным — дедлок на каждой смене режима чтения.
++        viewModelScope.launchIO {
+             setMangaViewerFlags.awaitSetReadingMode(manga.id, readingMode.flagValue.toLong())
+             val currChapters = state.value.viewerChapters
+             if (currChapters != null) {
 diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
 index d4828bee8..41e07ccd8 100644
 --- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt

@@ -1,0 +1,386 @@
+diff --git a/npm-hub/src/server.js b/npm-hub/src/server.js
+index b3ecccd..6de2238 100644
+--- a/npm-hub/src/server.js
++++ b/npm-hub/src/server.js
+@@ -126,6 +126,28 @@ const SESSION_OUTPUT_CHUNK = 64 * 1024; // replay frames this size so a phone st
+ // Строк истории панели, дублируемых в xterm при аттаче, — чтобы свайп вверх
+ // на большой сессии показывал прошлые экраны, а не «пустой буфер».
+ const SESSION_ATTACH_HISTORY_LINES = parseInt(process.env.SESSION_ATTACH_HISTORY_LINES || '600', 10) || 600;
++// Снапшот экрана на диск, рядом с meta.json.
++//
++// ЗАЧЕМ. Туннель умирает (1033) или раннер перезапускается — tmux-сессии
++// больше нет, лог тоже (он в TMP_DIR), и терминал открывается чёрным окном:
++// юзер решает, что агент потерян, и начинает заново. Снимок переживает оба
++// случая — он лежит в ~/.npm-hub/sessions, а весь этот каталог едет в
++// work-backup (backup-work.sh → descriptors/) и возвращается на следующем
++// раннере (restore-work.sh, cp -a сохраняет mtime).
++//
++// capture-pane отдаёт плоский текст панели (с цветами благодаря -e), без
++// раскладки по ячейкам: для «показать не чёрный экран, а последнее
++// известное состояние» этого хватает, для пиксельного восстановления TUI —
++// нет. Снимок отдаётся клиенту обычными output-кадрами (см. attachPtyClient),
++// протокол не меняется.
++const SESSION_SNAPSHOT_CAP = parseInt(process.env.SESSION_SNAPSHOT_CAP || String(256 * 1024), 10) || (256 * 1024);
++const SESSION_SNAPSHOT_INTERVAL_MS = parseInt(process.env.SESSION_SNAPSHOT_INTERVAL_MS || '4000', 10) || 4000;
++// Снимок старше суток — это уже не «что было на экране», а мусор из
++// прошлой смены; показывать его вместо пустоты хуже, чем пустота.
++const SESSION_SNAPSHOT_MAX_AGE_MS = parseInt(process.env.SESSION_SNAPSHOT_MAX_AGE_MS || String(24 * 60 * 60 * 1000), 10) || (24 * 60 * 60 * 1000);
++// Свежесозданной сессии снимок не нужен: агент ещё не нарисовал экран, а
++// значит писать пустой файл и коммитить его в work-backup незачем.
++const SESSION_SNAPSHOT_MIN_AGE_MS = 3000;
+ // How much of the scrollback is actually re-sent when a client (re)attaches.
+ //
+ // SESSION_OUTPUT_CAP is what we KEEP, not what we replay. Replaying all 4MB on
+@@ -2183,6 +2205,10 @@ const tmuxHas = () => {
+ const safeSessionName = id => TMUX_PREFIX + String(id).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
+ const sessionLogPath = id => path.join(PTY_DIR, safeSessionName(id) + '.log');
+ const sessionMetaPath = id => path.join(SESSION_DIR, safeSessionName(id) + '.meta.json');
++// Снимок экрана живёт рядом с дескриптором и в том же каталоге, который
++// backup-work.sh копирует в descriptors/ — поэтому он автоматически едет в
++// work-backup и возвращается через restore-work.sh вместе с meta.json.
++const sessionSnapshotPath = id => path.join(SESSION_DIR, safeSessionName(id) + '.snapshot');
+ const legacySessionMetaPath = id => path.join(PTY_DIR, safeSessionName(id) + '.meta.json');
+ 
+ // Keep project identity beside the tmux session. cwd alone is not enough for
+@@ -2264,7 +2290,9 @@ const syncTmuxSession = (session) => {
+   return session;
+ };
+ const deleteSessionMeta = (id) => {
+-  for (const p of [sessionMetaPath(id), legacySessionMetaPath(id)]) {
++  // Снимок удаляется вместе с дескриптором: всё, что живёт дольше сессии,
++  // только занимает место в work-backup и рискует показать чужой экран.
++  for (const p of [sessionMetaPath(id), legacySessionMetaPath(id), sessionSnapshotPath(id), sessionSnapshotPath(id) + '.tmp']) {
+     try { fs.unlinkSync(p); } catch {}
+   }
+ };
+@@ -2276,6 +2304,74 @@ const readSessionMeta = (id) => {
+   return null;
+ };
+ 
++// ─── Снимок экрана сессии ─────────────────────────────────────────────
++// tmux-путь берёт настоящую панель (capture-pane -e -J: с цветами, со
++// склеенными переносами). pty-путь (Windows / без tmux) capture-pane не
++// умеет — там единственный источник это кольцевой буфер вывода, и снимок
++// берётся из его хвоста.
++const sessionSnapshotText = (session) => {
++  if (!session) return '';
++  if (session.tmux) {
++    const r = tmuxRun(['capture-pane', '-p', '-e', '-J', '-t', safeSessionName(session.id)], 5000);
++    if (r.status !== 0 || typeof r.stdout !== 'string') return '';
++    return r.stdout.replace(/\s+$/, '');
++  }
++  return String(session.output || '').replace(/\s+$/, '');
++};
++const writeSessionSnapshot = (session) => {
++  if (!session || !session.id) return false;
++  const text = sessionSnapshotText(session);
++  if (!text) return false;
++  const body = text.length > SESSION_SNAPSHOT_CAP ? text.slice(-SESSION_SNAPSHOT_CAP) : text;
++  // Экран неподвижен (юзер читает его, или агент ждёт ввода) — не трогаем ни
++  // диск, ни git: каждый лишний байт здесь становится отдельным блобом в
++  // work-backup, а панель всё равно показывает тот же самый экран.
++  if (session._snapshot === body) return false;
++  const file = sessionSnapshotPath(session.id);
++  const tmp = file + '.tmp';
++  try {
++    fs.writeFileSync(tmp, body);
++    fs.renameSync(tmp, file); // атомарно: прерванный раннер не оставит обрезок
++  } catch {
++    try { fs.unlinkSync(tmp); } catch {}
++    return false;
++  }
++  session._snapshot = body;
++  return true;
++};
++const sessionSnapshotInfo = (id) => {
++  try {
++    const st = fs.statSync(sessionSnapshotPath(id));
++    if (!st.size) return null;
++    if (Date.now() - st.mtimeMs > SESSION_SNAPSHOT_MAX_AGE_MS) return null;
++    return { at: st.mtimeMs, bytes: st.size };
++  } catch { return null; }
++};
++const readSessionSnapshot = (id) => {
++  const info = sessionSnapshotInfo(id);
++  if (!info) return null;
++  try {
++    const data = fs.readFileSync(sessionSnapshotPath(id), 'utf8');
++    return data ? { ...info, data } : null;
++  } catch { return null; }
++};
++// Снимок нужен именно тогда, когда его никто не смотрит: момент перед падением
++// туннеля или рестартом раннера — это момент без клиентов. Поэтому тик общий и
++// не зависит от подключённых сокетов (у tmux-поллера они обратный смысл: без
++// клиентов он молчит).
++const snapshotSessions = () => {
++  const now = Date.now();
++  for (const session of [...sessions.values()]) {
++    try {
++      if (session.snapshotOff) continue;
++      if (now - (session.created || now) < SESSION_SNAPSHOT_MIN_AGE_MS) continue;
++      writeSessionSnapshot(session);
++    } catch {}
++  }
++};
++const sessionSnapshotTimer = setInterval(snapshotSessions, SESSION_SNAPSHOT_INTERVAL_MS);
++if (typeof sessionSnapshotTimer.unref === 'function') sessionSnapshotTimer.unref();
++
+ // A GitHub runner can come back with the same repo at a different absolute
+ // workspace path. Prefer the old cwd when it still exists, otherwise resolve
+ // the saved repository identity against the durable hub-work directory.
+@@ -2454,6 +2550,21 @@ const attachPtyClient = (session, ws) => {
+   session.clients.add(ws);
+   session.lastLeave = 0;
+   ws.send(JSON.stringify({ type: 'opened', id: session.id, resumed: session.resumed }));
++  // Экран, переживший туннель или раннер. Живой вывод всегда важнее снимка, и
++  // когда он есть (переподключение, revive после рестарта хаба) он сам несёт
++  // актуальное состояние — поэтому снимок отдаём только когда показать нечего:
++  // сессия восстановлена из descriptors/ и tmux только что создан заново.
++  // Иначе терминал мигает чёрным, и это выглядит как «агент потерялся».
++  if (!session.output) {
++    const snap = readSessionSnapshot(session.id);
++    if (snap) {
++      ws.send(JSON.stringify({
++        type: 'output', id: session.id,
++        data: snap.data.replace(/\s+$/, '') + '\r\n',
++        replay: true, replayEnd: false, snapshot: true, snapshotAt: snap.at
++      }));
++    }
++  }
+   if (session.tmux) {
+     const hist = tmuxAttachHistory(session);
+     if (hist) ws.send(JSON.stringify({ type: 'output', id: session.id, data: hist, replay: true, replayEnd: false }));
+@@ -2866,6 +2977,7 @@ app.get('/api/sessions', (req, res) => {
+   const push = (s) => {
+     if (s.tmux) syncTmuxSession(s);
+     const repo = s.repo || repoContext(s.cwd);
++    const snap = sessionSnapshotInfo(s.id);
+     list.push({
+       id: s.id, cwd: s.cwd || null, repoPath: repo && repo.path || null,
+       repoName: repo && repo.name || null, repoRemote: repo && repo.remote || null,
+@@ -2875,7 +2987,8 @@ app.get('/api/sessions', (req, res) => {
+       toolId: s.toolId || null, toolName: s.toolName || 'Terminal',
+       color: s.color || '#58a6ff', icon: s.icon || '>_',
+       autoRestore: s.autoRestore !== false, resumed: !!s.resumed, tmux: !!s.tmux,
+-      clients: s.clients ? s.clients.size : 0, created: s.created || 0
++      clients: s.clients ? s.clients.size : 0, created: s.created || 0,
++      snapshot: snap ? { at: snap.at, bytes: snap.bytes } : null
+     });
+   };
+   for (const s of sessions.values()) push(s);
+@@ -2906,6 +3019,7 @@ app.get('/api/sessions', (req, res) => {
+       if (!meta || meta.autoRestore === false || !meta.id || listed.has(String(meta.id))) continue;
+       const cwd = resolveRestoredCwd(meta);
+       if (!cwd) continue;
++      const snap = sessionSnapshotInfo(meta.id);
+       list.push({
+         id: meta.id, cwd, repoPath: meta.repoPath || cwd,
+         repoName: meta.repoName || null, repoRemote: meta.repoRemote || null,
+@@ -2916,7 +3030,8 @@ app.get('/api/sessions', (req, res) => {
+         toolId: meta.toolId || 'opencode', toolName: meta.toolName || 'OpenCode',
+         color: meta.color || '#00d4aa', icon: meta.icon || 'OC',
+         autoRestore: true, restore: true, resumed: false, tmux: false, clients: 0,
+-        created: meta.created || 0
++        created: meta.created || 0,
++        snapshot: snap ? { at: snap.at, bytes: snap.bytes } : null
+       });
+       listed.add(String(meta.id));
+     }
+@@ -4170,6 +4285,13 @@ app.get('/api/gh/repos/:owner/:repo/releases', async (req, res) => {
+ // behind (that stale URL is what produces Cloudflare Error 1033).
+ let tunnelInfo = null; // { state, url, type, error, startedAt, retryAt }
+ let activeTunnel = null; // { close, onExit, isAlive, healthCheck }
++// How many probes in a row must fail before the connector is thrown away.
++// One probe on a busy runner can time out while the tunnel is perfectly alive,
++// and reopening on the first failure is its own kind of 1033: the panel keeps
++// the old address for the whole window until the new one passes its own check.
++// The shell keeper already uses this rule (MAIN_FAILS >= 3 in
++// tools/tunnel_keeper.sh) - the hub now answers with the same patience.
++const TUNNEL_HEALTH_FAILS = parseInt(process.env.TUNNEL_HEALTH_FAILS || '3', 10) || 3;
+ let tunnelRestartTimer = null;
+ let tunnelHealthTimer = null;
+ let tunnelStopped = false;
+@@ -4244,19 +4366,25 @@ function startManagedTunnel(port, type) {
+ 
+     // A connector can remain as a process while its edge connection is lost.
+     // Process liveness alone is therefore insufficient to prevent Error 1033.
++    let healthFails = 0;
+     if (typeof result.healthCheck === 'function') {
+       tunnelHealthTimer = setInterval(async () => {
+         if (tunnelStopped || activeTunnel !== result) return;
++        let reason = null;
+         try {
+           const health = await result.healthCheck();
+-          if (!health || !health.ok) {
+-            try { result.close(); } catch {}
+-            reconnect(`public tunnel health check failed${health && health.status ? ` (HTTP ${health.status})` : ''}`);
+-          }
++          if (health && health.ok) { healthFails = 0; return; }
++          reason = `HTTP ${health && health.status || 'нет ответа'}`;
+         } catch (e) {
+-          try { result.close(); } catch {}
+-          reconnect(`public tunnel health check failed (${e.message})`);
++          reason = e.message;
++        }
++        healthFails += 1;
++        if (healthFails < TUNNEL_HEALTH_FAILS) {
++          console.log(`  ⚠ public tunnel probe ${healthFails}/${TUNNEL_HEALTH_FAILS} failed (${reason}); URL kept until it fails again.`);
++          return;
+         }
++        try { result.close(); } catch {}
++        reconnect(`public tunnel health check failed ${healthFails} probes in a row (${reason})`);
+       }, 30000);
+       tunnelHealthTimer.unref?.();
+     }
+diff --git a/tests/work-backup-test.sh b/tests/work-backup-test.sh
+index da331f5..2664861 100755
+--- a/tests/work-backup-test.sh
++++ b/tests/work-backup-test.sh
+@@ -40,8 +40,17 @@ check "final once always publishes" "$([ "$before" != "$(git -C "$TMP/remote.git
+ echo "second distinct edit" >> "$TMP/home/proj/committed.txt"
+ mkdir -p "$TMP/home/.npm-hub/sessions"
+ printf '%s\n' '{"id":"term_1","toolId":"opencode"}' > "$TMP/home/.npm-hub/sessions/npmhub-term_1.meta.json"
++# Снимок экрана лежит рядом с дескриптором и обязан ехать тем же снапшотом:
++# именно он показывает последнее известное состояние, когда терминал
++# открывается после падения туннеля или рестарта раннера. Хвост прерванной
++# записи (.tmp) — мусор, в бэкап он не годится.
++printf 'opencode TUI state\n' > "$TMP/home/.npm-hub/sessions/npmhub-term_1.snapshot"
++printf 'half written\n' > "$TMP/home/.npm-hub/sessions/npmhub-term_1.snapshot.tmp"
+ sleep 1
+ bash "$TOOLS/backup-work.sh" --once >/dev/null 2>&1
++DESC_STAMP="$(git -C "$TMP/remote.git" show work-backup:latest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"])')"
++check "TUI snapshot published with the descriptors" "$(git --git-dir="$TMP/remote.git" cat-file -e "work-backup:snapshots/$DESC_STAMP/descriptors/npmhub-term_1.snapshot" 2>/dev/null && echo 1 || echo 0)"
++check "interrupted snapshot write is not published" "$([ "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only work-backup | grep -c '\.snapshot\.tmp$')" = 0 ] && echo 1 || echo 0)"
+ 
+ export WORK_BACKUP_KEEP=2
+ for i in 1 2 3; do
+@@ -131,6 +140,10 @@ check "migration is idempotent" "$(SESSION_STATE_URL="$TMP/old.git" bash "$TOOLS
+ # Wipe and rebuild.
+ cd /
+ rm -rf "$TMP/home"; mkdir -p "$TMP/home"
++# A snapshot with no descriptor belongs to a session nothing can attach to
++# (killed mid-restore, or a hand-made file). It must not survive as clutter.
++mkdir -p "$TMP/home/.npm-hub/sessions"
++printf 'screen of a session that no longer exists\n' > "$TMP/home/.npm-hub/sessions/npmhub-term_9.snapshot"
+ bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
+ check "committed content restored" "$(grep -q '^base$' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
+ check "uncommitted change restored" "$(grep -q 'wip change' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
+@@ -140,6 +153,8 @@ check "latest content edit restored" "$(grep -q 'second distinct edit' "$TMP/hom
+ check "newer run backup survives old runner" "$(grep -q 'newer-run-marker' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
+ check "older run cannot overwrite backup" "$(! grep -q 'older-run-marker' "$TMP/home/proj/committed.txt" 2>/dev/null && echo 1 || echo 0)"
+ check "session descriptor restored" "$([ -f "$TMP/home/.npm-hub/sessions/npmhub-term_1.meta.json" ] && echo 1 || echo 0)"
++check "TUI snapshot restored with its descriptor" "$(grep -q 'opencode TUI state' "$TMP/home/.npm-hub/sessions/npmhub-term_1.snapshot" 2>/dev/null && echo 1 || echo 0)"
++check "orphan snapshot dropped on restore" "$([ ! -f "$TMP/home/.npm-hub/sessions/npmhub-term_9.snapshot" ] && echo 1 || echo 0)"
+ check "ignored file not restored" "$([ ! -f "$TMP/home/proj/build/out.o" ] && echo 1 || echo 0)"
+ # Loose $HOME files are out of the snapshot scope by design now (user rule:
+ # only the repo folder + opencode sessions/settings ride the snapshot). The
+diff --git a/tools/backup-work.sh b/tools/backup-work.sh
+index aec645e..422db24 100755
+--- a/tools/backup-work.sh
++++ b/tools/backup-work.sh
+@@ -513,6 +513,11 @@ PY
+   if [ -d "$ROOT/.npm-hub/sessions" ]; then
+     mkdir -p "$stage/descriptors" || return 1
+     cp -a "$ROOT/.npm-hub/sessions/." "$stage/descriptors/" || return 1
++    # Хвост прерванной записи снимка экрана (writeSessionSnapshot пишет
++    # .tmp и переименовывает). Это мусор: он меняется на каждом такте, и
++    # backup-work заметил бы «новое изменение» только чтобы закоммитить
++    # обрезок, который никто никогда не прочитает.
++    find "$stage/descriptors" -maxdepth 1 -name '*.tmp' -type f -delete 2>/dev/null || true
+   fi
+   # Last thing before publishing: make sure every file in the stage is
+   # something GitHub will actually accept. One oversized blob and the whole
+diff --git a/tools/restore-chats.sh b/tools/restore-chats.sh
+index bda5544..e387361 100755
+--- a/tools/restore-chats.sh
++++ b/tools/restore-chats.sh
+@@ -62,7 +62,7 @@ import_bundle() {
+   [ -d "$repo_dir" ] || { echo "restore-chats: missing repo dir $repo_dir" >&2; return 1; }
+   [ -s "$bundle" ] || { echo "restore-chats: empty bundle $bundle" >&2; return 1; }
+   CHAT_ONLY="${CHAT_ONLY:-}" CHAT_REPO_DIR="$repo_dir" BUNDLE="$bundle" python3 - <<'PY'
+-import json, os, subprocess, sys, tempfile
++import json, os, re, subprocess, sys, tempfile, time
+ import threading
+ from concurrent.futures import ThreadPoolExecutor
+ 
+@@ -105,14 +105,28 @@ def import_one(s):
+     try:
+         with os.fdopen(fd, "w", encoding="utf-8") as f:
+             json.dump(data, f, ensure_ascii=False)
+-        proc = subprocess.run(["opencode", "import", path], cwd=repo_dir,
+-                              capture_output=True, timeout=180)
+-        out = (proc.stdout or b"").decode("utf-8", "replace").strip()
+-        err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+-        if proc.returncode == 0:
+-            say("restore-chats: imported %s" % (sid or "?"))
+-            return True
+-        say("restore-chats: %s import failed: %s" % (sid, (err or out)[:200]), err=True)
++        # Every import writes into the SAME opencode sqlite database, so the
++        # pool above can lose a race for the write lock. That is not a broken
++        # bundle: the retry below only fires on a lock/busy error, where the
++        # session was NOT written - retrying an import that actually succeeded
++        # would duplicate the session in the panel.
++        transient = re.compile(r"database is locked|database table is locked|"
++                               r"SQLITE_BUSY|busy|try again", re.I)
++        for attempt in range(2):
++            proc = subprocess.run(["opencode", "import", path], cwd=repo_dir,
++                                  capture_output=True, timeout=180)
++            out = (proc.stdout or b"").decode("utf-8", "replace").strip()
++            err = (proc.stderr or b"").decode("utf-8", "replace").strip()
++            if proc.returncode == 0:
++                say("restore-chats: imported %s" % (sid or "?"))
++                return True
++            detail = err or out
++            if attempt == 0 and transient.search(detail):
++                say("restore-chats: %s hit the db lock, retrying once" % sid, err=True)
++                time.sleep(2)
++                continue
++            say("restore-chats: %s import failed: %s" % (sid, detail[:200]), err=True)
++            return False
+         return False
+     except Exception as e:
+         say("restore-chats: %s import error: %s" % (sid, e), err=True)
+diff --git a/tools/restore-work.sh b/tools/restore-work.sh
+index eda1e00..4663443 100755
+--- a/tools/restore-work.sh
++++ b/tools/restore-work.sh
+@@ -479,6 +479,11 @@ PY
+   fi
+ fi
+ 
++# Descriptors and TUI snapshots of the sessions. cp -n: whatever the fresh
++# runner wrote itself is newer and must survive; everything missing comes back.
++# Then the counts, because a silent restore here is indistinguishable from
++# «the user has no unfinished sessions» - and the snapshot is exactly what
++# makes a reopened terminal show the last known screen instead of a black one.
+ if [ -d "$SNAP/descriptors" ]; then
+   mkdir -p "$ROOT/.npm-hub/sessions" 2>/dev/null || failed=1
+   if ! cp -a -n "$SNAP/descriptors/." "$ROOT/.npm-hub/sessions/" 2>/dev/null; then
+@@ -487,6 +492,27 @@ if [ -d "$SNAP/descriptors" ]; then
+   else
+     log "restored durable session descriptors"
+   fi
++  session_dir="$ROOT/.npm-hub/sessions"
++  metas=0; snaps=0
++  if [ -d "$session_dir" ]; then
++    metas="$(find "$session_dir" -maxdepth 1 -name 'npmhub-*.meta.json' -type f 2>/dev/null | wc -l | tr -d ' ')"
++    # A snapshot without its descriptor is unusable: there is no session to
++    # attach it to, so nothing would ever read it. Drop it instead of leaving
++    # a file that only costs restore time and confuses the next backup.
++    for snap_file in "$session_dir"/npmhub-*.snapshot; do
++      [ -f "$snap_file" ] || continue
++      base="${snap_file%.snapshot}"
++      if [ -f "$base.meta.json" ]; then
++        snaps=$((snaps + 1))
++      else
++        rm -f "$snap_file" 2>/dev/null || true
++        log "dropped orphan TUI snapshot $(basename "$snap_file") (no descriptor)"
++      fi
++    done
++    # Tail of a snapshot write that a dead runner never finished.
++    find "$session_dir" -maxdepth 1 -name '*.snapshot.tmp' -type f -delete 2>/dev/null || true
++  fi
++  log "sessions available after restore: $metas descriptor(s), $snaps TUI snapshot(s)"
+ fi
+ 
+ log "done: $restored repo(s) restored"
