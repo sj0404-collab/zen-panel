@@ -1,0 +1,178 @@
+diff --git a/app/src/main/java/app/yomikai/shell/MainActivity.kt b/app/src/main/java/app/yomikai/shell/MainActivity.kt
+index 00cbb3f..1679d7a 100644
+--- a/app/src/main/java/app/yomikai/shell/MainActivity.kt
++++ b/app/src/main/java/app/yomikai/shell/MainActivity.kt
+@@ -23,6 +23,7 @@ import app.yomikai.shell.bridge.OnlineModels
+ import app.yomikai.shell.bridge.ShellBridge
+ import app.yomikai.shell.net.LocalServer
+ import app.yomikai.shell.storage.DeviceLibrary
++import app.yomikai.shell.web.WebAssets
+ import org.json.JSONArray
+ import org.json.JSONObject
+ import java.io.ByteArrayInputStream
+@@ -42,6 +43,7 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+     private lateinit var webView: WebView
+     private lateinit var server: LocalServer
+     private lateinit var library: DeviceLibrary
++    private lateinit var web: WebAssets
+     private lateinit var bridge: ShellBridge
+     private lateinit var tabBar: LinearLayout
+     private lateinit var browserBar: LinearLayout
+@@ -51,9 +53,6 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+     private val online by lazy { OnlineModels(this) }
+     private var currentTab = TAB_LIBRARY
+ 
+-    /** Ассеты веб-интерфейса: маленькие, поэтому держим в памяти целиком. */
+-    private val assetCache = HashMap<String, ByteArray>()
+-
+     private val pickTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+         if (uri == null) return@registerForActivityResult
+         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+@@ -66,6 +65,8 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+         library = DeviceLibrary(this)
++        web = WebAssets(this, library)
++        web.refreshAsync()
+         setContentView(buildLayout())
+         server = LocalServer(this, this)
+         server.start()
+@@ -74,6 +75,8 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+             serverUrlProvider = { server.baseUrl },
+             pickTree = pickTree,
+             online = online,
++            webUiInfo = { web.infoJson() },
++            reloadUi = { reloadUi() },
+         )
+         setupWebView()
+         installBackHandler()
+@@ -166,15 +169,32 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+             button.setTextColor(if (button.tag == id) ACCENT else MUTED)
+         }
+         if (id == TAB_BROWSER) {
++            // Мост снимается до загрузки внешней страницы: вкладка браузера
++            // открывает чужой интернет, а мост даёт настройки, ключи и
++            // распознавание за деньги. Чужая страница их видеть не должна.
++            webView.removeJavascriptInterface(BRIDGE_NAME)
+             val last = runCatching {
+                 JSONObject(bridge.getPrefs("browser")).optString("browser.last")
+             }.getOrNull()
+             loadAddress(last?.takeIf { it.isNotBlank() } ?: START_PAGE)
+         } else {
++            webView.addJavascriptInterface(bridge, BRIDGE_NAME)
+             webView.loadUrl("${server.baseUrl}/ui/index.html?k=${server.accessToken}&tab=$id")
+         }
+     }
+ 
++    /**
++     * Перечитать `workspace/web` и перезагрузить страницу. Кнопка в
++     * настройках веб-слоя: правка интерфейса не должна требовать перезапуска
++     * приложения.
++     */
++    private fun reloadUi() {
++        web.refreshAsync { changed ->
++            if (changed && currentTab != TAB_BROWSER) tellWeb("'ui:assets-changed'")
++        }
++        if (currentTab != TAB_BROWSER) openTab(currentTab)
++    }
++
+     private fun loadAddress(raw: String) {
+         val value = raw.trim()
+         if (value.isEmpty()) return
+@@ -218,7 +238,6 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+             javaScriptCanOpenWindowsAutomatically = false
+             setSupportMultipleWindows(false)
+         }
+-        webView.addJavascriptInterface(bridge, "Yomi")
+     }
+ 
+     private fun installBackHandler() {
+@@ -241,13 +260,7 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+ 
+     // --- сервер: ассеты -----------------------------------------------------
+ 
+-    override fun asset(path: String): Pair<InputStream, Long>? {
+-        val name = path.removePrefix("/").ifEmpty { "index.html" }
+-        val bytes = assetCache.getOrPut(name) {
+-            runCatching { assets.open("web/$name").use { it.readBytes() } }.getOrNull() ?: return null
+-        }
+-        return ByteArrayInputStream(bytes) to bytes.size.toLong()
+-    }
++    override fun asset(path: String): Pair<InputStream, Long>? = web.read(path)
+ 
+     // --- сервер: устройство -------------------------------------------------
+ 
+@@ -324,10 +337,15 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+     override fun onResume() {
+         super.onResume()
+         webView.onResume()
++        // Возврат из фона — обычное место, где пользователь успел поправить
++        // файлы в редакторе: перечитываем `workspace/web` и говорим вебу.
++        web.refreshAsync { changed -> if (changed) tellWeb("'ui:assets-changed'") }
+     }
+ 
+     override fun onDestroy() {
+         server.stop()
++        web.shutdown()
++        webView.removeJavascriptInterface(BRIDGE_NAME)
+         webView.destroy()
+         super.onDestroy()
+     }
+@@ -352,6 +370,7 @@ class MainActivity : ComponentActivity(), LocalServer.Routes {
+     private data class TabDef(val id: String, val title: Int)
+ 
+     private companion object {
++        const val BRIDGE_NAME = "Yomi"
+         const val TAB_LIBRARY = "library"
+         const val TAB_BROWSER = "browser"
+         const val START_PAGE = "https://duckduckgo.com"
+diff --git a/app/src/main/java/app/yomikai/shell/bridge/ShellBridge.kt b/app/src/main/java/app/yomikai/shell/bridge/ShellBridge.kt
+index 4619650..1b28a07 100644
+--- a/app/src/main/java/app/yomikai/shell/bridge/ShellBridge.kt
++++ b/app/src/main/java/app/yomikai/shell/bridge/ShellBridge.kt
+@@ -22,12 +22,17 @@ import java.io.ByteArrayOutputStream
+  *     поэтому из страницы они невозможны в принципе;
+  *  3. ключи провайдеров — они лежат в приватных настройках приложения и в веб
+  *     не отдаются, ровно как и не читаются.
++ *
++ * Мост ставится на веб-вкладки и снимается на вкладке браузера: там открывается
++ * чужой интернет, а через мост доступны настройки и распознавание за деньги.
+  */
+ class ShellBridge(
+     private val activity: Activity,
+     private val serverUrlProvider: () -> String,
+     private val pickTree: ActivityResultLauncher<Uri?>,
+     private val online: OnlineModels,
++    private val webUiInfo: () -> String,
++    private val reloadUi: () -> Unit,
+ ) {
+     private val prefs get() = activity.getSharedPreferences("shell", Context.MODE_PRIVATE)
+ 
+@@ -41,12 +46,27 @@ class ShellBridge(
+         runCatching { activity.packageManager.getPackageInfo(activity.packageName, 0).versionName }
+             .getOrNull() ?: "?"
+ 
++    // --- веб-интерфейс ------------------------------------------------------
++
++    /** Откуда взят интерфейс: из APK или переопределён `workspace/web`. */
++    @JavascriptInterface
++    fun webUi(): String = webUiInfo()
++
++    /** Перечитать `workspace/web` и перезагрузить страницу. */
++    @JavascriptInterface
++    fun reloadUi() {
++        activity.runOnUiThread { reloadUi() }
++    }
++
+     // --- настройки -----------------------------------------------------------
+ 
+     @JavascriptInterface
+     fun getPrefs(prefix: String): String {
+         val out = JSONObject()
+         prefs.all.forEach { (key, value) ->
++            // Ключи провайдеров в веб не отдаются никогда — это и есть
++            // содержимое приватных настроек приложения.
++            if (key.startsWith("key.")) return@forEach
+             if (prefix.isEmpty() || key.startsWith("$prefix.")) out.put(key, value)
+         }
+         return out.toString()
