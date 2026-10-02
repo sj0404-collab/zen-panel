@@ -1,0 +1,78 @@
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/loader/HttpPageLoader.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/loader/HttpPageLoader.kt
+index f9da3945d..caae5fb1b 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/loader/HttpPageLoader.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/loader/HttpPageLoader.kt
+@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.filter
+ import kotlinx.coroutines.flow.flow
+ import kotlinx.coroutines.runInterruptible
+ import kotlinx.coroutines.suspendCancellableCoroutine
++import logcat.LogPriority
+ import tachiyomi.core.common.util.lang.launchIO
+ import tachiyomi.core.common.util.lang.withIOContext
+ import uy.kohesive.injekt.Injekt
+@@ -131,20 +132,24 @@ internal class HttpPageLoader(
+ 
+     override fun recycle() {
+         super.recycle()
++
++        // Списком страниц делимся до отмены scope: дальше этот список уже никто
++        // не переживёт вместе с загрузчиком.
++        val pagesToSave = chapter.pages?.map { Page(it.index, it.url, it.imageUrl) }
++
+         scope.cancel()
+         queue.clear()
+ 
+-        // Cache current page list progress for online chapters to allow a faster reopen
+-        chapter.pages?.let { pages ->
++        // Cache current page list progress for online chapters to allow a faster reopen.
++        // Запись уходит в GlobalScope (top-level launchIO), иначе scope уже отменён.
++        pagesToSave?.let { pages ->
+             launchIO {
+                 try {
+-                    // Convert to pages without reader information
+-                    val pagesToSave = pages.map { Page(it.index, it.url, it.imageUrl) }
+-                    chapterCache.putPageListToCache(chapter.chapter.toDomainChapter()!!, pagesToSave)
+-                } catch (e: Throwable) {
+-                    if (e is CancellationException) {
+-                        throw e
+-                    }
++                    chapterCache.putPageListToCache(chapter.chapter.toDomainChapter()!!, pages)
++                } catch (e: CancellationException) {
++                    throw e
++                } catch (e: Exception) {
++                    logcat(LogPriority.WARN, e) { "HttpPageLoader failed to cache page list" }
+                 }
+             }
+         }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
+index df480b6c0..4daf92590 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
+@@ -282,7 +282,17 @@ class PagerPageHolder(
+             return
+         }
+ 
+-        panelDetectionJob = scope.launchIO {
++        // Битмап отдаётся сюда из loadResult, и освобождать его больше некому.
++        // try/finally внутри launch не спасает: если задание отменили ДО старта
++        // тела корутины, оно не выполняется вовсе, и нативный битмап утекал на
++        // каждое такое событие. Поэтому освобождение вешаем на завершение задания.
++        val released = java.util.concurrent.atomic.AtomicBoolean(false)
++        val releaseBitmap = {
++            if (released.compareAndSet(false, true) && !decoded.bitmap.isRecycled) {
++                decoded.bitmap.recycle()
++            }
++        }
++        val job = scope.launchIO {
+             val result = try {
+                 detectPanels.await(
+                     cacheKey = cacheKey,
+@@ -292,7 +302,7 @@ class PagerPageHolder(
+                     direction = readingDirection(),
+                 )
+             } finally {
+-                decoded.bitmap.recycle()
++                releaseBitmap()
+             }
+ 
+             withUIContext {

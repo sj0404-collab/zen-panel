@@ -1,0 +1,358 @@
+diff --git a/app/src/main/java/app/yomikai/shell/library/Library.kt b/app/src/main/java/app/yomikai/shell/library/Library.kt
+index 0de9a40..a24fc12 100644
+--- a/app/src/main/java/app/yomikai/shell/library/Library.kt
++++ b/app/src/main/java/app/yomikai/shell/library/Library.kt
+@@ -40,6 +40,8 @@ object Library {
+         val isArchive: Boolean,
+         /** Сколько страниц даст том: число записей-картинок в архиве или 1. */
+         val pages: Int = 0,
++        /** Глава-папка: страницы лежат внутри неё, а не в архиве. */
++        val isDirectory: Boolean = false,
+     ) : Serializable
+ 
+     /** Тайтл: папка со всеми томами и страницами. */
+diff --git a/app/src/main/java/app/yomikai/shell/library/LibraryActivity.kt b/app/src/main/java/app/yomikai/shell/library/LibraryActivity.kt
+index 3a267a3..8f11f91 100644
+--- a/app/src/main/java/app/yomikai/shell/library/LibraryActivity.kt
++++ b/app/src/main/java/app/yomikai/shell/library/LibraryActivity.kt
+@@ -111,11 +111,21 @@ class LibraryActivity : AppCompatActivity() {
+         header.text = name
+         lifecycleScope.launch {
+             val nodes = withContext(Dispatchers.IO) { repository.list(uri) }
+-            val back = Item.Back
+             val folders = nodes
+                 .filter { it.isDirectory }
+                 .sortedWith { a, b -> app.yomikai.shell.archive.naturalOrder(a.name, b.name) }
+-                .map { Item.Folder(it.uri, it.name) }
++                .map { node ->
++                    // Папка с главами открывается экраном глав, папка без них
++                    // (просто каталог) — обычным входом внутрь. Раньше папка
++                    // показывалась двумя строками подряд: «папка» и «читать
++                    // тайтл», и список выглядел сломанным.
++                    val hasContent = repository.list(node.uri).any {
++                        !it.isDirectory && it.extension in Library.ARCHIVE_EXTENSIONS
++                    } || repository.list(node.uri).any {
++                        !it.isDirectory && it.extension in Library.IMAGE_EXTENSIONS
++                    }
++                    Item.Folder(node.uri, node.name, hasContent)
++                }
+             val files = nodes
+                 .filter { !it.isDirectory }
+                 .sortedWith { a, b -> app.yomikai.shell.archive.naturalOrder(a.name, b.name) }
+@@ -133,15 +143,7 @@ class LibraryActivity : AppCompatActivity() {
+                 }
+             render(
+                 buildList {
+-                    if (path.size > 1) add(back)
+-                    // Кнопка «Читать» есть только у папки с главами: если
+-                    // внутри нет архивов и картинок, читать нечего.
+-                    add(Item.ReadTitle(uri, name, hasContent = nodes.any {
+-                        !it.isDirectory && (
+-                            it.extension in Library.ARCHIVE_EXTENSIONS ||
+-                                it.extension in Library.IMAGE_EXTENSIONS
+-                            )
+-                    }))
++                    if (path.size > 1) add(Item.Back)
+                     addAll(folders)
+                     addAll(files)
+                 },
+@@ -149,7 +151,6 @@ class LibraryActivity : AppCompatActivity() {
+                     path.addLast(openUri to openName)
+                     showFolder(openUri, openName)
+                 },
+-                onRead = { readUri, readName -> openReader(readUri, readName) },
+             )
+         }
+     }
+@@ -181,22 +182,6 @@ class LibraryActivity : AppCompatActivity() {
+         }
+     }
+ 
+-    private fun openReader(uri: String, name: String) {
+-        lifecycleScope.launch {
+-            val title = withContext(Dispatchers.IO) { repository.title(uri, name) }
+-            if (title.pages.isEmpty()) {
+-                android.widget.Toast
+-                    .makeText(this@LibraryActivity, R.string.reader_no_pages, android.widget.Toast.LENGTH_SHORT)
+-                    .show()
+-                return@launch
+-            }
+-            startActivity(
+-                Intent(this@LibraryActivity, ReaderActivity::class.java)
+-                    .putExtra(ReaderActivity.EXTRA_TITLE, title),
+-            )
+-        }
+-    }
+-
+     /** Строка списка. Запечатанные типы вместо флагов: у каждого свои действия. */
+     private sealed interface Item {
+         val label: String
+@@ -205,7 +190,11 @@ class LibraryActivity : AppCompatActivity() {
+             override val label: String get() = name
+         }
+ 
+-        data class Folder(val uri: String, val name: String) : Item {
++        data class Folder(
++            val uri: String,
++            val name: String,
++            val hasContent: Boolean,
++        ) : Item {
+             override val label: String get() = name
+         }
+ 
+@@ -219,10 +208,6 @@ class LibraryActivity : AppCompatActivity() {
+             override val label: String get() = name
+         }
+ 
+-        data class ReadTitle(val uri: String, val name: String, val hasContent: Boolean) : Item {
+-            override val label: String get() = name
+-        }
+-
+         data object Back : Item {
+             override val label: String = ".."
+         }
+@@ -231,7 +216,6 @@ class LibraryActivity : AppCompatActivity() {
+     private fun render(
+         items: List<Item>,
+         onOpen: (String, String) -> Unit,
+-        onRead: (String, String) -> Unit = { _, _ -> },
+         onRemove: (String) -> Unit = { },
+     ) {
+         recycler.adapter = object : RecyclerView.Adapter<Holder>() {
+@@ -245,7 +229,6 @@ class LibraryActivity : AppCompatActivity() {
+                 holder.bind(
+                     items[position],
+                     onOpen = onOpen,
+-                    onRead = onRead,
+                     onRemove = onRemove,
+                 )
+             }
+@@ -261,7 +244,6 @@ class LibraryActivity : AppCompatActivity() {
+         fun bind(
+             item: Item,
+             onOpen: (String, String) -> Unit,
+-            onRead: (String, String) -> Unit,
+             onRemove: (String) -> Unit,
+         ) {
+             action.setOnClickListener(null)
+@@ -275,7 +257,6 @@ class LibraryActivity : AppCompatActivity() {
+                 is Item.Root -> null
+                 is Item.Folder -> item.uri
+                 is Item.Volume -> item.uri
+-                is Item.ReadTitle -> item.uri
+                 Item.Back -> null
+             }
+             if (coverUri != null) {
+@@ -305,11 +286,17 @@ class LibraryActivity : AppCompatActivity() {
+                     title.setOnClickListener { onOpen(item.uri, item.name) }
+                 }
+                 is Item.Folder -> {
+-                    // Тайтл — это папка: тап открывает экран глав. Внутри
+-                    // самого экрана глав уже есть все тома рекурсивно.
+-                    action.text = getString(R.string.library_open)
+-                    action.setOnClickListener { openDetail(item.uri, item.name) }
+-                    title.setOnClickListener { openDetail(item.uri, item.name) }
++                    // Тайтл — это папка: тап открывает экран глав. Папка без
++                    // глав — просто каталог, и её открывают как каталог.
++                    if (item.hasContent) {
++                        action.text = getString(R.string.library_read_title)
++                        action.setOnClickListener { openDetail(item.uri, item.name) }
++                        title.setOnClickListener { openDetail(item.uri, item.name) }
++                    } else {
++                        action.text = getString(R.string.library_open)
++                        action.setOnClickListener { onOpen(item.uri, item.name) }
++                        title.setOnClickListener { onOpen(item.uri, item.name) }
++                    }
+                 }
+                 is Item.Volume -> {
+                     // Отдельный архив или картинка — это уже глава тайтла:
+@@ -320,12 +307,6 @@ class LibraryActivity : AppCompatActivity() {
+                     }
+                     title.setOnClickListener { onOpen(item.uri, item.name) }
+                 }
+-                is Item.ReadTitle -> {
+-                    action.text = getString(R.string.library_read_title)
+-                    action.isEnabled = item.hasContent
+-                    action.setOnClickListener { openDetail(item.uri, item.name) }
+-                    title.setOnClickListener { openDetail(item.uri, item.name) }
+-                }
+                 Item.Back -> {
+                     action.text = getString(R.string.library_up)
+                     action.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
+diff --git a/app/src/main/java/app/yomikai/shell/library/ReaderActivity.kt b/app/src/main/java/app/yomikai/shell/library/ReaderActivity.kt
+index 645f754..c6a6e7b 100644
+--- a/app/src/main/java/app/yomikai/shell/library/ReaderActivity.kt
++++ b/app/src/main/java/app/yomikai/shell/library/ReaderActivity.kt
+@@ -2,10 +2,13 @@ package app.yomikai.shell.library
+ 
+ import android.graphics.BitmapFactory
+ import android.os.Bundle
++import android.view.GestureDetector
++import android.view.MotionEvent
+ import android.util.LruCache
+ import android.view.LayoutInflater
+ import android.view.View
+ import android.view.ViewGroup
++import android.view.WindowManager
+ import android.widget.TextView
+ import androidx.appcompat.app.AppCompatActivity
+ import androidx.lifecycle.lifecycleScope
+@@ -69,6 +72,37 @@ class ReaderActivity : AppCompatActivity() {
+             override fun onPageSelected(position: Int) = updateStatus(position)
+         })
+         pager.offscreenPageLimit = 1
++
++        // Тапы по краям листают, тап в центре прячет счётчик. Без этого
++        // листать можно было только свайпом, а на большой странице свайп
++        // не всегда срабатывает так, как ожидаешь.
++        val width = resources.displayMetrics.widthPixels
++        pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
++            override fun onPageSelected(position: Int) = updateStatus(position)
++        })
++        val taps = GestureDetector(
++            this,
++            object : GestureDetector.SimpleOnGestureListener() {
++                override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
++                    when {
++                        e.x < width * 0.33f -> pager.currentItem = (pager.currentItem - 1).coerceAtLeast(0)
++                        e.x > width * 0.67f ->
++                            pager.currentItem = (pager.currentItem + 1).coerceAtMost(title.pages.size - 1)
++                        else -> status.visibility =
++                            if (status.visibility == View.VISIBLE) View.GONE else View.VISIBLE
++                    }
++                    return true
++                }
++            },
++        )
++        pager.setOnTouchListener { _, event ->
++            taps.onTouchEvent(event)
++            false
++        }
++
++        // Экран не гаснет: читать дольше минуты без касаний — обычное дело.
++        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
++
+         updateStatus(0)
+     }
+ 
+diff --git a/app/src/main/java/app/yomikai/shell/library/TitleRepository.kt b/app/src/main/java/app/yomikai/shell/library/TitleRepository.kt
+index 54a4db9..5d5a63d 100644
+--- a/app/src/main/java/app/yomikai/shell/library/TitleRepository.kt
++++ b/app/src/main/java/app/yomikai/shell/library/TitleRepository.kt
+@@ -47,7 +47,7 @@ class TitleRepository(context: Context) {
+         val collected = ArrayList<Library.Node>()
+         val entriesByUri = HashMap<String, List<String>>()
+         collect(folderUri, collected, entriesByUri, 0)
+-        return Library.buildTitle(
++        val built = Library.buildTitle(
+             name = name,
+             uri = folderUri,
+             nodes = collected,
+@@ -55,6 +55,35 @@ class TitleRepository(context: Context) {
+             maxPages = MAX_PAGES,
+             entriesOf = { volume -> entriesByUri[volume.uri].orEmpty() },
+         )
++        // Подпапки верхнего уровня — самостоятельные главы. Внутри папки
++        // манги их бывает много («Том 1/», «Том 2/»), и без них экран глав
++        // показывал бы одну строку «Том 1», хотя файлов лежит двадцать томов.
++        val subfolders = runCatching { list(folderUri) }
++            .getOrDefault(emptyList())
++            .filter { it.isDirectory }
++            .sortedWith { a, b -> naturalOrder(a.name, b.name) }
++            .map { node ->
++                Library.Volume(
++                    name = node.name,
++                    uri = node.uri,
++                    isArchive = false,
++                    pages = 0,
++                    isDirectory = true,
++                )
++            }
++        if (subfolders.isEmpty()) return built
++        val merged = ArrayList<Library.Volume>(subfolders.size + built.volumes.size)
++        val ordered = (subfolders + built.volumes).sortedWith { a, b -> naturalOrder(a.name, b.name) }
++        for (volume in ordered) {
++            merged.add(
++                if (volume.isDirectory) {
++                    volume.copy(pages = title(volume.uri, volume.name).pages.size)
++                } else {
++                    volume
++                },
++            )
++        }
++        return built.copy(volumes = merged)
+     }
+ 
+     /**
+@@ -86,19 +115,49 @@ class TitleRepository(context: Context) {
+     }
+ 
+     /**
+-     * Обложка папки — первая страница первых глав: zip-тома открываются один
+-     * раз и обложка берётся из первого архива, картинки — просто первой.
+-     * Это правдение к тексту в LIST, поэтому обложка не ждёт, пока читатель
+-     * откроет том.
++     * Обложка тайтла: первая страница первых глав.
++     *
++     * Считается лёгким обходом, а не через [title]: тот раскрывает центральный
++     * каталог КАЖДОГО архива в папке, и список из сорока папок двадцать минут
++     * рисовал серые квадраты вместо обложек. Здесь открывается ровно один
++     * архив — первый, из которого и берётся картинка.
+      */
+     fun coverOf(uri: String): ByteArray? {
+-        val t = titleOfFolderCached(uri)
+-        val first = t.pages.firstOrNull() ?: return null
+-        return bytes(first)
++        val children = runCatching { list(uri) }.getOrDefault(emptyList())
++        // У документа без детей list() пуст — значит, это файл, а не папка.
++        if (children.isEmpty()) return firstPageBytes(uri) ?: library.readBytes(uri)
++        val ordered = children.sortedWith { a, b -> naturalOrder(a.name, b.name) }
++        // Картинка прямо в папке — самая дешёвая обложка: один seek, без ZIP.
++        for (node in ordered) {
++            if (!node.isDirectory && node.extension in Library.IMAGE_EXTENSIONS) {
++                library.readBytes(node.uri)?.let { return it }
++            }
++        }
++        for (node in ordered) {
++            if (!node.isDirectory && node.extension in Library.ARCHIVE_EXTENSIONS) {
++                firstPageBytes(node.uri)?.let { return it }
++            }
++        }
++        // Вложенные папки: обложка тайтла ищется в них же, иначе папка
++        // «Том 1/» с главами осталась бы серой.
++        for (node in ordered) {
++            if (node.isDirectory) coverOf(node.uri)?.let { return it }
++        }
++        return null
+     }
+ 
++    /** Первая картинка архива: раскрываем центральный каталог и читаем запись. */
++    private fun firstPageBytes(archiveUri: String): ByteArray? = runCatching {
++        val (channel, size) = library.openChannel(archiveUri) ?: return null
++        openZip(channel, size).use { zip ->
++            val entry = zip.imageEntries(Library.IMAGE_EXTENSIONS).firstOrNull() ?: return null
++            zip.read(entry)
++        }
++    }.getOrNull()
++
+     /** Страницы только одного тома: для открытия читалки сразу на главу. */
+     fun pagesOf(volume: Library.Volume): List<Library.Page> {
++        if (volume.isDirectory) return title(volume.uri, volume.name).pages
+         if (volume.isArchive) {
+             val path = entries(volume.uri) ?: return emptyList()
+             return path.map { entry ->
+@@ -108,14 +167,6 @@ class TitleRepository(context: Context) {
+         return listOf(Library.Page.File(name = volume.name, uri = volume.uri))
+     }
+ 
+-    /** Последний собранный тайтл по URI папки — чтобы не собирать дважды. */
+-    private val titleByUri = object : LinkedHashMap<String, Library.Title>(32, 0.75f, true) {
+-        override fun removeEldestEntry(eldest: Map.Entry<String, Library.Title>?) = size > 32
+-    }
+-
+-    private fun titleOfFolderCached(uri: String): Library.Title =
+-        titleByUri[uri] ?: title(uri, "").also { titleByUri[uri] = it }
+-
+     /** Записи архива, в естественном порядке; null, если не архив. */
+     private fun entries(uri: String): List<String>? = runCatching {
+         val (channel, size) = library.openChannel(uri) ?: return null
