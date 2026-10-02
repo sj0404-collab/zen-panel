@@ -12,6 +12,22 @@ index cfc8afe24..3e2720833 100644
 -9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
 -10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
 -11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+index 90e082542..b82b44354 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+@@ -714,7 +714,10 @@ class ReaderViewModel @JvmOverloads constructor(
+      */
+     fun setMangaReadingMode(readingMode: ReadingMode) {
+         val manga = manga ?: return
+-        runBlocking(Dispatchers.IO) {
++        // Не runBlocking: eventChannel — rendezvous-канал, и его единственный
++        // получатель собирается на Main. Блокировка Main здесь делала send()
++        // невозможным — дедлок на каждой смене режима чтения.
++        viewModelScope.launchIO {
+             setMangaViewerFlags.awaitSetReadingMode(manga.id, readingMode.flagValue.toLong())
+             val currChapters = state.value.viewerChapters
+             if (currChapters != null) {
 diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
 index d4828bee8..41e07ccd8 100644
 --- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
