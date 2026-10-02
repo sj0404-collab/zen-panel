@@ -1,0 +1,27 @@
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 5ef131ecf..2cb9f3454 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -740,7 +740,13 @@ class AutoReadEngine(
+                         context = context,
+                         mangaId = mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
+                     )
+-                    scope.launch {
++                    // Ссылку на задание ОБЯЗАТЕЛЬНО держим. Раньше здесь стоял
++                    // голый scope.launch { … }, а следом aiRefine = null обнулял
++                    // поле ещё ДО присваивания: задание ни отменялось (finally),
++                    // ни попадало в preparedRef вовремя. Итог — на каждый кадр
++                    // улетал один бессрочный запрос к модели, который грел бэкенд
++                    // и душил авточтение, но почти никогда не успевал примениться.
++                    aiRefine = scope.launch {
+                         preparedRef.set(
+                             eu.kanade.tachiyomi.data.ai.AiAssistant.prepareFrame(
+                                 newLines = newLines,
+@@ -757,7 +763,6 @@ class AutoReadEngine(
+                 for (i in ordered.indices) {
+                     genders.set(i, localGenders[i] ?: detectGenderByDictionary(ordered[i].text))
+                 }
+-                aiRefine = null
+                 // Gemini Vision как ещё один фоновый уточнитель — только с ключом
+                 if (genderJpeg != null && ordered.isNotEmpty() &&
+                     prefs.googleApiKey().get().isNotBlank() && localGenders.any { it == null }
