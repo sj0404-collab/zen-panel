@@ -782,8 +782,51 @@ index 90e082542..1ed1be819 100644
              setMangaViewerFlags.awaitSetReadingMode(manga.id, readingMode.flagValue.toLong())
              val currChapters = state.value.viewerChapters
              if (currChapters != null) {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
+index c00213e77..c512c4c92 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
+@@ -85,6 +85,8 @@ class PagerPageHolder(
+      */
+     private var loadJob: Job? = null
+ 
++    private var cachedOcrJob: Job? = null
++
+     init {
+         setOcrPageIdentity(page.chapter.chapter.id, page.index)
+         onOcrRegionClicked = regionTap@{ tap ->
+@@ -113,9 +115,17 @@ class PagerPageHolder(
+         super.onDetachedFromWindow()
+         loadJob?.cancel()
+         loadJob = null
++        cachedOcrJob?.cancel()
++        cachedOcrJob = null
+         clearOcrPageIdentity()
+         panelDetectionJob?.cancel()
+         panelDetectionJob = null
++        // ViewPagerAdapter создаёт держатель заново на каждый instantiateItem,
++        // поэтому отсоединение здесь означает, что держатель больше не нужен.
++        // Раньше его scope не отменялся: SupervisorJob жил до конца процесса, а
++        // запущенная в него подгрузка кэша OCR успевала дописать результат
++        // ЧУЖОЙ страницы в уже переиспользованное представление.
++        scope.cancel()
+     }
+ 
+     private fun initProgressIndicator() {
+@@ -527,7 +537,10 @@ class PagerPageHolder(
+ 
+     private fun loadCachedOcrResult() {
+         val chapterId = page.chapter.chapter.id ?: return clearCachedOcrResult()
+-        scope.launchIO {
++        // Задание запоминаем: без этого результат подгрузки прилетал после
++        // отсоединения и подсвечивал области уже другой страницы.
++        cachedOcrJob?.cancel()
++        cachedOcrJob = scope.launchIO {
+             val cachedResult = ocrRepository.getCachedPage(chapterId, page.index)
+             withUIContext {
+                 setCachedOcrResult(cachedResult)
 diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
-index d4828bee8..41e07ccd8 100644
+index d4828bee8..4a73a41dd 100644
 --- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
 +++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
 @@ -183,8 +183,8 @@ class OverlayReaderService : Service() {
@@ -797,8 +840,47 @@ index d4828bee8..41e07ccd8 100644
              val wasHidden = overlayView.visibility != View.VISIBLE
              if (wasHidden) setPassthrough(false)
              overlayView.beginCapturePump()
+@@ -249,6 +249,7 @@ class OverlayReaderService : Service() {
+             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
++                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+             PixelFormat.TRANSLUCENT,
+         )
+@@ -282,9 +283,17 @@ class OverlayReaderService : Service() {
+             }
+ 
+             override fun onTouchEvent(event: MotionEvent): Boolean {
+-                if (event.actionMasked == MotionEvent.ACTION_UP) {
+-                    togglePassthrough()
+-                    return true
++                // Пузырь — обычный View, он не кликабелен, и ACTION_DOWN уходил
++                // в super, который возвращает false. Дальше событие до пузыря
++                // не доходило: ACTION_UP не приходил никогда, а вместе с ним и
++                // возврат из режима пропуска касаний.
++                when (event.actionMasked) {
++                    MotionEvent.ACTION_DOWN -> return true
++                    MotionEvent.ACTION_UP -> {
++                        togglePassthrough()
++                        return true
++                    }
++                    MotionEvent.ACTION_CANCEL -> return true
+                 }
+                 return super.onTouchEvent(event)
+             }
+@@ -295,7 +304,8 @@ class OverlayReaderService : Service() {
+             size,
+             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
++                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
++                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+             PixelFormat.TRANSLUCENT,
+         ).apply {
+             gravity = Gravity.TOP or Gravity.END
 diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
-index 262a1bafd..8a6f220a9 100644
+index 262a1bafd..c2f23ac82 100644
 --- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
 +++ b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayView.kt
 @@ -4,6 +4,7 @@ import android.content.Context
@@ -834,8 +916,8 @@ index 262a1bafd..8a6f220a9 100644
      // поэтому дисплей (а с ним и VirtualDisplay) получает свежие кадры даже на
 -    // полностью статичном экране. Панели при этом не рисуются, чтобы кадр был
 -    // чистым.
-+    // полностью статичном экране. Сама графика при этом рисуется как обычно:
-+    // область захвата лежит между панелями, поэтому в кадр они не попадают.
++    // полностью статичном экране. Сама графика при этом не рисуется вовсе —
++    // иначе в кадр попали бы рамка и ручки, лежащие на границе области захвата.
      private var capturePumping = false
      private val pumpHandler = Handler(Looper.getMainLooper())
      private val pumpRunnable = object : Runnable {
@@ -867,7 +949,7 @@ index 262a1bafd..8a6f220a9 100644
  
          val pref = Prefs.frame()
          frame = RectF(
-@@ -170,43 +192,77 @@ class OverlayView(
+@@ -170,43 +192,85 @@ class OverlayView(
          }
      }
  
@@ -906,7 +988,14 @@ index 262a1bafd..8a6f220a9 100644
  
      override fun onDraw(canvas: Canvas) {
          super.onDraw(canvas)
--        if (capturePumping) return
++
++        // Пока идёт захват, не рисуем НИЧЕГО. Задача «прокачки» — лишь
++        // заставить компоновщик выдавать кадры, поэтому ранний выход не мешает
++        // самой прокачке. А вот область захвата совпадает с рамкой, значит в
++        // кадр попадали бы и обводка рамки, и восемь светлых ручек (они
++        // центрированы на границе и уходят внутрь на половину) — OCR читал бы
++        // эти квадраты как текст.
+         if (capturePumping) return
  
          val alpha = (Prefs.overlayOpacity().coerceIn(0.1f, 0.9f) * 255).toInt()
          dimPaint.color = Color.argb(alpha, 4, 8, 20)
@@ -960,7 +1049,7 @@ index 262a1bafd..8a6f220a9 100644
      private fun drawToolbarButtons(canvas: Canvas) {
          for ((rect, btn) in buttons) {
              btnPaint.color = if (btn == pressedBtn) Color.parseColor("#FF8A65") else Color.WHITE
-@@ -241,21 +297,28 @@ class OverlayView(
+@@ -241,21 +305,28 @@ class OverlayView(
      private fun drawResultPanel(canvas: Canvas) {
          val pad = dp(10f)
          statusPaint.textAlign = Paint.Align.LEFT
@@ -998,7 +1087,7 @@ index 262a1bafd..8a6f220a9 100644
              var y = panelRect.top + dp(34f) + lineH
              for (i in scrollLines until min(scrollLines + visible, lines.size)) {
                  canvas.drawText(lines[i], pad, y, resultPaint)
-@@ -264,6 +327,8 @@ class OverlayView(
+@@ -264,6 +335,8 @@ class OverlayView(
          }
      }
  
@@ -1007,7 +1096,7 @@ index 262a1bafd..8a6f220a9 100644
      private fun wrapText(paint: Paint, text: String, maxW: Int): List<String> {
          val words = text.split(" ")
          val lines = ArrayList<String>()
-@@ -293,10 +358,17 @@ class OverlayView(
+@@ -293,10 +366,17 @@ class OverlayView(
          when (event.actionMasked) {
              MotionEvent.ACTION_DOWN -> return onDown(x, y)
              MotionEvent.ACTION_MOVE -> { onMove(x, y); return true }
@@ -1026,7 +1115,7 @@ index 262a1bafd..8a6f220a9 100644
          }
          return true
      }
-@@ -346,19 +418,18 @@ class OverlayView(
+@@ -346,19 +426,18 @@ class OverlayView(
          val dy = y - touchY
          when (mode) {
              Mode.MOVE -> {
@@ -1058,7 +1147,7 @@ index 262a1bafd..8a6f220a9 100644
                  invalidate()
              }
              Mode.CORNER_RESIZE -> {
-@@ -367,8 +438,16 @@ class OverlayView(
+@@ -367,8 +446,16 @@ class OverlayView(
              }
              Mode.SCROLL -> {
                  val lineH = resultPaint.textSize * 1.25f
@@ -1077,7 +1166,7 @@ index 262a1bafd..8a6f220a9 100644
                  lastPanelY = y
                  invalidate()
              }
-@@ -379,7 +458,7 @@ class OverlayView(
+@@ -379,7 +466,7 @@ class OverlayView(
      }
  
      private fun resizeTo(dx: Float, dy: Float) {
@@ -1086,7 +1175,7 @@ index 262a1bafd..8a6f220a9 100644
          val l = frame.left
          val t = frame.top
          val r = frame.right
-@@ -397,13 +476,19 @@ class OverlayView(
+@@ -397,14 +484,21 @@ class OverlayView(
          clampFrame()
      }
  
@@ -1103,13 +1192,16 @@ index 262a1bafd..8a6f220a9 100644
 -        }
          pressedBtn = null
          mode = Mode.NONE
+-        callback.onFrameChanged(bean())
 +        // Рамку сохраняем до действия: «Скан» читает Prefs.frame(), и при
 +        // прежнем порядке захватывалась старая область, если рамку только что
 +        // передвинули.
-         callback.onFrameChanged(bean())
++        bean()?.let { callback.onFrameChanged(it) }
++        if (btn != null) perform(btn)
          invalidate()
      }
-@@ -419,15 +504,29 @@ class OverlayView(
+ 
+@@ -419,15 +513,29 @@ class OverlayView(
          }
      }
  
