@@ -1,0 +1,56 @@
+diff --git a/app/src/main/java/app/yomikai/shell/library/Library.kt b/app/src/main/java/app/yomikai/shell/library/Library.kt
+index 338d672..0de9a40 100644
+--- a/app/src/main/java/app/yomikai/shell/library/Library.kt
++++ b/app/src/main/java/app/yomikai/shell/library/Library.kt
+@@ -38,6 +38,8 @@ object Library {
+         val name: String,
+         val uri: String,
+         val isArchive: Boolean,
++        /** Сколько страниц даст том: число записей-картинок в архиве или 1. */
++        val pages: Int = 0,
+     ) : Serializable
+ 
+     /** Тайтл: папка со всеми томами и страницами. */
+@@ -66,11 +68,13 @@ object Library {
+         val archives = nodes
+             .filter { !it.isDirectory && it.extension in ARCHIVE_EXTENSIONS }
+             .sortedWith { a, b -> natural(a.name, b.name) }
+-            .map { Volume(it.name, it.uri, true) }
++            .map { node ->
++                Volume(node.name, node.uri, isArchive = true, pages = entriesOf(Volume(node.name, node.uri, true)).size)
++            }
+         val loose = nodes
+             .filter { !it.isDirectory && it.extension in IMAGE_EXTENSIONS }
+             .sortedWith { a, b -> natural(a.name, b.name) }
+-            .map { Volume(it.name, it.uri, false) }
++            .map { Volume(it.name, it.uri, isArchive = false, pages = 1) }
+         // Подпапки — тоже тома: вложенная «Том 3/» внутри тайтла обязана
+         // попасть в чтение, иначе тайтл читается не весь.
+         val subdirs = nodes
+diff --git a/app/src/main/java/app/yomikai/shell/library/TitleDetailActivity.kt b/app/src/main/java/app/yomikai/shell/library/TitleDetailActivity.kt
+index 65f57e2..14230a3 100644
+--- a/app/src/main/java/app/yomikai/shell/library/TitleDetailActivity.kt
++++ b/app/src/main/java/app/yomikai/shell/library/TitleDetailActivity.kt
+@@ -66,6 +66,7 @@ class TitleDetailActivity : AppCompatActivity() {
+             if (coverBytes != null) {
+                 cover.setImageBitmap(BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size))
+             }
++            titleText.text = if (t.pages.isNotEmpty()) "$folderName · ${t.pages.size} стр." else folderName
+             list.adapter = ChapterAdapter(t.volumes) { volume ->
+                 val single = Library.Title(
+                     name = volume.name,
+@@ -98,7 +99,13 @@ class TitleDetailActivity : AppCompatActivity() {
+             private val name: TextView = view.findViewById(R.id.chapter)
+ 
+             fun bind(volume: Library.Volume) {
+-                name.text = volume.name
++                name.text = buildString {
++                    append(volume.name)
++                    // Численный индикатор: столько страниц в томе, сколько
++                    // записей-картинок в архиве. Без него глава — имя без
++                    // намека на объём.
++                    if (volume.pages > 0) append(" · ").append(volume.pages).append(" стр.")
++                }
+                 itemView.setOnClickListener { onClick(volume) }
+             }
+         }
