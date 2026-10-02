@@ -12,6 +12,24 @@ index cfc8afe24..3e2720833 100644
 -9. В каждом клони репозитория сохраняй текущую сессию агента в файле AGENT_SESSION.md: контекст, выполненные изменения и следующий шаг, чтобы сессию можно было прочитать и продолжить.
 -10. Сохраняй diff локального клона (`git diff` и `git diff --cached`) рядом с сессией в репозитории, чтобы изменения можно было проверить и продолжить.
 -11. При каждом открытии или начале работы в репозитории сразу обновляй `AGENT_SESSION.md` актуальными контекстом, diff, выполненными изменениями и следующим шагом.
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index f84b24c29..63c9901ac 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -248,10 +248,9 @@ baselineProfile {
+ 
+ dependencies {
+     // Russian/Cyrillic PP-OCR models are downloaded outside the APK.
+-    // ONNX-голоса: только Java-API sherpa-onnx (238КБ, из classes.jar AAR).
+-    // Нативные .so (55МБ!) НЕ в APK — качаются как дополнение в рантайме
+-    // (OnnxTts.downloadRuntime) и грузятся через System.load.
+-    implementation(files("libs/sherpa-onnx-classes.jar"))
++    // Нейроголоса sherpa-onnx вынесены на сторону сервера пользователя: в коде
++    // не осталось ни одного импорта, поэтому локальный jar больше не нужен и
++    // отсутствие файла не должно ломать сборку.
+     implementation(libs.commons.compress)
+     implementation(libs.xz)
+     baselineProfile(projects.baselineProfile)
 diff --git a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt
 index 28d1734ac..a98d6d182 100644
 --- a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderAiChatOverlay.kt
@@ -76,7 +94,7 @@ index 28d1734ac..a98d6d182 100644
              chatOnce(
                  context = context,
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
-index 66bde0bdb..4253ac95b 100644
+index 66bde0bdb..2e6c9445a 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiAgent.kt
 @@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.data.ui.UiActionRegistry
@@ -197,7 +215,7 @@ index 66bde0bdb..4253ac95b 100644
 +    if (host.isBlank()) return "ОШИБКА: в адресе «$rawUrl» нет хоста"
 +
 +    val addresses = runCatching {
-+        java.net.InetAddress.getAllByName(host).map { it.address }
++        java.net.InetAddress.getAllByName(host)
 +    }.getOrElse { return "ОШИБКА: не удалось разрешить «$host»" }
 +    if (addresses.isEmpty()) return "ОШИБКА: не удалось разрешить «$host»"
 +
@@ -809,10 +827,18 @@ index 790984bea..68c9e3be0 100644
 +        .stateIn(ioCoroutineScope, start, null)
  }
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
-index c00213e77..c512c4c92 100644
+index c00213e77..df480b6c0 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
-@@ -85,6 +85,8 @@ class PagerPageHolder(
+@@ -22,6 +22,7 @@ import eu.kanade.tachiyomi.util.view.isVisibleOnScreen
+ import eu.kanade.tachiyomi.widget.ViewPagerAdapter
+ import kotlinx.coroutines.Job
+ import kotlinx.coroutines.MainScope
++import kotlinx.coroutines.cancel
+ import kotlinx.coroutines.flow.collectLatest
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.supervisorScope
+@@ -85,6 +86,8 @@ class PagerPageHolder(
       */
      private var loadJob: Job? = null
  
@@ -821,7 +847,7 @@ index c00213e77..c512c4c92 100644
      init {
          setOcrPageIdentity(page.chapter.chapter.id, page.index)
          onOcrRegionClicked = regionTap@{ tap ->
-@@ -113,9 +115,17 @@ class PagerPageHolder(
+@@ -113,9 +116,17 @@ class PagerPageHolder(
          super.onDetachedFromWindow()
          loadJob?.cancel()
          loadJob = null
@@ -839,7 +865,7 @@ index c00213e77..c512c4c92 100644
      }
  
      private fun initProgressIndicator() {
-@@ -527,7 +537,10 @@ class PagerPageHolder(
+@@ -527,7 +538,10 @@ class PagerPageHolder(
  
      private fun loadCachedOcrResult() {
          val chapterId = page.chapter.chapter.id ?: return clearCachedOcrResult()
