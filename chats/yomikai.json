@@ -4,7 +4,7 @@
   "repo": "sj0404-collab/zen-panel",
   "repoName": "yomikai",
   "workdir": "/home/runner/hub-work/yomikai/code",
-  "updatedAt": "2026-10-02T15:38:04Z",
+  "updatedAt": "2026-10-02T15:45:17Z",
   "count": 4,
   "sessions": [
     {
@@ -12,7 +12,7 @@
       "title": "Исправление критических проблем читалки и чата",
       "slug": "sunny-cactus",
       "directory": "/home/runner/hub-work/yomikai/code",
-      "timeUpdated": 1790955464228,
+      "timeUpdated": 1790955893828,
       "export": {
         "info": {
           "id": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
@@ -35,7 +35,7 @@
           "cost": 0,
           "time": {
             "created": 1790949056951,
-            "updated": 1790955464228
+            "updated": 1790955893828
           }
         },
         "messages": [
@@ -126,6 +126,20 @@
                     "file": "app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt",
                     "patch": "Index: app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt\n===================================================================\n--- app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt\t\n+++ app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt\t\n@@ -1,598 +1,611 @@\n package eu.kanade.tachiyomi.ui.reader.viewer.pager\n \n import android.annotation.SuppressLint\n import android.content.Context\n import android.graphics.Bitmap\n import android.graphics.drawable.Drawable\n import android.view.LayoutInflater\n import androidx.core.view.isVisible\n import eu.kanade.presentation.util.formattedMessage\n import eu.kanade.tachiyomi.data.ocr.decodeImageDecoderBitmap\n import eu.kanade.tachiyomi.data.ocr.decodeImageDecoderBounds\n import eu.kanade.tachiyomi.databinding.ReaderErrorBinding\n import eu.kanade.tachiyomi.source.model.Page\n import eu.kanade.tachiyomi.ui.reader.model.InsertPage\n import eu.kanade.tachiyomi.ui.reader.model.ReaderPage\n import eu.kanade.tachiyomi.ui.reader.viewer.ReaderOcrPageIdentity\n import eu.kanade.tachiyomi.ui.reader.viewer.ReaderOcrRegionSelection\n import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView\n import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator\n import eu.kanade.tachiyomi.ui.webview.WebViewActivity\n import eu.kanade.tachiyomi.util.view.isVisibleOnScreen\n import eu.kanade.tachiyomi.widget.ViewPagerAdapter\n import kotlinx.coroutines.Job\n import kotlinx.coroutines.MainScope\n import kotlinx.coroutines.flow.collectLatest\n import kotlinx.coroutines.launch\n import kotlinx.coroutines.supervisorScope\n import logcat.LogPriority\n import mihon.domain.ocr.repository.OcrRepository\n import mihon.domain.panel.interactor.DetectPanels\n import okio.Buffer\n import okio.BufferedSource\n import tachiyomi.core.common.i18n.stringResource\n import tachiyomi.core.common.util.lang.launchIO\n import tachiyomi.core.common.util.lang.withIOContext\n import tachiyomi.core.common.util.lang.withUIContext\n import tachiyomi.core.common.util.system.ImageUtil\n import tachiyomi.core.common.util.system.Panel\n import tachiyomi.core.common.util.system.ReadingDirection\n import tachiyomi.core.common.util.system.logcat\n import tachiyomi.i18n.MR\n import uy.kohesive.injekt.Injekt\n import uy.kohesive.injekt.api.get\n import uy.kohesive.injekt.injectLazy\n \n /**\n  * View of the ViewPager that contains a page of a chapter.\n  */\n @SuppressLint(\"ViewConstructor\")\n class PagerPageHolder(\n     readerThemedContext: Context,\n     val viewer: PagerViewer,\n     val page: ReaderPage,\n ) : ReaderPageImageView(readerThemedContext), ViewPagerAdapter.PositionableView {\n \n     private val ocrRepository: OcrRepository by injectLazy()\n     private val detectPanels: DetectPanels by lazy { Injekt.get() }\n \n     private var panels: List<Panel> = emptyList()\n     private var currentPanelIndex = -1\n     private var panelDetectionJob: Job? = null\n     private var panelDetectionGeneration = 0\n     private var pendingBackwardNavigation = false\n \n     /**\n      * Item that identifies this view. Needed by the adapter to not recreate views.\n      */\n     override val item\n         get() = page\n \n     /**\n      * Loading progress bar to indicate the current progress.\n      */\n     private var progressIndicator: ReaderProgressIndicator? = null // = ReaderProgressIndicator(readerThemedContext)\n \n     /**\n      * Error layout to show when the image fails to load.\n      */\n     private var errorLayout: ReaderErrorBinding? = null\n \n     private val scope = MainScope()\n \n     /**\n      * Job for loading the page and processing changes to the page's status.\n      */\n     private var loadJob: Job? = null\n \n+    private var cachedOcrJob: Job? = null\n+\n     init {\n         setOcrPageIdentity(page.chapter.chapter.id, page.index)\n         onOcrRegionClicked = regionTap@{ tap ->\n             val chapterId = page.chapter.chapter.id ?: return@regionTap\n             viewer.activity.showOcrResult(\n                 ReaderOcrRegionSelection(\n                     page = ReaderOcrPageIdentity(chapterId, page.index),\n                     regionOrder = tap.regionOrder,\n                     displayText = tap.displayText,\n                     queryText = tap.queryText,\n                     boundingBox = tap.boundingBox,\n                     textOrientation = tap.textOrientation,\n                     anchorRectOnScreen = tap.anchorRectOnScreen,\n                     initialSelectionOffset = tap.initialSelectionOffset,\n                 ),\n             )\n         }\n         loadJob = scope.launch { loadPageAndProcessStatus() }\n     }\n \n     /**\n      * Called when this view is detached from the window. Unsubscribes any active subscription.\n      */\n     @SuppressLint(\"ClickableViewAccessibility\")\n     override fun onDetachedFromWindow() {\n         super.onDetachedFromWindow()\n         loadJob?.cancel()\n         loadJob = null\n+        cachedOcrJob?.cancel()\n+        cachedOcrJob = null\n         clearOcrPageIdentity()\n         panelDetectionJob?.cancel()\n         panelDetectionJob = null\n+        // ViewPagerAdapter создаёт держатель заново на каждый instantiateItem,\n+        // поэтому отсоединение здесь означает, что держатель больше не нужен.\n+        // Раньше его scope не отменялся: SupervisorJob жил до конца процесса, а\n+        // запущенная в него подгрузка кэша OCR успевала дописать результат\n+        // ЧУЖОЙ страницы в уже переиспользованное представление.\n+        scope.cancel()\n     }\n \n     private fun initProgressIndicator() {\n         if (progressIndicator == null) {\n             progressIndicator = ReaderProgressIndicator(context)\n             addView(progressIndicator)\n         }\n     }\n \n     /**\n      * Loads the page and processes changes to the page's status.\n      *\n      * Returns immediately if the page has no PageLoader.\n      * Otherwise, this function does not return. It will continue to process status changes until\n      * the Job is cancelled.\n      */\n     private suspend fun loadPageAndProcessStatus() {\n         val loader = page.chapter.pageLoader ?: return\n \n         supervisorScope {\n             launchIO {\n                 loader.loadPage(page)\n             }\n             page.statusFlow.collectLatest { state ->\n                 when (state) {\n                     Page.State.Queue -> setQueued()\n                     Page.State.LoadPage -> setLoading()\n                     Page.State.DownloadImage -> {\n                         setDownloading()\n                         page.progressFlow.collectLatest { value ->\n                             progressIndicator?.setProgress(value)\n                         }\n                     }\n                     Page.State.Ready -> setImage()\n                     is Page.State.Error -> setError(state.error)\n                 }\n             }\n         }\n     }\n \n     /**\n      * Called when the page is queued.\n      */\n     private fun setQueued() {\n         initProgressIndicator()\n         progressIndicator?.show()\n         removeErrorLayout()\n         setFileCropRect(null)\n         clearCachedOcrResult()\n     }\n \n     /**\n      * Called when the page is loading.\n      */\n     private fun setLoading() {\n         initProgressIndicator()\n         progressIndicator?.show()\n         removeErrorLayout()\n         setFileCropRect(null)\n         clearCachedOcrResult()\n     }\n \n     /**\n      * Called when the page is downloading.\n      */\n     private fun setDownloading() {\n         initProgressIndicator()\n         progressIndicator?.show()\n         removeErrorLayout()\n         setFileCropRect(null)\n         clearCachedOcrResult()\n     }\n \n     /**\n      * Called when the page is ready.\n      */\n     private suspend fun setImage() {\n         progressIndicator?.setProgress(0)\n         panels = emptyList()\n         setPanelDebugDetections(emptyList())\n         currentPanelIndex = -1\n         pendingBackwardNavigation = false\n \n         panelDetectionJob?.cancel()\n         panelDetectionGeneration++\n \n         val streamFn = page.stream ?: return\n \n         try {\n             val loadResult = withIOContext {\n                 val source = streamFn().use { process(item, Buffer().readFrom(it)) }\n                 val isAnimated = ImageUtil.isAnimatedAndSupported(source)\n                 val cropRect = if (!isAnimated && viewer.config.imageCropBorders) {\n                     ImageUtil.detectBorderCrop(source)\n                 } else {\n                     null\n                 }\n                 val background = if (!isAnimated && viewer.config.automaticBackground) {\n                     ImageUtil.chooseBackground(context, source.peek().inputStream())\n                 } else {\n                     null\n                 }\n                 val panelBitmap = if (!isAnimated && viewer.config.panelNavigation) {\n                     decodePanelBitmap(source)\n                 } else {\n                     null\n                 }\n                 LoadResult(source, isAnimated, background, panelBitmap, cropRect)\n             }\n             withUIContext {\n                 setFileCropRect(loadResult.cropRect)\n                 setImage(\n                     loadResult.source,\n                     loadResult.isAnimated,\n                     Config(\n                         zoomDuration = viewer.config.doubleTapAnimDuration,\n                         minimumScaleType = viewer.config.imageScaleType,\n                         cropBorders = viewer.config.imageCropBorders,\n                         zoomStartPosition = viewer.config.imageZoomType,\n                         landscapeZoom = viewer.config.landscapeZoom,\n                     ),\n                 )\n                 if (!loadResult.isAnimated) {\n                     pageBackground = loadResult.background\n                 }\n                 removeErrorLayout()\n                 loadCachedOcrResult()\n                 maybeStartPanelDetection(loadResult)\n             }\n         } catch (e: Throwable) {\n             logcat(LogPriority.ERROR, e)\n             withUIContext {\n                 setError(e)\n             }\n         }\n     }\n \n     private fun maybeStartPanelDetection(loadResult: LoadResult) {\n         if (!viewer.config.panelNavigation || loadResult.isAnimated) {\n             loadResult.panelBitmap?.bitmap?.recycle()\n             setPanelDebugDetections(emptyList())\n             logcat(LogPriority.VERBOSE) {\n                 \"Panel nav detection skipped index=${page.index} enabled=${viewer.config.panelNavigation} animated=${loadResult.isAnimated}\"\n             }\n             return\n         }\n \n         val generation = panelDetectionGeneration\n         val cacheKey = panelDetectionCacheKey()\n         val decoded = loadResult.panelBitmap\n         if (decoded == null) {\n             logcat(LogPriority.VERBOSE) { \"Panel nav detection skipped index=${page.index}: no processed panel bitmap\" }\n             return\n         }\n \n         panelDetectionJob = scope.launchIO {\n             val result = try {\n                 detectPanels.await(\n                     cacheKey = cacheKey,\n                     image = decoded.bitmap,\n                     originalWidth = decoded.originalWidth,\n                     originalHeight = decoded.originalHeight,\n                     direction = readingDirection(),\n                 )\n             } finally {\n                 decoded.bitmap.recycle()\n             }\n \n             withUIContext {\n                 if (generation != panelDetectionGeneration) return@withUIContext\n \n                 panels = result.panels\n                 if (eu.kanade.tachiyomi.BuildConfig.DEBUG) {\n                     setPanelDebugDetections(result.debugPanels, result.debugBubbles)\n                 }\n                 currentPanelIndex = if (pendingBackwardNavigation && panels.isNotEmpty()) {\n                     panels.size\n                 } else {\n                     -1\n                 }\n                 pendingBackwardNavigation = false\n                 logcat(LogPriority.VERBOSE) {\n                     \"Panel nav detection assigned index=${page.index} panels=${panels.size} \" +\n                         \"ordered=${panels.joinToString { it.rect.flattenToString() }} \" +\n                         \"debug=${result.debugPanels.joinToString {\n                             \"${\"%.2f\".format(it.confidence)}@${it.rect.flattenToString()}\"\n                         }}\"\n                 }\n             }\n         }\n     }\n \n     private fun decodePanelBitmap(source: BufferedSource): DecodedPanelBitmap? {\n         val bounds = source.peek().inputStream().use(::decodeImageDecoderBounds)\n         if (bounds == null) {\n             logcat(LogPriority.VERBOSE) { \"Panel nav decodeBitmap failed: bounds unavailable\" }\n             return null\n         }\n \n         val largestDimension = maxOf(bounds.width, bounds.height)\n         if (largestDimension <= 0) {\n             logcat(LogPriority.VERBOSE) { \"Panel nav decodeBitmap failed: dimensions <= 0\" }\n             return null\n         }\n \n         val sampleSize = generateSequence(1) { it * 2 }\n             .first { largestDimension / it <= 800 }\n \n         val bitmap = source.peek().inputStream().use {\n             decodeImageDecoderBitmap(it, sampleSize)\n         }\n \n         if (bitmap == null) {\n             logcat(LogPriority.VERBOSE) {\n                 \"Panel nav decodeBitmap failed: bitmap null after decode with sampleSize=$sampleSize\"\n             }\n             return null\n         }\n \n         logcat(LogPriority.VERBOSE) {\n             \"Panel nav decodeBitmap success sampleSize=$sampleSize \" +\n                 \"bitmapSize=${bitmap.width}x${bitmap.height} \" +\n                 \"originalSize=${bounds.width}x${bounds.height} \" +\n                 \"config=${bitmap.config}\"\n         }\n \n         return DecodedPanelBitmap(\n             bitmap = bitmap,\n             originalWidth = bounds.width,\n             originalHeight = bounds.height,\n         )\n     }\n \n     private fun readingDirection(): ReadingDirection {\n         return when (viewer) {\n             is R2LPagerViewer -> ReadingDirection.RTL\n             is VerticalPagerViewer -> ReadingDirection.VERTICAL\n             else -> ReadingDirection.LTR\n         }\n     }\n \n     fun hasPanels(): Boolean = panels.isNotEmpty()\n \n     fun hasNextPanel(): Boolean = hasPanels() && currentPanelIndex < panels.lastIndex\n \n     fun hasPreviousPanel(): Boolean = hasPanels() && currentPanelIndex > 0\n \n     fun zoomToNextPanel(): Boolean {\n         var nextIndex = currentPanelIndex + 1\n         while (nextIndex <= panels.lastIndex) {\n             logcat(LogPriority.VERBOSE) {\n                 \"Panel nav next attempt index=${page.index} currentPanelIndex=$currentPanelIndex nextIndex=$nextIndex rect=${panels[nextIndex].rect.flattenToString()}\"\n             }\n             if (zoomToPanel(panels[nextIndex])) {\n                 currentPanelIndex = nextIndex\n                 logcat(LogPriority.VERBOSE) {\n                     \"Panel nav next result index=${page.index} zoomed=true currentPanelIndex=$currentPanelIndex\"\n                 }\n                 return true\n             }\n             // Zoom was too small, skip to next\n             nextIndex++\n         }\n         logcat(LogPriority.VERBOSE) {\n             \"Panel nav next unavailable index=${page.index} currentPanelIndex=$currentPanelIndex panelCount=${panels.size}\"\n         }\n         return false\n     }\n \n     fun zoomToPreviousPanel(): Boolean {\n         var previousIndex = currentPanelIndex - 1\n         while (previousIndex >= 0) {\n             logcat(LogPriority.VERBOSE) {\n                 \"Panel nav previous attempt index=${page.index} currentPanelIndex=$currentPanelIndex previousIndex=$previousIndex rect=${panels[previousIndex].rect.flattenToString()}\"\n             }\n             if (zoomToPanel(panels[previousIndex])) {\n                 currentPanelIndex = previousIndex\n                 logcat(LogPriority.VERBOSE) {\n                     \"Panel nav previous result index=${page.index} zoomed=true currentPanelIndex=$currentPanelIndex\"\n                 }\n                 return true\n             }\n             // Zoom was too small, skip to previous\n             previousIndex--\n         }\n         logcat(LogPriority.VERBOSE) {\n             \"Panel nav previous unavailable index=${page.index} currentPanelIndex=$currentPanelIndex panelCount=${panels.size}\"\n         }\n         return false\n     }\n \n     protected override fun onPageReady(forward: Boolean) {\n         logcat(LogPriority.VERBOSE) {\n             \"Panel nav onPageReady index=${page.index} forward=$forward panelCount=${panels.size} visible=${isVisibleOnScreen()}\"\n         }\n         super.onPageReady(forward)\n     }\n \n     override fun onPageSelected(forward: Boolean) {\n         super.onPageSelected(forward)\n         // When navigating backward into a page, position after the last panel\n         // so the first backward tap zooms to the last panel\n         if (!forward) {\n             if (hasPanels()) {\n                 currentPanelIndex = panels.size\n             } else {\n                 pendingBackwardNavigation = true\n             }\n         }\n         logcat(LogPriority.VERBOSE) {\n             \"Panel nav onPageSelected index=${page.index} forward=$forward panelCount=${panels.size} currentPanelIndex=$currentPanelIndex\"\n         }\n     }\n \n     private fun panelDetectionCacheKey(): String {\n         val pageType = if (page is InsertPage) \"insert\" else \"page\"\n         return buildString {\n             append(page.chapter.chapter.id)\n             append(':')\n             append(page.index)\n             append(':')\n             append(pageType)\n             append(':')\n             append(page.url)\n             append(':')\n             append(page.imageUrl ?: \"\")\n         }\n     }\n \n     private fun process(page: ReaderPage, imageSource: BufferedSource): BufferedSource {\n         if (viewer.config.dualPageRotateToFit) {\n             return rotateDualPage(imageSource)\n         }\n \n         if (!viewer.config.dualPageSplit) {\n             return imageSource\n         }\n \n         if (page is InsertPage) {\n             return splitInHalf(imageSource)\n         }\n \n         val isDoublePage = ImageUtil.isWideImage(imageSource)\n         if (!isDoublePage) {\n             return imageSource\n         }\n \n         onPageSplit(page)\n \n         return splitInHalf(imageSource)\n     }\n \n     private fun rotateDualPage(imageSource: BufferedSource): BufferedSource {\n         val isDoublePage = ImageUtil.isWideImage(imageSource)\n         return if (isDoublePage) {\n             val rotation = if (viewer.config.dualPageRotateToFitInvert) -90f else 90f\n             ImageUtil.rotateImage(imageSource, rotation)\n         } else {\n             imageSource\n         }\n     }\n \n     private fun splitInHalf(imageSource: BufferedSource): BufferedSource {\n         var side = when {\n             viewer is L2RPagerViewer && page is InsertPage -> ImageUtil.Side.RIGHT\n             viewer !is L2RPagerViewer && page is InsertPage -> ImageUtil.Side.LEFT\n             viewer is L2RPagerViewer && page !is InsertPage -> ImageUtil.Side.LEFT\n             viewer !is L2RPagerViewer && page !is InsertPage -> ImageUtil.Side.RIGHT\n             else -> error(\"We should choose a side!\")\n         }\n \n         if (viewer.config.dualPageInvert) {\n             side = when (side) {\n                 ImageUtil.Side.RIGHT -> ImageUtil.Side.LEFT\n                 ImageUtil.Side.LEFT -> ImageUtil.Side.RIGHT\n             }\n         }\n \n         return ImageUtil.splitInHalf(imageSource, side)\n     }\n \n     private fun onPageSplit(page: ReaderPage) {\n         val newPage = InsertPage(page)\n         viewer.onPageSplit(page, newPage)\n     }\n \n     /**\n      * Called when the page has an error.\n      */\n     private fun setError(error: Throwable?) {\n         progressIndicator?.hide()\n         showErrorLayout(error)\n         setFileCropRect(null)\n         clearCachedOcrResult()\n     }\n \n     override fun onImageLoaded() {\n         super.onImageLoaded()\n         progressIndicator?.hide()\n     }\n \n     /**\n      * Called when an image fails to decode.\n      */\n     override fun onImageLoadError(error: Throwable?) {\n         super.onImageLoadError(error)\n         setError(error)\n     }\n \n     private fun loadCachedOcrResult() {\n         val chapterId = page.chapter.chapter.id ?: return clearCachedOcrResult()\n-        scope.launchIO {\n+        // Задание запоминаем: без этого результат подгрузки прилетал после\n+        // отсоединения и подсвечивал области уже другой страницы.\n+        cachedOcrJob?.cancel()\n+        cachedOcrJob = scope.launchIO {\n             val cachedResult = ocrRepository.getCachedPage(chapterId, page.index)\n             withUIContext {\n                 setCachedOcrResult(cachedResult)\n                 viewer.activity.syncActiveOcrOverlay()\n             }\n         }\n     }\n \n     /**\n      * Called when an image is zoomed in/out.\n      */\n     override fun onScaleChanged(newScale: Float) {\n         super.onScaleChanged(newScale)\n         viewer.activity.hideMenu()\n     }\n \n     private fun showErrorLayout(error: Throwable?): ReaderErrorBinding {\n         if (errorLayout == null) {\n             errorLayout = ReaderErrorBinding.inflate(LayoutInflater.from(context), this, true)\n             errorLayout?.actionRetry?.viewer = viewer\n             errorLayout?.actionRetry?.setOnClickListener {\n                 page.chapter.pageLoader?.retryPage(page)\n             }\n         }\n \n         val imageUrl = page.imageUrl\n         errorLayout?.actionOpenInWebView?.isVisible = imageUrl != null\n         if (imageUrl != null) {\n             if (imageUrl.startsWith(\"http\", true)) {\n                 errorLayout?.actionOpenInWebView?.viewer = viewer\n                 errorLayout?.actionOpenInWebView?.setOnClickListener {\n                     val sourceId = viewer.activity.viewModel.manga?.source\n \n                     val intent = WebViewActivity.newIntent(context, imageUrl, sourceId)\n                     context.startActivity(intent)\n                 }\n             }\n         }\n \n         errorLayout?.errorMessage?.text = with(context) { error?.formattedMessage }\n             ?: context.stringResource(MR.strings.decode_image_error)\n \n         errorLayout?.root?.isVisible = true\n         return errorLayout!!\n     }\n \n     /**\n      * Removes the decode error layout from the holder, if found.\n      */\n     private fun removeErrorLayout() {\n         errorLayout?.root?.isVisible = false\n         errorLayout = null\n     }\n }\n \n private data class LoadResult(\n     val source: BufferedSource,\n     val isAnimated: Boolean,\n     val background: Drawable?,\n     val panelBitmap: DecodedPanelBitmap?,\n     val cropRect: android.graphics.Rect?,\n )\n \n private data class DecodedPanelBitmap(\n     val bitmap: Bitmap,\n     val originalWidth: Int,\n     val originalHeight: Int,\n )\n",
                     "additions": 14,
+                    "deletions": 1,
+                    "status": "modified"
+                  },
+                  {
+                    "file": "app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt",
+                    "patch": "Index: app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt\n===================================================================\n--- app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt\t\n+++ app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt\t\n@@ -1,194 +1,200 @@\n package eu.kanade.tachiyomi.ui.reader.viewer.pager\n \n import android.view.View\n import android.view.ViewGroup\n import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition\n import eu.kanade.tachiyomi.ui.reader.model.InsertPage\n import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter\n import eu.kanade.tachiyomi.ui.reader.model.ReaderPage\n import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters\n import eu.kanade.tachiyomi.ui.reader.viewer.calculateChapterGap\n import eu.kanade.tachiyomi.util.system.createReaderThemeContext\n import eu.kanade.tachiyomi.widget.ViewPagerAdapter\n import tachiyomi.core.common.util.system.logcat\n \n /**\n  * Pager adapter used by this [viewer] to where [ViewerChapters] updates are posted.\n  */\n class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {\n \n     /**\n      * List of currently set items.\n      */\n     var items: MutableList<Any> = mutableListOf()\n         private set\n \n     /**\n      * Holds preprocessed items so they don't get removed when changing chapter\n      */\n     private var preprocessed: MutableMap<Int, InsertPage> = mutableMapOf()\n \n     var nextTransition: ChapterTransition.Next? = null\n         private set\n \n     var currentChapter: ReaderChapter? = null\n \n     /**\n      * Context that has been wrapped to use the correct theme values based on the\n      * current app theme and reader background color\n      */\n     private var readerThemedContext = viewer.activity.createReaderThemeContext()\n \n     /**\n      * Updates this adapter with the given [chapters]. It handles setting a few pages of the\n      * next/previous chapter to allow seamless transitions and inverting the pages if the viewer\n      * has R2L direction.\n      */\n     fun setChapters(chapters: ViewerChapters, forceTransition: Boolean) {\n         val newItems = mutableListOf<Any>()\n \n         // Forces chapter transition if there is missing chapters\n         val prevHasMissingChapters = calculateChapterGap(chapters.currChapter, chapters.prevChapter) > 0\n         val nextHasMissingChapters = calculateChapterGap(chapters.nextChapter, chapters.currChapter) > 0\n \n         // Add previous chapter pages and transition\n         chapters.prevChapter?.pages?.let(newItems::addAll)\n \n         // Skip transition page if the chapter is loaded & current page is not a transition page\n         if (prevHasMissingChapters || forceTransition || chapters.prevChapter?.state !is ReaderChapter.State.Loaded) {\n             newItems.add(ChapterTransition.Prev(chapters.currChapter, chapters.prevChapter))\n         }\n \n         var insertPageLastPage: InsertPage? = null\n \n         // Add current chapter.\n         val currPages = chapters.currChapter.pages\n         if (currPages != null) {\n             val pages = currPages.toMutableList()\n \n             val lastPage = pages.last()\n \n             // Insert preprocessed pages into current page list\n             preprocessed.keys.sortedDescending()\n                 .forEach { key ->\n                     if (lastPage.index == key) {\n                         insertPageLastPage = preprocessed[key]\n                     }\n                     preprocessed[key]?.let { pages.add(key + 1, it) }\n                 }\n \n             newItems.addAll(pages)\n         }\n \n         currentChapter = chapters.currChapter\n \n         // Add next chapter transition and pages.\n         nextTransition = ChapterTransition.Next(chapters.currChapter, chapters.nextChapter)\n             .also {\n                 if (\n                     nextHasMissingChapters ||\n                     forceTransition ||\n                     chapters.nextChapter?.state !is ReaderChapter.State.Loaded\n                 ) {\n                     newItems.add(it)\n                 }\n             }\n \n         chapters.nextChapter?.pages?.let(newItems::addAll)\n \n         // Resets double-page splits, else insert pages get misplaced\n         items.filterIsInstance<InsertPage>().also { items.removeAll(it) }\n \n         if (viewer is R2LPagerViewer) {\n             newItems.reverse()\n         }\n \n         preprocessed = mutableMapOf()\n         items = newItems\n         notifyDataSetChanged()\n \n         // Will skip insert page otherwise\n         if (insertPageLastPage != null) {\n             viewer.moveToPage(insertPageLastPage)\n         }\n     }\n \n     /**\n      * Returns the amount of items of the adapter.\n      */\n     override fun getCount(): Int {\n         return items.size\n     }\n \n     /**\n      * Creates a new view for the item at the given [position].\n      */\n     override fun createView(container: ViewGroup, position: Int): View {\n         return when (val item = items[position]) {\n             is ReaderPage -> PagerPageHolder(readerThemedContext, viewer, item)\n             is ChapterTransition -> PagerTransitionHolder(readerThemedContext, viewer, item)\n             else -> {\n                 logcat { \"PagerViewerAdapter: Unknown item type: ${item.javaClass}, skipping\" }\n                 View(readerThemedContext)\n             }\n         }\n     }\n \n     /**\n      * Returns the current position of the given [view] on the adapter.\n      */\n     override fun getItemPosition(view: Any): Int {\n         if (view is PositionableView) {\n             val position = items.indexOf(view.item)\n             if (position != -1) {\n                 return position\n             } else {\n                 logcat { \"Position for ${view.item} not found\" }\n             }\n         }\n         return POSITION_NONE\n     }\n \n     fun onPageSplit(currentPage: Any?, newPage: InsertPage) {\n         if (currentPage !is ReaderPage) return\n \n         val currentIndex = items.indexOf(currentPage)\n+        if (currentIndex < 0) {\n+            // Страницы нет в списке (список глав уже пересобрали). Дальше\n+            // currentIndex + 1 даёт 0, а currentIndex — -1, и items[...] падал\n+            // с IndexOutOfBounds прямо внутри загрузки страницы.\n+            return\n+        }\n \n         // Put aside preprocessed pages for next chapter so they don't get removed when changing chapter\n         if (currentPage.chapter.chapter.id != currentChapter?.chapter?.id) {\n             preprocessed[newPage.index] = newPage\n             return\n         }\n \n         val placeAtIndex = when (viewer) {\n             is L2RPagerViewer,\n             is VerticalPagerViewer,\n             -> currentIndex + 1\n             else -> currentIndex\n         }\n \n         // It will enter a endless cycle of insert pages\n         if (viewer is R2LPagerViewer && placeAtIndex - 1 >= 0 && items[placeAtIndex - 1] is InsertPage) {\n             return\n         }\n \n         // Same here it will enter a endless cycle of insert pages\n         if (items[placeAtIndex] is InsertPage) {\n             return\n         }\n \n         items.add(placeAtIndex, newPage)\n \n         notifyDataSetChanged()\n     }\n \n     fun cleanupPageSplit() {\n         val insertPages = items.filterIsInstance<InsertPage>()\n         items.removeAll(insertPages)\n         notifyDataSetChanged()\n     }\n \n     fun refresh() {\n         readerThemedContext = viewer.activity.createReaderThemeContext()\n     }\n }\n",
+                    "additions": 6,
+                    "deletions": 0,
+                    "status": "modified"
+                  },
+                  {
+                    "file": "app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                    "patch": "Index: app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n===================================================================\n--- app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\t\n+++ app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\t\n@@ -1,371 +1,378 @@\n package eu.kanade.tachiyomi.ui.reader.viewer.webtoon\n \n import android.content.res.Resources\n import android.view.LayoutInflater\n import android.view.ViewGroup\n import android.view.ViewGroup.LayoutParams.MATCH_PARENT\n import android.view.ViewGroup.LayoutParams.WRAP_CONTENT\n import android.widget.FrameLayout\n import androidx.core.view.isVisible\n import androidx.core.view.updateLayoutParams\n import androidx.core.view.updateMargins\n import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView\n import eu.kanade.presentation.util.formattedMessage\n import eu.kanade.tachiyomi.databinding.ReaderErrorBinding\n import eu.kanade.tachiyomi.source.model.Page\n import eu.kanade.tachiyomi.ui.reader.model.ReaderPage\n import eu.kanade.tachiyomi.ui.reader.viewer.ReaderOcrPageIdentity\n import eu.kanade.tachiyomi.ui.reader.viewer.ReaderOcrRegionSelection\n import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView\n import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator\n import eu.kanade.tachiyomi.ui.webview.WebViewActivity\n import eu.kanade.tachiyomi.util.system.dpToPx\n import kotlinx.coroutines.Job\n import kotlinx.coroutines.MainScope\n import kotlinx.coroutines.flow.collectLatest\n import kotlinx.coroutines.launch\n import kotlinx.coroutines.supervisorScope\n import logcat.LogPriority\n import mihon.domain.ocr.repository.OcrRepository\n import okio.Buffer\n import okio.BufferedSource\n import tachiyomi.core.common.i18n.stringResource\n import tachiyomi.core.common.util.lang.launchIO\n import tachiyomi.core.common.util.lang.withIOContext\n import tachiyomi.core.common.util.lang.withUIContext\n import tachiyomi.core.common.util.system.ImageUtil\n import tachiyomi.core.common.util.system.logcat\n import tachiyomi.i18n.MR\n import uy.kohesive.injekt.injectLazy\n \n /**\n  * Holder of the webtoon reader for a single page of a chapter.\n  *\n  * @param frame the root view for this holder.\n  * @param viewer the webtoon viewer.\n  * @constructor creates a new webtoon holder.\n  */\n class WebtoonPageHolder(\n     private val frame: ReaderPageImageView,\n     viewer: WebtoonViewer,\n ) : WebtoonBaseHolder(frame, viewer) {\n \n     private val ocrRepository: OcrRepository by injectLazy()\n \n     /**\n      * Loading progress bar to indicate the current progress.\n      */\n     private val progressIndicator = createProgressIndicator()\n \n     /**\n      * Progress bar container. Needed to keep a minimum height size of the holder, otherwise the\n      * adapter would create more views to fill the screen, which is not wanted.\n      */\n     private lateinit var progressContainer: ViewGroup\n \n     /**\n      * Error layout to show when the image fails to load.\n      */\n     private var errorLayout: ReaderErrorBinding? = null\n \n     /**\n      * Getter to retrieve the height of the recycler view.\n      */\n     private val parentHeight\n         get() = viewer.recycler.height\n \n     /**\n      * Page of a chapter.\n      */\n     private var page: ReaderPage? = null\n \n     private val scope = MainScope()\n \n     /**\n      * Job for loading the page.\n      */\n     private var loadJob: Job? = null\n \n+    private var cachedOcrJob: Job? = null\n+\n     init {\n         refreshLayoutParams()\n \n         frame.onImageLoaded = { onImageDecoded() }\n         frame.onImageLoadError = { error -> setError(error) }\n         frame.onScaleChanged = { viewer.activity.hideMenu() }\n         frame.onOcrRegionClicked = regionTap@{ tap ->\n             val currentPage = page ?: return@regionTap\n             val chapterId = currentPage.chapter.chapter.id ?: return@regionTap\n             viewer.activity.showOcrResult(\n                 ReaderOcrRegionSelection(\n                     page = ReaderOcrPageIdentity(chapterId, currentPage.index),\n                     regionOrder = tap.regionOrder,\n                     displayText = tap.displayText,\n                     queryText = tap.queryText,\n                     boundingBox = tap.boundingBox,\n                     textOrientation = tap.textOrientation,\n                     anchorRectOnScreen = tap.anchorRectOnScreen,\n                     initialSelectionOffset = tap.initialSelectionOffset,\n                 ),\n             )\n         }\n     }\n \n     /**\n      * Binds the given [page] with this view holder, subscribing to its state.\n      */\n     fun bind(page: ReaderPage) {\n         this.page = page\n         loadJob?.cancel()\n+        cachedOcrJob?.cancel()\n         frame.setOcrPageIdentity(page.chapter.chapter.id, page.index)\n         frame.setFileCropRect(null)\n         frame.clearCachedOcrResult()\n         loadJob = scope.launch { loadPageAndProcessStatus() }\n         refreshLayoutParams()\n     }\n \n     private fun refreshLayoutParams() {\n         frame.layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {\n             if (!viewer.isContinuous) {\n                 bottomMargin = 15.dpToPx\n             }\n \n             val margin = Resources.getSystem().displayMetrics.widthPixels * (viewer.config.sidePadding / 100f)\n             marginEnd = margin.toInt()\n             marginStart = margin.toInt()\n         }\n     }\n \n     /**\n      * Called when the view is recycled and added to the view pool.\n      */\n     override fun recycle() {\n         loadJob?.cancel()\n         loadJob = null\n \n         removeErrorLayout()\n         frame.recycle()\n         frame.clearOcrPageIdentity()\n         frame.setFileCropRect(null)\n         frame.clearCachedOcrResult()\n         progressIndicator.setProgress(0)\n         progressContainer.isVisible = true\n     }\n \n     /**\n      * Loads the page and processes changes to the page's status.\n      *\n      * Returns immediately if there is no page or the page has no PageLoader.\n      * Otherwise, this function does not return. It will continue to process status changes until\n      * the Job is cancelled.\n      */\n     private suspend fun loadPageAndProcessStatus() {\n         val page = page ?: return\n         val loader = page.chapter.pageLoader ?: return\n         supervisorScope {\n             launchIO {\n                 loader.loadPage(page)\n             }\n             page.statusFlow.collectLatest { state ->\n                 when (state) {\n                     Page.State.Queue -> setQueued()\n                     Page.State.LoadPage -> setLoading()\n                     Page.State.DownloadImage -> {\n                         setDownloading()\n                         page.progressFlow.collectLatest { value ->\n                             progressIndicator.setProgress(value)\n                         }\n                     }\n                     Page.State.Ready -> setImage()\n                     is Page.State.Error -> setError(state.error)\n                 }\n             }\n         }\n     }\n \n     /**\n      * Called when the page is queued.\n      */\n     private fun setQueued() {\n         progressContainer.isVisible = true\n         progressIndicator.show()\n         removeErrorLayout()\n         frame.setFileCropRect(null)\n         frame.clearCachedOcrResult()\n     }\n \n     /**\n      * Called when the page is loading.\n      */\n     private fun setLoading() {\n         progressContainer.isVisible = true\n         progressIndicator.show()\n         removeErrorLayout()\n         frame.setFileCropRect(null)\n         frame.clearCachedOcrResult()\n     }\n \n     /**\n      * Called when the page is downloading\n      */\n     private fun setDownloading() {\n         progressContainer.isVisible = true\n         progressIndicator.show()\n         removeErrorLayout()\n         frame.setFileCropRect(null)\n         frame.clearCachedOcrResult()\n     }\n \n     /**\n      * Called when the page is ready.\n      */\n     private suspend fun setImage() {\n         progressIndicator.setProgress(0)\n \n         val streamFn = page?.stream ?: return\n \n         try {\n             val (source, isAnimated, cropRect) = withIOContext {\n                 val source = streamFn().use { process(Buffer().readFrom(it)) }\n                 val isAnimated = ImageUtil.isAnimatedAndSupported(source)\n                 val cropRect = if (!isAnimated && viewer.config.imageCropBorders) {\n                     ImageUtil.detectBorderCrop(source)\n                 } else {\n                     null\n                 }\n                 Triple(source, isAnimated, cropRect)\n             }\n             withUIContext {\n                 frame.setFileCropRect(cropRect)\n                 frame.setImage(\n                     source,\n                     isAnimated,\n                     ReaderPageImageView.Config(\n                         zoomDuration = viewer.config.doubleTapAnimDuration,\n                         minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,\n                         cropBorders = viewer.config.imageCropBorders,\n                     ),\n                 )\n                 removeErrorLayout()\n                 loadCachedOcrResult()\n             }\n         } catch (e: Throwable) {\n             logcat(LogPriority.ERROR, e)\n             withUIContext {\n                 setError(e)\n             }\n         }\n     }\n \n     private fun process(imageSource: BufferedSource): BufferedSource {\n         if (viewer.config.dualPageRotateToFit) {\n             return rotateDualPage(imageSource)\n         }\n \n         if (viewer.config.dualPageSplit) {\n             val isDoublePage = ImageUtil.isWideImage(imageSource)\n             if (isDoublePage) {\n                 val upperSide = if (viewer.config.dualPageInvert) ImageUtil.Side.LEFT else ImageUtil.Side.RIGHT\n                 return ImageUtil.splitAndMerge(imageSource, upperSide)\n             }\n         }\n \n         return imageSource\n     }\n \n     private fun rotateDualPage(imageSource: BufferedSource): BufferedSource {\n         val isDoublePage = ImageUtil.isWideImage(imageSource)\n         return if (isDoublePage) {\n             val rotation = if (viewer.config.dualPageRotateToFitInvert) -90f else 90f\n             ImageUtil.rotateImage(imageSource, rotation)\n         } else {\n             imageSource\n         }\n     }\n \n     /**\n      * Called when the page has an error.\n      */\n     private fun setError(error: Throwable?) {\n         progressContainer.isVisible = false\n         initErrorLayout(error)\n         frame.setFileCropRect(null)\n         frame.clearCachedOcrResult()\n     }\n \n     /**\n      * Called when the image is decoded and going to be displayed.\n      */\n     private fun onImageDecoded() {\n         progressContainer.isVisible = false\n         removeErrorLayout()\n     }\n \n     private fun loadCachedOcrResult() {\n         val currentPage = page ?: return frame.clearCachedOcrResult()\n         val chapterId = currentPage.chapter.chapter.id ?: return frame.clearCachedOcrResult()\n-        scope.launchIO {\n+        // Задание запоминаем и отменяем при переиспользовании держателя:\n+        // иначе результат подгрузки прилетал уже на другую страницу и\n+        // подсвечивал области, которые к ней отношения не имеют.\n+        cachedOcrJob?.cancel()\n+        cachedOcrJob = scope.launchIO {\n             val cachedResult = ocrRepository.getCachedPage(chapterId, currentPage.index)\n             withUIContext {\n                 frame.setCachedOcrResult(cachedResult)\n                 viewer.activity.syncActiveOcrOverlay()\n             }\n         }\n     }\n \n     /**\n      * Creates a new progress bar.\n      */\n     private fun createProgressIndicator(): ReaderProgressIndicator {\n         progressContainer = FrameLayout(context)\n         frame.addView(progressContainer, MATCH_PARENT, parentHeight)\n \n         val progress = ReaderProgressIndicator(context).apply {\n             updateLayoutParams<FrameLayout.LayoutParams> {\n                 updateMargins(top = parentHeight / 4)\n             }\n         }\n         progressContainer.addView(progress)\n         return progress\n     }\n \n     /**\n      * Initializes a button to retry pages.\n      */\n     private fun initErrorLayout(error: Throwable?): ReaderErrorBinding {\n         if (errorLayout == null) {\n             errorLayout = ReaderErrorBinding.inflate(LayoutInflater.from(context), frame, true)\n             errorLayout?.root?.layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, (parentHeight * 0.8).toInt())\n             errorLayout?.actionRetry?.setOnClickListener {\n                 page?.let { it.chapter.pageLoader?.retryPage(it) }\n             }\n         }\n \n         val imageUrl = page?.imageUrl\n         errorLayout?.actionOpenInWebView?.isVisible = imageUrl != null\n         if (imageUrl != null) {\n             if (imageUrl.startsWith(\"http\", true)) {\n                 errorLayout?.actionOpenInWebView?.setOnClickListener {\n                     val sourceId = viewer.activity.viewModel.manga?.source\n \n                     val intent = WebViewActivity.newIntent(context, imageUrl, sourceId)\n                     context.startActivity(intent)\n                 }\n             }\n         }\n \n         errorLayout?.errorMessage?.text = with(context) { error?.formattedMessage }\n             ?: context.stringResource(MR.strings.decode_image_error)\n \n         return errorLayout!!\n     }\n \n     /**\n      * Removes the decode error layout from the holder, if found.\n      */\n     private fun removeErrorLayout() {\n         errorLayout?.let {\n             frame.removeView(it.root)\n             errorLayout = null\n         }\n     }\n }\n",
+                    "additions": 8,
                     "deletions": 1,
                     "status": "modified"
                   },
@@ -12290,9 +12304,732 @@
               "modelID": "big-pickle",
               "providerID": "opencode",
               "time": {
-                "created": 1790955464225
+                "created": 1790955464225,
+                "completed": 1790955507173
               },
+              "finish": "tool-calls",
               "id": "msg_0fd43a621001XDQ4uQ9hfQYH40",
+              "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3"
+            },
+            "parts": [
+              {
+                "snapshot": "5934516f2ddbceac885dcc336215c089d62369bc",
+                "type": "step-start",
+                "id": "prt_0fd44475e001gJG3MUNMMPlp18",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd43a621001XDQ4uQ9hfQYH40"
+              },
+              {
+                "type": "reasoning",
+                "text": "For Webtoon (RecyclerView), holders ARE reused from the pool after `recycle()`. So cancelling the scope in `recycle()` would break rebinding — `loadJob` is recreated on bind? Let me check: is `scope.launch { loadPageAndProcessStatus() }` in `init` or in `recycle()`/`bind`?\n\nIn `recycle()` only `loadJob` is cancelled and set to null. So where is loadJob restarted? Let me grep.",
+                "time": {
+                  "start": 1790955505508,
+                  "end": 1790955506425
+                },
+                "id": "prt_0fd4447640016SnIXlm1i48C9T",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd43a621001XDQ4uQ9hfQYH40"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_M9gd60bMEpypxH1QTnOsTX4U",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/yomikai/code && grep -n \"loadJob\\|scope.launch\\|fun bind\\|fun init\" app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt"
+                  },
+                  "output": "87:    private var loadJob: Job? = null\n116:    fun bind(page: ReaderPage) {\n118:        loadJob?.cancel()\n122:        loadJob = scope.launch { loadPageAndProcessStatus() }\n142:        loadJob?.cancel()\n143:        loadJob = null\n306:        scope.launchIO {\n334:    private fun initErrorLayout(error: Throwable?): ReaderErrorBinding {\n",
+                  "metadata": {
+                    "output": "87:    private var loadJob: Job? = null\n116:    fun bind(page: ReaderPage) {\n118:        loadJob?.cancel()\n122:        loadJob = scope.launch { loadPageAndProcessStatus() }\n142:        loadJob?.cancel()\n143:        loadJob = null\n306:        scope.launchIO {\n334:    private fun initErrorLayout(error: Throwable?): ReaderErrorBinding {\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/yomikai/code && grep -n \"loadJob\\|scope.launch\\|fun bind\\|fun init\" app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                  "time": {
+                    "start": 1790955506921,
+                    "end": 1790955506945
+                  }
+                },
+                "id": "prt_0fd444aff001WpdaSrOv6QP1nS",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd43a621001XDQ4uQ9hfQYH40"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "5934516f2ddbceac885dcc336215c089d62369bc",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fd444d66001CVbFzmYNOEPSZk",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd43a621001XDQ4uQ9hfQYH40"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fce1e1dd001ZXDzYXlgaKueVb",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790955507209,
+                "completed": 1790955534935
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fd444e0900188z0KCOHf8habv",
+              "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3"
+            },
+            "parts": [
+              {
+                "snapshot": "5934516f2ddbceac885dcc336215c089d62369bc",
+                "type": "step-start",
+                "id": "prt_0fd44b2c0001BZ5GrFpbC24lTs",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd444e0900188z0KCOHf8habv"
+              },
+              {
+                "type": "reasoning",
+                "text": "For Webtoon, `bind(page)` restarts loadJob on the same scope. So the holder IS reused → cancelling `scope` in `recycle()` would break it permanently.\n\nSo for webtoon the right fix is only to track/cancel the cached-OCR job (line 306), not the scope. Let me do that.\n\nLet me look at line 300-315.",
+                "time": {
+                  "start": 1790955532996,
+                  "end": 1790955533697
+                },
+                "id": "prt_0fd44b2c4001ZQ9WpIBIn3xoQY",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd444e0900188z0KCOHf8habv"
+              },
+              {
+                "type": "text",
+                "text": "Вебтун использует переиспользование — отменять scope нельзя. Правлю только задачу кэша.",
+                "time": {
+                  "start": 1790955533703,
+                  "end": 1790955534714
+                },
+                "id": "prt_0fd44b587001knCtPqeaKn22Hi",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd444e0900188z0KCOHf8habv"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_HUd4VZ5D8YVEIqFOhUJkKzWu",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/yomikai/code && sed -n '298,318p' app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt"
+                  },
+                  "output": "    private fun onImageDecoded() {\n        progressContainer.isVisible = false\n        removeErrorLayout()\n    }\n\n    private fun loadCachedOcrResult() {\n        val currentPage = page ?: return frame.clearCachedOcrResult()\n        val chapterId = currentPage.chapter.chapter.id ?: return frame.clearCachedOcrResult()\n        scope.launchIO {\n            val cachedResult = ocrRepository.getCachedPage(chapterId, currentPage.index)\n            withUIContext {\n                frame.setCachedOcrResult(cachedResult)\n                viewer.activity.syncActiveOcrOverlay()\n            }\n        }\n    }\n\n    /**\n     * Creates a new progress bar.\n     */\n    private fun createProgressIndicator(): ReaderProgressIndicator {\n",
+                  "metadata": {
+                    "output": "    private fun onImageDecoded() {\n        progressContainer.isVisible = false\n        removeErrorLayout()\n    }\n\n    private fun loadCachedOcrResult() {\n        val currentPage = page ?: return frame.clearCachedOcrResult()\n        val chapterId = currentPage.chapter.chapter.id ?: return frame.clearCachedOcrResult()\n        scope.launchIO {\n            val cachedResult = ocrRepository.getCachedPage(chapterId, currentPage.index)\n            withUIContext {\n                frame.setCachedOcrResult(cachedResult)\n                viewer.activity.syncActiveOcrOverlay()\n            }\n        }\n    }\n\n    /**\n     * Creates a new progress bar.\n     */\n    private fun createProgressIndicator(): ReaderProgressIndicator {\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/yomikai/code && sed -n '298,318p' app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                  "time": {
+                    "start": 1790955534644,
+                    "end": 1790955534660
+                  }
+                },
+                "id": "prt_0fd44b73d0018lWvRFFN3TP46J",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd444e0900188z0KCOHf8habv"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "5934516f2ddbceac885dcc336215c089d62369bc",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fd44ba10001VjF4jR1utUKzGI",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd444e0900188z0KCOHf8habv"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fce1e1dd001ZXDzYXlgaKueVb",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790955534966,
+                "completed": 1790955583121
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fd44ba76001FS8evJsp03CEBT",
+              "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3"
+            },
+            "parts": [
+              {
+                "snapshot": "5934516f2ddbceac885dcc336215c089d62369bc",
+                "type": "step-start",
+                "id": "prt_0fd456a3a001Y8Zo0lBZGmIFWR",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd44ba76001FS8evJsp03CEBT"
+              },
+              {
+                "type": "tool",
+                "tool": "edit",
+                "callID": "call_13Zuyk1R12hWJ77DgkP7nx64",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "filePath": "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                    "newString": "private fun loadCachedOcrResult() {\n        val currentPage = page ?: return frame.clearCachedOcrResult()\n        val chapterId = currentPage.chapter.chapter.id ?: return frame.clearCachedOcrResult()\n        // Задание запоминаем и отменяем при переиспользовании держателя:\n        // иначе результат подгрузки прилетал уже на другую страницу и\n        // подсвечивал области, которые к ней отношения не имеют.\n        cachedOcrJob?.cancel()\n        cachedOcrJob = scope.launchIO {\n            val cachedResult = ocrRepository.getCachedPage(chapterId, currentPage.index)\n            withUIContext {\n                frame.setCachedOcrResult(cachedResult)\n                viewer.activity.syncActiveOcrOverlay()\n            }\n        }\n    }\n",
+                    "oldString": "private fun loadCachedOcrResult() {\n        val currentPage = page ?: return frame.clearCachedOcrResult()\n        val chapterId = currentPage.chapter.chapter.id ?: return frame.clearCachedOcrResult()\n        scope.launchIO {\n            val cachedResult = ocrRepository.getCachedPage(chapterId, currentPage.index)\n            withUIContext {\n                frame.setCachedOcrResult(cachedResult)\n                viewer.activity.syncActiveOcrOverlay()\n            }\n        }\n    }\n"
+                  },
+                  "output": "Edit applied successfully.",
+                  "metadata": {
+                    "diagnostics": {},
+                    "diff": "Index: /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n===================================================================\n--- /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n+++ /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n@@ -302,9 +302,13 @@\n \n private fun loadCachedOcrResult() {\n     val currentPage = page ?: return frame.clearCachedOcrResult()\n     val chapterId = currentPage.chapter.chapter.id ?: return frame.clearCachedOcrResult()\n-    scope.launchIO {\n+    // Задание запоминаем и отменяем при переиспользовании держателя:\n+    // иначе результат подгрузки прилетал уже на другую страницу и\n+    // подсвечивал области, которые к ней отношения не имеют.\n+    cachedOcrJob?.cancel()\n+    cachedOcrJob = scope.launchIO {\n         val cachedResult = ocrRepository.getCachedPage(chapterId, currentPage.index)\n         withUIContext {\n             frame.setCachedOcrResult(cachedResult)\n             viewer.activity.syncActiveOcrOverlay()\n",
+                    "filediff": {
+                      "file": "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                      "patch": "Index: /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n===================================================================\n--- /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n+++ /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n@@ -302,9 +302,13 @@\n \n private fun loadCachedOcrResult() {\n     val currentPage = page ?: return frame.clearCachedOcrResult()\n     val chapterId = currentPage.chapter.chapter.id ?: return frame.clearCachedOcrResult()\n-    scope.launchIO {\n+    // Задание запоминаем и отменяем при переиспользовании держателя:\n+    // иначе результат подгрузки прилетал уже на другую страницу и\n+    // подсвечивал области, которые к ней отношения не имеют.\n+    cachedOcrJob?.cancel()\n+    cachedOcrJob = scope.launchIO {\n         val cachedResult = ocrRepository.getCachedPage(chapterId, currentPage.index)\n         withUIContext {\n             frame.setCachedOcrResult(cachedResult)\n             viewer.activity.syncActiveOcrOverlay()\n",
+                      "additions": 5,
+                      "deletions": 1
+                    },
+                    "truncated": false
+                  },
+                  "title": "app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                  "time": {
+                    "start": 1790955582948,
+                    "end": 1790955582966
+                  }
+                },
+                "id": "prt_0fd456a7e0012kBYBER6kl6egc",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd44ba76001FS8evJsp03CEBT"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "91366fb54a0ef16a54102d378353ba7b193d29e0",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fd45766c001mOqNdygKCJB9jY",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd44ba76001FS8evJsp03CEBT"
+              },
+              {
+                "type": "patch",
+                "hash": "5934516f2ddbceac885dcc336215c089d62369bc",
+                "files": [
+                  "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt"
+                ],
+                "id": "prt_0fd45768e001nEf1nzH2GQCxuj",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd44ba76001FS8evJsp03CEBT"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fce1e1dd001ZXDzYXlgaKueVb",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790955583144,
+                "completed": 1790955634554
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fd4576a80016zj8214OksMyr7",
+              "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3"
+            },
+            "parts": [
+              {
+                "snapshot": "91366fb54a0ef16a54102d378353ba7b193d29e0",
+                "type": "step-start",
+                "id": "prt_0fd463671001t76Ohl1E0hIFmi",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd4576a80016zj8214OksMyr7"
+              },
+              {
+                "type": "tool",
+                "tool": "edit",
+                "callID": "call_KVs4ObWrpsaSd74vpVQEn3n1",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "filePath": "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                    "newString": "private var loadJob: Job? = null\n\n    private var cachedOcrJob: Job? = null\n",
+                    "oldString": "private var loadJob: Job? = null\n"
+                  },
+                  "output": "Edit applied successfully.",
+                  "metadata": {
+                    "diagnostics": {},
+                    "diff": "Index: /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n===================================================================\n--- /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n+++ /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n@@ -85,8 +85,10 @@\n  * Job for loading the page.\n  */\n private var loadJob: Job? = null\n \n+private var cachedOcrJob: Job? = null\n+\n init {\n     refreshLayoutParams()\n \n     frame.onImageLoaded = { onImageDecoded() }\n",
+                    "filediff": {
+                      "file": "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                      "patch": "Index: /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n===================================================================\n--- /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n+++ /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n@@ -85,8 +85,10 @@\n  * Job for loading the page.\n  */\n private var loadJob: Job? = null\n \n+private var cachedOcrJob: Job? = null\n+\n init {\n     refreshLayoutParams()\n \n     frame.onImageLoaded = { onImageDecoded() }\n",
+                      "additions": 2,
+                      "deletions": 0
+                    },
+                    "truncated": false
+                  },
+                  "title": "app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                  "time": {
+                    "start": 1790955634379,
+                    "end": 1790955634390
+                  }
+                },
+                "id": "prt_0fd4636aa00153UnOBznzaABn3",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd4576a80016zj8214OksMyr7"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "d46e320cfc988eb377cca0583aeac59e691c49a5",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fd463f450013cAgPatxJ4oBPr",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd4576a80016zj8214OksMyr7"
+              },
+              {
+                "type": "patch",
+                "hash": "91366fb54a0ef16a54102d378353ba7b193d29e0",
+                "files": [
+                  "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt"
+                ],
+                "id": "prt_0fd463f77001c15T3Tt2tBRlJG",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd4576a80016zj8214OksMyr7"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fce1e1dd001ZXDzYXlgaKueVb",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790955634574,
+                "completed": 1790955681431
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fd463f8e0013V8ss0Oqvw82Bu",
+              "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3"
+            },
+            "parts": [
+              {
+                "snapshot": "d46e320cfc988eb377cca0583aeac59e691c49a5",
+                "type": "step-start",
+                "id": "prt_0fd46f36d001uBd10iNMFaB310",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd463f8e0013V8ss0Oqvw82Bu"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_DqP7qpYrf824L1llXmOIpn0A",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/yomikai/code && sed -n '115,130p' app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt"
+                  },
+                  "output": "    /**\n     * Binds the given [page] with this view holder, subscribing to its state.\n     */\n    fun bind(page: ReaderPage) {\n        this.page = page\n        loadJob?.cancel()\n        frame.setOcrPageIdentity(page.chapter.chapter.id, page.index)\n        frame.setFileCropRect(null)\n        frame.clearCachedOcrResult()\n        loadJob = scope.launch { loadPageAndProcessStatus() }\n        refreshLayoutParams()\n    }\n\n    private fun refreshLayoutParams() {\n        frame.layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {\n            if (!viewer.isContinuous) {\n",
+                  "metadata": {
+                    "output": "    /**\n     * Binds the given [page] with this view holder, subscribing to its state.\n     */\n    fun bind(page: ReaderPage) {\n        this.page = page\n        loadJob?.cancel()\n        frame.setOcrPageIdentity(page.chapter.chapter.id, page.index)\n        frame.setFileCropRect(null)\n        frame.clearCachedOcrResult()\n        loadJob = scope.launch { loadPageAndProcessStatus() }\n        refreshLayoutParams()\n    }\n\n    private fun refreshLayoutParams() {\n        frame.layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {\n            if (!viewer.isContinuous) {\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/yomikai/code && sed -n '115,130p' app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                  "time": {
+                    "start": 1790955681234,
+                    "end": 1790955681257
+                  }
+                },
+                "id": "prt_0fd46f39a001wk6RZfDZFWhaE4",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd463f8e0013V8ss0Oqvw82Bu"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "d46e320cfc988eb377cca0583aeac59e691c49a5",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fd46f666001eMlX4SLuwWjAfA",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd463f8e0013V8ss0Oqvw82Bu"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fce1e1dd001ZXDzYXlgaKueVb",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790955681456,
+                "completed": 1790955740072
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fd46f6b0001XWI9gApCd1uWKh",
+              "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3"
+            },
+            "parts": [
+              {
+                "snapshot": "d46e320cfc988eb377cca0583aeac59e691c49a5",
+                "type": "step-start",
+                "id": "prt_0fd47d160001TutSOYPcEjUEmc",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd46f6b0001XWI9gApCd1uWKh"
+              },
+              {
+                "type": "tool",
+                "tool": "edit",
+                "callID": "call_0ACzPVYoJK0ytcg74hiz6Obi",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "filePath": "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                    "newString": "fun bind(page: ReaderPage) {\n        this.page = page\n        loadJob?.cancel()\n        cachedOcrJob?.cancel()\n",
+                    "oldString": "fun bind(page: ReaderPage) {\n        this.page = page\n        loadJob?.cancel()\n"
+                  },
+                  "output": "Edit applied successfully.",
+                  "metadata": {
+                    "diagnostics": {},
+                    "diff": "Index: /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n===================================================================\n--- /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n+++ /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n@@ -117,8 +117,9 @@\n  */\n fun bind(page: ReaderPage) {\n     this.page = page\n     loadJob?.cancel()\n+    cachedOcrJob?.cancel()\n     frame.setOcrPageIdentity(page.chapter.chapter.id, page.index)\n     frame.setFileCropRect(null)\n     frame.clearCachedOcrResult()\n     loadJob = scope.launch { loadPageAndProcessStatus() }\n",
+                    "filediff": {
+                      "file": "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                      "patch": "Index: /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n===================================================================\n--- /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n+++ /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt\n@@ -117,8 +117,9 @@\n  */\n fun bind(page: ReaderPage) {\n     this.page = page\n     loadJob?.cancel()\n+    cachedOcrJob?.cancel()\n     frame.setOcrPageIdentity(page.chapter.chapter.id, page.index)\n     frame.setFileCropRect(null)\n     frame.clearCachedOcrResult()\n     loadJob = scope.launch { loadPageAndProcessStatus() }\n",
+                      "additions": 1,
+                      "deletions": 0
+                    },
+                    "truncated": false
+                  },
+                  "title": "app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt",
+                  "time": {
+                    "start": 1790955739826,
+                    "end": 1790955739836
+                  }
+                },
+                "id": "prt_0fd47d17d001sS2cKcFqIl0wEQ",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd46f6b0001XWI9gApCd1uWKh"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "95e9cdae2cd94decdb8c4009dc31a9666d56eb9e",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fd47db68001H9EjkqVNGRn0ir",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd46f6b0001XWI9gApCd1uWKh"
+              },
+              {
+                "type": "patch",
+                "hash": "d46e320cfc988eb377cca0583aeac59e691c49a5",
+                "files": [
+                  "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt"
+                ],
+                "id": "prt_0fd47dba4001hZ5Ck4M2OF19uF",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd46f6b0001XWI9gApCd1uWKh"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fce1e1dd001ZXDzYXlgaKueVb",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790955740093,
+                "completed": 1790955789186
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fd47dbbd0017m7ge9TiruI4XB",
+              "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3"
+            },
+            "parts": [
+              {
+                "snapshot": "95e9cdae2cd94decdb8c4009dc31a9666d56eb9e",
+                "type": "step-start",
+                "id": "prt_0fd4897df001vNwon7TBByFTsr",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd47dbbd0017m7ge9TiruI4XB"
+              },
+              {
+                "type": "text",
+                "text": "Проверяю состояние сборки.",
+                "time": {
+                  "start": 1790955788259,
+                  "end": 1790955789018
+                },
+                "id": "prt_0fd4897e3001DF82VsXAwfKr6Z",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd47dbbd0017m7ge9TiruI4XB"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_5h7Vyx6uQ0QeXZRPRKasLnTf",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "tail -80 /tmp/opencode/compile_app.log; echo \"===\"; pgrep -f \"compileBasicDebug\" >/dev/null && echo RUNNING || echo FINISHED"
+                  },
+                  "output": "Calculating task graph as no cached configuration is available for tasks: :app:compileBasicDebugKotlin\nType-safe project accessors is an incubating feature.\n> Task :build-logic:checkKotlinGradlePluginConfigurationErrors SKIPPED\n> Task :build-logic:pluginDescriptors\n> Task :build-logic:processResources\n> Task :build-logic:compileKotlin\n> Task :build-logic:compileJava NO-SOURCE\n> Task :build-logic:classes\n> Task :build-logic:jar\n\n> Configure project :app\nWARNING: The option setting 'android.enableR8.fullMode=false' is deprecated.\nThe current default is 'true'.\nIt will be removed in version 10.0 of the Android Gradle plugin.\n===\nRUNNING\n",
+                  "metadata": {
+                    "output": "Calculating task graph as no cached configuration is available for tasks: :app:compileBasicDebugKotlin\nType-safe project accessors is an incubating feature.\n> Task :build-logic:checkKotlinGradlePluginConfigurationErrors SKIPPED\n> Task :build-logic:pluginDescriptors\n> Task :build-logic:processResources\n> Task :build-logic:compileKotlin\n> Task :build-logic:compileJava NO-SOURCE\n> Task :build-logic:classes\n> Task :build-logic:jar\n\n> Configure project :app\nWARNING: The option setting 'android.enableR8.fullMode=false' is deprecated.\nThe current default is 'true'.\nIt will be removed in version 10.0 of the Android Gradle plugin.\n===\nRUNNING\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "tail -80 /tmp/opencode/compile_app.log; echo \"===\"; pgrep -f \"compileBasicDebug\" >/dev/null && echo RUNNING || echo FINISHED",
+                  "time": {
+                    "start": 1790955788969,
+                    "end": 1790955789025
+                  }
+                },
+                "id": "prt_0fd4898960013tbFVrbOAJLGX9",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd47dbbd0017m7ge9TiruI4XB"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "95e9cdae2cd94decdb8c4009dc31a9666d56eb9e",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fd489b26001oZflljde87z7mB",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd47dbbd0017m7ge9TiruI4XB"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fce1e1dd001ZXDzYXlgaKueVb",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790955789228,
+                "completed": 1790955844409
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fd489bac0013ZPmaqgfvlHp4G",
+              "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3"
+            },
+            "parts": [
+              {
+                "snapshot": "95e9cdae2cd94decdb8c4009dc31a9666d56eb9e",
+                "type": "step-start",
+                "id": "prt_0fd495fed001Iwt5SxlJ1tZJiS",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd489bac0013ZPmaqgfvlHp4G"
+              },
+              {
+                "type": "reasoning",
+                "text": "Build is still stuck/compiling. Let me check if the Kotlin compiler process is still active, and how long.\n\nMeanwhile let me fix the remaining items:\n- #9: `onPageSplit` index bounds\n- #3: `ReaderSettingsScreenModel` leak\n\nLet me do #9 (simple, safe).",
+                "time": {
+                  "start": 1790955839472,
+                  "end": 1790955840137
+                },
+                "id": "prt_0fd495ff00013Rx9P62e49nKIQ",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd489bac0013ZPmaqgfvlHp4G"
+              },
+              {
+                "type": "text",
+                "text": "Правлю выход за границы массива в `onPageSplit`.",
+                "time": {
+                  "start": 1790955840141,
+                  "end": 1790955842501
+                },
+                "id": "prt_0fd49628d001sZgXcHKEiamlyV",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd489bac0013ZPmaqgfvlHp4G"
+              },
+              {
+                "type": "tool",
+                "tool": "edit",
+                "callID": "call_1XQzk3gm9SZ4icrErbCKLi2n",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "filePath": "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt",
+                    "newString": "val currentIndex = items.indexOf(currentPage)\n        if (currentIndex < 0) {\n            // Страницы нет в списке (список глав уже пересобрали). Дальше\n            // currentIndex + 1 даёт 0, а currentIndex — -1, и items[...] падал\n            // с IndexOutOfBounds прямо внутри загрузки страницы.\n            return\n        }\n",
+                    "oldString": "val currentIndex = items.indexOf(currentPage)\n"
+                  },
+                  "output": "Edit applied successfully.",
+                  "metadata": {
+                    "diagnostics": {},
+                    "diff": "Index: /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt\n===================================================================\n--- /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt\n+++ /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt\n@@ -152,8 +152,14 @@\n fun onPageSplit(currentPage: Any?, newPage: InsertPage) {\n     if (currentPage !is ReaderPage) return\n \n     val currentIndex = items.indexOf(currentPage)\n+    if (currentIndex < 0) {\n+        // Страницы нет в списке (список глав уже пересобрали). Дальше\n+        // currentIndex + 1 даёт 0, а currentIndex — -1, и items[...] падал\n+        // с IndexOutOfBounds прямо внутри загрузки страницы.\n+        return\n+    }\n \n     // Put aside preprocessed pages for next chapter so they don't get removed when changing chapter\n     if (currentPage.chapter.chapter.id != currentChapter?.chapter?.id) {\n         preprocessed[newPage.index] = newPage\n",
+                    "filediff": {
+                      "file": "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt",
+                      "patch": "Index: /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt\n===================================================================\n--- /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt\n+++ /home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt\n@@ -152,8 +152,14 @@\n fun onPageSplit(currentPage: Any?, newPage: InsertPage) {\n     if (currentPage !is ReaderPage) return\n \n     val currentIndex = items.indexOf(currentPage)\n+    if (currentIndex < 0) {\n+        // Страницы нет в списке (список глав уже пересобрали). Дальше\n+        // currentIndex + 1 даёт 0, а currentIndex — -1, и items[...] падал\n+        // с IndexOutOfBounds прямо внутри загрузки страницы.\n+        return\n+    }\n \n     // Put aside preprocessed pages for next chapter so they don't get removed when changing chapter\n     if (currentPage.chapter.chapter.id != currentChapter?.chapter?.id) {\n         preprocessed[newPage.index] = newPage\n",
+                      "additions": 6,
+                      "deletions": 0
+                    },
+                    "truncated": false
+                  },
+                  "title": "app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt",
+                  "time": {
+                    "start": 1790955842497,
+                    "end": 1790955843268
+                  }
+                },
+                "id": "prt_0fd4963f2001T42Y1Gnct0J1Fw",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd489bac0013ZPmaqgfvlHp4G"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "2f461e100fb2ef922d3425c9b78f8d9b0a333d2a",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fd4972e0001kG1BdD1tRD8YqA",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd489bac0013ZPmaqgfvlHp4G"
+              },
+              {
+                "type": "patch",
+                "hash": "95e9cdae2cd94decdb8c4009dc31a9666d56eb9e",
+                "files": [
+                  "/home/runner/hub-work/yomikai/code/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt"
+                ],
+                "id": "prt_0fd4973330011v4vqXCWNcxsrr",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd489bac0013ZPmaqgfvlHp4G"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fce1e1dd001ZXDzYXlgaKueVb",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790955844441,
+                "completed": 1790955893777
+              },
+              "finish": "tool-calls",
+              "id": "msg_0fd497359001VodcN0RtnB74SV",
+              "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3"
+            },
+            "parts": [
+              {
+                "snapshot": "2f461e100fb2ef922d3425c9b78f8d9b0a333d2a",
+                "type": "step-start",
+                "id": "prt_0fd4a300b001HRZAo2XufOJNw0",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd497359001VodcN0RtnB74SV"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_QNTw51qjFs4u44lfXEUyL1a7",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/yomikai/code && sed -n '155,185p' app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt"
+                  },
+                  "output": "        val currentIndex = items.indexOf(currentPage)\n        if (currentIndex < 0) {\n            // Страницы нет в списке (список глав уже пересобрали). Дальше\n            // currentIndex + 1 даёт 0, а currentIndex — -1, и items[...] падал\n            // с IndexOutOfBounds прямо внутри загрузки страницы.\n            return\n        }\n\n        // Put aside preprocessed pages for next chapter so they don't get removed when changing chapter\n        if (currentPage.chapter.chapter.id != currentChapter?.chapter?.id) {\n            preprocessed[newPage.index] = newPage\n            return\n        }\n\n        val placeAtIndex = when (viewer) {\n            is L2RPagerViewer,\n            is VerticalPagerViewer,\n            -> currentIndex + 1\n            else -> currentIndex\n        }\n\n        // It will enter a endless cycle of insert pages\n        if (viewer is R2LPagerViewer && placeAtIndex - 1 >= 0 && items[placeAtIndex - 1] is InsertPage) {\n            return\n        }\n\n        // Same here it will enter a endless cycle of insert pages\n        if (items[placeAtIndex] is InsertPage) {\n            return\n        }\n\n",
+                  "metadata": {
+                    "output": "        val currentIndex = items.indexOf(currentPage)\n        if (currentIndex < 0) {\n            // Страницы нет в списке (список глав уже пересобрали). Дальше\n            // currentIndex + 1 даёт 0, а currentIndex — -1, и items[...] падал\n            // с IndexOutOfBounds прямо внутри загрузки страницы.\n            return\n        }\n\n        // Put aside preprocessed pages for next chapter so they don't get removed when changing chapter\n        if (currentPage.chapter.chapter.id != currentChapter?.chapter?.id) {\n            preprocessed[newPage.index] = newPage\n            return\n        }\n\n        val placeAtIndex = when (viewer) {\n            is L2RPagerViewer,\n            is VerticalPagerViewer,\n            -> currentIndex + 1\n            else -> currentIndex\n        }\n\n        // It will enter a endless cycle of insert pages\n        if (viewer is R2LPagerViewer && placeAtIndex - 1 >= 0 && items[placeAtIndex - 1] is InsertPage) {\n            return\n        }\n\n        // Same here it will enter a endless cycle of insert pages\n        if (items[placeAtIndex] is InsertPage) {\n            return\n        }\n\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/yomikai/code && sed -n '155,185p' app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt",
+                  "time": {
+                    "start": 1790955893531,
+                    "end": 1790955893563
+                  }
+                },
+                "id": "prt_0fd4a308a001bY38mHjhpmVbkM",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd497359001VodcN0RtnB74SV"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "2f461e100fb2ef922d3425c9b78f8d9b0a333d2a",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_0fd4a33a10019t3P5A4cBxmoEz",
+                "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3",
+                "messageID": "msg_0fd497359001VodcN0RtnB74SV"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_0fce1e1dd001ZXDzYXlgaKueVb",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1790955893826
+              },
+              "id": "msg_0fd4a3442001vCU8YK9rIXade8",
               "sessionID": "ses_f031e1e48ffe5z6Gpb3VrYEFT3"
             },
             "parts": []
@@ -31254,8 +31991,8 @@
     }
   ],
   "state": "updated",
-  "stamp": "20261002T153804",
-  "startedAt": "2026-10-02T15:38:12Z",
+  "stamp": "20261002T154517",
+  "startedAt": "2026-10-02T15:45:25Z",
   "runId": "37008353501",
   "runNumber": "359"
 }
