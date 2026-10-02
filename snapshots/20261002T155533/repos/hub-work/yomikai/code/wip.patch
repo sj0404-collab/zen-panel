@@ -782,6 +782,32 @@ index 90e082542..1ed1be819 100644
              setMangaViewerFlags.awaitSetReadingMode(manga.id, readingMode.flagValue.toLong())
              val currChapters = state.value.viewerChapters
              if (currChapters != null) {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderSettingsScreenModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderSettingsScreenModel.kt
+index 790984bea..68c9e3be0 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderSettingsScreenModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderSettingsScreenModel.kt
+@@ -18,13 +18,19 @@ class ReaderSettingsScreenModel(
+     val preferences: ReaderPreferences = Injekt.get(),
+ ) : ScreenModel {
+ 
++    // WhileSubscribed, а не Lazily: держатель создаётся обычным remember{} и
++    // в ScreenModelStore не снимается, поэтому кэш Lazily навсегда удерживал
++    // последний Viewer — а вместе с ним Activity и всё дерево представлений
++    // после onDestroy. Окно в 5с идёт после закрытия диалога.
++    private val start = SharingStarted.WhileSubscribed(5_000)
++
+     val viewerFlow = readerState
+         .map { it.viewer }
+         .distinctUntilChanged()
+-        .stateIn(ioCoroutineScope, SharingStarted.Lazily, null)
++        .stateIn(ioCoroutineScope, start, null)
+ 
+     val mangaFlow = readerState
+         .map { it.manga }
+         .distinctUntilChanged()
+-        .stateIn(ioCoroutineScope, SharingStarted.Lazily, null)
++        .stateIn(ioCoroutineScope, start, null)
+ }
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
 index c00213e77..c512c4c92 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
@@ -825,6 +851,69 @@ index c00213e77..c512c4c92 100644
              val cachedResult = ocrRepository.getCachedPage(chapterId, page.index)
              withUIContext {
                  setCachedOcrResult(cachedResult)
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt
+index 6aaaa31f1..896144322 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerViewerAdapter.kt
+@@ -153,6 +153,12 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
+         if (currentPage !is ReaderPage) return
+ 
+         val currentIndex = items.indexOf(currentPage)
++        if (currentIndex < 0) {
++            // Страницы нет в списке (список глав уже пересобрали). Дальше
++            // currentIndex + 1 даёт 0, а currentIndex — -1, и items[...] падал
++            // с IndexOutOfBounds прямо внутри загрузки страницы.
++            return
++        }
+ 
+         // Put aside preprocessed pages for next chapter so they don't get removed when changing chapter
+         if (currentPage.chapter.chapter.id != currentChapter?.chapter?.id) {
+@@ -167,6 +173,11 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
+             else -> currentIndex
+         }
+ 
++        // Разрез не вставляется мимо списка: у последней страницы в режиме
++        // LTR/вебтун placeAtIndex равен items.size, и обращение к items[...]
++        // было IndexOutOfBoundsException.
++        if (placeAtIndex !in items.indices) return
++
+         // It will enter a endless cycle of insert pages
+         if (viewer is R2LPagerViewer && placeAtIndex - 1 >= 0 && items[placeAtIndex - 1] is InsertPage) {
+             return
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt
+index def4e9b5c..0610c41d9 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt
+@@ -86,6 +86,8 @@ class WebtoonPageHolder(
+      */
+     private var loadJob: Job? = null
+ 
++    private var cachedOcrJob: Job? = null
++
+     init {
+         refreshLayoutParams()
+ 
+@@ -116,6 +118,7 @@ class WebtoonPageHolder(
+     fun bind(page: ReaderPage) {
+         this.page = page
+         loadJob?.cancel()
++        cachedOcrJob?.cancel()
+         frame.setOcrPageIdentity(page.chapter.chapter.id, page.index)
+         frame.setFileCropRect(null)
+         frame.clearCachedOcrResult()
+@@ -303,7 +306,11 @@ class WebtoonPageHolder(
+     private fun loadCachedOcrResult() {
+         val currentPage = page ?: return frame.clearCachedOcrResult()
+         val chapterId = currentPage.chapter.chapter.id ?: return frame.clearCachedOcrResult()
+-        scope.launchIO {
++        // Задание запоминаем и отменяем при переиспользовании держателя:
++        // иначе результат подгрузки прилетал уже на другую страницу и
++        // подсвечивал области, которые к ней отношения не имеют.
++        cachedOcrJob?.cancel()
++        cachedOcrJob = scope.launchIO {
+             val cachedResult = ocrRepository.getCachedPage(chapterId, currentPage.index)
+             withUIContext {
+                 frame.setCachedOcrResult(cachedResult)
 diff --git a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt b/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
 index d4828bee8..4a73a41dd 100644
 --- a/overlay-reader/app/src/main/java/com/yomikai/overlayreader/OverlayReaderService.kt
