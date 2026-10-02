@@ -1,0 +1,378 @@
+diff --git a/app/src/main/assets/panel/index.html b/app/src/main/assets/panel/index.html
+index 3575862..6e6fe86 100644
+--- a/app/src/main/assets/panel/index.html
++++ b/app/src/main/assets/panel/index.html
+@@ -60,6 +60,17 @@
+   }
+   .row { display: flex; gap: 8px; flex-wrap: wrap; }
+   .row > * { flex: 1 1 150px; }
++  /* The rarely pressed controls live in here: one line instead of six, and
++     nothing is lost - tap the summary and they are all still there. */
++  details.more { margin-top: 8px; }
++  details.more > summary {
++    color: var(--dim); font-size: 12.5px; font-weight: 600;
++    padding: 8px 0; cursor: pointer; list-style: none;
++  }
++  details.more > summary::-webkit-details-marker { display: none; }
++  details.more > summary::before { content: '▸ '; }
++  details.more[open] > summary::before { content: '▾ '; }
++  details.more[open] > summary { color: var(--cyan); }
+   table { width: 100%; border-collapse: collapse; font-size: 13px; }
+   td { padding: 8px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+   td:first-child { color: var(--dim); white-space: nowrap; width: 1%; padding-right: 12px; }
+@@ -257,11 +268,16 @@
+     <h2>Раннер / файлы</h2>
+     <div class="note" id="runner-line" style="margin-top:0">Живой хаб не найден — файлы пакаются там же, в хабе.</div>
+     <div class="row" style="margin-top:8px">
+-      <button class="ghost small" onclick="runnerPanelScan()">🔍 Файлы</button>
+       <button class="ghost small" id="pr-save" onclick="runnerPanelSave()" disabled>💾 Сохранить</button>
+-      <button class="ghost small" id="pr-restart" onclick="runnerPanelRestart()" disabled>⟲ Перезапустить</button>
+       <button class="ghost small" id="pr-stop" onclick="runnerPanelStop()" disabled>⏻ Выключить</button>
+     </div>
++    <details class="more" id="runner-more">
++      <summary>⚙️ Ещё — файлы и перезапуск</summary>
++      <div class="row" style="margin-top:8px">
++        <button class="ghost small" onclick="runnerPanelScan()">🔍 Файлы</button>
++        <button class="ghost small" id="pr-restart" onclick="runnerPanelRestart()" disabled>⟲ Перезапустить</button>
++      </div>
++    </details>
+     <div id="runner-scan" style="margin-top:8px"></div>
+     <div id="runner-res"></div>
+   </div>
+@@ -269,24 +285,26 @@
+   <div class="card" id="handoff-card">
+     <h2>🔁 Эстафета сессии</h2>
+     <div class="note" style="margin-top:0" id="ho-line">читаю настройки…</div>
+-    <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap">
+-      <label class="note" style="display:flex;align-items:center;gap:6px">
+-        <input id="ho-auto" type="checkbox"> автопередача</label>
+-      <label class="note">работает до
+-        <input id="ho-age" type="number" min="0" max="720" step="10" inputmode="numeric"
+-               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
+-      <label class="note">простой
+-        <input id="ho-idle" type="number" min="0" max="720" step="5" inputmode="numeric"
+-               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
+-      <label class="note">отсчёт
+-        <input id="ho-count" type="number" min="30" max="1800" step="30" inputmode="numeric"
+-               style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> с</label>
+-    </div>
+     <div class="row" style="margin-top:8px">
+-      <button class="small" onclick="handoffPanelSave()">💾 Сохранить</button>
+       <button class="ghost small" id="ho-start" onclick="handoffPanelStart()">🔁 Передать сейчас</button>
+       <button class="ghost small" id="ho-continue" onclick="handoffPanelContinue()">▶️ Продолжить</button>
+     </div>
++    <details class="more" id="ho-more">
++      <summary id="ho-more-sum">⚙️ Автопередача и лимиты</summary>
++      <div class="row" style="margin-top:8px;gap:10px;flex-wrap:wrap">
++        <label class="note" style="display:flex;align-items:center;gap:6px">
++          <input id="ho-auto" type="checkbox"> автопередача</label>
++        <label class="note">работает до
++          <input id="ho-age" type="number" min="0" max="720" step="10" inputmode="numeric"
++                 style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
++        <label class="note">простой
++          <input id="ho-idle" type="number" min="0" max="720" step="5" inputmode="numeric"
++                 style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> мин</label>
++        <label class="note">отсчёт
++          <input id="ho-count" type="number" min="30" max="1800" step="30" inputmode="numeric"
++                 style="width:66px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)"> с</label>
++        <button class="small" onclick="handoffPanelSave()">💾 Сохранить</button>
++      </div>
+ <div class="note" id="ho-hint" style="margin-top:6px">
+       Без «автопередачи» ничего не запускается само: раннер живёт, пока жив GitHub, и уходит только по кнопке.
+       С галочкой сессия, которой вы реально пользуетесь, заранее переезжает на новый раннер, чтобы не попасть под 6-часовой лимит.
+@@ -295,6 +313,7 @@
+       Передача сначала сохраняет всё на GitHub, потом считает 3 минуты; «Продолжить» отменяет.
+       0 = выключено. Если не удалось сохранить — раннер не выключается.
+     </div>
++    </details>
+   </div>
+ 
+   <div class="card">
+@@ -2582,9 +2601,14 @@ function handoffPanelRender(doc) {
+   if (s.reason) bits.push(esc(HO_WHY[s.reason] || s.reason));
+   if (s.lastError) bits.push('<span class="danger">' + esc(s.lastError) + '</span>');
+   if (s.successor && s.successor.url) bits.push('новый: <a href="' + esc(s.successor.url) + '" target="_blank" rel="noreferrer">' + esc(s.successor.url) + '</a>');
+-  if (s.savedIn) bits.push('настройки: ' + (s.savedIn === 'repo' ? 'в репозитории' : 'локально у раннера'));
+-  bits.push(s.enabled ? 'автопередача включена' : 'автопередача выключена — сам ничего не запускаю');
++  if (s.ageMin != null) bits.push('раннер живёт ' + esc(s.ageMin) + ' мин');
+   line.innerHTML = bits.join(' · ');
++  // The switch lives inside the folded block, so the summary carries its state:
++  // that way the panel still says "nothing runs on its own" without adding a
++  // fourth line of text to the card.
++  const sum = $('ho-more-sum');
++  if (sum) sum.textContent = '⚙️ Автопередача и лимиты — ' + (s.enabled ? 'включена' : 'выключена') +
++    (s.savedIn ? ' · ' + (s.savedIn === 'repo' ? 'в репозитории' : 'локально') : '');
+   const cont = $('ho-continue');
+   if (cont) cont.disabled = !(s.state === 'countdown' || s.state === 'failed');
+   const start = $('ho-start');
+diff --git a/npm-hub/public/dashboard-app.js b/npm-hub/public/dashboard-app.js
+index fb8df2e..18f4ed9 100644
+--- a/npm-hub/public/dashboard-app.js
++++ b/npm-hub/public/dashboard-app.js
+@@ -7,6 +7,7 @@
+ 
+ let RUNNER = null;
+ let RUNNER_BUSY = false;
++let RUNNER_MORE = false;   // "Ещё" open - it has to survive a re-render
+ let serverSessions = [];
+ 
+ async function pageInit() {
+@@ -79,14 +80,23 @@ function runnerRender() {
+     <div class="runner-h">🎛 Раннер <span class="runner-dot${onActs ? ' on' : ''}"></span></div>
+     <div class="runner-line">${info}</div>
+     <div class="runner-btns">
+-      <button class="btn btn-sm" onclick="runnerScan()">🔍 Файлы</button>
+       <button class="btn btn-sm btn-ok" onclick="runnerSave()" id="runner-save" disabled>💾 Сохранить</button>
+-      <button class="btn btn-sm btn-ok" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled'}>⟲ Перезапуск</button>
+       <button class="btn btn-sm btn-er" onclick="runnerStop()" id="runner-stop"${onActs ? '' : ' disabled'}>⏻ Выключить</button>
++      <details class="more" id="runner-more" ontoggle="RUNNER_MORE=this.open">
++        <summary>⚙️ Ещё</summary>
++        <div class="runner-btns" style="margin:8px 0 0">
++          <button class="btn btn-sm" onclick="runnerScan()">🔍 Файлы</button>
++          <button class="btn btn-sm btn-ok" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled'}>⟲ Перезапуск</button>
++        </div>
++      </details>
+     </div>
+     <div id="runner-scan"></div>
+     <div id="runner-res"></div>
+   </div>`;
++  // The card is rebuilt on every scan and install, so a fold the user opened
++  // would snap shut under their finger. Put it back the way they left it.
++  const runnerMore = document.getElementById('runner-more');
++  if (runnerMore && RUNNER_MORE) runnerMore.open = true;
+   if (RUNNER_BUSY) {
+     const s = document.getElementById('runner-scan');
+     if (s) s.innerHTML = '<div class="runner-busy">работаю…</div>';
+diff --git a/npm-hub/public/desktop-app.js b/npm-hub/public/desktop-app.js
+index 1469d9a..a958956 100644
+--- a/npm-hub/public/desktop-app.js
++++ b/npm-hub/public/desktop-app.js
+@@ -412,6 +412,8 @@ function renderDashboard() {
+ // ===== RUNNER CARD — сохранение / выключение / перезапуск ранера =====
+ let RUNNER = null;        // last /api/runner answer
+ let RUNNER_BUSY = false;  // stop/restart in flight
++let RUNNER_MORE = false;  // "Ещё" open - it has to survive a re-render
++let HO_MORE = false;      // the folded relay settings, same reason
+ function fmtBytes(n) {
+   if (n == null) return '?';
+   if (n < 1024) return n + ' B';
+@@ -440,26 +442,42 @@ function runnerRender() {
+     <div class="runner-h">🎛 Раннер <span class="runner-dot${onActs ? ' on' : ''}"></span></div>
+     <div class="runner-line">${info}</div>
+     <div class="runner-btns">
+-      <button class="btn btn-sm" onclick="runnerScan()">🔍 Файлы</button>
+       <button class="btn btn-sm btn-ok" onclick="runnerSave()" id="runner-save" disabled>💾 Сохранить</button>
+-      <button class="btn btn-sm btn-ok" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled'}>⟲ Перезапуск</button>
+       <button class="btn btn-sm btn-er" onclick="runnerStop()" id="runner-stop"${onActs ? '' : ' disabled'}>⏻ Выключить</button>
++      <details class="more" id="runner-more" ontoggle="RUNNER_MORE=this.open">
++        <summary>⚙️ Ещё</summary>
++        <div class="runner-btns" style="margin:8px 0 0">
++          <button class="btn btn-sm" onclick="runnerScan()">🔍 Файлы</button>
++          <button class="btn btn-sm btn-ok" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled'}>⟲ Перезапуск</button>
++        </div>
++      </details>
+     </div>
+     <div id="runner-scan"></div>
+     <div id="runner-res"></div>
+     <div class="runner-h" style="margin-top:10px">🔁 Эстафета <span class="runner-dot" id="handoff-dot"></span></div>
+     <div class="runner-line" id="handoff-line">загружаю состояние…</div>
+     <div class="runner-btns">
+-      <label class="runner-lbl"><input id="ho-auto" type="checkbox"> автопередача</label>
+-      <label class="runner-lbl">работает до <input id="ho-age" class="runner-inp" type="number" min="0" max="720" step="10" inputmode="numeric"> мин</label>
+-      <label class="runner-lbl">простой <input id="ho-idle" class="runner-inp" type="number" min="0" max="720" step="5" inputmode="numeric"> мин</label>
+-      <label class="runner-lbl">отсчёт <input id="ho-count" class="runner-inp" type="number" min="30" max="1800" step="30" inputmode="numeric"> с</label>
+-      <button class="btn btn-sm" onclick="handoffSave()">💾 Лимиты</button>
+       <button class="btn btn-sm btn-ok" onclick="handoffStart()" id="ho-start">🔁 Передать</button>
+       <button class="btn btn-sm btn-ok" onclick="handoffContinue()" id="ho-continue" hidden>▶️ Продолжить</button>
++      <details class="more" id="ho-more" ontoggle="HO_MORE=this.open">
++        <summary id="ho-more-sum">⚙️ Автопередача и лимиты</summary>
++        <div class="runner-btns" style="margin:8px 0 0">
++          <label class="runner-lbl"><input id="ho-auto" type="checkbox"> автопередача</label>
++          <label class="runner-lbl">работает до <input id="ho-age" class="runner-inp" type="number" min="0" max="720" step="10" inputmode="numeric"> мин</label>
++          <label class="runner-lbl">простой <input id="ho-idle" class="runner-inp" type="number" min="0" max="720" step="5" inputmode="numeric"> мин</label>
++          <label class="runner-lbl">отсчёт <input id="ho-count" class="runner-inp" type="number" min="30" max="1800" step="30" inputmode="numeric"> с</label>
++          <button class="btn btn-sm" onclick="handoffSave()">💾 Лимиты</button>
++        </div>
++        <div class="runner-line" style="font-size:11px;opacity:.7;margin:8px 0 0" id="handoff-hint"></div>
++      </details>
+     </div>
+-    <div class="runner-line" style="font-size:11px;opacity:.7" id="handoff-hint"></div>
+   </div>`;
++  // The card is rebuilt on every scan and install, so a fold the user opened
++  // would snap shut under their finger. Put it back the way they left it.
++  const runnerMore = document.getElementById('runner-more');
++  if (runnerMore && RUNNER_MORE) runnerMore.open = true;
++  const hoMore = document.getElementById('ho-more');
++  if (hoMore && HO_MORE) hoMore.open = true;
+   handoffRender();
+   if (RUNNER_BUSY) {
+     const s = document.getElementById('runner-scan');
+@@ -506,7 +524,6 @@ function handoffRender() {
+   if (s.state === 'failed' && s.lastError) bits.push('<span style="color:var(--err)">' + escHtml(s.lastError) + '</span>');
+   if (s.successor && s.successor.url) bits.push('новый: <a href="' + escAttr(s.successor.url) + '" target="_blank" rel="noreferrer">' + escHtml(s.successor.url) + '</a>');
+   bits.push('раннер живёт ' + (s.ageMin || 0) + ' мин' + (p.idleMin > 0 ? ', простой ' + (s.idleMin || 0) + '/' + p.idleMin + ' мин' : ''));
+-  bits.push('настройки: ' + (s.savedIn === 'repo' ? 'в control-репозитории' : 'локально'));
+   line.innerHTML = bits.join(' · ');
+   const dot = document.getElementById('handoff-dot');
+   if (dot) dot.className = 'runner-dot' + (cap.available && s.state !== 'idle' ? ' on' : '');
+@@ -516,7 +533,11 @@ function handoffRender() {
+   set('ho-count', p.countdownSec == null ? '' : p.countdownSec);
+   const autoBox = document.getElementById('ho-auto');
+   if (autoBox && document.activeElement !== autoBox) autoBox.checked = p.auto === true || p.auto === 1;
+-  bits.push(p.auto ? 'автопередача включена' : 'автопередача выключена — сам ничего не запускаю');
++  // The switch and the limits are folded away, so the summary carries their
++  // state instead of adding another line to the card.
++  const sum = document.getElementById('ho-more-sum');
++  if (sum) sum.textContent = '⚙️ Автопередача и лимиты — ' + (s.enabled ? 'включена' : 'выключена') +
++    (s.savedIn ? ' · ' + (s.savedIn === 'repo' ? 'в репозитории' : 'локально') : '');
+   const cont = document.getElementById('ho-continue');
+   if (cont) cont.hidden = !(s.state === 'countdown' || s.state === 'failed');
+   const start = document.getElementById('ho-start');
+diff --git a/npm-hub/public/hub.css b/npm-hub/public/hub.css
+index 2327517..6270602 100644
+--- a/npm-hub/public/hub.css
++++ b/npm-hub/public/hub.css
+@@ -58,6 +58,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
+ .runner-res a{color:var(--acc)}
+ .runner-err{font-size:12px;color:var(--err);background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.3);border-radius:8px;padding:8px;margin-bottom:8px}
+ .runner-busy{font-size:12px;color:var(--warn);margin-bottom:8px}
++/* The rarely pressed controls are folded: one quiet line instead of six, and
++   nothing is thrown away - tap "⚙️ Ещё" and they are all still there. */
++details.more{flex:1 0 100%;margin:0}
++details.more>summary{font-size:12px;color:var(--t3);cursor:pointer;padding:6px 2px;list-style:none;user-select:none;width:max-content}
++details.more>summary::-webkit-details-marker{display:none}
++details.more>summary::before{content:"▸ "}
++details.more[open]>summary::before{content:"▾ "}
++details.more[open]>summary{color:var(--t2)}
+ .card{background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:16px;transition:all .15s}
+ .card:hover{border-color:var(--bdr)}
+ .gh-repo-actions{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+diff --git a/npm-hub/public/mobile-app.js b/npm-hub/public/mobile-app.js
+index 33dac67..fdb13db 100644
+--- a/npm-hub/public/mobile-app.js
++++ b/npm-hub/public/mobile-app.js
+@@ -803,6 +803,8 @@ function renderDashboard() {
+ // ===== RUNNER CARD — сохранение / выключение / перезапуск ранера =====
+ let RUNNER = null;        // last /api/runner answer
+ let RUNNER_BUSY = false;  // stop/restart in flight
++let RUNNER_MORE = false;  // "Ещё" open - it has to survive a re-render
++let HO_MORE = false;      // the folded relay settings, same reason
+ function fmtBytes(n) {
+   if (n == null) return '?';
+   if (n < 1024) return n + ' B';
+@@ -831,26 +833,42 @@ function runnerRender() {
+     <div class="runner-h">🎛 Раннер <span class="runner-dot${onActs ? ' on' : ''}"></span></div>
+     <div class="runner-line">${info}</div>
+     <div class="runner-btns">
+-      <button class="btn btn-sm" onclick="runnerScan()">🔍 Файлы</button>
+       <button class="btn btn-sm btn-ok" onclick="runnerSave()" id="runner-save" disabled>💾 Сохранить</button>
+-      <button class="btn btn-sm btn-ok" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled'}>⟲ Перезапуск</button>
+       <button class="btn btn-sm btn-er" onclick="runnerStop()" id="runner-stop"${onActs ? '' : ' disabled'}>⏻ Выключить</button>
++      <details class="more" id="runner-more" ontoggle="RUNNER_MORE=this.open">
++        <summary>⚙️ Ещё</summary>
++        <div class="runner-btns" style="margin:8px 0 0">
++          <button class="btn btn-sm" onclick="runnerScan()">🔍 Файлы</button>
++          <button class="btn btn-sm btn-ok" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled'}>⟲ Перезапуск</button>
++        </div>
++      </details>
+     </div>
+     <div id="runner-scan"></div>
+     <div id="runner-res"></div>
+     <div class="runner-h" style="margin-top:10px">🔁 Эстафета <span class="runner-dot" id="handoff-dot"></span></div>
+     <div class="runner-line" id="handoff-line">загружаю состояние…</div>
+     <div class="runner-btns">
+-      <label class="runner-lbl"><input id="ho-auto" type="checkbox"> автопередача</label>
+-      <label class="runner-lbl">работает до <input id="ho-age" class="runner-inp" type="number" min="0" max="720" step="10" inputmode="numeric"> мин</label>
+-      <label class="runner-lbl">простой <input id="ho-idle" class="runner-inp" type="number" min="0" max="720" step="5" inputmode="numeric"> мин</label>
+-      <label class="runner-lbl">отсчёт <input id="ho-count" class="runner-inp" type="number" min="30" max="1800" step="30" inputmode="numeric"> с</label>
+-      <button class="btn btn-sm" onclick="handoffSave()">💾 Лимиты</button>
+       <button class="btn btn-sm btn-ok" onclick="handoffStart()" id="ho-start">🔁 Передать</button>
+       <button class="btn btn-sm btn-ok" onclick="handoffContinue()" id="ho-continue" hidden>▶️ Продолжить</button>
++      <details class="more" id="ho-more" ontoggle="HO_MORE=this.open">
++        <summary id="ho-more-sum">⚙️ Автопередача и лимиты</summary>
++        <div class="runner-btns" style="margin:8px 0 0">
++          <label class="runner-lbl"><input id="ho-auto" type="checkbox"> автопередача</label>
++          <label class="runner-lbl">работает до <input id="ho-age" class="runner-inp" type="number" min="0" max="720" step="10" inputmode="numeric"> мин</label>
++          <label class="runner-lbl">простой <input id="ho-idle" class="runner-inp" type="number" min="0" max="720" step="5" inputmode="numeric"> мин</label>
++          <label class="runner-lbl">отсчёт <input id="ho-count" class="runner-inp" type="number" min="30" max="1800" step="30" inputmode="numeric"> с</label>
++          <button class="btn btn-sm" onclick="handoffSave()">💾 Лимиты</button>
++        </div>
++        <div class="runner-line" style="font-size:11px;opacity:.7;margin:8px 0 0" id="handoff-hint"></div>
++      </details>
+     </div>
+-    <div class="runner-line" style="font-size:11px;opacity:.7" id="handoff-hint"></div>
+   </div>`;
++  // The card is rebuilt on every scan and install, so a fold the user opened
++  // would snap shut under their finger. Put it back the way they left it.
++  const runnerMore = document.getElementById('runner-more');
++  if (runnerMore && RUNNER_MORE) runnerMore.open = true;
++  const hoMore = document.getElementById('ho-more');
++  if (hoMore && HO_MORE) hoMore.open = true;
+   handoffRender();
+   if (RUNNER_BUSY) {
+     const s = document.getElementById('runner-scan');
+@@ -898,7 +916,6 @@ function handoffRender() {
+   if (s.state === 'failed' && s.lastError) bits.push('<span style="color:var(--err)">' + escHtml(s.lastError) + '</span>');
+   if (s.successor && s.successor.url) bits.push('новый: <a href="' + escAttr(s.successor.url) + '" target="_blank" rel="noreferrer">' + escHtml(s.successor.url) + '</a>');
+   bits.push('раннер живёт ' + (s.ageMin || 0) + ' мин' + (p.idleMin > 0 ? ', простой ' + (s.idleMin || 0) + '/' + p.idleMin + ' мин' : ''));
+-  bits.push('настройки: ' + (s.savedIn === 'repo' ? 'в control-репозитории' : 'локально'));
+   line.innerHTML = bits.join(' · ');
+   const dot = document.getElementById('handoff-dot');
+   if (dot) dot.className = 'runner-dot' + (cap.available && s.state !== 'idle' ? ' on' : '');
+@@ -908,7 +925,11 @@ function handoffRender() {
+   set('ho-count', p.countdownSec == null ? '' : p.countdownSec);
+   const autoBox = document.getElementById('ho-auto');
+   if (autoBox && document.activeElement !== autoBox) autoBox.checked = p.auto === true || p.auto === 1;
+-  bits.push(p.auto ? 'автопередача включена' : 'автопередача выключена — сам ничего не запускаю');
++  // The switch and the limits are folded away, so the summary carries their
++  // state instead of adding another line to the card.
++  const sum = document.getElementById('ho-more-sum');
++  if (sum) sum.textContent = '⚙️ Автопередача и лимиты — ' + (s.enabled ? 'включена' : 'выключена') +
++    (s.savedIn ? ' · ' + (s.savedIn === 'repo' ? 'в репозитории' : 'локально') : '');
+   const cont = document.getElementById('ho-continue');
+   if (cont) cont.hidden = !(s.state === 'countdown' || s.state === 'failed');
+   const start = document.getElementById('ho-start');
+diff --git a/tests/mobile-touch-test.js b/tests/mobile-touch-test.js
+index bf308fe..585c0b8 100644
+--- a/tests/mobile-touch-test.js
++++ b/tests/mobile-touch-test.js
+@@ -809,5 +809,39 @@ check('q99 every policy editor offers the switch',
+   mob.includes('id="ho-auto"') && mob.includes("auto: !!((document.getElementById('ho-auto') || {}).checked)") &&
+   desk.includes('id="ho-auto"'));
+ 
++// q100: the hub cards had eleven controls for a feature nobody presses: files,
++// save, restart, stop, plus the relay's checkbox, three numbers, limits, hand
++// over and continue. Two stay on the surface (save, stop) and the rest sit in
++// one folded "Ещё" - nothing removed, and the fold survives the re-render.
++const hubCss = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/hub.css'), 'utf8');
++const dashApp = fs.readFileSync(path.join(__dirname, '..', 'npm-hub/public/dashboard-app.js'), 'utf8');
++check('q100 the rare controls are folded away',
++  mob.includes('<details class="more" id="runner-more"') &&
++  mob.includes('<details class="more" id="ho-more"') &&
++  desk.includes('<details class="more" id="runner-more"') &&
++  desk.includes('<details class="more" id="ho-more"') &&
++  dashApp.includes('<details class="more" id="runner-more"') &&
++  panel.includes('<details class="more" id="runner-more">') &&
++  panel.includes('<details class="more" id="ho-more">') &&
++  hubCss.includes('details.more{') && hubCss.includes('details.more>summary'));
++check('q100 save and stop stay visible, restart is folded',
++  mob.includes('id="runner-save"') && mob.includes('id="runner-stop"') &&
++  mob.indexOf('id="runner-stop"') < mob.indexOf('id="runner-more"') &&
++  mob.indexOf('id="runner-more"') < mob.indexOf('id="runner-restart"') &&
++  panel.indexOf('id="pr-stop"') < panel.indexOf('id="runner-more"') &&
++  panel.indexOf('id="runner-more"') < panel.indexOf('id="pr-restart"'));
++check('q100 the hand-over button and its cancel stay reachable',
++  mob.indexOf('id="ho-more"') > mob.indexOf('id="ho-continue"') &&
++  panel.indexOf('id="ho-more"') > panel.indexOf('id="ho-continue"'));
++check('q100 an opened fold is not closed by the next re-render',
++  mob.includes('RUNNER_MORE') && mob.includes('HO_MORE') &&
++  mob.includes("if (runnerMore && RUNNER_MORE) runnerMore.open = true;") &&
++  mob.includes("if (hoMore && HO_MORE) hoMore.open = true;") &&
++  desk.includes('RUNNER_MORE') && dashApp.includes('RUNNER_MORE'));
++check('q100 the switch state moved into the fold summary',
++  mob.includes("id=\"ho-more-sum\"") && mob.includes("document.getElementById('ho-more-sum')") &&
++  !mob.includes("bits.push(p.auto ?") && panel.includes("id=\"ho-more-sum\"") &&
++  panel.includes("$('ho-more-sum')") && !panel.includes('bits.push(s.enabled ?'));
++
+ console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
+ process.exit(fail ? 1 : 0);
