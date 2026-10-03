@@ -272,5 +272,66 @@ echo "newer local work" > "$TMP/home/proj/committed.txt"
 bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
 check "existing repo untouched" "$(grep -q 'newer local work' "$TMP/home/proj/committed.txt" && echo 1 || echo 0)"
 
+# ── Choosing what to restore ──────────────────────────────────────────
+# A snapshot is a pile: repositories, chat sessions, settings, loose files,
+# terminal screen snapshots. Restoring all of it every time is slow and, for
+# the big files, expensive. The hub now passes the tick boxes down.
+SELECT_SNAP="$(git --git-dir="$TMP/remote.git" show work-backup:latest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"])')"
+check "the chosen snapshot names repos to pick from" "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only "work-backup:snapshots/$SELECT_SNAP/repos" | grep -c 'meta.json' | grep -qv '^0$' && echo 1 || echo 0)"
+
+rm -rf "$TMP/home/proj" "$TMP/home/shallow-code" "$TMP/home/.npm-hub"
+# Only shallow-code, and nothing but it: no chats, no settings, no loose files,
+# no terminal descriptors.
+WORK_BACKUP_SNAPSHOT="snapshots/$SELECT_SNAP" WORK_BACKUP_ONLY_REPOS='shallow-code' \
+WORK_BACKUP_SKIP_CHATS=1 WORK_BACKUP_SKIP_SETTINGS=1 WORK_BACKUP_SKIP_FILES=1 WORK_BACKUP_SKIP_SESSIONS=1 \
+  bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
+check "the ticked repository is restored" "$([ -d "$TMP/home/shallow-code/.git" ] && echo 1 || echo 0)"
+check "an unticked repository stays away" "$([ ! -e "$TMP/home/proj" ] && echo 1 || echo 0)"
+check "unticked: no terminal descriptors" "$([ ! -e "$TMP/home/.npm-hub/sessions" ] && echo 1 || echo 0)"
+
+# The same snapshot with only the sessions ticked and no repositories at all:
+# the sessions are what the user came for, and a repo they did not ask for must
+# not appear just because its chats were wanted.
+rm -rf "$TMP/home/shallow-code" "$TMP/home/proj"
+WORK_BACKUP_SNAPSHOT="snapshots/$SELECT_SNAP" WORK_BACKUP_ONLY_REPOS='' \
+WORK_BACKUP_SKIP_FILES=1 \
+  bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
+check "no repository ticked means none is cloned" "$([ ! -e "$TMP/home/proj" ] && [ ! -e "$TMP/home/shallow-code" ] && echo 1 || echo 0)"
+check "terminal descriptors come back when ticked" "$([ -n "$(find "$TMP/home/.npm-hub/sessions" -name '*.meta.json' 2>/dev/null)" ] && echo 1 || echo 0)"
+
+# An empty selection must not fail the run and must not be read as «everything».
+rm -rf "$TMP/home/.npm-hub"
+WORK_BACKUP_SNAPSHOT="snapshots/$SELECT_SNAP" WORK_BACKUP_ONLY_REPOS='' \
+WORK_BACKUP_SKIP_CHATS=1 WORK_BACKUP_SKIP_SETTINGS=1 WORK_BACKUP_SKIP_FILES=1 WORK_BACKUP_SKIP_SESSIONS=1 \
+  bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
+check "an empty selection restores nothing and still succeeds" \
+  "$([ ! -e "$TMP/home/proj" ] && [ ! -e "$TMP/home/.npm-hub/sessions" ] && echo 1 || echo 0)"
+
+# '*' is the explicit «everything», which is what hub startup passes.
+rm -rf "$TMP/home/proj" "$TMP/home/shallow-code"
+WORK_BACKUP_SNAPSHOT="snapshots/$SELECT_SNAP" WORK_BACKUP_ONLY_REPOS='*' \
+  bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
+check "a star restores everything again" "$([ -d "$TMP/home/shallow-code/.git" ] && echo 1 || echo 0)"
+
+# ── Only the chosen snapshot is fetched ────────────────────────────────
+# The branch clones at depth 1 with --filter=blob:none and nothing checked out,
+# then a sparse checkout materialises snapshots/<stamp>. A plain clone pulled
+# the blobs of every snapshot on the branch, which is what ran the restore into
+# the hub's 40-minute wall (SIGKILL, «завершилось с кодом 137») on a big branch.
+check "the clone asks for no blobs and no checkout" \
+  "$(grep -q -- '--depth 1 --filter=blob:none --no-checkout' "$TOOLS/restore-work.sh" && echo 1 || echo 0)"
+check "the snapshot is materialised by a sparse checkout" \
+  "$(grep -q 'sparse-checkout set' "$TOOLS/restore-work.sh" && grep -q 'sparse-checkout init --cone' "$TOOLS/restore-work.sh" && echo 1 || echo 0)"
+# The explicit path is now read from the commit, before anything is checked out,
+# so the directory it names does not exist on disk at that moment. This is the
+# check that would have caught that: it asks for one named snapshot and asks the
+# log which one it actually took.
+rm -rf "$TMP/home/proj" "$TMP/home/shallow-code"
+WORK_BACKUP_SNAPSHOT="snapshots/$SELECT_SNAP" bash "$TOOLS/restore-work.sh" >"$TMP/explicit.log" 2>&1
+check "an explicit snapshot path is honoured" \
+  "$(grep -q "restoring from .*snapshots/$SELECT_SNAP" "$TMP/explicit.log" && echo 1 || echo 0)"
+check "the explicitly named snapshot really restored" \
+  "$([ -d "$TMP/home/shallow-code/.git" ] && echo 1 || echo 0)"
+
 echo "work-backup: $pass passed, $fail failed"
 [ "$fail" = 0 ]

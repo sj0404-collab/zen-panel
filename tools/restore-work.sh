@@ -17,6 +17,15 @@
 #   WORK_BACKUP_SNAPSHOT    explicit snapshot dir  (default: newest)
 #   SESSION_STATE_URL       git remote override for local tests
 #   WORK_BACKUP_RESTORE=0   skip entirely
+#
+# WHAT TO RESTORE (all optional; unset means everything, which is what the
+# automatic restore at hub start wants. The hub's snapshot tab ticks these.)
+#   WORK_BACKUP_ONLY_REPOS      set: newline-separated `rel` paths, * for all,
+#                               empty string for none. Unset = everything.
+#   WORK_BACKUP_SKIP_CHATS=1     no opencode chat sessions
+#   WORK_BACKUP_SKIP_SETTINGS=1  no opencode settings
+#   WORK_BACKUP_SKIP_FILES=1     no loose home files, no chunked big files
+#   WORK_BACKUP_SKIP_SESSIONS=1  no terminal descriptors / TUI snapshots
 set -uo pipefail
 
 ROOT="${WORK_BACKUP_ROOT:-$HOME}"
@@ -125,32 +134,68 @@ TARGET=""
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-if git clone -q --depth 1 --branch "$BRANCH" "$REMOTE" "$WORK/state" 2>/dev/null; then
+# Only ONE snapshot is read here, but a plain clone pulls the blobs of EVERY
+# snapshot on the branch. work-backup passed 70 MB long ago and grows with
+# every backup, while the hub gives a restore 40 minutes and then SIGKILLs it -
+# so the whole-branch clone was killed mid-flight ("завершилось с кодом 137")
+# having restored nothing. A partial clone fetches the tree and no blobs, and
+# the sparse checkout below materialises exactly the snapshot asked for.
+# Remotes that do not speak partial clone (a local path, as in the tests) fall
+# back to the plain clone, exactly as before.
+if git clone -q --depth 1 --filter=blob:none --no-checkout --branch "$BRANCH" "$REMOTE" "$WORK/state" 2>/dev/null; then
+  TARGET="$WORK/state"
+elif git clone -q --depth 1 --branch "$BRANCH" "$REMOTE" "$WORK/state" 2>/dev/null; then
   TARGET="$WORK/state"
 else
   log "no $BRANCH branch yet; nothing to restore"
   exit 0
 fi
 
+# Nothing is checked out yet, so every lookup below reads the commit directly
+# instead of the working tree. `git show` on a partial clone fetches that ONE
+# blob and no others, which is what keeps the listing cheap.
+read_branch_file() { git -C "$TARGET" show "$BRANCH:$1" 2>/dev/null; }
+list_branch_dirs() { git -C "$TARGET" ls-tree -d --name-only "$BRANCH" -- "$1" 2>/dev/null; }
+
 if [ -n "${WORK_BACKUP_SNAPSHOT:-}" ]; then
-  SNAP="$TARGET/$WORK_BACKUP_SNAPSHOT"
-elif [ -f "$TARGET/latest.json" ]; then
-  LATEST_STAMP=$(python3 - "$TARGET/latest.json" <<'PY'
-import json, sys
+  SNAP_REL="${WORK_BACKUP_SNAPSHOT#/}"
+elif read_branch_file latest.json | grep -q '"stamp"'; then
+  LATEST_STAMP=$(read_branch_file latest.json | python3 -c 'import json,sys
 try:
-    print(json.load(open(sys.argv[1], encoding='utf-8')).get('stamp', ''))
+    print(json.load(sys.stdin).get("stamp", ""))
 except Exception:
-    print('')
-PY
-)
-  if [ -n "$LATEST_STAMP" ] && [ -d "$TARGET/snapshots/$LATEST_STAMP" ]; then
-    SNAP="$TARGET/snapshots/$LATEST_STAMP"
+    print("")')
+  if [ -n "$LATEST_STAMP" ] && list_branch_dirs "snapshots/$LATEST_STAMP" | grep -q .; then
+    SNAP_REL="snapshots/$LATEST_STAMP"
   fi
 fi
-if [ -z "${SNAP:-}" ]; then
-  SNAP="$(ls -1d "$TARGET"/snapshots/*/ 2>/dev/null | LC_ALL=C sort -r | head -n1)"
+if [ -z "${SNAP_REL:-}" ]; then
+  SNAP_REL="$(list_branch_dirs snapshots | LC_ALL=C sort -r | head -n1)"
 fi
-if [ -z "${SNAP:-}" ] || [ ! -d "$SNAP" ]; then
+if [ -z "${SNAP_REL:-}" ]; then
+  log "no snapshot found in $BRANCH"
+  exit 0
+fi
+SNAP="$TARGET/$SNAP_REL"
+
+# ── Materialise only the snapshot we were asked for ─────────────────────
+# The tree is already here; this pulls the blobs of snapshots/<stamp> and
+# nothing else. If the remote ignored the filter above the worktree is still
+# empty, so a full checkout is the honest fallback.
+if [ -d "$SNAP" ]; then
+  :
+elif git -C "$TARGET" sparse-checkout init --cone >/dev/null 2>&1 \
+  && git -C "$TARGET" sparse-checkout set "$SNAP_REL" >/dev/null 2>&1 \
+  && git -C "$TARGET" checkout -q "$BRANCH" >/dev/null 2>&1 \
+  && [ -d "$SNAP" ]; then
+  log "fetched only $SNAP_REL (the branch itself is much larger)"
+else
+  log "partial fetch unavailable; checking out the whole branch (slow, but it restores)"
+  git -C "$TARGET" sparse-checkout disable >/dev/null 2>&1 || true
+  git -C "$TARGET" checkout -q -f "$BRANCH" >/dev/null 2>&1 || true
+  git -C "$TARGET" reset -q --hard "$BRANCH" >/dev/null 2>&1 || true
+fi
+if [ ! -d "$SNAP" ]; then
   log "no snapshot found in $BRANCH"
   exit 0
 fi
@@ -286,6 +331,53 @@ PY
 
 restored=0
 failed=0
+# ── What the user ticked ───────────────────────────────────────────────
+# A snapshot holds more than a user usually wants back: repositories, chat
+# sessions, settings, loose home files, terminal descriptors. Restoring all of
+# it every time is slow and, for the big files, expensive - so the hub passes
+# the selection down and this script honours it exactly. No variable set (the
+# old behaviour, and every plain run) still means "everything", which is what
+# the automatic restore at hub start needs.
+# An UNSET variable means everything, which is what the automatic restore at
+# hub start passes and what every plain run expects. A variable that is set -
+# even to an empty string - is a decision by the caller: empty therefore means
+# "nothing", and that is the difference between "I ticked nothing" and "I did
+# not say", which must not quietly restore the whole snapshot.
+ONLY_REPOS_SET=0
+[ "${WORK_BACKUP_ONLY_REPOS+x}" = "x" ] && ONLY_REPOS_SET=1
+ONLY_REPOS="${WORK_BACKUP_ONLY_REPOS:-}"
+SKIP_CHATS="${WORK_BACKUP_SKIP_CHATS:-0}"
+SKIP_SETTINGS="${WORK_BACKUP_SKIP_SETTINGS:-0}"
+SKIP_FILES="${WORK_BACKUP_SKIP_FILES:-0}"
+SKIP_SESSIONS="${WORK_BACKUP_SKIP_SESSIONS:-0}"
+selection_is_partial() {
+  [ "$ONLY_REPOS_SET" = "1" ] && [ "$ONLY_REPOS" != "*" ] \
+    || [ "$SKIP_CHATS" = "1" ] || [ "$SKIP_SETTINGS" = "1" ] \
+    || [ "$SKIP_FILES" = "1" ] || [ "$SKIP_SESSIONS" = "1" ]
+}
+repo_selected() {
+  local rel="$1"
+  [ "$ONLY_REPOS_SET" = "1" ] || return 0
+  [ -n "$ONLY_REPOS" ] || return 1
+  [ "$ONLY_REPOS" = "*" ] && return 0
+  printf '%s\n' "$ONLY_REPOS" | grep -qxF -- "$rel"
+}
+SELECTED_METAS="$WORK/selected-metas.txt"
+: > "$SELECTED_METAS"
+if selection_is_partial; then
+  if [ "$ONLY_REPOS_SET" = "1" ] && [ "$ONLY_REPOS" = "*" ]; then
+    repos_desc='*'
+  elif [ "$ONLY_REPOS_SET" = "1" ]; then
+    repos_desc="$(printf '%s' "$ONLY_REPOS" | tr '\n' ' ')"
+  else
+    repos_desc='(не задано — все)'
+  fi
+  log "selection: repos=[$repos_desc]" \
+    "chats=$([ "$SKIP_CHATS" = 1 ] && echo no || echo yes)" \
+    "settings=$([ "$SKIP_SETTINGS" = 1 ] && echo no || echo yes)" \
+    "files=$([ "$SKIP_FILES" = 1 ] && echo no || echo yes)" \
+    "sessions=$([ "$SKIP_SESSIONS" = 1 ] && echo no || echo yes)"
+fi
 while IFS= read -r meta; do
   [ -f "$meta" ] || continue
   repodir="$(dirname "$meta")"
@@ -298,6 +390,13 @@ except Exception:
     print(os.path.basename(os.path.dirname(sys.argv[1])))
 PY
 )"
+  # An unticked repository is not touched at all: no clone, no wip patch, no
+  # untracked files, and no chat import for it further down.
+  if ! repo_selected "$rel"; then
+    log "skipped $rel (not selected)"
+    continue
+  fi
+  printf '%s\n' "$meta" >> "$SELECTED_METAS"
   dest="$ROOT/$rel"
   existing="$(find_existing_repo "$meta")"
   if [ -n "$existing" ] && [ -e "$existing/.git" ]; then
@@ -363,7 +462,9 @@ done < <(find "$SNAP/repos" -type f -name meta.json -print 2>/dev/null)
 # ── OpenCode: settings + chat sessions from the SAME snapshot ──
 # Settings go back to the exact path the manifest recorded, never clobbering
 # whatever the fresh runner already wrote (--keep-old semantics via cp -n).
-if [ -f "$SNAP/opencode/settings/manifest.json" ]; then
+if [ "$SKIP_SETTINGS" = "1" ]; then
+  log "skipped opencode settings (not selected)"
+elif [ -f "$SNAP/opencode/settings/manifest.json" ]; then
   python3 - "$SNAP/opencode" <<'PYP'
 import json, os, shutil, sys
 oc = sys.argv[1]
@@ -391,9 +492,16 @@ PYP
 fi
 # Chat sessions: per-repo bundle from this very snapshot, imported back into
 # the repo we just restored (restore-chats.sh assigns sessions to the CWD).
-if [ -d "$SNAP/opencode/chats" ] && ls "$SNAP/opencode/chats"/*.json >/dev/null 2>&1; then
+#
+# It walks the SAME list of metas the repo loop above wrote, not a glob over
+# repos/hub-work/*/meta.json. That glob only ever matched repositories the Files
+# tab happened to clone into hub-work/, so chat sessions of the hub clone and of
+# any repo elsewhere under $HOME were silently never restored.
+if [ "$SKIP_CHATS" = "1" ]; then
+  log "skipped opencode chats (not selected)"
+elif [ -d "$SNAP/opencode/chats" ] && ls "$SNAP/opencode/chats"/*.json >/dev/null 2>&1; then
   RESTORE_CHATS_BIN="$HOME/.local/bin/restore-chats.sh"; [ -f "$RESTORE_CHATS_BIN" ] || RESTORE_CHATS_BIN="$(dirname "$0")/restore-chats.sh"
-  for meta in "$SNAP/repos"/hub-work/*/meta.json; do
+  while IFS= read -r meta; do
     [ -f "$meta" ] || continue
     name="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); print(d.get("name") or "")' "$meta" 2>/dev/null | tr -c 'A-Za-z0-9._-' '_')"
     [ -n "$name" ] || continue
@@ -403,10 +511,12 @@ if [ -d "$SNAP/opencode/chats" ] && ls "$SNAP/opencode/chats"/*.json >/dev/null 
     dest="$ROOT/$rel"
     [ -d "$dest" ] || continue
     CHAT_BUNDLE="$bundle" CHAT_REPO_DIR="$dest" bash "$RESTORE_CHATS_BIN" >/dev/null 2>&1 && log "chats restored for $name" || log "chats restore failed for $name"
-  done
+  done < "$SELECTED_METAS"
 fi
 
-if [ -s "$SNAP/files.tar.gz" ]; then
+if [ "$SKIP_FILES" = "1" ]; then
+  log "skipped loose home files and big files (not selected)"
+elif [ -s "$SNAP/files.tar.gz" ]; then
   # --keep-old-files: never overwrite whatever the fresh runner already has.
   if extract_keep_old "$ROOT" "$SNAP/files.tar.gz"; then
     log "restored loose home files (existing ones left untouched)"
@@ -416,7 +526,7 @@ if [ -s "$SNAP/files.tar.gz" ]; then
   fi
 fi
 
-if [ -d "$SNAP/big" ]; then
+if [ "$SKIP_FILES" != "1" ] && [ -d "$SNAP/big" ]; then
   # Files that were too big for files.tar.gz arrived as chunks (see
   # collect_big_files in backup-work.sh): glue them back, check the sha256 the
   # backup recorded, and only then delete the chunks. A missing or corrupt
@@ -484,7 +594,9 @@ fi
 # Then the counts, because a silent restore here is indistinguishable from
 # «the user has no unfinished sessions» - and the snapshot is exactly what
 # makes a reopened terminal show the last known screen instead of a black one.
-if [ -d "$SNAP/descriptors" ]; then
+if [ "$SKIP_SESSIONS" = "1" ]; then
+  log "skipped durable session descriptors and TUI snapshots (not selected)"
+elif [ -d "$SNAP/descriptors" ]; then
   mkdir -p "$ROOT/.npm-hub/sessions" 2>/dev/null || failed=1
   if ! cp -a -n "$SNAP/descriptors/." "$ROOT/.npm-hub/sessions/" 2>/dev/null; then
     log "could not restore durable session descriptors"

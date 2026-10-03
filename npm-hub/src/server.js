@@ -4700,7 +4700,7 @@ app.get('/api/work-snapshots', async (req, res) => {
         const size = parseInt(m[1], 10) || 0;
         const stamp = m[2], rel = m[3];
         let s = snaps.get(stamp);
-        if (!s) { s = { stamp, repos: new Map(), extras: 0, chats: 0, settings: false, total: 0 }; snaps.set(stamp, s); }
+        if (!s) { s = { stamp, repos: new Map(), extras: 0, chats: 0, chatNames: [], settings: false, sessions: false, total: 0 }; snaps.set(stamp, s); }
         s.total += size;
         const base = rel.split('/').pop();
         const dir = rel.slice(0, -(base.length + 1));
@@ -4712,17 +4712,25 @@ app.get('/api/work-snapshots', async (req, res) => {
           if (size > 0) s.extras += size;
         } else if (rel.startsWith('opencode/chats/') && base.endsWith('.json')) {
           s.chats += 1;
+          s.chatNames.push(base.replace(/\.json$/, ''));
         } else if (rel.startsWith('opencode/settings/') && base !== 'manifest.json') {
           s.settings = true;
+        } else if (rel.startsWith('descriptors/')) {
+          // Terminal descriptors and the TUI screen snapshots beside them: what
+          // makes a reopened terminal show the last known screen instead of a
+          // blank one. Ticked separately from the chat sessions, because it is
+          // a different thing to want back.
+          s.sessions = true;
         }
       }
       const list = [...snaps.values()].map(s => {
-        const active = s.repos.size > 0 || s.chats > 0 || s.settings;
+        const active = s.repos.size > 0 || s.chats > 0 || s.settings || s.sessions;
         return {
           stamp: s.stamp,
           repos: [...s.repos.values()].filter(r => r.bytes > 0).sort((a, b) => a.rel.localeCompare(b.rel)),
           extrasMb: Math.round(s.extras / 104857.6) / 10,
-          chats: s.chats, settings: s.settings, active,
+          chats: s.chats, chatNames: s.chatNames.sort(), settings: s.settings,
+          sessions: s.sessions, active,
           totalMb: Math.round(s.total / 104857.6) / 10
         };
       });
@@ -4745,12 +4753,37 @@ app.post('/api/work-snapshots/restore', express.json(), (req, res) => {
     if (!stamp || !/^[A-Za-z0-9._:-]+$/.test(stamp) || stamp.includes('..') || stamp.includes('/')) {
       return res.json({ success: false, error: 'некорректное имя снапшота' });
     }
+    // What the user ticked. An absent field means "yes": the page sends every
+    // checkbox, and a hand-written POST from the terminal must keep restoring
+    // everything rather than nothing.
+    const body = req.body || {};
+    const yes = v => v === undefined || v === null || v === true || v === 1 || v === '1';
+    const wantChats = yes(body.chats);
+    const wantSettings = yes(body.settings);
+    const wantFiles = yes(body.files);
+    const wantSessions = yes(body.sessions);
+    // repos: a list of `rel` paths, or absent / empty / ['*'] for all of them.
+    let repos = '*';
+    if (Array.isArray(body.repos) && body.repos.length) {
+      const picked = body.repos
+        .map(r => String(r == null ? '' : r).trim())
+        .filter(r => r && r !== '*' && r.length <= 400
+          && !r.includes('\0') && !/[\n\r]/.test(r) && !r.startsWith('/') && !r.split('/').includes('..'));
+      repos = picked.length ? picked.join('\n') : '';
+      if (!picked.length && body.repos.some(r => String(r) === '*')) repos = '*';
+    }
     if (wbRestore.running) return res.json({ success: false, error: 'восстановление уже идёт' });
     const token = runnerToken();
     if (!token) return res.json({ success: false, error: 'нет токена GitHub' });
     if (!fs.existsSync(RESTORE_WORK_SH)) return res.json({ success: false, error: 'нет скрипта восстановления' });
     wbRestore = { running: true, startedAt: Date.now(), doneAt: 0, code: null, tail: [] };
+    const pickedList = repos === '*' ? 'все' : (repos === '' ? 'нет' : repos.split('\n').join(', '));
     wbPushTail('♻ восстановление из snapshots/' + stamp + '\n');
+    wbPushTail('   выбрано: репо=[' + pickedList + ']' +
+      ' чаты=' + (wantChats ? 'да' : 'нет') +
+      ' настройки=' + (wantSettings ? 'да' : 'нет') +
+      ' файлы=' + (wantFiles ? 'да' : 'нет') +
+      ' сессии=' + (wantSessions ? 'да' : 'нет') + '\n');
     const env = Object.assign({}, process.env, {
       GH_TOKEN: token,
       GITHUB_TOKEN: token,
@@ -4758,7 +4791,12 @@ app.post('/api/work-snapshots/restore', express.json(), (req, res) => {
       HUB_LOGS: LOG_DIR,
       WORK_BACKUP_ROOT: HOME,
       WORK_BACKUP_RESTORE_EXISTING: '1',
-      WORK_BACKUP_SNAPSHOT: 'snapshots/' + stamp
+      WORK_BACKUP_SNAPSHOT: 'snapshots/' + stamp,
+      WORK_BACKUP_ONLY_REPOS: repos,
+      WORK_BACKUP_SKIP_CHATS: wantChats ? '0' : '1',
+      WORK_BACKUP_SKIP_SETTINGS: wantSettings ? '0' : '1',
+      WORK_BACKUP_SKIP_FILES: wantFiles ? '0' : '1',
+      WORK_BACKUP_SKIP_SESSIONS: wantSessions ? '0' : '1'
     });
     const child = spawn('bash', [RESTORE_WORK_SH], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', d => { process.stdout.write(d); wbPushTail(d); });

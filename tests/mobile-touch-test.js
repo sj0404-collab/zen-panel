@@ -949,5 +949,57 @@ check('q105 the panel no longer swallows the page console',
   panelKt.includes('import android.util.Log') &&
   panelKt.includes('import android.webkit.ConsoleMessage'));
 
+// q106: the snapshot tab could only restore everything, and could not even name
+// what. The list collapsed each day to its newest entry, so every earlier
+// snapshot of that day was unreachable, and the POST carried nothing but a
+// stamp. Now the choice is spelled out and honoured end to end.
+check('q106 every snapshot of a day is reachable',
+  mob.includes('function snapVisible()') && mob.includes('function snapToggleAll()') &&
+  mob.includes('Показать все (') && mob.includes('let snapShowAll = false;') &&
+  !mob.includes('if (!byDay.has(d)) byDay.set(d, s); // список уже по убыванию'));
+check('q106 the chosen snapshot has tick boxes',
+  mob.includes('function snapTicks(s)') && mob.includes('function snapRepo(') &&
+  mob.includes('function snapFlag(') && mob.includes('class="snap-ticks"') &&
+  mob.includes('Что восстанавливать:'));
+check('q106 opencode sessions are tickable on their own',
+  mob.includes("bucket('chats', '💬 Сессии opencode'") &&
+  mob.includes("bucket('sessions', '🖥 Снимки экрана терминалов'") &&
+  mob.includes("bucket('settings', '⚙️ Настройки opencode'") &&
+  mob.includes("bucket('files', '📦 Разрозненные файлы'") &&
+  mob.includes("onchange=\"snapFlag('${snapEsc(s.stamp)}','${id}',this.checked)\""));
+check('q106 the ticks travel with the request',
+  mob.includes('repos: repos,') && mob.includes('chats: p.chats,') &&
+  mob.includes('settings: p.settings,') && mob.includes('files: p.files,') &&
+  mob.includes('sessions: p.sessions'));
+check('q106 ticking nothing says so instead of restoring everything',
+  mob.includes('if (nothing) { fmInfo(') &&
+  mob.includes('Ничего не выбрано') &&
+  mob.includes("body: JSON.stringify({\n        snapshot: s.stamp,"));
+check('q106 the server accepts the selection and defaults to everything',
+  server.includes('WORK_BACKUP_ONLY_REPOS: repos,') &&
+  server.includes('WORK_BACKUP_SKIP_CHATS: wantChats ? \'0\' : \'1\',') &&
+  server.includes('WORK_BACKUP_SKIP_SETTINGS: wantSettings ? \'0\' : \'1\',') &&
+  server.includes('WORK_BACKUP_SKIP_FILES: wantFiles ? \'0\' : \'1\',') &&
+  server.includes('WORK_BACKUP_SKIP_SESSIONS: wantSessions ? \'0\' : \'1\'') &&
+  server.includes('const yes = v => v === undefined') &&
+  !server.includes("repos = String((req.body && req.body.repos) || '').replace"));
+check('q106 the restore honours the selection, unset still meaning everything',
+  restoreWork.includes('ONLY_REPOS_SET=0') &&
+  restoreWork.includes('[ "${WORK_BACKUP_ONLY_REPOS+x}" = "x" ] && ONLY_REPOS_SET=1') &&
+  restoreWork.includes('[ -n "$ONLY_REPOS" ] || return 1') &&
+  restoreWork.includes('WORK_BACKUP_SKIP_CHATS=1     no opencode chat sessions') &&
+  restoreWork.includes('skipped opencode chats (not selected)') &&
+  restoreWork.includes('skipped opencode settings (not selected)') &&
+  restoreWork.includes('skipped loose home files and big files (not selected)') &&
+  restoreWork.includes('skipped durable session descriptors and TUI snapshots (not selected)') &&
+  restoreWork.includes('done < "$SELECTED_METAS"'));
+check('q106 chat sessions follow the repositories that were actually restored',
+  restoreWork.includes('SELECTED_METAS="$WORK/selected-metas.txt"') &&
+  !restoreWork.includes('"$SNAP/repos"/hub-work/*/meta.json'));
+check('q106 the listing tells the page what can be ticked',
+  server.includes('s.chatNames.push(') &&
+  server.includes('sessions: s.sessions, active,') &&
+  server.includes("} else if (rel.startsWith('descriptors/')) {"));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
