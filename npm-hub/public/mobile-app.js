@@ -4270,6 +4270,25 @@ _keepAliveInterval = setInterval(() => {
 // Сервер читает только «дерево» ветки work-backup (список+размеры), поэтому
 // список открывается быстро даже если в ветке сотни мегабайт.
 let snapData = { snapshots: [], recommended: '' }, snapSelected = '', snapPoll = null;
+// The ticks. A snapshot carries more than anyone wants back every time, so the
+// choice is per snapshot, not global: picking another snapshot must not silently
+// reuse the previous one's boxes.
+let snapPick_ = {};
+function snapSel(stamp) {
+  if (!snapPick_[stamp]) {
+    const s = (snapData.snapshots || []).find(x => x.stamp === stamp) || {};
+    // Default: everything the snapshot actually has, so the common case is one
+    // press and the old behaviour; the point is that a box can be cleared.
+    snapPick_[stamp] = {
+      repos: (s.repos || []).map(r => r.rel),
+      chats: s.chats > 0,
+      settings: !!s.settings,
+      files: true,
+      sessions: !!s.sessions
+    };
+  }
+  return snapPick_[stamp];
+}
 function snapEsc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function snapMb(n) { const v = Math.round((n || 0) / 104857.6) / 10; return v >= 1 ? (v + ' МБ') : ((Math.round((n || 0) / 1048.576)) + ' КБ'); }
 async function initSnapshots() {
@@ -4300,18 +4319,28 @@ async function snapLoad(force) {
   }
 }
 function snapDay(s) { return s.replace(/^\d+$|\D/g, '').slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'); }
-function renderSnapList() {
-  const list = document.getElementById('snap-list');
-  if (!snapData.snapshots.length) { list.innerHTML = ''; return; }
-  // По дням — всегда самый новый снапшот дня; внутри дня не показываем хвосты.
+// Which snapshots are on screen. It used to collapse each day to its newest
+// entry, which quietly threw away every earlier snapshot of that day: the one
+// the user actually wanted was often the one taken before a bad hour, and it
+// was never reachable. Now the newest of each day shows, and a day with more
+// behind it grows a «показать все» row.
+let snapShowAll = false;
+function snapVisible() {
+  if (snapShowAll) return snapData.snapshots;
   const byDay = new Map();
   for (const s of snapData.snapshots) {
     const d = snapDay(s.stamp);
-    if (!byDay.has(d)) byDay.set(d, s); // список уже по убыванию: первый = новейший
+    if (!byDay.has(d)) byDay.set(d, s); // the list is newest-first, so the first is the newest
   }
-  const shown = [...byDay.values()];
-  if (!snapData.snapshots.some(s => s.active)) snapSelected = ''; // отмечать нечего — честно
-  list.innerHTML = shown.map(s => {
+  return [...byDay.values()];
+}
+function snapHiddenCount() { return snapData.snapshots.length - snapVisible().length; }
+function renderSnapList() {
+  const list = document.getElementById('snap-list');
+  if (!snapData.snapshots.length) { list.innerHTML = ''; return; }
+  if (!snapData.snapshots.some(s => s.stamp === snapSelected)) snapSelected = snapData.recommended || (snapData.snapshots[0] || {}).stamp || '';
+  const shown = snapVisible();
+  const html = shown.map(s => {
     const sel = s.stamp === snapSelected;
     const act = !!s.active;
     const marks = [];
@@ -4322,6 +4351,7 @@ function renderSnapList() {
     if (s.extrasMb > 0) what.push('дифы/новое: ' + s.extrasMb + ' МБ');
     if (s.chats) what.push('чаты opencode: ' + s.chats);
     if (s.settings) what.push('настройки opencode');
+    if (s.sessions) what.push('снимки экрана терминалов');
     if (!what.length) what.push('только файлы/аудит');
     return `<label class="snap-row ${sel ? 'sel' : ''}" data-stamp="${snapEsc(s.stamp)}" onclick="snapPick('${snapEsc(s.stamp)}')">
       <input type="radio" name="snap" ${sel ? 'checked' : ''}>
@@ -4331,12 +4361,52 @@ function renderSnapList() {
         <div style="font-size:11px;color:var(--t3);margin-top:3px">${what.join(' · ')}</div>
       </div>
       <div style="font-size:11px;color:var(--t3)">${s.totalMb} МБ</div>
-    </label>`;
+    </label>` + (sel ? snapTicks(s) : '');
   }).join('');
+  const hidden = snapHiddenCount();
+  const more = hidden > 0
+    ? `<div style="margin:6px 0 2px"><button class="btn btn-sm" onclick="snapToggleAll()">${snapShowAll ? '🔽 Свернуть' : '👁 Показать все (' + snapData.snapshots.length + ')'}</button></div>`
+    : (snapData.snapshots.length > shown.length ? '<div style="margin:6px 0 2px"><button class="btn btn-sm" onclick="snapToggleAll()">🔽 Свернуть</button></div>' : '');
+  list.innerHTML = html + more;
   const btn = document.getElementById('snap-restore');
   const s = snapData.snapshots.find(x => x.stamp === snapSelected);
   btn.disabled = !(s && s.active);
 }
+// The tick boxes for the chosen snapshot. Repositories one by one, then the
+// four buckets that are not repositories - the opencode sessions asked for
+// being the reason this panel exists at all.
+function snapTicks(s) {
+  const p = snapSel(s.stamp);
+  const rows = [];
+  for (const r of s.repos) {
+    rows.push(`<label class="snap-tick" onclick="event.stopPropagation()">
+      <input type="checkbox" ${p.repos.indexOf(r.rel) >= 0 ? 'checked' : ''} onchange="snapRepo('${snapEsc(s.stamp)}','${snapEsc(r.rel)}',this.checked)">
+      <span>📁 ${snapEsc(r.rel)} <span style="color:var(--t3)">(${r.kind}, ${snapMb(r.bytes)})</span></span>
+    </label>`);
+  }
+  const bucket = (id, label, on, count) => `<label class="snap-tick" onclick="event.stopPropagation()">
+      <input type="checkbox" ${on ? 'checked' : ''} onchange="snapFlag('${snapEsc(s.stamp)}','${id}',this.checked)">
+      <span>${label}${count ? ' <span style="color:var(--t3)">(' + count + ')</span>' : ''}</span>
+    </label>`;
+  if (s.chats) rows.push(bucket('chats', '💬 Сессии opencode', p.chats, (s.chatNames || []).length));
+  if (s.settings) rows.push(bucket('settings', '⚙️ Настройки opencode', p.settings));
+  if (s.sessions) rows.push(bucket('sessions', '🖥 Снимки экрана терминалов', p.sessions));
+  rows.push(bucket('files', '📦 Разрозненные файлы', p.files));
+  if (!rows.length) return '';
+  return `<div class="snap-ticks" onclick="event.stopPropagation()">
+    <div style="font-size:11px;color:var(--t2);font-weight:600;margin:6px 0 3px">Что восстанавливать:</div>
+    ${rows.join('')}
+  </div>`;
+}
+function snapRepo(stamp, rel, on) {
+  const p = snapSel(stamp);
+  const at = p.repos.indexOf(rel);
+  if (on && at < 0) p.repos.push(rel);
+  if (!on && at >= 0) p.repos.splice(at, 1);
+  renderSnapList();
+}
+function snapFlag(stamp, id, on) { snapSel(stamp)[id] = on; renderSnapList(); }
+function snapToggleAll() { snapShowAll = !snapShowAll; renderSnapList(); }
 function snapPick(stamp) {
   snapSelected = stamp;
   renderSnapList();
@@ -4344,10 +4414,31 @@ function snapPick(stamp) {
 async function snapRestore() {
   const s = snapData.snapshots.find(x => x.stamp === snapSelected);
   if (!s) return;
-  const ok = await fmConfirm('Восстановить локальные репозитории из снапшота ' + s.stamp + '? Существующие git-репозитории не трогаются, дополняются только отсутствующие.', 'Восстановить');
+  const p = snapSel(s.stamp);
+  const repos = p.repos.slice();
+  const nothing = !repos.length && !p.chats && !p.settings && !p.files && !p.sessions;
+  if (nothing) { fmInfo('Ничего не выбрано — отметь хотя бы репозиторий или сессии.'); return; }
+  const bits = [];
+  bits.push(repos.length === s.repos.length ? 'все репозитории (' + repos.length + ')' : (repos.length ? repos.length + ' из ' + s.repos.length + ' репозиториев' : 'без репозиториев'));
+  if (p.chats) bits.push('сессии opencode');
+  if (p.settings) bits.push('настройки opencode');
+  if (p.sessions) bits.push('снимки экрана');
+  if (p.files) bits.push('файлы');
+  const ok = await fmConfirm('Восстановить из снапшота ' + s.stamp + ':\n\n' + bits.join('\n') + '\n\nСуществующие git-репозитории не перезаписываются.', 'Восстановить');
   if (!ok) return;
   try {
-    const r = await fetch('/api/work-snapshots/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snapshot: s.stamp }) });
+    const r = await fetch('/api/work-snapshots/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        snapshot: s.stamp,
+        repos: repos,
+        chats: p.chats,
+        settings: p.settings,
+        files: p.files,
+        sessions: p.sessions
+      })
+    });
     const j = await r.json();
     if (!j || j.success !== true) { fmInfo('Не запустилось: ' + (j && j.error || '?')); return; }
     showSnapProgress();
