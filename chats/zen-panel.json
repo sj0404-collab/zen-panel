@@ -3,8 +3,8 @@
   "sz_tip": "chats",
   "repo": "sj0404-collab/zen-panel",
   "repoName": "zen-panel",
-  "workdir": "/home/runner/hub-work/zen-panel/code",
-  "updatedAt": "2026-10-03T15:13:25Z",
+  "workdir": "/home/runner/work/zen-panel/zen-panel/fork",
+  "updatedAt": "2026-10-03T15:44:30Z",
   "count": 23,
   "sessions": [
     {
@@ -12,7 +12,7 @@
       "title": "Обзор Zen.md",
       "slug": "tidy-canyon",
       "directory": "/home/runner/work/zen-panel/zen-panel/fork",
-      "timeUpdated": 1791035651258,
+      "timeUpdated": 1791042268818,
       "export": {
         "info": {
           "id": "ses_f02ffbb93ffeRIB1q4jSKc235d",
@@ -36,7 +36,7 @@
           "cost": 0,
           "time": {
             "created": 1790951048300,
-            "updated": 1791035651258
+            "updated": 1791042268818
           }
         },
         "messages": [
@@ -17047,6 +17047,924 @@
                 "messageID": "msg_1020b0f170014QJEvuQfhYRp0E"
               }
             ]
+          },
+          {
+            "info": {
+              "role": "user",
+              "time": {
+                "created": 1791042185257
+              },
+              "agent": "build",
+              "model": {
+                "providerID": "opencode",
+                "modelID": "big-pickle"
+              },
+              "summary": {
+                "diffs": []
+              },
+              "id": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "type": "text",
+                "text": "баг со снапшотами они не востанавливаються вылазит ошибка и не могу выбирать сам что востанавливать в них ",
+                "id": "prt_1026ee82b001tJRjprDnMnvLNp",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026ee829001NGmm3ndgf3Hie4"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042185591,
+                "completed": 1791042190723
+              },
+              "finish": "tool-calls",
+              "id": "msg_1026ee977001bWIvQA2tRbuEjj",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-start",
+                "id": "prt_1026ef65e001bQvJPU5gIKC5dO",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026ee977001bWIvQA2tRbuEjj"
+              },
+              {
+                "type": "reasoning",
+                "text": "New task: bug with snapshots — they don't restore, an error appears, and the user can't choose what to restore in them.\n\nLet me investigate the snapshot/restore code. There's `tools/snapshot-audit-code.sh`, `tools/restore-audit-code.sh`, `tests/tui-snapshot-test.js` (31 passed).\n\nLet me read those and find the restore UI.\n\nLet me explore inparallel.",
+                "time": {
+                  "start": 1791042188897,
+                  "end": 1791042190173
+                },
+                "id": "prt_1026ef661001jR5X6vYC7WiE6A",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026ee977001bWIvQA2tRbuEjj"
+              },
+              {
+                "type": "text",
+                "text": "Смотрю код снапшотов и восстановления.",
+                "time": {
+                  "start": 1791042190176,
+                  "end": 1791042190588
+                },
+                "id": "prt_1026efb60001xfkAqWyCqGGk3M",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026ee977001bWIvQA2tRbuEjj"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a1026eebd4726793d0d67e",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/work/zen-panel/zen-panel/fork && cat tools/snapshot-audit-code.sh"
+                  },
+                  "output": "#!/usr/bin/env bash\n# Snapshot audit + code to session-state branch as audit.json / code.json\nset -uo pipefail\n\nSLOT=\"${1:-agent}\"\nWORK=\"${2:-${GITHUB_WORKSPACE:-$(pwd)}/fork}\"\nif [ ! -d \"$WORK\" ]; then\n  WORK=\"$(pwd)\"\nfi\nif [ ! -d \"$WORK/.git\" ] && [ -d \"$WORK/../fork/.git\" ]; then\n  WORK=\"$WORK/../fork\"\nfi\n\nHUB_LOGS=\"${HUB_LOGS:-$HOME/.npm-hub/logs}\"\nmkdir -p \"$HUB_LOGS\" 2>/dev/null || true\n\nINTERVAL=\"${SNAPSHOT_INTERVAL:-120}\"\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nexport SLOT WORK\n\nlog() { echo \"[snapshot $SLOT] $*\" | tee -a \"$HUB_LOGS/snapshot-$SLOT.log\"; }\npublish_snapshot() {\n  local output status\n  output=\"$(bash \"$SCRIPT_DIR/publish_session.sh\" \"$@\" 2>&1)\"\n  status=$?\n  printf '%s\\n' \"$output\" | tee -a \"$HUB_LOGS/snapshot-$SLOT.log\"\n  return \"$status\"\n}\nsnapshot_lock_dir() { printf '%s/snapshot-%s.lock' \"$HUB_LOGS\" \"$SLOT\"; }\nacquire_snapshot_lock() {\n  local lock owner now mtime\n  lock=\"$(snapshot_lock_dir)\"\n  if mkdir \"$lock\" 2>/dev/null; then\n    printf '%s\\n' \"$$\" > \"$lock/pid\"\n    printf '%s\\n' \"$(date +%s)\" > \"$lock/started\"\n    return 0\n  fi\n  owner=\"\"\n  [ -f \"$lock/pid\" ] && owner=\"$(tr -dc '0-9' < \"$lock/pid\")\"\n  now=\"$(date +%s)\"\n  mtime=\"$(stat -c %Y \"$lock\" 2>/dev/null || printf '0')\"\n  if { [ -n \"$owner\" ] && ! kill -0 \"$owner\" 2>/dev/null; } \\\n    || { [ -z \"$owner\" ] && [ \"$mtime\" -gt 0 ] && [ $((now - mtime)) -gt 120 ]; }; then\n    rm -rf \"$lock\"\n    if mkdir \"$lock\" 2>/dev/null; then\n      printf '%s\\n' \"$$\" > \"$lock/pid\"\n      printf '%s\\n' \"$now\" > \"$lock/started\"\n      return 0\n    fi\n  fi\n  return 1\n}\nrelease_snapshot_lock() { rm -rf \"$(snapshot_lock_dir)\"; }\n\n# Daemon cycle counter for the throttled per-repo chat export below.\nCHATCYCLE=0\n\n# Publish chats/<name>.json for EVERY git repo under $HOME (the hub clone plus\n# everything cloned from the Files tab), so the next runner re-imports each\n# repo's opencode sessions by name instead of starting from an empty db.\nexport_all_chats() {\n  [ \"${SNAPSHOT_EXPORT_ALL_CHATS:-0}\" = \"1\" ] || return 0\n  [ -f \"$SCRIPT_DIR/export-chats.sh\" ] || return 0\n  [ -n \"${GH_TOKEN:-${GITHUB_TOKEN:-}}\" ] || return 0\n  GH_TOKEN=\"${GH_TOKEN:-${GITHUB_TOKEN:-}}\" PUBLISH=1 \\\n    bash \"$SCRIPT_DIR/export-chats.sh\" --all >> \"$HUB_LOGS/snapshot-$SLOT.log\" 2>&1\n}\n\ndo_snapshot() {\n  if ! acquire_snapshot_lock; then\n    log \"another snapshot is already running\"\n    return 0\n  fi\n  local stamp\n  local chat_ok=1\n  stamp=\"$(date -u '+%Y%m%dT%H%M%S')\"\n  local tmpdir\n  if ! tmpdir=\"$(mktemp -d)\"; then\n    log \"cannot create snapshot directory\"\n    release_snapshot_lock\n    return 1\n  fi\n\n  local audit_src=\"$WORK/.zen-agent/audit.jsonl\"\n  local audit_json=\"$tmpdir/audit.json\"\n  local code_json=\"$tmpdir/code.json\"\n\n  python3 - \"$audit_src\" \"$WORK\" \"$tmpdir\" <<'PY'\nimport json, os, sys, glob, sqlite3\naudit_src, work, tmpdir = sys.argv[1], sys.argv[2], sys.argv[3]\nout = {\"kind\":\"audit\",\"slot\": os.environ.get(\"SLOT\",\"\"), \"stamp\": os.popen(\"date -u +%Y-%m-%dT%H:%M:%SZ\").read().strip(),\n       \"audit\": [], \"sessions\": [], \"opencode\": [], \"chat\": []}\ntry:\n    if os.path.exists(audit_src):\n        lines = open(audit_src, encoding=\"utf-8\").read().splitlines()\n        for l in lines[-500:]:\n            l=l.strip()\n            if not l: continue\n            try:\n                j=json.loads(l)\n                out[\"audit\"].append(j)\n                if j.get(\"event\") in (\"task_started\",\"model_response\",\"tool_finished\",\"task_finished\",\"user_message\",\"agent_message\"):\n                    out[\"chat\"].append(j)\n            except: pass\nexcept Exception as e:\n    out[\"audit_error\"]=str(e)\ntry:\n    sess_dir = os.path.join(work, \".zen-agent\", \"sessions\")\n    if os.path.isdir(sess_dir):\n        for p in glob.glob(os.path.join(sess_dir, \"*.json\"))[:50]:\n            try: out[\"sessions\"].append(json.load(open(p, encoding=\"utf-8\")))\n            except: pass\nexcept Exception as e:\n    out[\"sessions_error\"]=str(e)\ntry:\n    db = os.path.expanduser(\"~/.local/share/opencode/opencode.db\")\n    if os.path.exists(db):\n        import sqlite3\n        con = sqlite3.connect(db)\n        con.row_factory = sqlite3.Row\n        cur = con.cursor()\n        cur.execute(\"SELECT id, title, slug, directory, parent_id, datetime(time_created/1000,'unixepoch') as created FROM session ORDER BY time_created DESC LIMIT 50\")\n        for r in cur.fetchall():\n            out[\"opencode\"].append(dict(r))\n        try:\n            cur.execute(\"SELECT session_id, id as message_id, time_created, json_extract(data,'$.role') as role, substr(json_extract(data,'$.parts'),1,2000) as parts FROM message ORDER BY time_created DESC LIMIT 200\")\n            out[\"opencodeMessages\"] = [dict(r) for r in cur.fetchall()]\n            out[\"opencodeMessageCount\"] = len(out[\"opencodeMessages\"])\n        except Exception:\n            pass\n        con.close()\nexcept Exception as e:\n    out[\"opencode_error\"] = str(e)\nout[\"chatCount\"] = len(out[\"chat\"])\nout[\"auditCount\"] = len(out[\"audit\"])\n# Если chat пустой (неизвестные event names), дублируем audit как chat\nif out[\"chatCount\"] == 0 and out[\"audit\"]:\n    out[\"chat\"] = out[\"audit\"]\n    out[\"chatCount\"] = len(out[\"chat\"])\nwith open(os.path.join(tmpdir, \"audit.json\"), \"w\", encoding=\"utf-8\") as f:\n    json.dump(out, f, ensure_ascii=False, indent=2)\nPY\n  if [ ! -s \"$audit_json\" ]; then echo \"{}\" > \"$audit_json\"; fi\n  # Обновляем saved/opencode-*.json каждые 120с (не раз в сутки) чтобы сессии были свежими\n  if [ -f \"$SCRIPT_DIR/backup-chat-history.sh\" ] && [ -n \"${GH_TOKEN:-${GITHUB_TOKEN:-}}\" ]; then\n    if ! GH_TOKEN=\"${GH_TOKEN:-${GITHUB_TOKEN:-}}\" PUBLISH=1 bash \"$SCRIPT_DIR/backup-chat-history.sh\" >> \"$HUB_LOGS/snapshot-$SLOT.log\" 2>&1; then\n      log \"chat history backup failed\"\n      chat_ok=0\n    fi\n  fi\n  # Per-repo chat bundles: on the 120s daemon only every 10th cycle (~20 min,\n  # export is heavier than the light audit/code snapshot), always on the final\n  # --once. The final run covers cross-run continuity; the periodic one guards\n  # against a runner that is killed before the graceful final step.\n  CHATCYCLE=$((CHATCYCLE + 1))\n   if [ $((CHATCYCLE % 10)) -eq 1 ] || [ \"${SNAPSHOT_ONCE:-}\" = \"1\" ]; then\n     if ! export_all_chats; then\n       log \"chat export failed\"\n       chat_ok=0\n     fi\n   fi\n\n\n  python3 - \"$WORK\" \"$tmpdir\" <<'PY'\nimport json, os, sys, subprocess, glob\nwork, tmpdir = sys.argv[1], sys.argv[2]\nout = {\"kind\":\"code\",\"slot\": os.environ.get(\"SLOT\",\"\"), \"stamp\": os.popen(\"date -u +%Y-%m-%dT%H:%M:%SZ\").read().strip(),\n       \"changedFiles\": [], \"gitStatus\": \"\", \"gitDiffStat\": \"\", \"gitDiff\": \"\", \"gitLog\": [], \"sessions\": []}\ndef run(cmd):\n    try: return subprocess.check_output(cmd, cwd=work, shell=True, text=True, stderr=subprocess.DEVNULL)\n    except: return \"\"\nout[\"gitStatus\"] = run(\"git status --porcelain=v1 2>/dev/null | head -n 200\")\nout[\"gitDiffStat\"] = run(\"git diff --stat HEAD 2>/dev/null | head -n 200\")\ndiff = run(\"git diff HEAD 2>/dev/null | head -c 400000\")\nout[\"gitDiff\"] = diff\ntry:\n    for l in out[\"gitStatus\"].splitlines():\n        if len(l) >= 3:\n            out[\"changedFiles\"].append({\"code\": l[:2], \"path\": l[3:]})\n        elif l:\n            out[\"changedFiles\"].append({\"code\": l[:2].strip() if len(l)>=2 else l, \"path\": l[3:] if len(l)>=3 else \"\"})\nexcept: pass\nout[\"gitLog\"] = [x for x in run(\"git log --oneline -20 2>/dev/null\").strip().splitlines() if x][:20]\ntry:\n    sess_dir = os.path.join(work, \".zen-agent\", \"sessions\")\n    if os.path.isdir(sess_dir):\n        for p in glob.glob(os.path.join(sess_dir, \"*.json\"))[:20]:\n            try: out[\"sessions\"].append({\"file\": os.path.basename(p), \"data\": json.load(open(p, encoding=\"utf-8\"))})\n            except: pass\nexcept: pass\ntry: out[\"topFiles\"] = [x for x in run(\"ls -1 2>/dev/null | head -n 50\").strip().splitlines() if x]\nexcept: pass\nout[\"changedCount\"] = len(out[\"changedFiles\"])\nwith open(os.path.join(tmpdir, \"code.json\"), \"w\", encoding=\"utf-8\") as f:\n    json.dump(out, f, ensure_ascii=False, indent=2)\nPY\n  if [ ! -s \"$code_json\" ]; then echo \"{}\" > \"$code_json\"; fi\n\n  local published=0\n  for f in audit.json code.json; do\n    local base=\"${f%.json}\"\n    local src=\"$tmpdir/$f\"\n    local dst=\"$f\"\n    if publish_snapshot \"slot=$SLOT\" \"file=$dst\" \"json=$src\" \"kind=snapshot-$f\"; then\n      published=$((published+1))\n    else\n      log \"publish failed for $dst\"\n    fi\n    local hist=\"saved/${base}-${SLOT}-${stamp}.json\"\n    if publish_snapshot \"file=$hist\" \"json=$src\" \"kind=snapshot-$f\"; then\n      published=$((published+1))\n    else\n      log \"publish failed for $hist\"\n    fi\n  done\n  log \"snapshot $stamp: audit $(wc -c < \"$audit_json\" 2>/dev/null | tr -d ' ')B code $(wc -c < \"$code_json\" 2>/dev/null | tr -d ' ')B published=$published/4\"\n  rm -rf \"$tmpdir\"\n  release_snapshot_lock\n  [ \"$published\" -eq 4 ] && [ \"$chat_ok\" -eq 1 ]\n}\n\nif [ \"${1:-}\" = \"--once\" ] || [ \"${SNAPSHOT_ONCE:-}\" = \"1\" ]; then\n  SLOT=\"${2:-agent}\"\n  WORK=\"${3:-$WORK}\"\n  if [ ! -d \"$WORK\" ]; then WORK=\"$(pwd)\"; fi\n  if [ ! -d \"$WORK/.git\" ] && [ -d \"$WORK/../fork/.git\" ]; then WORK=\"$WORK/../fork\"; fi\n  export SLOT WORK\n  # Full chat transcripts (chats/<repo>.json): this repo's bundle is always\n  # exported at shutdown; with SNAPSHOT_EXPORT_ALL_CHATS=1 every repo under\n  # $HOME is exported too (see export_all_chats inside do_snapshot).\n  if [ \"${EXPORT_CHATS:-1}\" != \"0\" ] && [ -f \"$SCRIPT_DIR/export-chats.sh\" ] \\\n    && [ -n \"${GH_TOKEN:-${GITHUB_TOKEN:-}}\" ]; then\n    CHAT_REPO_DIR=\"$WORK\" PUBLISH=\"${PUBLISH:-1}\" \\\n      bash \"$SCRIPT_DIR/export-chats.sh\" 2>&1 | tee -a \"$HUB_LOGS/snapshot-$SLOT.log\"\n    export_status=${PIPESTATUS[0]}\n    if [ \"$export_status\" -ne 0 ]; then\n      log \"one-shot chat export failed\"\n      exit 1\n    fi\n  fi\n  do_snapshot || exit 1\n  exit 0\nfi\n\nlog \"snapshot daemon started slot=$SLOT work=$WORK interval=${INTERVAL}s (audit.json + code.json every ${INTERVAL}s)\"\ndo_snapshot || true\nwhile true; do\n  sleep \"$INTERVAL\"\n  do_snapshot || log \"snapshot failed, retrying\"\ndone\n",
+                  "metadata": {
+                    "output": "#!/usr/bin/env bash\n# Snapshot audit + code to session-state branch as audit.json / code.json\nset -uo pipefail\n\nSLOT=\"${1:-agent}\"\nWORK=\"${2:-${GITHUB_WORKSPACE:-$(pwd)}/fork}\"\nif [ ! -d \"$WORK\" ]; then\n  WORK=\"$(pwd)\"\nfi\nif [ ! -d \"$WORK/.git\" ] && [ -d \"$WORK/../fork/.git\" ]; then\n  WORK=\"$WORK/../fork\"\nfi\n\nHUB_LOGS=\"${HUB_LOGS:-$HOME/.npm-hub/logs}\"\nmkdir -p \"$HUB_LOGS\" 2>/dev/null || true\n\nINTERVAL=\"${SNAPSHOT_INTERVAL:-120}\"\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nexport SLOT WORK\n\nlog() { echo \"[snapshot $SLOT] $*\" | tee -a \"$HUB_LOGS/snapshot-$SLOT.log\"; }\npublish_snapshot() {\n  local output status\n  output=\"$(bash \"$SCRIPT_DIR/publish_session.sh\" \"$@\" 2>&1)\"\n  status=$?\n  printf '%s\\n' \"$output\" | tee -a \"$HUB_LOGS/snapshot-$SLOT.log\"\n  return \"$status\"\n}\nsnapshot_lock_dir() { printf '%s/snapshot-%s.lock' \"$HUB_LOGS\" \"$SLOT\"; }\nacquire_snapshot_lock() {\n  local lock owner now mtime\n  lock=\"$(snapshot_lock_dir)\"\n  if mkdir \"$lock\" 2>/dev/null; then\n    printf '%s\\n' \"$$\" > \"$lock/pid\"\n    printf '%s\\n' \"$(date +%s)\" > \"$lock/started\"\n    return 0\n  fi\n  owner=\"\"\n  [ -f \"$lock/pid\" ] && owner=\"$(tr -dc '0-9' < \"$lock/pid\")\"\n  now=\"$(date +%s)\"\n  mtime=\"$(stat -c %Y \"$lock\" 2>/dev/null || printf '0')\"\n  if { [ -n \"$owner\" ] && ! kill -0 \"$owner\" 2>/dev/null; } \\\n    || { [ -z \"$owner\" ] && [ \"$mtime\" -gt 0 ] && [ $((now - mtime)) -gt 120 ]; }; then\n    rm -rf \"$lock\"\n    if mkdir \"$lock\" 2>/dev/null; then\n      printf '%s\\n' \"$$\" > \"$lock/pid\"\n      printf '%s\\n' \"$now\" > \"$lock/started\"\n      return 0\n    fi\n  fi\n  return 1\n}\nrelease_snapshot_lock() { rm -rf \"$(snapshot_lock_dir)\"; }\n\n# Daemon cycle counter for the throttled per-repo chat export below.\nCHATCYCLE=0\n\n# Publish chats/<name>.json for EVERY git repo under $HOME (the hub clone plus\n# everything cloned from the Files tab), so the next runner re-imports each\n# repo's opencode sessions by name instead of starting from an empty db.\nexport_all_chats() {\n  [ \"${SNAPSHOT_EXPORT_ALL_CHATS:-0}\" = \"1\" ] || return 0\n  [ -f \"$SCRIPT_DIR/export-chats.sh\" ] || return 0\n  [ -n \"${GH_TOKEN:-${GITHUB_TOKEN:-}}\" ] || return 0\n  GH_TOKEN=\"${GH_TOKEN:-${GITHUB_TOKEN:-}}\" PUBLISH=1 \\\n    bash \"$SCRIPT_DIR/export-chats.sh\" --all >> \"$HUB_LOGS/snapshot-$SLOT.log\" 2>&1\n}\n\ndo_snapshot() {\n  if ! acquire_snapshot_lock; then\n    log \"another snapshot is already running\"\n    return 0\n  fi\n  local stamp\n  local chat_ok=1\n  stamp=\"$(date -u '+%Y%m%dT%H%M%S')\"\n  local tmpdir\n  if ! tmpdir=\"$(mktemp -d)\"; then\n    log \"cannot create snapshot directory\"\n    release_snapshot_lock\n    return 1\n  fi\n\n  local audit_src=\"$WORK/.zen-agent/audit.jsonl\"\n  local audit_json=\"$tmpdir/audit.json\"\n  local code_json=\"$tmpdir/code.json\"\n\n  python3 - \"$audit_src\" \"$WORK\" \"$tmpdir\" <<'PY'\nimport json, os, sys, glob, sqlite3\naudit_src, work, tmpdir = sys.argv[1], sys.argv[2], sys.argv[3]\nout = {\"kind\":\"audit\",\"slot\": os.environ.get(\"SLOT\",\"\"), \"stamp\": os.popen(\"date -u +%Y-%m-%dT%H:%M:%SZ\").read().strip(),\n       \"audit\": [], \"sessions\": [], \"opencode\": [], \"chat\": []}\ntry:\n    if os.path.exists(audit_src):\n        lines = open(audit_src, encoding=\"utf-8\").read().splitlines()\n        for l in lines[-500:]:\n            l=l.strip()\n            if not l: continue\n            try:\n                j=json.loads(l)\n                out[\"audit\"].append(j)\n                if j.get(\"event\") in (\"task_started\",\"model_response\",\"tool_finished\",\"task_finished\",\"user_message\",\"agent_message\"):\n                    out[\"chat\"].append(j)\n            except: pass\nexcept Exception as e:\n    out[\"audit_error\"]=str(e)\ntry:\n    sess_dir = os.path.join(work, \".zen-agent\", \"sessions\")\n    if os.path.isdir(sess_dir):\n        for p in glob.glob(os.path.join(sess_dir, \"*.json\"))[:50]:\n            try: out[\"sessions\"].append(json.load(open(p, encoding=\"utf-8\")))\n            except: pass\nexcept Exception as e:\n    out[\"sessions_error\"]=str(e)\ntry:\n    db = os.path.expanduser(\"~/.local/share/opencode/opencode.db\")\n    if os.path.exists(db):\n        import sqlite3\n        con = sqlite3.connect(db)\n        con.row_factory = sqlite3.Row\n        cur = con.cursor()\n        cur.execute(\"SELECT id, title, slug, directory, parent_id, datetime(time_created/1000,'unixepoch') as created FROM session ORDER BY time_created DESC LIMIT 50\")\n        for r in cur.fetchall():\n            out[\"opencode\"].append(dict(r))\n        try:\n            cur.execute(\"SELECT session_id, id as message_id, time_created, json_extract(data,'$.role') as role, substr(json_extract(data,'$.parts'),1,2000) as parts FROM message ORDER BY time_created DESC LIMIT 200\")\n            out[\"opencodeMessages\"] = [dict(r) for r in cur.fetchall()]\n            out[\"opencodeMessageCount\"] = len(out[\"opencodeMessages\"])\n        except Exception:\n            pass\n        con.close()\nexcept Exception as e:\n    out[\"opencode_error\"] = str(e)\nout[\"chatCount\"] = len(out[\"chat\"])\nout[\"auditCount\"] = len(out[\"audit\"])\n# Если chat пустой (неизвестные event names), дублируем audit как chat\nif out[\"chatCount\"] == 0 and out[\"audit\"]:\n    out[\"chat\"] = out[\"audit\"]\n    out[\"chatCount\"] = len(out[\"chat\"])\nwith open(os.path.join(tmpdir, \"audit.json\"), \"w\", encoding=\"utf-8\") as f:\n    json.dump(out, f, ensure_ascii=False, indent=2)\nPY\n  if [ ! -s \"$audit_json\" ]; then echo \"{}\" > \"$audit_json\"; fi\n  # Обновляем saved/opencode-*.json каждые 120с (не раз в сутки) чтобы сессии были свежими\n  if [ -f \"$SCRIPT_DIR/backup-chat-history.sh\" ] && [ -n \"${GH_TOKEN:-${GITHUB_TOKEN:-}}\" ]; then\n    if ! GH_TOKEN=\"${GH_TOKEN:-${GITHUB_TOKEN:-}}\" PUBLISH=1 bash \"$SCRIPT_DIR/backup-chat-history.sh\" >> \"$HUB_LOGS/snapshot-$SLOT.log\" 2>&1; then\n      log \"chat history backup failed\"\n      chat_ok=0\n    fi\n  fi\n  # Per-repo chat bundles: on the 120s daemon only every 10th cycle (~20 min,\n  # export is heavier than the light audit/code snapshot), always on the final\n  # --once. The final run covers cross-run continuity; the periodic one guards\n  # against a runner that is killed before the graceful final step.\n  CHATCYCLE=$((CHATCYCLE + 1))\n   if [ $((CHATCYCLE % 10)) -eq 1 ] || [ \"${SNAPSHOT_ONCE:-}\" = \"1\" ]; then\n     if ! export_all_chats; then\n       log \"chat export failed\"\n       chat_ok=0\n     fi\n   fi\n\n\n  python3 - \"$WORK\" \"$tmpdir\" <<'PY'\nimport json, os, sys, subprocess, glob\nwork, tmpdir = sys.argv[1], sys.argv[2]\nout = {\"kind\":\"code\",\"slot\": os.environ.get(\"SLOT\",\"\"), \"stamp\": os.popen(\"date -u +%Y-%m-%dT%H:%M:%SZ\").read().strip(),\n       \"changedFiles\": [], \"gitStatus\": \"\", \"gitDiffStat\": \"\", \"gitDiff\": \"\", \"gitLog\": [], \"sessions\": []}\ndef run(cmd):\n    try: return subprocess.check_output(cmd, cwd=work, shell=True, text=True, stderr=subprocess.DEVNULL)\n    except: return \"\"\nout[\"gitStatus\"] = run(\"git status --porcelain=v1 2>/dev/null | head -n 200\")\nout[\"gitDiffStat\"] = run(\"git diff --stat HEAD 2>/dev/null | head -n 200\")\ndiff = run(\"git diff HEAD 2>/dev/null | head -c 400000\")\nout[\"gitDiff\"] = diff\ntry:\n    for l in out[\"gitStatus\"].splitlines():\n        if len(l) >= 3:\n            out[\"changedFiles\"].append({\"code\": l[:2], \"path\": l[3:]})\n        elif l:\n            out[\"changedFiles\"].append({\"code\": l[:2].strip() if len(l)>=2 else l, \"path\": l[3:] if len(l)>=3 else \"\"})\nexcept: pass\nout[\"gitLog\"] = [x for x in run(\"git log --oneline -20 2>/dev/null\").strip().splitlines() if x][:20]\ntry:\n    sess_dir = os.path.join(work, \".zen-agent\", \"sessions\")\n    if os.path.isdir(sess_dir):\n        for p in glob.glob(os.path.join(sess_dir, \"*.json\"))[:20]:\n            try: out[\"sessions\"].append({\"file\": os.path.basename(p), \"data\": json.load(open(p, encoding=\"utf-8\"))})\n            except: pass\nexcept: pass\ntry: out[\"topFiles\"] = [x for x in run(\"ls -1 2>/dev/null | head -n 50\").strip().splitlines() if x]\nexcept: pass\nout[\"changedCount\"] = len(out[\"changedFiles\"])\nwith open(os.path.join(tmpdir, \"code.json\"), \"w\", encoding=\"utf-8\") as f:\n    json.dump(out, f, ensure_ascii=False, indent=2)\nPY\n  if [ ! -s \"$code_json\" ]; then echo \"{}\" > \"$code_json\"; fi\n\n  local published=0\n  for f in audit.json code.json; do\n    local base=\"${f%.json}\"\n    local src=\"$tmpdir/$f\"\n    local dst=\"$f\"\n    if publish_snapshot \"slot=$SLOT\" \"file=$dst\" \"json=$src\" \"kind=snapshot-$f\"; then\n      published=$((published+1))\n    else\n      log \"publish failed for $dst\"\n    fi\n    local hist=\"saved/${base}-${SLOT}-${stamp}.json\"\n    if publish_snapshot \"file=$hist\" \"json=$src\" \"kind=snapshot-$f\"; then\n      published=$((published+1))\n    else\n      log \"publish failed for $hist\"\n    fi\n  done\n  log \"snapshot $stamp: audit $(wc -c < \"$audit_json\" 2>/dev/null | tr -d ' ')B code $(wc -c < \"$code_json\" 2>/dev/null | tr -d ' ')B published=$published/4\"\n  rm -rf \"$tmpdir\"\n  release_snapshot_lock\n  [ \"$published\" -eq 4 ] && [ \"$chat_ok\" -eq 1 ]\n}\n\nif [ \"${1:-}\" = \"--once\" ] || [ \"${SNAPSHOT_ONCE:-}\" = \"1\" ]; then\n  SLOT=\"${2:-agent}\"\n  WORK=\"${3:-$WORK}\"\n  if [ ! -d \"$WORK\" ]; then WORK=\"$(pwd)\"; fi\n  if [ ! -d \"$WORK/.git\" ] && [ -d \"$WORK/../fork/.git\" ]; then WORK=\"$WORK/../fork\"; fi\n  export SLOT WORK\n  # Full chat transcripts (chats/<repo>.json): this repo's bundle is always\n  # exported at shutdown; with SNAPSHOT_EXPORT_ALL_CHATS=1 every repo under\n  # $HOME is exported too (see export_all_chats inside do_snapshot).\n  if [ \"${EXPORT_CHATS:-1}\" != \"0\" ] && [ -f \"$SCRIPT_DIR/export-chats.sh\" ] \\\n    && [ -n \"${GH_TOKEN:-${GITHUB_TOKEN:-}}\" ]; then\n    CHAT_REPO_DIR=\"$WORK\" PUBLISH=\"${PUBLISH:-1}\" \\\n      bash \"$SCRIPT_DIR/export-chats.sh\" 2>&1 | tee -a \"$HUB_LOGS/snapshot-$SLOT.log\"\n    export_status=${PIPESTATUS[0]}\n    if [ \"$export_status\" -ne 0 ]; then\n      log \"one-shot chat export failed\"\n      exit 1\n    fi\n  fi\n  do_snapshot || exit 1\n  exit 0\nfi\n\nlog \"snapshot daemon started slot=$SLOT work=$WORK interval=${INTERVAL}s (audit.json + code.json every ${INTERVAL}s)\"\ndo_snapshot || true\nwhile true; do\n  sleep \"$INTERVAL\"\n  do_snapshot || log \"snapshot failed, retrying\"\ndone\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/work/zen-panel/zen-panel/fork && cat tools/snapshot-audit-code.sh",
+                  "time": {
+                    "start": 1791042190576,
+                    "end": 1791042190642
+                  }
+                },
+                "id": "prt_1026efce9001sx8e0PR1fRp0e9",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026ee977001bWIvQA2tRbuEjj"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a1026eebd4726793d0d67f",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/work/zen-panel/zen-panel/fork && cat tools/restore-audit-code.sh"
+                  },
+                  "output": "cat: tools/restore-audit-code.sh: No such file or directory\n",
+                  "metadata": {
+                    "output": "cat: tools/restore-audit-code.sh: No such file or directory\n",
+                    "exit": 1,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/work/zen-panel/zen-panel/fork && cat tools/restore-audit-code.sh",
+                  "time": {
+                    "start": 1791042190584,
+                    "end": 1791042190649
+                  }
+                },
+                "id": "prt_1026efcf2001ARU2jH7d2BFFfP",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026ee977001bWIvQA2tRbuEjj"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_1026efd570016SboWIjG8m0yeY",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026ee977001bWIvQA2tRbuEjj"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042190747,
+                "completed": 1791042201889
+              },
+              "finish": "tool-calls",
+              "id": "msg_1026efd9b001zRTajFBbob7VvL",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-start",
+                "id": "prt_1026f0d68001LRZeYPkkmQuGlh",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026efd9b001zRTajFBbob7VvL"
+              },
+              {
+                "type": "reasoning",
+                "text": "The file `tools/restore-audit-code.sh` doesn't exist in `tools/` — but earlier in the session summary it was listed. Let me check: in the first bash output of this session (the `ls npm-hub/src/ tools/`), the list included `restore-chats.sh` and `restore-work.sh` — but NOT `restore-audit-code.sh`. Let me re-read: the list was:\n\n```\nbackup-chat-history.sh\nbackup-work.sh\nbuild_win.sh\nexport-chats.sh\nhandoff.sh\nhub_control.sh\nmigrate_session_state.sh\noc_first_prompt.py\noc_gh_auth.sh\noc_lan_start.sh\noc_lan_stop.sh\nopen_tunnel.sh\npublish_session.sh\nreap_dead_sessions.sh\nrescue_ssh.sh\nrestore-chats.sh\nrestore-work.sh\nrestore_audit-code.sh      <-- wait, is this there?\nsnapshot-audit-code.sh\n```\n\nLooking at the output again:\n```\nrescue_ssh.sh\nrestore-chats.sh\nrestore-work.sh\nrestore_audit-code.sh\nsnapshot-audit-code.sh\n```\n\nHmm, actually the output shows:\n```\nrescue_ssh.sh\nrestore-chats.sh\nrestore-work.sh\nrestore_audit-code.sh\nsnapshot-audit-code.sh\n```\n\nLet me look at the actual output text I received:\n```\nrescue_ssh.sh\nrestore-chats.sh\nrestore-work.sh\nrestore_audit-code.sh\nsnapshot-audit-code.sh\n```\n\nThe output was:\n```\nreap_dead_sessions.sh\nrescue_ssh.sh\nrestore-chats.sh\nrestore-work.sh\nrestore_audit-code.sh\nsnapshot-audit-code.sh\n```\n\nHmm I need to be careful. The actual received output listed:\n```\nrescue_ssh.sh\nrestore-chats.sh\nrestore-work.sh\nrestore_audit-code.sh\nsnapshot-audit-code.sh\n```\nWait no. Let me scroll: the output ended with:\n\n```\nrestore-chats.sh\nrestore-work.sh\nrestore_audit-code.sh\nsnapshot-audit-code.sh\n```\n\nHmm, I recall seeing `restore_audit-code.sh` (with underscore). Yes! In the tool output it was `restore_audit-code.sh` — underscore before \"audit\". So the file is `tools/restore_audit-code.sh`. Let me read that.\n\nAlso, importantly: at repo root there are untracked `audit.json`, `code.json` — those are snapshot outputs the user probably downloaded/has locally. And modified `npm-hub/.zen-agent/audit.jsonl`.\n\nLet me read the restore script and the UI that callsit.",
+                "time": {
+                  "start": 1791042194795,
+                  "end": 1791042201378
+                },
+                "id": "prt_1026f0d6b0014hI3Of8phqG29Z",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026efd9b001zRTajFBbob7VvL"
+              },
+              {
+                "type": "text",
+                "text": "Файл называется `restore_audit-code.sh`. Читаю его и UI восстановления:",
+                "time": {
+                  "start": 1791042201381,
+                  "end": 1791042201792
+                },
+                "id": "prt_1026f2724001a2FBdDrl7GYgxA",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026efd9b001zRTajFBbob7VvL"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a1026f17917173a862019d",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/work/zen-panel/zen-panel/fork && cat tools/restore_audit-code.sh"
+                  },
+                  "output": "cat: tools/restore_audit-code.sh: No such file or directory\n",
+                  "metadata": {
+                    "output": "cat: tools/restore_audit-code.sh: No such file or directory\n",
+                    "exit": 1,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/work/zen-panel/zen-panel/fork && cat tools/restore_audit-code.sh",
+                  "time": {
+                    "start": 1791042201778,
+                    "end": 1791042201790
+                  }
+                },
+                "id": "prt_1026f28ac001SNCnpj5cE3dnK7",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026efd9b001zRTajFBbob7VvL"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_1026f28e9001lp9AS78iUaWiMf",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026efd9b001zRTajFBbob7VvL"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042201909,
+                "completed": 1791042204297
+              },
+              "finish": "tool-calls",
+              "id": "msg_1026f2934001idi3zzt4m3aPgq",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-start",
+                "id": "prt_1026f2f170013X5mtt9LDV3rWv",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f2934001idi3zzt4m3aPgq"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a1026f20de767aabd89fa6",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/work/zen-panel/zen-panel/fork && ls tools/ | grep -i \"restore\\|snapshot\""
+                  },
+                  "output": "restore-chats.sh\nrestore-work.sh\nrestore_audit_code.sh\nsnapshot-audit-code.sh\n",
+                  "metadata": {
+                    "output": "restore-chats.sh\nrestore-work.sh\nrestore_audit_code.sh\nsnapshot-audit-code.sh\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/work/zen-panel/zen-panel/fork && ls tools/ | grep -i \"restore\\|snapshot\"",
+                  "time": {
+                    "start": 1791042204194,
+                    "end": 1791042204209
+                  }
+                },
+                "id": "prt_1026f321c001SGhm3GJ8OWFuZd",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f2934001idi3zzt4m3aPgq"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_1026f325a0012G8RViTNAx5Vfw",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f2934001idi3zzt4m3aPgq"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042204319,
+                "completed": 1791042206885
+              },
+              "finish": "tool-calls",
+              "id": "msg_1026f329f00160mV3g4fL7eqBx",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-start",
+                "id": "prt_1026f3a66001Z4WGIL2AdSPAMU",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f329f00160mV3g4fL7eqBx"
+              },
+              {
+                "type": "tool",
+                "tool": "read",
+                "callID": "call_01a1026f33837790afd4f9dd",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "filePath": "/home/runner/work/zen-panel/zen-panel/fork/tools/restore_audit_code.sh"
+                  },
+                  "output": "<path>/home/runner/work/zen-panel/zen-panel/fork/tools/restore_audit_code.sh</path>\n<type>file</type>\n<content>\n1: #!/usr/bin/env bash\n2: # Restore audit.json / code.json from session-state branch into workspace\n3: set -uo pipefail\n4: WORK=\"${1:-${GITHUB_WORKSPACE:-$(pwd)}/fork}\"\n5: SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n6: if [ ! -d \"$WORK\" ]; then WORK=\"$(pwd)\"; fi\n7: if [ -d \"$WORK/.git\" ]; then :; elif [ -d \"$WORK/../fork/.git\" ]; then WORK=\"$WORK/../fork\"; fi\n8: BRANCH=\"session-state\"\n9: HUB_LOGS=\"${HUB_LOGS:-$HOME/.npm-hub/logs}\"\n10: if ! mkdir -p \"$HUB_LOGS\" 2>/dev/null; then\n11:   echo \"restore_audit_code: cannot create log directory\" >&2\n12:   exit 1\n13: fi\n14: \n15: if [ -z \"${GH_TOKEN:-}\" ] && [ -z \"${GITHUB_TOKEN:-}\" ]; then\n16:   echo \"restore_audit_code: no GH_TOKEN, skip\" >&2\n17:   exit 0\n18: fi\n19: GH_TOKEN=\"${GH_TOKEN:-${GITHUB_TOKEN:-}}\"\n20: REMOTE=\"${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY:-}.git}\"\n21: \n22: # STATE_DIR hands in a session-state tree the caller already cloned, so a\n23: # second restore of the same branch does not pay for a second clone.\n24: #\n25: # This branch had grown past 70 MB, almost half of it one uploaded APK under\n26: # artifacts/ that nothing here ever reads. The hub workflow called this script\n27: # twice, so every single hub start downloaded the whole thing twice (~150 MB)\n28: # before the hub could publish its address - measured: the step took 1:51 on\n29: # one run and 5:52 on the next with no code change in between. The blob filter\n30: # drops everything over 1 MB (that APK and any other future upload) and leaves\n31: # every JSON this script actually reads, and the caller reuses one clone for\n32: # both calls. The fallback clone without the filter is for remotes that do not\n33: # speak partial clone (a local file:// repo in the tests, for one).\n34: STATE_DIR=\"${STATE_DIR:-}\"\n35: TMP=\"\"\n36: STATE=\"\"\n37: if [ -n \"$STATE_DIR\" ] && [ -d \"$STATE_DIR\" ]; then\n38:   STATE=\"$STATE_DIR\"\n39: else\n40:   if ! TMP=\"$(mktemp -d)\"; then\n41:     echo \"restore_audit_code: cannot create restore directory\" >&2\n42:     exit 1\n43:   fi\n44:   # cleanup() only ever removes a directory this script created: a STATE_DIR\n45:   # belongs to the caller and outlives us.\n46:   cleanup(){ rm -rf \"$TMP\"; }\n47:   trap cleanup EXIT\n48:   CLONE_DIR=\"$TMP/state\"\n49:   if ! git clone -q --depth 1 --filter=blob:limit=1m --branch \"$BRANCH\" \"$REMOTE\" \"$CLONE_DIR\" 2>/dev/null; then\n50:     if ! git clone -q --depth 1 --branch \"$BRANCH\" \"$REMOTE\" \"$CLONE_DIR\" 2>/dev/null; then\n51:       echo \"restore_audit_code: no $BRANCH branch yet\"\n52:       exit 0\n53:     fi\n54:   fi\n55:   STATE=\"$CLONE_DIR\"\n56: fi\n57: status=0\n58: # The branch was reorganised: audit/code now live under snapshots/, and the\n59: # historical bundles under history/<date>/<weekday>/. Both layouts are read, so\n60: # a branch that was never migrated restores exactly as before.\n61: pick_state_file() {\n62:   # $1 = leaf name; prints the first existing candidate.\n63:   local leaf=\"$1\" cand\n64:   for cand in \"snapshots/$leaf\" \"$leaf\" \"live/$leaf\" \"models/$leaf\"; do\n65:     if [ -f \"$STATE/$cand\" ]; then printf '%s' \"$cand\"; return 0; fi\n66:   done\n67:   # history/<date>/<weekday>/<leaf>\n68:   cand=\"$(find \"$STATE/history\" -type f -name \"$leaf\" 2>/dev/null | LC_ALL=C sort | tail -n1)\"\n69:   [ -n \"$cand\" ] || return 1\n70:   printf '%s' \"${cand#\"$STATE\"/}\"\n71: }\n72: history_files() {\n73:   # $1 = glob name (e.g. audit-*.json); prints matching files, new layout first.\n74:   find \"$STATE/history\" -type f -name \"$1\" 2>/dev/null | LC_ALL=C sort\n75:   ls \"$STATE\"/saved/\"$1\" 2>/dev/null\n76: }\n77: for f in audit.json code.json; do\n78:   rel=\"$(pick_state_file \"$f\")\" || rel=\"\"\n79:   if [ -n \"$rel\" ] && [ -f \"$STATE/$rel\" ]; then\n80:     if ! cp -f \"$STATE/$rel\" \"$WORK/$f\" 2>/dev/null; then\n81:       echo \"restore_audit_code: could not restore $f\" >&2\n82:       status=1\n83:       continue\n84:     fi\n85:     if [ \"$f\" = \"audit.json\" ] && [ ! -s \"$WORK/.zen-agent/audit.jsonl\" ]; then\n86:       mkdir -p \"$WORK/.zen-agent\" || status=1\n87:       # $rel, not $f: the branch moved audit.json under snapshots/, and reading\n88:       # the bare leaf name looked in the root of the clone, where it has not\n89:       # been since the layout change. It failed on every single start (\"No such\n90:       # file or directory: .../cloned/audit.json\"), set status=1, and left\n91:       # .zen-agent/audit.jsonl empty - so the audit trail the hub reads was\n92:       # never restored at all.\n93:       if ! python3 - \"$STATE/$rel\" \"$WORK/.zen-agent/audit.jsonl\" <<'PY'\n94: import json, sys\n95: src, dst = sys.argv[1], sys.argv[2]\n96: try:\n97:     data=json.load(open(src, encoding=\"utf-8\"))\n98:     audit=data.get(\"audit\",[]) or data.get(\"chat\",[])\n99:     with open(dst,\"w\",encoding=\"utf-8\") as out:\n100:         for ev in audit:\n101:             out.write(json.dumps(ev, ensure_ascii=False)+\"\\n\")\n102:     print(f\"restored {len(audit)} audit events to {dst}\")\n103: except Exception as e:\n104:     print(f\"restore audit failed: {e}\", file=sys.stderr)\n105:     sys.exit(1)\n106: PY\n107:       then\n108:         status=1\n109:       fi\n110:     fi\n111:     echo \"restore_audit_code: restored $rel ($(wc -c < \"$STATE/$rel\" | tr -d ' ')B) -> $WORK/$f\"\n112:   fi\n113: done\n114: mkdir -p \"$WORK/.zen-agent/restored\" 2>/dev/null || status=1\n115: for kind in audit code; do\n116:   files=\"$(history_files \"*$kind-*.json\")\"\n117:   if [ -n \"$files\" ]; then\n118:     # shellcheck disable=SC2086\n119:     if ! printf '%s\\n' \"$files\" | xargs -r cp -f -t \"$WORK/.zen-agent/restored/\" 2>/dev/null; then status=1; fi\n120:     echo \"restore_audit_code: saved $kind snapshots copied\"\n121:   fi\n122: done\n123: mkdir -p \"$HOME/.local/share/opencode/history\" 2>/dev/null || status=1\n124: opencode_bundles=\"$(history_files '*opencode-*.json')\"\n125: if [ -n \"$opencode_bundles\" ]; then\n126:   for f in $opencode_bundles; do\n127:     STAMP=\"$(basename \"$f\" .json | sed 's/^opencode-//')\"\n128:     DEST=\"$HOME/.local/share/opencode/history/$STAMP\"\n129:     mkdir -p \"$DEST\" 2>/dev/null || status=1\n130:     if ! cp -f \"$f\" \"$DEST/bundle.json\" 2>/dev/null; then status=1; fi\n131:     echo \"restore_audit_code: opencode bundle $STAMP restored\"\n132:   done\n133:   audit_rel=\"$(pick_state_file audit.json || true)\"\n134:   if [ -n \"$audit_rel\" ] && [ -f \"$STATE/$audit_rel\" ]; then\n135:     if ! python3 - \"$STATE/$audit_rel\" \"$HOME/.local/share/opencode/history\" <<'PY2'\n136: import json, os, sys, glob\n137: audit_path, hist_root = sys.argv[1], sys.argv[2]\n138: try:\n139:     data=json.load(open(audit_path, encoding=\"utf-8\"))\n140:     msgs=data.get(\"opencodeMessages\",[])\n141:     if msgs:\n142:         import glob as g\n143:         dirs=sorted(g.glob(hist_root+\"/*\"))\n144:         dest=dirs[-1] if dirs else hist_root+\"/restored\"\n145:         os.makedirs(dest, exist_ok=True)\n146:         with open(dest+\"/messages_restored.jsonl\",\"w\",encoding=\"utf-8\") as out:\n147:             for m in msgs:\n148:                 out.write(json.dumps(m, ensure_ascii=False)+\"\\n\")\n149:         print(f\"restored {len(msgs)} opencode messages to {dest}/messages_restored.jsonl\")\n150: except Exception as e:\n151:     print(f\"opencode restore failed: {e}\", file=sys.stderr)\n152:     sys.exit(1)\n153: PY2\n154:     then\n155:       status=1\n156:     fi\n157:   fi\n158: fi\n159: \n160: # Chat transcripts live in their own folder: chats/<repo>.json holds the full\n161: # export of every session for this repo. Import them back into the repo (the\n162: # CWD determines the session directory). opencode import is idempotent, so a\n163: # re-run just reports the session again. Disable with RESTORE_CHATS=0.\n164: #\n165: # RESTORE_CHATS_ALL=1 imports EVERY chats/<name>.json bundle into whatever\n166: # local repo matches (the hub clone + everything the Files tab cloned into\n167: # hub-work/), so sessions come back for all repos, not just this $WORK.\n168: if [ \"${RESTORE_CHATS_ALL:-0}\" = \"1\" ] && [ -f \"$SCRIPT_DIR/restore-chats.sh\" ]; then\n169:   CHAT_ALL_ROOT=\"${RESTORE_CHATS_ROOT:-$HOME}\" \\\n170:     bash \"$SCRIPT_DIR/restore-chats.sh\" --all --state \"$STATE\" 2>&1 | sed 's/^/  /'\n171:   chat_status=${PIPESTATUS[0]}\n172:   [ \"$chat_status\" -eq 0 ] || status=1\n173: elif [ \"${RESTORE_CHATS:-1}\" != \"0\" ] && [ -f \"$SCRIPT_DIR/restore-chats.sh\" ]; then\n174:   CHAT_REPO_DIR=\"$WORK\" bash \"$SCRIPT_DIR/restore-chats.sh\" --state \"$STATE\" 2>&1 | sed 's/^/  /'\n175:   chat_status=${PIPESTATUS[0]}\n176:   [ \"$chat_status\" -eq 0 ] || status=1\n177: fi\n178: [ \"$status\" -eq 0 ]\n\n(End of file - total 178 lines)\n</content>",
+                  "metadata": {
+                    "preview": "#!/usr/bin/env bash\n# Restore audit.json / code.json from session-state branch into workspace\nset -uo pipefail\nWORK=\"${1:-${GITHUB_WORKSPACE:-$(pwd)}/fork}\"\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nif [ ! -d \"$WORK\" ]; then WORK=\"$(pwd)\"; fi\nif [ -d \"$WORK/.git\" ]; then :; elif [ -d \"$WORK/../fork/.git\" ]; then WORK=\"$WORK/../fork\"; fi\nBRANCH=\"session-state\"\nHUB_LOGS=\"${HUB_LOGS:-$HOME/.npm-hub/logs}\"\nif ! mkdir -p \"$HUB_LOGS\" 2>/dev/null; then\n  echo \"restore_audit_code: cannot create log directory\" >&2\n  exit 1\nfi\n\nif [ -z \"${GH_TOKEN:-}\" ] && [ -z \"${GITHUB_TOKEN:-}\" ]; then\n  echo \"restore_audit_code: no GH_TOKEN, skip\" >&2\n  exit 0\nfi\nGH_TOKEN=\"${GH_TOKEN:-${GITHUB_TOKEN:-}}\"\nREMOTE=\"${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY:-}.git}\"",
+                    "truncated": false,
+                    "loaded": [],
+                    "display": {
+                      "type": "file",
+                      "path": "/home/runner/work/zen-panel/zen-panel/fork/tools/restore_audit_code.sh",
+                      "text": "#!/usr/bin/env bash\n# Restore audit.json / code.json from session-state branch into workspace\nset -uo pipefail\nWORK=\"${1:-${GITHUB_WORKSPACE:-$(pwd)}/fork}\"\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nif [ ! -d \"$WORK\" ]; then WORK=\"$(pwd)\"; fi\nif [ -d \"$WORK/.git\" ]; then :; elif [ -d \"$WORK/../fork/.git\" ]; then WORK=\"$WORK/../fork\"; fi\nBRANCH=\"session-state\"\nHUB_LOGS=\"${HUB_LOGS:-$HOME/.npm-hub/logs}\"\nif ! mkdir -p \"$HUB_LOGS\" 2>/dev/null; then\n  echo \"restore_audit_code: cannot create log directory\" >&2\n  exit 1\nfi\n\nif [ -z \"${GH_TOKEN:-}\" ] && [ -z \"${GITHUB_TOKEN:-}\" ]; then\n  echo \"restore_audit_code: no GH_TOKEN, skip\" >&2\n  exit 0\nfi\nGH_TOKEN=\"${GH_TOKEN:-${GITHUB_TOKEN:-}}\"\nREMOTE=\"${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY:-}.git}\"\n\n# STATE_DIR hands in a session-state tree the caller already cloned, so a\n# second restore of the same branch does not pay for a second clone.\n#\n# This branch had grown past 70 MB, almost half of it one uploaded APK under\n# artifacts/ that nothing here ever reads. The hub workflow called this script\n# twice, so every single hub start downloaded the whole thing twice (~150 MB)\n# before the hub could publish its address - measured: the step took 1:51 on\n# one run and 5:52 on the next with no code change in between. The blob filter\n# drops everything over 1 MB (that APK and any other future upload) and leaves\n# every JSON this script actually reads, and the caller reuses one clone for\n# both calls. The fallback clone without the filter is for remotes that do not\n# speak partial clone (a local file:// repo in the tests, for one).\nSTATE_DIR=\"${STATE_DIR:-}\"\nTMP=\"\"\nSTATE=\"\"\nif [ -n \"$STATE_DIR\" ] && [ -d \"$STATE_DIR\" ]; then\n  STATE=\"$STATE_DIR\"\nelse\n  if ! TMP=\"$(mktemp -d)\"; then\n    echo \"restore_audit_code: cannot create restore directory\" >&2\n    exit 1\n  fi\n  # cleanup() only ever removes a directory this script created: a STATE_DIR\n  # belongs to the caller and outlives us.\n  cleanup(){ rm -rf \"$TMP\"; }\n  trap cleanup EXIT\n  CLONE_DIR=\"$TMP/state\"\n  if ! git clone -q --depth 1 --filter=blob:limit=1m --branch \"$BRANCH\" \"$REMOTE\" \"$CLONE_DIR\" 2>/dev/null; then\n    if ! git clone -q --depth 1 --branch \"$BRANCH\" \"$REMOTE\" \"$CLONE_DIR\" 2>/dev/null; then\n      echo \"restore_audit_code: no $BRANCH branch yet\"\n      exit 0\n    fi\n  fi\n  STATE=\"$CLONE_DIR\"\nfi\nstatus=0\n# The branch was reorganised: audit/code now live under snapshots/, and the\n# historical bundles under history/<date>/<weekday>/. Both layouts are read, so\n# a branch that was never migrated restores exactly as before.\npick_state_file() {\n  # $1 = leaf name; prints the first existing candidate.\n  local leaf=\"$1\" cand\n  for cand in \"snapshots/$leaf\" \"$leaf\" \"live/$leaf\" \"models/$leaf\"; do\n    if [ -f \"$STATE/$cand\" ]; then printf '%s' \"$cand\"; return 0; fi\n  done\n  # history/<date>/<weekday>/<leaf>\n  cand=\"$(find \"$STATE/history\" -type f -name \"$leaf\" 2>/dev/null | LC_ALL=C sort | tail -n1)\"\n  [ -n \"$cand\" ] || return 1\n  printf '%s' \"${cand#\"$STATE\"/}\"\n}\nhistory_files() {\n  # $1 = glob name (e.g. audit-*.json); prints matching files, new layout first.\n  find \"$STATE/history\" -type f -name \"$1\" 2>/dev/null | LC_ALL=C sort\n  ls \"$STATE\"/saved/\"$1\" 2>/dev/null\n}\nfor f in audit.json code.json; do\n  rel=\"$(pick_state_file \"$f\")\" || rel=\"\"\n  if [ -n \"$rel\" ] && [ -f \"$STATE/$rel\" ]; then\n    if ! cp -f \"$STATE/$rel\" \"$WORK/$f\" 2>/dev/null; then\n      echo \"restore_audit_code: could not restore $f\" >&2\n      status=1\n      continue\n    fi\n    if [ \"$f\" = \"audit.json\" ] && [ ! -s \"$WORK/.zen-agent/audit.jsonl\" ]; then\n      mkdir -p \"$WORK/.zen-agent\" || status=1\n      # $rel, not $f: the branch moved audit.json under snapshots/, and reading\n      # the bare leaf name looked in the root of the clone, where it has not\n      # been since the layout change. It failed on every single start (\"No such\n      # file or directory: .../cloned/audit.json\"), set status=1, and left\n      # .zen-agent/audit.jsonl empty - so the audit trail the hub reads was\n      # never restored at all.\n      if ! python3 - \"$STATE/$rel\" \"$WORK/.zen-agent/audit.jsonl\" <<'PY'\nimport json, sys\nsrc, dst = sys.argv[1], sys.argv[2]\ntry:\n    data=json.load(open(src, encoding=\"utf-8\"))\n    audit=data.get(\"audit\",[]) or data.get(\"chat\",[])\n    with open(dst,\"w\",encoding=\"utf-8\") as out:\n        for ev in audit:\n            out.write(json.dumps(ev, ensure_ascii=False)+\"\\n\")\n    print(f\"restored {len(audit)} audit events to {dst}\")\nexcept Exception as e:\n    print(f\"restore audit failed: {e}\", file=sys.stderr)\n    sys.exit(1)\nPY\n      then\n        status=1\n      fi\n    fi\n    echo \"restore_audit_code: restored $rel ($(wc -c < \"$STATE/$rel\" | tr -d ' ')B) -> $WORK/$f\"\n  fi\ndone\nmkdir -p \"$WORK/.zen-agent/restored\" 2>/dev/null || status=1\nfor kind in audit code; do\n  files=\"$(history_files \"*$kind-*.json\")\"\n  if [ -n \"$files\" ]; then\n    # shellcheck disable=SC2086\n    if ! printf '%s\\n' \"$files\" | xargs -r cp -f -t \"$WORK/.zen-agent/restored/\" 2>/dev/null; then status=1; fi\n    echo \"restore_audit_code: saved $kind snapshots copied\"\n  fi\ndone\nmkdir -p \"$HOME/.local/share/opencode/history\" 2>/dev/null || status=1\nopencode_bundles=\"$(history_files '*opencode-*.json')\"\nif [ -n \"$opencode_bundles\" ]; then\n  for f in $opencode_bundles; do\n    STAMP=\"$(basename \"$f\" .json | sed 's/^opencode-//')\"\n    DEST=\"$HOME/.local/share/opencode/history/$STAMP\"\n    mkdir -p \"$DEST\" 2>/dev/null || status=1\n    if ! cp -f \"$f\" \"$DEST/bundle.json\" 2>/dev/null; then status=1; fi\n    echo \"restore_audit_code: opencode bundle $STAMP restored\"\n  done\n  audit_rel=\"$(pick_state_file audit.json || true)\"\n  if [ -n \"$audit_rel\" ] && [ -f \"$STATE/$audit_rel\" ]; then\n    if ! python3 - \"$STATE/$audit_rel\" \"$HOME/.local/share/opencode/history\" <<'PY2'\nimport json, os, sys, glob\naudit_path, hist_root = sys.argv[1], sys.argv[2]\ntry:\n    data=json.load(open(audit_path, encoding=\"utf-8\"))\n    msgs=data.get(\"opencodeMessages\",[])\n    if msgs:\n        import glob as g\n        dirs=sorted(g.glob(hist_root+\"/*\"))\n        dest=dirs[-1] if dirs else hist_root+\"/restored\"\n        os.makedirs(dest, exist_ok=True)\n        with open(dest+\"/messages_restored.jsonl\",\"w\",encoding=\"utf-8\") as out:\n            for m in msgs:\n                out.write(json.dumps(m, ensure_ascii=False)+\"\\n\")\n        print(f\"restored {len(msgs)} opencode messages to {dest}/messages_restored.jsonl\")\nexcept Exception as e:\n    print(f\"opencode restore failed: {e}\", file=sys.stderr)\n    sys.exit(1)\nPY2\n    then\n      status=1\n    fi\n  fi\nfi\n\n# Chat transcripts live in their own folder: chats/<repo>.json holds the full\n# export of every session for this repo. Import them back into the repo (the\n# CWD determines the session directory). opencode import is idempotent, so a\n# re-run just reports the session again. Disable with RESTORE_CHATS=0.\n#\n# RESTORE_CHATS_ALL=1 imports EVERY chats/<name>.json bundle into whatever\n# local repo matches (the hub clone + everything the Files tab cloned into\n# hub-work/), so sessions come back for all repos, not just this $WORK.\nif [ \"${RESTORE_CHATS_ALL:-0}\" = \"1\" ] && [ -f \"$SCRIPT_DIR/restore-chats.sh\" ]; then\n  CHAT_ALL_ROOT=\"${RESTORE_CHATS_ROOT:-$HOME}\" \\\n    bash \"$SCRIPT_DIR/restore-chats.sh\" --all --state \"$STATE\" 2>&1 | sed 's/^/  /'\n  chat_status=${PIPESTATUS[0]}\n  [ \"$chat_status\" -eq 0 ] || status=1\nelif [ \"${RESTORE_CHATS:-1}\" != \"0\" ] && [ -f \"$SCRIPT_DIR/restore-chats.sh\" ]; then\n  CHAT_REPO_DIR=\"$WORK\" bash \"$SCRIPT_DIR/restore-chats.sh\" --state \"$STATE\" 2>&1 | sed 's/^/  /'\n  chat_status=${PIPESTATUS[0]}\n  [ \"$chat_status\" -eq 0 ] || status=1\nfi\n[ \"$status\" -eq 0 ]",
+                      "lineStart": 1,
+                      "lineEnd": 178,
+                      "totalLines": 178,
+                      "truncated": false
+                    }
+                  },
+                  "title": "tools/restore_audit_code.sh",
+                  "time": {
+                    "start": 1791042206693,
+                    "end": 1791042206704
+                  }
+                },
+                "id": "prt_1026f3be0001s4gss7U9AkJR7j",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f329f00160mV3g4fL7eqBx"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_1026f3c70001IVcpEPNe0hKeiP",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f329f00160mV3g4fL7eqBx"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042206908,
+                "completed": 1791042210575
+              },
+              "finish": "tool-calls",
+              "id": "msg_1026f3cb9001kfR7YWUxF91E3V",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-start",
+                "id": "prt_1026f4347001fuQ4iWRn35Gf4a",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f3cb9001kfR7YWUxF91E3V"
+              },
+              {
+                "type": "reasoning",
+                "text": "This is the *automatic* restore at hub start. The user's complaint is about snapshots in the UI: \"баг со снапшотами они не востанавливаются вылазит ошибка и не могу выбирать сам что востанавливать в них\".\n\nSo there's a UI where the user picks snapshots to restore. Let me find it — probably in the panel (`app/src/main/assets/panel/index.html`) or the hub (`npm-hub/public/*`), or the TUI snapshot test (`tests/tui-snapshot-test.js`).\n\nLet me search for snapshotrestore UI.",
+                "time": {
+                  "start": 1791042208598,
+                  "end": 1791042209717
+                },
+                "id": "prt_1026f4355001JKT2n7XCRXVCM9",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f3cb9001kfR7YWUxF91E3V"
+              },
+              {
+                "type": "text",
+                "text": "Ищу UI, где выбираются снапшоты:",
+                "time": {
+                  "start": 1791042209719,
+                  "end": 1791042210426
+                },
+                "id": "prt_1026f47b7001I0hPklgWRTY29y",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f3cb9001kfR7YWUxF91E3V"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a1026f420c70039fa7a57f",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/work/zen-panel/zen-panel/fork && grep -rln \"снапшот\\|snapshot\" npm-hub/public/*.js npm-hub/public/*.html app/src/main/assets/panel/*.html app/src/main/assets/panel/*.js agent/*.js 2>/dev/null | head -20"
+                  },
+                  "output": "npm-hub/public/mobile-app.js\nnpm-hub/public/mobile.html\napp/src/main/assets/panel/index.html\n",
+                  "metadata": {
+                    "output": "npm-hub/public/mobile-app.js\nnpm-hub/public/mobile.html\napp/src/main/assets/panel/index.html\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/work/zen-panel/zen-panel/fork && grep -rln \"снапшот\\|snapshot\" npm-hub/public/*.js npm-hub/public/*.html app/src/main/assets/panel/*.html app/src/main/assets/panel/*.js agent/*.js 2>/dev/null | head -20",
+                  "time": {
+                    "start": 1791042210396,
+                    "end": 1791042210424
+                  }
+                },
+                "id": "prt_1026f4a57001XYsQyrgPEq4U4y",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f3cb9001kfR7YWUxF91E3V"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_1026f4abe001N9K45rW73mJcpb",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f3cb9001kfR7YWUxF91E3V"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042210715,
+                "completed": 1791042213943
+              },
+              "finish": "tool-calls",
+              "id": "msg_1026f4b9b0010DAkoXPM9Hx6j3",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-start",
+                "id": "prt_1026f56ba001eLPiDZXl8zvB7D",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f4b9b0010DAkoXPM9Hx6j3"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a1026f4f4d73de84859b08",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/work/zen-panel/zen-panel/fork && grep -n \"снапшот\\|snapshot\\|Snapshot\" npm-hub/public/mobile-app.js | head -40"
+                  },
+                  "output": "296:  if (p === 'snapshots') initSnapshots();\n4269:// Вход в хаб не ждёт скачивание бэкапов; снапшот выбирается здесь, после входа.\n4272:let snapData = { snapshots: [], recommended: '' }, snapSelected = '', snapPoll = null;\n4275:async function initSnapshots() {\n4278:    const j = await fetch('/api/work-snapshots/restore/status').then(r => r.json());\n4281:  if (!snapData.snapshots.length) snapLoad();\n4287:    const j = await fetch('/api/work-snapshots').then(r => r.json());\n4289:    snapData = { snapshots: j.snapshots || [], recommended: j.recommended || '' };\n4290:    snapSelected = snapSelected || snapData.recommended || (snapData.snapshots[0] || {}).stamp || '';\n4292:    if (snapData.snapshots.length) {\n4293:      note.textContent = j.note || ('Снапшотов: ' + snapData.snapshots.length + '. По умолчанию — последний с целыми репозиториями.');\n4305:  if (!snapData.snapshots.length) { list.innerHTML = ''; return; }\n4306:  // По дням — всегда самый новый снапшот дня; внутри дня не показываем хвосты.\n4308:  for (const s of snapData.snapshots) {\n4313:  if (!snapData.snapshots.some(s => s.active)) snapSelected = ''; // отмечать нечего — честно\n4337:  const s = snapData.snapshots.find(x => x.stamp === snapSelected);\n4345:  const s = snapData.snapshots.find(x => x.stamp === snapSelected);\n4347:  const ok = await fmConfirm('Восстановить локальные репозитории из снапшота ' + s.stamp + '? Существующие git-репозитории не трогаются, дополняются только отсутствующие.', 'Восстановить');\n4350:    const r = await fetch('/api/work-snapshots/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snapshot: s.stamp }) });\n4369:    try { j = await fetch('/api/work-snapshots/restore/status').then(r => r.json()); } catch (e) { return; }\n",
+                  "metadata": {
+                    "output": "296:  if (p === 'snapshots') initSnapshots();\n4269:// Вход в хаб не ждёт скачивание бэкапов; снапшот выбирается здесь, после входа.\n4272:let snapData = { snapshots: [], recommended: '' }, snapSelected = '', snapPoll = null;\n4275:async function initSnapshots() {\n4278:    const j = await fetch('/api/work-snapshots/restore/status').then(r => r.json());\n4281:  if (!snapData.snapshots.length) snapLoad();\n4287:    const j = await fetch('/api/work-snapshots').then(r => r.json());\n4289:    snapData = { snapshots: j.snapshots || [], recommended: j.recommended || '' };\n4290:    snapSelected = snapSelected || snapData.recommended || (snapData.snapshots[0] || {}).stamp || '';\n4292:    if (snapData.snapshots.length) {\n4293:      note.textContent = j.note || ('Снапшотов: ' + snapData.snapshots.length + '. По умолчанию — последний с целыми репозиториями.');\n4305:  if (!snapData.snapshots.length) { list.innerHTML = ''; return; }\n4306:  // По дням — всегда самый новый снапшот дня; внутри дня не показываем хвосты.\n4308:  for (const s of snapData.snapshots) {\n4313:  if (!snapData.snapshots.some(s => s.active)) snapSelected = ''; // отмечать нечего — честно\n4337:  const s = snapData.snapshots.find(x => x.stamp === snapSelected);\n4345:  const s = snapData.snapshots.find(x => x.stamp === snapSelected);\n4347:  const ok = await fmConfirm('Восстановить локальные репозитории из снапшота ' + s.stamp + '? Существующие git-репозитории не трогаются, дополняются только отсутствующие.', 'Восстановить');\n4350:    const r = await fetch('/api/work-snapshots/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snapshot: s.stamp }) });\n4369:    try { j = await fetch('/api/work-snapshots/restore/status').then(r => r.json()); } catch (e) { return; }\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/work/zen-panel/zen-panel/fork && grep -n \"снапшот\\|snapshot\\|Snapshot\" npm-hub/public/mobile-app.js | head -40",
+                  "time": {
+                    "start": 1791042213794,
+                    "end": 1791042213808
+                  }
+                },
+                "id": "prt_1026f579b001xsU68wWIHyovUL",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f4b9b0010DAkoXPM9Hx6j3"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_1026f57fd001ANHETVBfbz0jS9",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f4b9b0010DAkoXPM9Hx6j3"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042213988,
+                "completed": 1791042216031
+              },
+              "finish": "tool-calls",
+              "id": "msg_1026f5864001A1qXNRhHw0Rt0M",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-start",
+                "id": "prt_1026f5ebf0016719PXg6rbe579",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f5864001A1qXNRhHw0Rt0M"
+              },
+              {
+                "type": "tool",
+                "tool": "read",
+                "callID": "call_01a1026f575b70e98e9fe05b",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "filePath": "/home/runner/work/zen-panel/zen-panel/fork/npm-hub/public/mobile-app.js",
+                    "limit": 125,
+                    "offset": 4265
+                  },
+                  "output": "<path>/home/runner/work/zen-panel/zen-panel/fork/npm-hub/public/mobile-app.js</path>\n<type>file</type>\n<content>\n4265:   requestWake();\n4266: })();\n4267: \n4268: // ===== SNAPSHOT TAB — выборочное восстановление локальных репозиториев =====\n4269: // Вход в хаб не ждёт скачивание бэкапов; снапшот выбирается здесь, после входа.\n4270: // Сервер читает только «дерево» ветки work-backup (список+размеры), поэтому\n4271: // список открывается быстро даже если в ветке сотни мегабайт.\n4272: let snapData = { snapshots: [], recommended: '' }, snapSelected = '', snapPoll = null;\n4273: function snapEsc(s) { return String(s).replace(/[&<>\"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c])); }\n4274: function snapMb(n) { const v = Math.round((n || 0) / 104857.6) / 10; return v >= 1 ? (v + ' МБ') : ((Math.round((n || 0) / 1048.576)) + ' КБ'); }\n4275: async function initSnapshots() {\n4276:   // Висящий рестарт хаба не теряет уже работающее восстановление — подхватываем.\n4277:   try {\n4278:     const j = await fetch('/api/work-snapshots/restore/status').then(r => r.json());\n4279:     if (j && j.running) { showSnapProgress(); pollSnap(); return; }\n4280:   } catch (e) {}\n4281:   if (!snapData.snapshots.length) snapLoad();\n4282: }\n4283: async function snapLoad(force) {\n4284:   const note = document.getElementById('snap-note'), list = document.getElementById('snap-list');\n4285:   if (force) note.textContent = 'Читаю ветку work-backup…';\n4286:   try {\n4287:     const j = await fetch('/api/work-snapshots').then(r => r.json());\n4288:     if (!j || j.success !== true) { note.textContent = 'Не прочиталось: ' + (j && j.error || '?'); return; }\n4289:     snapData = { snapshots: j.snapshots || [], recommended: j.recommended || '' };\n4290:     snapSelected = snapSelected || snapData.recommended || (snapData.snapshots[0] || {}).stamp || '';\n4291:     renderSnapList();\n4292:     if (snapData.snapshots.length) {\n4293:       note.textContent = j.note || ('Снапшотов: ' + snapData.snapshots.length + '. По умолчанию — последний с целыми репозиториями.');\n4294:     } else {\n4295:       note.textContent = j.note || 'Снапшотов пока нет — раннер ещё не сохранял репозитории.';\n4296:       list.innerHTML = '';\n4297:     }\n4298:   } catch (e) {\n4299:     note.textContent = 'Нет связи: ' + (e && e.message || e);\n4300:   }\n4301: }\n4302: function snapDay(s) { return s.replace(/^\\d+$|\\D/g, '').slice(0, 8).replace(/(\\d{4})(\\d{2})(\\d{2})/, '$1-$2-$3'); }\n4303: function renderSnapList() {\n4304:   const list = document.getElementById('snap-list');\n4305:   if (!snapData.snapshots.length) { list.innerHTML = ''; return; }\n4306:   // По дням — всегда самый новый снапшот дня; внутри дня не показываем хвосты.\n4307:   const byDay = new Map();\n4308:   for (const s of snapData.snapshots) {\n4309:     const d = snapDay(s.stamp);\n4310:     if (!byDay.has(d)) byDay.set(d, s); // список уже по убыванию: первый = новейший\n4311:   }\n4312:   const shown = [...byDay.values()];\n4313:   if (!snapData.snapshots.some(s => s.active)) snapSelected = ''; // отмечать нечего — честно\n4314:   list.innerHTML = shown.map(s => {\n4315:     const sel = s.stamp === snapSelected;\n4316:     const act = !!s.active;\n4317:     const marks = [];\n4318:     if (s.stamp === snapData.recommended) marks.push('<span style=\"color:var(--acc);font-weight:600\">⭐ последний, где что-то делали</span>');\n4319:     if (!act) marks.push('<span style=\"color:var(--warn,#e0a642);font-weight:600\">⚠ ничего не делали (пусто)</span>');\n4320:     const what = [];\n4321:     if (s.repos.length) what.push('репо: ' + s.repos.map(r => snapEsc(r.rel) + ' (' + r.kind + ', ' + snapMb(r.bytes) + ')').join(' | '));\n4322:     if (s.extrasMb > 0) what.push('дифы/новое: ' + s.extrasMb + ' МБ');\n4323:     if (s.chats) what.push('чаты opencode: ' + s.chats);\n4324:     if (s.settings) what.push('настройки opencode');\n4325:     if (!what.length) what.push('только файлы/аудит');\n4326:     return `<label class=\"snap-row ${sel ? 'sel' : ''}\" data-stamp=\"${snapEsc(s.stamp)}\" onclick=\"snapPick('${snapEsc(s.stamp)}')\">\n4327:       <input type=\"radio\" name=\"snap\" ${sel ? 'checked' : ''}>\n4328:       <div style=\"flex:1;min-width:0\">\n4329:         <div style=\"font-size:12px;font-weight:700;color:var(--t1)\">📅 ${snapEsc(snapDay(s.stamp))} · ${snapEsc(s.stamp.slice(-6).replace(/(\\d{2})(\\d{2})(\\d{2})/, '$1:$2:$3'))}</div>\n4330:         <div style=\"font-size:11px;margin-top:2px\">${marks.join(' ')}</div>\n4331:         <div style=\"font-size:11px;color:var(--t3);margin-top:3px\">${what.join(' · ')}</div>\n4332:       </div>\n4333:       <div style=\"font-size:11px;color:var(--t3)\">${s.totalMb} МБ</div>\n4334:     </label>`;\n4335:   }).join('');\n4336:   const btn = document.getElementById('snap-restore');\n4337:   const s = snapData.snapshots.find(x => x.stamp === snapSelected);\n4338:   btn.disabled = !(s && s.active);\n4339: }\n4340: function snapPick(stamp) {\n4341:   snapSelected = stamp;\n4342:   renderSnapList();\n4343: }\n4344: async function snapRestore() {\n4345:   const s = snapData.snapshots.find(x => x.stamp === snapSelected);\n4346:   if (!s) return;\n4347:   const ok = await fmConfirm('Восстановить локальные репозитории из снапшота ' + s.stamp + '? Существующие git-репозитории не трогаются, дополняются только отсутствующие.', 'Восстановить');\n4348:   if (!ok) return;\n4349:   try {\n4350:     const r = await fetch('/api/work-snapshots/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snapshot: s.stamp }) });\n4351:     const j = await r.json();\n4352:     if (!j || j.success !== true) { fmInfo('Не запустилось: ' + (j && j.error || '?')); return; }\n4353:     showSnapProgress();\n4354:     pollSnap();\n4355:   } catch (e) {\n4356:     fmInfo('Нет связи: ' + (e && e.message || e));\n4357:   }\n4358: }\n4359: function showSnapProgress() {\n4360:   document.getElementById('snap-prog-wrap').style.display = '';\n4361:   document.getElementById('snap-spin').style.display = '';\n4362:   document.getElementById('snap-prog-title').textContent = 'Восстановление…';\n4363:   document.getElementById('snap-restore').disabled = true;\n4364: }\n4365: function pollSnap() {\n4366:   if (snapPoll) clearInterval(snapPoll);\n4367:   snapPoll = setInterval(async () => {\n4368:     let j = null;\n4369:     try { j = await fetch('/api/work-snapshots/restore/status').then(r => r.json()); } catch (e) { return; }\n4370:     if (!j) return;\n4371:     const el = document.getElementById('snap-prog');\n4372:     el.textContent = (j.tail || []).join('\\n');\n4373:     el.scrollTop = el.scrollHeight;\n4374:     const sec = j.elapsed || 0;\n4375:     document.getElementById('snap-prog-time').textContent = Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');\n4376:     if (!j.running) {\n4377:       clearInterval(snapPoll); snapPoll = null;\n4378:       document.getElementById('snap-spin').style.display = 'none';\n4379:       const good = j.code === 0;\n4380:       document.getElementById('snap-prog-title').textContent = good ? '✅ Готово' : ('❌ Завершилось с кодом ' + j.code);\n4381:       document.getElementById('snap-prog-title').style.color = good ? 'var(--ok,#3fbf6f)' : 'var(--err,#e05a5a)';\n4382:       if (good) fmInfo('Локальные репозитории восстановлены. Обнови «Файлы» и смотри свои папки.');\n4383:     }\n4384:   }, 2000);\n4385: }\n4386: \n\n(End of file - total 4386 lines)\n</content>",
+                  "metadata": {
+                    "preview": "  requestWake();\n})();\n\n// ===== SNAPSHOT TAB — выборочное восстановление локальных репозиториев =====\n// Вход в хаб не ждёт скачивание бэкапов; снапшот выбирается здесь, после входа.\n// Сервер читает только «дерево» ветки work-backup (список+размеры), поэтому\n// список открывается быстро даже если в ветке сотни мегабайт.\nlet snapData = { snapshots: [], recommended: '' }, snapSelected = '', snapPoll = null;\nfunction snapEsc(s) { return String(s).replace(/[&<>\"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c])); }\nfunction snapMb(n) { const v = Math.round((n || 0) / 104857.6) / 10; return v >= 1 ? (v + ' МБ') : ((Math.round((n || 0) / 1048.576)) + ' КБ'); }\nasync function initSnapshots() {\n  // Висящий рестарт хаба не теряет уже работающее восстановление — подхватываем.\n  try {\n    const j = await fetch('/api/work-snapshots/restore/status').then(r => r.json());\n    if (j && j.running) { showSnapProgress(); pollSnap(); return; }\n  } catch (e) {}\n  if (!snapData.snapshots.length) snapLoad();\n}\nasync function snapLoad(force) {\n  const note = document.getElementById('snap-note'), list = document.getElementById('snap-list');",
+                    "truncated": false,
+                    "loaded": [],
+                    "display": {
+                      "type": "file",
+                      "path": "/home/runner/work/zen-panel/zen-panel/fork/npm-hub/public/mobile-app.js",
+                      "text": "  requestWake();\n})();\n\n// ===== SNAPSHOT TAB — выборочное восстановление локальных репозиториев =====\n// Вход в хаб не ждёт скачивание бэкапов; снапшот выбирается здесь, после входа.\n// Сервер читает только «дерево» ветки work-backup (список+размеры), поэтому\n// список открывается быстро даже если в ветке сотни мегабайт.\nlet snapData = { snapshots: [], recommended: '' }, snapSelected = '', snapPoll = null;\nfunction snapEsc(s) { return String(s).replace(/[&<>\"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c])); }\nfunction snapMb(n) { const v = Math.round((n || 0) / 104857.6) / 10; return v >= 1 ? (v + ' МБ') : ((Math.round((n || 0) / 1048.576)) + ' КБ'); }\nasync function initSnapshots() {\n  // Висящий рестарт хаба не теряет уже работающее восстановление — подхватываем.\n  try {\n    const j = await fetch('/api/work-snapshots/restore/status').then(r => r.json());\n    if (j && j.running) { showSnapProgress(); pollSnap(); return; }\n  } catch (e) {}\n  if (!snapData.snapshots.length) snapLoad();\n}\nasync function snapLoad(force) {\n  const note = document.getElementById('snap-note'), list = document.getElementById('snap-list');\n  if (force) note.textContent = 'Читаю ветку work-backup…';\n  try {\n    const j = await fetch('/api/work-snapshots').then(r => r.json());\n    if (!j || j.success !== true) { note.textContent = 'Не прочиталось: ' + (j && j.error || '?'); return; }\n    snapData = { snapshots: j.snapshots || [], recommended: j.recommended || '' };\n    snapSelected = snapSelected || snapData.recommended || (snapData.snapshots[0] || {}).stamp || '';\n    renderSnapList();\n    if (snapData.snapshots.length) {\n      note.textContent = j.note || ('Снапшотов: ' + snapData.snapshots.length + '. По умолчанию — последний с целыми репозиториями.');\n    } else {\n      note.textContent = j.note || 'Снапшотов пока нет — раннер ещё не сохранял репозитории.';\n      list.innerHTML = '';\n    }\n  } catch (e) {\n    note.textContent = 'Нет связи: ' + (e && e.message || e);\n  }\n}\nfunction snapDay(s) { return s.replace(/^\\d+$|\\D/g, '').slice(0, 8).replace(/(\\d{4})(\\d{2})(\\d{2})/, '$1-$2-$3'); }\nfunction renderSnapList() {\n  const list = document.getElementById('snap-list');\n  if (!snapData.snapshots.length) { list.innerHTML = ''; return; }\n  // По дням — всегда самый новый снапшот дня; внутри дня не показываем хвосты.\n  const byDay = new Map();\n  for (const s of snapData.snapshots) {\n    const d = snapDay(s.stamp);\n    if (!byDay.has(d)) byDay.set(d, s); // список уже по убыванию: первый = новейший\n  }\n  const shown = [...byDay.values()];\n  if (!snapData.snapshots.some(s => s.active)) snapSelected = ''; // отмечать нечего — честно\n  list.innerHTML = shown.map(s => {\n    const sel = s.stamp === snapSelected;\n    const act = !!s.active;\n    const marks = [];\n    if (s.stamp === snapData.recommended) marks.push('<span style=\"color:var(--acc);font-weight:600\">⭐ последний, где что-то делали</span>');\n    if (!act) marks.push('<span style=\"color:var(--warn,#e0a642);font-weight:600\">⚠ ничего не делали (пусто)</span>');\n    const what = [];\n    if (s.repos.length) what.push('репо: ' + s.repos.map(r => snapEsc(r.rel) + ' (' + r.kind + ', ' + snapMb(r.bytes) + ')').join(' | '));\n    if (s.extrasMb > 0) what.push('дифы/новое: ' + s.extrasMb + ' МБ');\n    if (s.chats) what.push('чаты opencode: ' + s.chats);\n    if (s.settings) what.push('настройки opencode');\n    if (!what.length) what.push('только файлы/аудит');\n    return `<label class=\"snap-row ${sel ? 'sel' : ''}\" data-stamp=\"${snapEsc(s.stamp)}\" onclick=\"snapPick('${snapEsc(s.stamp)}')\">\n      <input type=\"radio\" name=\"snap\" ${sel ? 'checked' : ''}>\n      <div style=\"flex:1;min-width:0\">\n        <div style=\"font-size:12px;font-weight:700;color:var(--t1)\">📅 ${snapEsc(snapDay(s.stamp))} · ${snapEsc(s.stamp.slice(-6).replace(/(\\d{2})(\\d{2})(\\d{2})/, '$1:$2:$3'))}</div>\n        <div style=\"font-size:11px;margin-top:2px\">${marks.join(' ')}</div>\n        <div style=\"font-size:11px;color:var(--t3);margin-top:3px\">${what.join(' · ')}</div>\n      </div>\n      <div style=\"font-size:11px;color:var(--t3)\">${s.totalMb} МБ</div>\n    </label>`;\n  }).join('');\n  const btn = document.getElementById('snap-restore');\n  const s = snapData.snapshots.find(x => x.stamp === snapSelected);\n  btn.disabled = !(s && s.active);\n}\nfunction snapPick(stamp) {\n  snapSelected = stamp;\n  renderSnapList();\n}\nasync function snapRestore() {\n  const s = snapData.snapshots.find(x => x.stamp === snapSelected);\n  if (!s) return;\n  const ok = await fmConfirm('Восстановить локальные репозитории из снапшота ' + s.stamp + '? Существующие git-репозитории не трогаются, дополняются только отсутствующие.', 'Восстановить');\n  if (!ok) return;\n  try {\n    const r = await fetch('/api/work-snapshots/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snapshot: s.stamp }) });\n    const j = await r.json();\n    if (!j || j.success !== true) { fmInfo('Не запустилось: ' + (j && j.error || '?')); return; }\n    showSnapProgress();\n    pollSnap();\n  } catch (e) {\n    fmInfo('Нет связи: ' + (e && e.message || e));\n  }\n}\nfunction showSnapProgress() {\n  document.getElementById('snap-prog-wrap').style.display = '';\n  document.getElementById('snap-spin').style.display = '';\n  document.getElementById('snap-prog-title').textContent = 'Восстановление…';\n  document.getElementById('snap-restore').disabled = true;\n}\nfunction pollSnap() {\n  if (snapPoll) clearInterval(snapPoll);\n  snapPoll = setInterval(async () => {\n    let j = null;\n    try { j = await fetch('/api/work-snapshots/restore/status').then(r => r.json()); } catch (e) { return; }\n    if (!j) return;\n    const el = document.getElementById('snap-prog');\n    el.textContent = (j.tail || []).join('\\n');\n    el.scrollTop = el.scrollHeight;\n    const sec = j.elapsed || 0;\n    document.getElementById('snap-prog-time').textContent = Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');\n    if (!j.running) {\n      clearInterval(snapPoll); snapPoll = null;\n      document.getElementById('snap-spin').style.display = 'none';\n      const good = j.code === 0;\n      document.getElementById('snap-prog-title').textContent = good ? '✅ Готово' : ('❌ Завершилось с кодом ' + j.code);\n      document.getElementById('snap-prog-title').style.color = good ? 'var(--ok,#3fbf6f)' : 'var(--err,#e05a5a)';\n      if (good) fmInfo('Локальные репозитории восстановлены. Обнови «Файлы» и смотри свои папки.');\n    }\n  }, 2000);\n}\n",
+                      "lineStart": 4265,
+                      "lineEnd": 4386,
+                      "totalLines": 4386,
+                      "truncated": false
+                    }
+                  },
+                  "title": "npm-hub/public/mobile-app.js",
+                  "time": {
+                    "start": 1791042215846,
+                    "end": 1791042215896
+                  }
+                },
+                "id": "prt_1026f5fa1001u6RRYXG5fRPeKZ",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f5864001A1qXNRhHw0Rt0M"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_1026f6024001g4vRunBpElk5BS",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f5864001A1qXNRhHw0Rt0M"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042216057,
+                "completed": 1791042220291
+              },
+              "finish": "tool-calls",
+              "id": "msg_1026f6079001VEEO7Wr02LeZKJ",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-start",
+                "id": "prt_1026f6699001i0kLb14B9BHeUD",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f6079001VEEO7Wr02LeZKJ"
+              },
+              {
+                "type": "reasoning",
+                "text": "Now let me look at the server side: `/api/work-snapshots`, `/api/work-snapshots/restore`, `/api/work-snapshots/restore/status`.\n\nTwo user complaints:\n1. \"они не восстанавливаются вылазит ошибка\" — restore fails with an error.\n2. \"не могу выбирать сам что восстанавливать в них\" — can't choose what to restore.\n\nFor #2: the UI only lets you pick a whole snapshot (one per day shown, `renderSnapList` groups by day and shows only the newest per day!). Line 4306-4312: \"По дням — всегда самый новый снапшот дня; внутри дня не показываем хвосты.\" — So you literally cannot choose an older snapshot within the same day. That IS the \"can't choose\" complaint, at least partly.\n\nLet me findthe server endpoints.",
+                "time": {
+                  "start": 1791042217629,
+                  "end": 1791042220202
+                },
+                "id": "prt_1026f669d001dGOrpC79H8zyx3",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f6079001VEEO7Wr02LeZKJ"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a1026f68157117a6095b9f",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/work/zen-panel/zen-panel/fork && grep -n \"work-snapshots\" npm-hub/src/server.js | head -20"
+                  },
+                  "output": "4675:app.get('/api/work-snapshots', async (req, res) => {\n4742:app.post('/api/work-snapshots/restore', express.json(), (req, res) => {\n4775:app.get('/api/work-snapshots/restore/status', (req, res) => {\n",
+                  "metadata": {
+                    "output": "4675:app.get('/api/work-snapshots', async (req, res) => {\n4742:app.post('/api/work-snapshots/restore', express.json(), (req, res) => {\n4775:app.get('/api/work-snapshots/restore/status', (req, res) => {\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/work/zen-panel/zen-panel/fork && grep -n \"work-snapshots\" npm-hub/src/server.js | head -20",
+                  "time": {
+                    "start": 1791042220208,
+                    "end": 1791042220217
+                  }
+                },
+                "id": "prt_1026f70ac001vKmyLh1h0XoYsK",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f6079001VEEO7Wr02LeZKJ"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_1026f70da001xZY0jIkmyFVU2I",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f6079001VEEO7Wr02LeZKJ"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042220313,
+                "completed": 1791042223446
+              },
+              "finish": "tool-calls",
+              "id": "msg_1026f7118001R3iOxnvqSmXl1E",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-start",
+                "id": "prt_1026f7a41001xTRQcxDxFuEjSG",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f7118001R3iOxnvqSmXl1E"
+              },
+              {
+                "type": "tool",
+                "tool": "read",
+                "callID": "call_01a1026f740a774eb27b38db",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "filePath": "/home/runner/work/zen-panel/zen-panel/fork/npm-hub/src/server.js",
+                    "limit": 115,
+                    "offset": 4675
+                  },
+                  "output": "<path>/home/runner/work/zen-panel/zen-panel/fork/npm-hub/src/server.js</path>\n<type>file</type>\n<content>\n4675: app.get('/api/work-snapshots', async (req, res) => {\n4676:   try {\n4677:     const remote = wbRemote();\n4678:     if (!remote) return res.json({ success: true, snapshots: [], recommended: '', note: 'не на Actions-раннере' });\n4679:     // ls-remote is the cheap freshness check; refresh the tree only when the\n4680:     // branch really moved (a snapshot push) or every 5 minutes max.\n4681:     const heads = await wbRunCmd('git', ['ls-remote', remote, 'refs/heads/work-backup'], 30000);\n4682:     const sha = (heads.out.trim().split(/\\s+/)[0] || '').trim();\n4683:     if (!sha || heads.code !== 0 || !/^[0-9a-f]{40}$/.test(sha)) {\n4684:       return res.json({ success: true, snapshots: wbIndex.snapshots || [], recommended: wbIndex.recommended || '', note: 'ветка work-backup пока пустая' });\n4685:     }\n4686:     if (wbIndex.sha !== sha || !wbIndex.at || (Date.now() - wbIndex.at) > 300000) {\n4687:       fs.mkdirSync(WB_CACHE_DIR, { recursive: true });\n4688:       if (!fs.existsSync(path.join(WB_CACHE_DIR, 'HEAD'))) {\n4689:         const init = await wbRunCmd('git', ['init', '-q', '--bare', WB_CACHE_DIR], 20000);\n4690:         if (init.code !== 0) throw new Error('git init: ' + init.out.slice(0, 200));\n4691:       }\n4692:       const fch = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'fetch', '-q', '--depth=1', '--filter=blob:none', remote, '+refs/heads/work-backup:refs/wb'], 180000);\n4693:       if (fch.code !== 0) throw new Error('fetch: ' + fch.out.slice(0, 200));\n4694:       const tree = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'ls-tree', '-r', '-l', 'refs/wb', '--', 'snapshots/'], 60000);\n4695:       if (tree.code !== 0) throw new Error('ls-tree: ' + tree.out.slice(0, 200));\n4696:       const snaps = new Map();\n4697:       for (const line of tree.out.split('\\n')) {\n4698:         const m = line.match(/^\\S+ blob +\\S+ +(\\d+)\\tsnapshots\\/([^/]+)\\/(.+)$/);\n4699:         if (!m) continue;\n4700:         const size = parseInt(m[1], 10) || 0;\n4701:         const stamp = m[2], rel = m[3];\n4702:         let s = snaps.get(stamp);\n4703:         if (!s) { s = { stamp, repos: new Map(), extras: 0, chats: 0, settings: false, total: 0 }; snaps.set(stamp, s); }\n4704:         s.total += size;\n4705:         const base = rel.split('/').pop();\n4706:         const dir = rel.slice(0, -(base.length + 1));\n4707:         if (base === 'repo.bundle' || base === 'worktree.tar.gz') {\n4708:           const e = s.repos.get(dir) || { rel: dir, bytes: 0, kind: '' };\n4709:           if (size > 0) { e.bytes += size; e.kind = base === 'repo.bundle' ? 'git' : 'архив'; }\n4710:           s.repos.set(dir, e);\n4711:         } else if (base === 'wip.patch' || base === 'untracked.tar.gz') {\n4712:           if (size > 0) s.extras += size;\n4713:         } else if (rel.startsWith('opencode/chats/') && base.endsWith('.json')) {\n4714:           s.chats += 1;\n4715:         } else if (rel.startsWith('opencode/settings/') && base !== 'manifest.json') {\n4716:           s.settings = true;\n4717:         }\n4718:       }\n4719:       const list = [...snaps.values()].map(s => {\n4720:         const active = s.repos.size > 0 || s.chats > 0 || s.settings;\n4721:         return {\n4722:           stamp: s.stamp,\n4723:           repos: [...s.repos.values()].filter(r => r.bytes > 0).sort((a, b) => a.rel.localeCompare(b.rel)),\n4724:           extrasMb: Math.round(s.extras / 104857.6) / 10,\n4725:           chats: s.chats, settings: s.settings, active,\n4726:           totalMb: Math.round(s.total / 104857.6) / 10\n4727:         };\n4728:       });\n4729:       list.sort((a, b) => b.stamp.localeCompare(a.stamp));\n4730:       // \"Всегда самые новые; если новые пустые — последние, где что-то делали\":\n4731:       // рекомендация = новейший снапшот с реальной активностью (репо или чаты\n4732:       // opencode или настройки), а не просто самый свежий по времени.\n4733:       const recommended = (list.find(s => s.active) || { stamp: '' }).stamp;\n4734:       wbIndex = { sha, at: Date.now(), snapshots: list, recommended };\n4735:     }\n4736:     res.json({ success: true, snapshots: wbIndex.snapshots, recommended: wbIndex.recommended });\n4737:   } catch (e) {\n4738:     res.json({ success: false, error: 'не прочитал work-backup: ' + e.message });\n4739:   }\n4740: });\n4741: \n4742: app.post('/api/work-snapshots/restore', express.json(), (req, res) => {\n4743:   try {\n4744:     const stamp = String((req.body && req.body.snapshot) || '').trim();\n4745:     if (!stamp || !/^[A-Za-z0-9._:-]+$/.test(stamp) || stamp.includes('..') || stamp.includes('/')) {\n4746:       return res.json({ success: false, error: 'некорректное имя снапшота' });\n4747:     }\n4748:     if (wbRestore.running) return res.json({ success: false, error: 'восстановление уже идёт' });\n4749:     const token = runnerToken();\n4750:     if (!token) return res.json({ success: false, error: 'нет токена GitHub' });\n4751:     if (!fs.existsSync(RESTORE_WORK_SH)) return res.json({ success: false, error: 'нет скрипта восстановления' });\n4752:     wbRestore = { running: true, startedAt: Date.now(), doneAt: 0, code: null, tail: [] };\n4753:     wbPushTail('♻ восстановление из snapshots/' + stamp + '\\n');\n4754:     const env = Object.assign({}, process.env, {\n4755:       GH_TOKEN: token,\n4756:       GITHUB_TOKEN: token,\n4757:       GITHUB_REPOSITORY: process.env.GITHUB_REPOSITORY || '',\n4758:       HUB_LOGS: LOG_DIR,\n4759:       WORK_BACKUP_ROOT: HOME,\n4760:       WORK_BACKUP_RESTORE_EXISTING: '1',\n4761:       WORK_BACKUP_SNAPSHOT: 'snapshots/' + stamp\n4762:     });\n4763:     const child = spawn('bash', [RESTORE_WORK_SH], { env, stdio: ['ignore', 'pipe', 'pipe'] });\n4764:     child.stdout.on('data', d => { process.stdout.write(d); wbPushTail(d); });\n4765:     child.stderr.on('data', d => { wbPushTail(d); });\n4766:     const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} ; wbPushTail('⏱ таймаут 40 минут — прервал'); }, 40 * 60000);\n4767:     child.on('error', e => { clearTimeout(timer); wbRestore.running = false; wbRestore.doneAt = Date.now(); wbRestore.code = -1; wbPushTail('ошибка запуска: ' + e.message); });\n4768:     child.on('close', code => { clearTimeout(timer); wbRestore.running = false; wbRestore.doneAt = Date.now(); wbRestore.code = code; wbPushTail(code === 0 ? '✅ восстановление завершено' : ('❌ скрипт завершился с кодом ' + code)); });\n4769:     res.json({ success: true });\n4770:   } catch (e) {\n4771:     res.json({ success: false, error: e.message });\n4772:   }\n4773: });\n4774: \n4775: app.get('/api/work-snapshots/restore/status', (req, res) => {\n4776:   const t = wbRestore;\n4777:   res.json({\n4778:     success: true,\n4779:     running: t.running,\n4780:     startedAt: t.startedAt || 0,\n4781:     doneAt: t.doneAt || 0,\n4782:     code: t.code,\n4783:     elapsed: t.startedAt ? Math.round((((t.running ? Date.now() : t.doneAt) || Date.now()) - t.startedAt) / 1000) : 0,\n4784:     tail: t.tail.slice(-80)\n4785:   });\n4786: });\n4787: \n4788: // ─── PULSE AUDIO AUTO-START ───\n4789: (async () => {\n\n(Showing lines 4675-4789 of 4847. Use offset=4790 to continue.)\n</content>",
+                  "metadata": {
+                    "preview": "app.get('/api/work-snapshots', async (req, res) => {\n  try {\n    const remote = wbRemote();\n    if (!remote) return res.json({ success: true, snapshots: [], recommended: '', note: 'не на Actions-раннере' });\n    // ls-remote is the cheap freshness check; refresh the tree only when the\n    // branch really moved (a snapshot push) or every 5 minutes max.\n    const heads = await wbRunCmd('git', ['ls-remote', remote, 'refs/heads/work-backup'], 30000);\n    const sha = (heads.out.trim().split(/\\s+/)[0] || '').trim();\n    if (!sha || heads.code !== 0 || !/^[0-9a-f]{40}$/.test(sha)) {\n      return res.json({ success: true, snapshots: wbIndex.snapshots || [], recommended: wbIndex.recommended || '', note: 'ветка work-backup пока пустая' });\n    }\n    if (wbIndex.sha !== sha || !wbIndex.at || (Date.now() - wbIndex.at) > 300000) {\n      fs.mkdirSync(WB_CACHE_DIR, { recursive: true });\n      if (!fs.existsSync(path.join(WB_CACHE_DIR, 'HEAD'))) {\n        const init = await wbRunCmd('git', ['init', '-q', '--bare', WB_CACHE_DIR], 20000);\n        if (init.code !== 0) throw new Error('git init: ' + init.out.slice(0, 200));\n      }\n      const fch = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'fetch', '-q', '--depth=1', '--filter=blob:none', remote, '+refs/heads/work-backup:refs/wb'], 180000);\n      if (fch.code !== 0) throw new Error('fetch: ' + fch.out.slice(0, 200));\n      const tree = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'ls-tree', '-r', '-l', 'refs/wb', '--', 'snapshots/'], 60000);",
+                    "truncated": true,
+                    "loaded": [],
+                    "display": {
+                      "type": "file",
+                      "path": "/home/runner/work/zen-panel/zen-panel/fork/npm-hub/src/server.js",
+                      "text": "app.get('/api/work-snapshots', async (req, res) => {\n  try {\n    const remote = wbRemote();\n    if (!remote) return res.json({ success: true, snapshots: [], recommended: '', note: 'не на Actions-раннере' });\n    // ls-remote is the cheap freshness check; refresh the tree only when the\n    // branch really moved (a snapshot push) or every 5 minutes max.\n    const heads = await wbRunCmd('git', ['ls-remote', remote, 'refs/heads/work-backup'], 30000);\n    const sha = (heads.out.trim().split(/\\s+/)[0] || '').trim();\n    if (!sha || heads.code !== 0 || !/^[0-9a-f]{40}$/.test(sha)) {\n      return res.json({ success: true, snapshots: wbIndex.snapshots || [], recommended: wbIndex.recommended || '', note: 'ветка work-backup пока пустая' });\n    }\n    if (wbIndex.sha !== sha || !wbIndex.at || (Date.now() - wbIndex.at) > 300000) {\n      fs.mkdirSync(WB_CACHE_DIR, { recursive: true });\n      if (!fs.existsSync(path.join(WB_CACHE_DIR, 'HEAD'))) {\n        const init = await wbRunCmd('git', ['init', '-q', '--bare', WB_CACHE_DIR], 20000);\n        if (init.code !== 0) throw new Error('git init: ' + init.out.slice(0, 200));\n      }\n      const fch = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'fetch', '-q', '--depth=1', '--filter=blob:none', remote, '+refs/heads/work-backup:refs/wb'], 180000);\n      if (fch.code !== 0) throw new Error('fetch: ' + fch.out.slice(0, 200));\n      const tree = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'ls-tree', '-r', '-l', 'refs/wb', '--', 'snapshots/'], 60000);\n      if (tree.code !== 0) throw new Error('ls-tree: ' + tree.out.slice(0, 200));\n      const snaps = new Map();\n      for (const line of tree.out.split('\\n')) {\n        const m = line.match(/^\\S+ blob +\\S+ +(\\d+)\\tsnapshots\\/([^/]+)\\/(.+)$/);\n        if (!m) continue;\n        const size = parseInt(m[1], 10) || 0;\n        const stamp = m[2], rel = m[3];\n        let s = snaps.get(stamp);\n        if (!s) { s = { stamp, repos: new Map(), extras: 0, chats: 0, settings: false, total: 0 }; snaps.set(stamp, s); }\n        s.total += size;\n        const base = rel.split('/').pop();\n        const dir = rel.slice(0, -(base.length + 1));\n        if (base === 'repo.bundle' || base === 'worktree.tar.gz') {\n          const e = s.repos.get(dir) || { rel: dir, bytes: 0, kind: '' };\n          if (size > 0) { e.bytes += size; e.kind = base === 'repo.bundle' ? 'git' : 'архив'; }\n          s.repos.set(dir, e);\n        } else if (base === 'wip.patch' || base === 'untracked.tar.gz') {\n          if (size > 0) s.extras += size;\n        } else if (rel.startsWith('opencode/chats/') && base.endsWith('.json')) {\n          s.chats += 1;\n        } else if (rel.startsWith('opencode/settings/') && base !== 'manifest.json') {\n          s.settings = true;\n        }\n      }\n      const list = [...snaps.values()].map(s => {\n        const active = s.repos.size > 0 || s.chats > 0 || s.settings;\n        return {\n          stamp: s.stamp,\n          repos: [...s.repos.values()].filter(r => r.bytes > 0).sort((a, b) => a.rel.localeCompare(b.rel)),\n          extrasMb: Math.round(s.extras / 104857.6) / 10,\n          chats: s.chats, settings: s.settings, active,\n          totalMb: Math.round(s.total / 104857.6) / 10\n        };\n      });\n      list.sort((a, b) => b.stamp.localeCompare(a.stamp));\n      // \"Всегда самые новые; если новые пустые — последние, где что-то делали\":\n      // рекомендация = новейший снапшот с реальной активностью (репо или чаты\n      // opencode или настройки), а не просто самый свежий по времени.\n      const recommended = (list.find(s => s.active) || { stamp: '' }).stamp;\n      wbIndex = { sha, at: Date.now(), snapshots: list, recommended };\n    }\n    res.json({ success: true, snapshots: wbIndex.snapshots, recommended: wbIndex.recommended });\n  } catch (e) {\n    res.json({ success: false, error: 'не прочитал work-backup: ' + e.message });\n  }\n});\n\napp.post('/api/work-snapshots/restore', express.json(), (req, res) => {\n  try {\n    const stamp = String((req.body && req.body.snapshot) || '').trim();\n    if (!stamp || !/^[A-Za-z0-9._:-]+$/.test(stamp) || stamp.includes('..') || stamp.includes('/')) {\n      return res.json({ success: false, error: 'некорректное имя снапшота' });\n    }\n    if (wbRestore.running) return res.json({ success: false, error: 'восстановление уже идёт' });\n    const token = runnerToken();\n    if (!token) return res.json({ success: false, error: 'нет токена GitHub' });\n    if (!fs.existsSync(RESTORE_WORK_SH)) return res.json({ success: false, error: 'нет скрипта восстановления' });\n    wbRestore = { running: true, startedAt: Date.now(), doneAt: 0, code: null, tail: [] };\n    wbPushTail('♻ восстановление из snapshots/' + stamp + '\\n');\n    const env = Object.assign({}, process.env, {\n      GH_TOKEN: token,\n      GITHUB_TOKEN: token,\n      GITHUB_REPOSITORY: process.env.GITHUB_REPOSITORY || '',\n      HUB_LOGS: LOG_DIR,\n      WORK_BACKUP_ROOT: HOME,\n      WORK_BACKUP_RESTORE_EXISTING: '1',\n      WORK_BACKUP_SNAPSHOT: 'snapshots/' + stamp\n    });\n    const child = spawn('bash', [RESTORE_WORK_SH], { env, stdio: ['ignore', 'pipe', 'pipe'] });\n    child.stdout.on('data', d => { process.stdout.write(d); wbPushTail(d); });\n    child.stderr.on('data', d => { wbPushTail(d); });\n    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} ; wbPushTail('⏱ таймаут 40 минут — прервал'); }, 40 * 60000);\n    child.on('error', e => { clearTimeout(timer); wbRestore.running = false; wbRestore.doneAt = Date.now(); wbRestore.code = -1; wbPushTail('ошибка запуска: ' + e.message); });\n    child.on('close', code => { clearTimeout(timer); wbRestore.running = false; wbRestore.doneAt = Date.now(); wbRestore.code = code; wbPushTail(code === 0 ? '✅ восстановление завершено' : ('❌ скрипт завершился с кодом ' + code)); });\n    res.json({ success: true });\n  } catch (e) {\n    res.json({ success: false, error: e.message });\n  }\n});\n\napp.get('/api/work-snapshots/restore/status', (req, res) => {\n  const t = wbRestore;\n  res.json({\n    success: true,\n    running: t.running,\n    startedAt: t.startedAt || 0,\n    doneAt: t.doneAt || 0,\n    code: t.code,\n    elapsed: t.startedAt ? Math.round((((t.running ? Date.now() : t.doneAt) || Date.now()) - t.startedAt) / 1000) : 0,\n    tail: t.tail.slice(-80)\n  });\n});\n\n// ─── PULSE AUDIO AUTO-START ───\n(async () => {",
+                      "lineStart": 4675,
+                      "lineEnd": 4789,
+                      "totalLines": 4847,
+                      "truncated": true
+                    }
+                  },
+                  "title": "npm-hub/src/server.js",
+                  "time": {
+                    "start": 1791042223224,
+                    "end": 1791042223244
+                  }
+                },
+                "id": "prt_1026f7c72001DygMzOiq60be2e",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f7118001R3iOxnvqSmXl1E"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_1026f7d1c0019CpXbyp1D5QNay",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f7118001R3iOxnvqSmXl1E"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042223470,
+                "completed": 1791042244372
+              },
+              "finish": "tool-calls",
+              "id": "msg_1026f7d6e001E2SpvQ32Rr4P4t",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-start",
+                "id": "prt_1026fc2e2001yCfcxcw50BUUM0",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f7d6e001E2SpvQ32Rr4P4t"
+              },
+              {
+                "type": "reasoning",
+                "text": "Now let me look at `tools/restore-work.sh` — that's what runs, with `WORK_BACKUP_SNAPSHOT` and `WORK_BACKUP_RESTORE_EXISTING`.\n\nAnd I need to know the actual error the user sees. Let me check `restore-work.sh` for likely failures.\n\nKey suspects:\n1. `WORK_BACKUP_RESTORE_EXISTING: '1'` — restore INTO existing repos. The confirm dialog says \"Существующие git-репозитории не трогаются, дополняются только отсутствующие\" (existing repos untouched, only missing ones supplemented) — but the env sets `WORK_BACKUP_RESTORE_EXISTING=1`, which may CONTRADICT the dialog. Let me check what restore-work.sh does with it.\n\n2. The snapshot list only shows one per day → can't choose.\n\nLetme read restore-work.sh.",
+                "time": {
+                  "start": 1791042241253,
+                  "end": 1791042244207
+                },
+                "id": "prt_1026fc2e500176N43RAGqlA1vR",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f7d6e001E2SpvQ32Rr4P4t"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a1026fcd197086804c9ba7",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/work/zen-panel/zen-panel/fork && wc -l tools/restore-work.sh && cat tools/restore-work.sh"
+                  },
+                  "output": "519 tools/restore-work.sh\n#!/usr/bin/env bash\n# Restore the working tree from the newest `work-backup` snapshot.\n#\n# Runs at hub startup, after restore_audit_code.sh, so a runner that died with\n# unpushed work comes back with that work in place: each repo is rebuilt from\n# its git bundle, the uncommitted diff is reapplied and untracked files are\n# unpacked. Small non-repo files are restored only when missing.\n#\n# SAFETY\n#   An existing directory that is already a git repo is never touched: it holds\n#   newer work than the snapshot and clobbering it would be the very data loss\n#   this is meant to prevent. Restore only fills in paths that are absent.\n#\n# ENV\n#   WORK_BACKUP_ROOT        root to restore into   (default $HOME)\n#   WORK_BACKUP_BRANCH      source branch          (default work-backup)\n#   WORK_BACKUP_SNAPSHOT    explicit snapshot dir  (default: newest)\n#   SESSION_STATE_URL       git remote override for local tests\n#   WORK_BACKUP_RESTORE=0   skip entirely\nset -uo pipefail\n\nROOT=\"${WORK_BACKUP_ROOT:-$HOME}\"\nBRANCH=\"${WORK_BACKUP_BRANCH:-work-backup}\"\nHUB_LOGS=\"${HUB_LOGS:-$HOME/.npm-hub/logs}\"\nif ! mkdir -p \"$HUB_LOGS\" 2>/dev/null; then\n  printf '%s\\n' \"restore-work: cannot create log directory\" >&2\n  exit 1\nfi\nlog() { echo \"[restore-work $(date -u '+%H:%M:%S')] $*\" | tee -a \"$HUB_LOGS/restore-work.log\"; }\n\n[ \"${WORK_BACKUP_RESTORE:-1}\" = \"0\" ] && { log \"disabled\"; exit 0; }\n\n# Apply the WIP/untracked part without replacing a repo that the workflow\n# checked out freshly. This is enabled explicitly for the Hub checkout: the\n# old runner's local edits must come back on top of the new checkout.\napply_payload() {\n  local dir=\"$1\" repodir=\"$2\" label=\"$3\" result=0\n  if [ -s \"$repodir/wip.patch\" ]; then\n    if ( cd \"$dir\" && git apply --whitespace=nowarn \"$repodir/wip.patch\" 2>/dev/null ); then\n      log \"applied uncommitted changes to $label\"\n    else\n      log \"could not reapply uncommitted changes to $label (kept at $repodir/wip.patch)\"\n      result=1\n    fi\n  fi\n  if [ -s \"$repodir/untracked.tar.gz\" ]; then\n    if extract_keep_old \"$dir\" \"$repodir/untracked.tar.gz\"; then\n      log \"restored untracked files for $label\"\n    else\n      log \"could not restore untracked files for $label\"\n      result=1\n    fi\n  fi\n  return \"$result\"\n}\nextract_keep_old() {\n  local dir=\"$1\" archive=\"$2\" output rc=0\n  output=\"$(cd \"$dir\" && tar --keep-old-files -xzf \"$archive\" 2>&1)\" || rc=$?\n  if [ \"$rc\" -eq 0 ]; then return 0; fi\n  case \"$output\" in\n    *\"Cannot open: File exists\"*) return 0 ;;\n  esac\n  [ -n \"$output\" ] && log \"tar: ${output:0:200}\"\n  return 1\n}\n\n# Rebuild a repository from worktree.tar.gz - what backup-work.sh writes for a\n# shallow clone, whose bundle cannot be cloned (\"Failed to traverse parents\").\n# The result is a real repository (git init + one commit), so the next backup\n# can bundle it properly; the caller then applies the WIP diff and the untracked\n# files exactly as it does for a cloned repository.\nrebuild_from_archive() {\n  local repodir=\"$1\" dest=\"$2\" rel=\"$3\"\n  [ -s \"$repodir/worktree.tar.gz\" ] || return 1\n  mkdir -p \"$dest\" || return 1\n  if ! tar -xzf \"$repodir/worktree.tar.gz\" -C \"$dest\" 2>/dev/null; then\n    log \"could not unpack the archive of $rel\"\n    return 1\n  fi\n  ( cd \"$dest\" && git init -q ) || return 1\n  if [ -f \"$repodir/meta.json\" ]; then\n    META_REMOTE=$(python3 - \"$repodir/meta.json\" <<'META'\nimport json, sys\ntry:\n    print(json.load(open(sys.argv[1], encoding='utf-8')).get('remote', ''))\nexcept Exception:\n    print('')\nMETA\n)\n    [ -z \"$META_REMOTE\" ] || git -C \"$dest\" remote add origin \"$META_REMOTE\" 2>/dev/null || true\n  fi\n  # `git -c key=value`, with the equals sign: written as `-c user.email value`\n  # git reads the value as the subcommand, the commit silently never happens and\n  # the restored repository is left with no commits at all.\n  if ! ( cd \"$dest\" && git add -A && \\\n      GIT_AUTHOR_NAME=\"Restore\" GIT_AUTHOR_EMAIL=\"restore@zen-panel\" \\\n      GIT_COMMITTER_NAME=\"Restore\" GIT_COMMITTER_EMAIL=\"restore@zen-panel\" \\\n          git commit -q -m \"state restored from the previous runner\" ) >/dev/null 2>&1; then\n    log \"could not commit the restored tree of $rel (the files are there, but it is not a repository yet)\"\n    return 1\n  fi\n  return 0\n}\n\ncopy_legacy_manifest() {\n  local dir=\"$1\"\n  local legacy=\"$(dirname \"$dir\")/MANIFEST.md\"\n  if [ -f \"$legacy\" ] && [ ! -f \"$dir/MANIFEST.md\" ]; then\n    if ! cp \"$legacy\" \"$dir/MANIFEST.md\" 2>/dev/null; then\n      log \"could not migrate legacy manifest into $dir\"\n      return 1\n    fi\n    log \"migrated legacy manifest into $dir\"\n  fi\n  return 0\n}\n\nREMOTE=\"${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN:-${GITHUB_TOKEN:-}}@github.com/${GITHUB_REPOSITORY:-}.git}\"\n\nif ! WORK=\"$(mktemp -d)\"; then\n  log \"cannot create restore directory\"\n  exit 1\nfi\nTARGET=\"\"\ncleanup() { rm -rf \"$WORK\"; }\ntrap cleanup EXIT\n\nif git clone -q --depth 1 --branch \"$BRANCH\" \"$REMOTE\" \"$WORK/state\" 2>/dev/null; then\n  TARGET=\"$WORK/state\"\nelse\n  log \"no $BRANCH branch yet; nothing to restore\"\n  exit 0\nfi\n\nif [ -n \"${WORK_BACKUP_SNAPSHOT:-}\" ]; then\n  SNAP=\"$TARGET/$WORK_BACKUP_SNAPSHOT\"\nelif [ -f \"$TARGET/latest.json\" ]; then\n  LATEST_STAMP=$(python3 - \"$TARGET/latest.json\" <<'PY'\nimport json, sys\ntry:\n    print(json.load(open(sys.argv[1], encoding='utf-8')).get('stamp', ''))\nexcept Exception:\n    print('')\nPY\n)\n  if [ -n \"$LATEST_STAMP\" ] && [ -d \"$TARGET/snapshots/$LATEST_STAMP\" ]; then\n    SNAP=\"$TARGET/snapshots/$LATEST_STAMP\"\n  fi\nfi\nif [ -z \"${SNAP:-}\" ]; then\n  SNAP=\"$(ls -1d \"$TARGET\"/snapshots/*/ 2>/dev/null | LC_ALL=C sort -r | head -n1)\"\nfi\nif [ -z \"${SNAP:-}\" ] || [ ! -d \"$SNAP\" ]; then\n  log \"no snapshot found in $BRANCH\"\n  exit 0\nfi\nlog \"restoring from $SNAP\"\n\n# ── Glue back the split blobs ────────────────────────────────────────────\n# Anything over 100 MB cannot be a git blob on GitHub, so backup-work.sh split\n# it into big/<n>/part.NNN and wrote big-blobs.json. Rebuild every entry in\n# place, verify the size and the sha256, and only then read the snapshot. A\n# mismatch is reported and the file is left out rather than half-written.\nrebuild_split_blobs() {\n  local snap=\"$1\" failed=0\n  [ -f \"$snap/big-blobs.json\" ] || return 0\n  if python3 - \"$snap\" <<'BLOBS'\nimport hashlib, json, os, sys\nsnap = sys.argv[1]\ntry:\n    doc = json.load(open(os.path.join(snap, 'big-blobs.json'), encoding='utf-8'))\nexcept Exception as exc:\n    print('unreadable big-blobs.json: %s' % exc)\n    raise SystemExit(1)\nblobs = doc.get('blobs') or []\nok = True\nfor n, blob in enumerate(blobs, start=1):\n    rel = str(blob.get('rel') or '').strip('/')\n    parts = blob.get('parts') or []\n    if not rel or not parts:\n        continue\n    dest = os.path.join(snap, rel)\n    os.makedirs(os.path.dirname(dest) or snap, exist_ok=True)\n    tmp = dest + '.rebuilt'\n    digest = hashlib.sha256()\n    try:\n        with open(tmp, 'wb') as out:\n            for part in parts:\n                src = os.path.join(snap, 'blobs', str(n), part)\n                if not os.path.isfile(src):\n                    raise IOError('missing chunk %s' % part)\n                with open(src, 'rb') as fh:\n                    while True:\n                        block = fh.read(1 << 20)\n                        if not block:\n                            break\n                        digest.update(block)\n                        out.write(block)\n        want = str(blob.get('sha256') or '')\n        if want and digest.hexdigest() != want:\n            raise IOError('sha256 mismatch')\n        want_size = int(blob.get('size') or 0)\n        if want_size and os.path.getsize(tmp) != want_size:\n            raise IOError('size mismatch: %d != %d' % (os.path.getsize(tmp), want_size))\n        os.replace(tmp, dest)\n        print('rebuilt %s (%d bytes)' % (rel, os.path.getsize(dest)))\n    except Exception as exc:\n        if os.path.exists(tmp):\n            try:\n                os.remove(tmp)\n            except OSError:\n                pass\n        print('could not rebuild %s: %s' % (rel, exc))\n        ok = False\nraise SystemExit(0 if ok else 1)\nBLOBS\n  then\n    log \"rebuilt the split blobs\"\n  else\n    log \"some split blobs could not be rebuilt - the snapshot is incomplete\"\n    failed=1\n  fi\n  return \"$failed\"\n}\nBLOBS_FAILED=0\nrebuild_split_blobs \"$SNAP\" || BLOBS_FAILED=1\n\nfind_existing_repo() {\n  local meta=\"$1\"\n  [ \"${WORK_BACKUP_RESTORE_EXISTING:-0}\" = \"1\" ] || return 0\n  python3 - \"$ROOT\" \"$meta\" <<'PY'\nimport json, os, subprocess, sys\nroot, meta_path = sys.argv[1:]\ntry: meta = json.load(open(meta_path, encoding='utf-8'))\nexcept Exception: raise SystemExit(0)\nrel = str(meta.get('rel') or '').strip('/')\nwanted_remote = str(meta.get('remote') or '').strip()\n\ndef is_repo(path):\n    try:\n        return os.path.isdir(os.path.join(path, '.git')) or subprocess.run(\n            ['git', '-C', path, 'rev-parse', '--git-dir'],\n            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0\n    except Exception:\n        return False\n\ndef norm(url):\n    value = str(url or '').strip().rstrip('/')\n    if value.endswith('.git'): value = value[:-4]\n    if value.startswith('git@github.com:'): value = 'https://github.com/' + value.split(':', 1)[1]\n    if value.startswith('ssh://git@github.com/'):\n        value = 'https://github.com/' + value.split('github.com/', 1)[1]\n    return value\n\nwanted = norm(wanted_remote)\ndef remote_of(path):\n    try:\n        return subprocess.check_output(\n            ['git', '-C', path, 'remote', 'get-url', 'origin'],\n            text=True, stderr=subprocess.DEVNULL).strip()\n    except Exception:\n        return ''\n\nif rel:\n    exact = os.path.join(root, rel)\n    if is_repo(exact) and (not wanted or norm(remote_of(exact)) == wanted):\n        print(exact)\n        raise SystemExit(0)\nif not wanted:\n    raise SystemExit(0)\nfor base, dirs, files in os.walk(root):\n    dirs[:] = [d for d in dirs if d not in ('node_modules', '.cache', '.npm', '.gradle', '.git')]\n    if not is_repo(base):\n        continue\n    try:\n        remote = subprocess.check_output(\n            ['git', '-C', base, 'remote', 'get-url', 'origin'],\n            text=True, stderr=subprocess.DEVNULL).strip()\n    except Exception:\n        continue\n    if norm(remote) == wanted:\n        print(base)\n        raise SystemExit(0)\nPY\n}\n\nrestored=0\nfailed=0\nwhile IFS= read -r meta; do\n  [ -f \"$meta\" ] || continue\n  repodir=\"$(dirname \"$meta\")\"\n  rel=\"$(python3 - \"$meta\" <<'PY'\nimport json, sys, os\ntry:\n    d=json.load(open(sys.argv[1], encoding='utf-8'))\n    print(d.get('rel') or os.path.basename(os.path.dirname(sys.argv[1])))\nexcept Exception:\n    print(os.path.basename(os.path.dirname(sys.argv[1])))\nPY\n)\"\n  dest=\"$ROOT/$rel\"\n  existing=\"$(find_existing_repo \"$meta\")\"\n  if [ -n \"$existing\" ] && [ -e \"$existing/.git\" ]; then\n     if ! apply_payload \"$existing\" \"$repodir\" \"$(basename \"$existing\")\"; then failed=1; fi\n     if ! copy_legacy_manifest \"$existing\"; then failed=1; fi\n\n    restored=$((restored + 1))\n    log \"reused existing repo $existing for backup $rel\"\n    continue\n  fi\n  if [ -e \"$dest\" ] && [ -n \"$(ls -A \"$dest\" 2>/dev/null)\" ] \\\n    && ! git -C \"$dest\" rev-parse --git-dir >/dev/null 2>&1; then\n    partial=\"$dest.partial-$(date +%s)\"\n     if ! mv \"$dest\" \"$partial\" 2>/dev/null; then\n       log \"could not quarantine incomplete clone $dest\"\n       failed=1\n       continue\n     fi\n\n    log \"moved incomplete clone $dest to $partial\"\n  fi\n  if [ -e \"$dest/.git\" ] && git -C \"$dest\" rev-parse --git-dir >/dev/null 2>&1; then\n    log \"skip $rel: already a valid repo at $dest\"\n    continue\n  fi\n  mkdir -p \"$(dirname \"$dest\")\"\n  if [ -f \"$repodir/repo.bundle\" ]; then\n     if ! git clone -q \"$repodir/repo.bundle\" \"$dest\" 2>/dev/null; then\n       # A bundle that will not clone is still better than no repository: the\n       # archive next to it holds the committed tree, and the WIP patch plus\n       # the untracked pack that follow bring the working state with it.\n       if rebuild_from_archive \"$repodir\" \"$dest\" \"$rel\"; then\n         log \"restored $rel from its archive (the bundle would not clone)\"\n       else\n         log \"clone of $rel failed; skipped\"\n         failed=1\n         continue\n       fi\n     fi\n     if [ -f \"$repodir/meta.json\" ]; then\n       META_REMOTE=$(python3 - \"$repodir/meta.json\" <<'PY'\nimport json, sys\ntry:\n    print(json.load(open(sys.argv[1], encoding='utf-8')).get('remote', ''))\nexcept Exception:\n    print('')\nPY\n)\n       [ -z \"$META_REMOTE\" ] || git -C \"$dest\" remote set-url origin \"$META_REMOTE\" 2>/dev/null || true\n     fi\n\n  elif ! rebuild_from_archive \"$repodir\" \"$dest\" \"$rel\"; then\n    mkdir -p \"$dest\"\n    ( cd \"$dest\" && git init -q )\n  fi\n   if ! apply_payload \"$dest\" \"$repodir\" \"$rel\"; then failed=1; fi\n   if ! copy_legacy_manifest \"$dest\"; then failed=1; fi\n\n  restored=$((restored + 1))\n  log \"restored $rel -> $dest\"\ndone < <(find \"$SNAP/repos\" -type f -name meta.json -print 2>/dev/null)\n\n# ── OpenCode: settings + chat sessions from the SAME snapshot ──\n# Settings go back to the exact path the manifest recorded, never clobbering\n# whatever the fresh runner already wrote (--keep-old semantics via cp -n).\nif [ -f \"$SNAP/opencode/settings/manifest.json\" ]; then\n  python3 - \"$SNAP/opencode\" <<'PYP'\nimport json, os, shutil, sys\noc = sys.argv[1]\ntry:\n    manifest = json.load(open(os.path.join(oc, 'settings', 'manifest.json'), encoding='utf-8'))\nexcept Exception as exc:\n    print('opencode settings: bad manifest: %s' % exc)\n    raise SystemExit(1)\ndone = 0\nfor e in manifest if isinstance(manifest, list) else manifest.get('files', []):\n    rel, fn = e.get('rel', ''), e.get('file', '')\n    src = os.path.join(oc, fn)\n    if not rel or not fn or not os.path.isfile(src):\n        continue\n    dest = os.path.expanduser(rel) if rel.startswith('~') else rel\n    if rel.startswith('hub-work'):\n        dest = os.path.join(os.environ.get('WORK_BACKUP_ROOT', os.path.expanduser('~')), rel)\n    os.makedirs(os.path.dirname(dest), exist_ok=True)\n    if os.path.exists(dest):\n        continue  # keep the fresh runner's own copy\n    shutil.copy2(src, dest)\n    done += 1\nprint('opencode settings: %d file(s) restored' % done)\nPYP\nfi\n# Chat sessions: per-repo bundle from this very snapshot, imported back into\n# the repo we just restored (restore-chats.sh assigns sessions to the CWD).\nif [ -d \"$SNAP/opencode/chats\" ] && ls \"$SNAP/opencode/chats\"/*.json >/dev/null 2>&1; then\n  RESTORE_CHATS_BIN=\"$HOME/.local/bin/restore-chats.sh\"; [ -f \"$RESTORE_CHATS_BIN\" ] || RESTORE_CHATS_BIN=\"$(dirname \"$0\")/restore-chats.sh\"\n  for meta in \"$SNAP/repos\"/hub-work/*/meta.json; do\n    [ -f \"$meta\" ] || continue\n    name=\"$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding=\"utf-8\")); print(d.get(\"name\") or \"\")' \"$meta\" 2>/dev/null | tr -c 'A-Za-z0-9._-' '_')\"\n    [ -n \"$name\" ] || continue\n    bundle=\"$SNAP/opencode/chats/$name.json\"\n    [ -s \"$bundle\" ] || continue\n    rel=\"$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding=\"utf-8\")); print(d.get(\"rel\") or \"\")' \"$meta\" 2>/dev/null)\"\n    dest=\"$ROOT/$rel\"\n    [ -d \"$dest\" ] || continue\n    CHAT_BUNDLE=\"$bundle\" CHAT_REPO_DIR=\"$dest\" bash \"$RESTORE_CHATS_BIN\" >/dev/null 2>&1 && log \"chats restored for $name\" || log \"chats restore failed for $name\"\n  done\nfi\n\nif [ -s \"$SNAP/files.tar.gz\" ]; then\n  # --keep-old-files: never overwrite whatever the fresh runner already has.\n  if extract_keep_old \"$ROOT\" \"$SNAP/files.tar.gz\"; then\n    log \"restored loose home files (existing ones left untouched)\"\n  else\n    log \"could not restore loose home files\"\n    failed=1\n  fi\nfi\n\nif [ -d \"$SNAP/big\" ]; then\n  # Files that were too big for files.tar.gz arrived as chunks (see\n  # collect_big_files in backup-work.sh): glue them back, check the sha256 the\n  # backup recorded, and only then delete the chunks. A missing or corrupt\n  # part is reported instead of leaving a half file behind.\n  if python3 - \"$ROOT\" \"$SNAP/big\" <<'PY'\nimport hashlib, json, os, sys\nroot, bigdir = sys.argv[1], sys.argv[2]\nok = True\nfor name in sorted(os.listdir(bigdir)):\n    meta_path = os.path.join(bigdir, name, 'meta.json')\n    if not os.path.isfile(meta_path):\n        continue\n    try:\n        meta = json.load(open(meta_path, encoding='utf-8'))\n    except Exception as exc:\n        print('unreadable meta %s: %s' % (name, exc))\n        ok = False\n        continue\n    rel = str(meta.get('rel') or '').strip('/')\n    parts = [p for p in (meta.get('parts') or [])]\n    if not rel or not parts:\n        continue\n    dest = os.path.join(root, rel)\n    os.makedirs(os.path.dirname(dest) or root, exist_ok=True)\n    digest = hashlib.sha256()\n    tmp = dest + '.handoff-part'\n    try:\n        with open(tmp, 'wb') as out:\n            for part in parts:\n                src = os.path.join(bigdir, name, part)\n                if not os.path.isfile(src):\n                    raise IOError('missing chunk %s' % part)\n                with open(src, 'rb') as fh:\n                    while True:\n                        block = fh.read(1 << 20)\n                        if not block:\n                            break\n                        digest.update(block)\n                        out.write(block)\n        want = str(meta.get('sha256') or '')\n        if want and digest.hexdigest() != want:\n            raise IOError('sha256 mismatch (expected %s)' % want)\n        os.replace(tmp, dest)\n        print('restored %s (%d bytes)' % (rel, os.path.getsize(dest)))\n    except Exception as exc:\n        if os.path.exists(tmp):\n            try:\n                os.remove(tmp)\n            except OSError:\n                pass\n        print('could not rebuild %s: %s' % (rel, exc))\n        ok = False\nraise SystemExit(0 if ok else 1)\nPY\n  then\n    log \"rebuilt chunked big files\"\n  else\n    log \"some chunked big files could not be rebuilt\"\n    failed=1\n  fi\nfi\n\n# Descriptors and TUI snapshots of the sessions. cp -n: whatever the fresh\n# runner wrote itself is newer and must survive; everything missing comes back.\n# Then the counts, because a silent restore here is indistinguishable from\n# «the user has no unfinished sessions» - and the snapshot is exactly what\n# makes a reopened terminal show the last known screen instead of a black one.\nif [ -d \"$SNAP/descriptors\" ]; then\n  mkdir -p \"$ROOT/.npm-hub/sessions\" 2>/dev/null || failed=1\n  if ! cp -a -n \"$SNAP/descriptors/.\" \"$ROOT/.npm-hub/sessions/\" 2>/dev/null; then\n    log \"could not restore durable session descriptors\"\n    failed=1\n  else\n    log \"restored durable session descriptors\"\n  fi\n  session_dir=\"$ROOT/.npm-hub/sessions\"\n  metas=0; snaps=0\n  if [ -d \"$session_dir\" ]; then\n    metas=\"$(find \"$session_dir\" -maxdepth 1 -name 'npmhub-*.meta.json' -type f 2>/dev/null | wc -l | tr -d ' ')\"\n    # A snapshot without its descriptor is unusable: there is no session to\n    # attach it to, so nothing would ever read it. Drop it instead of leaving\n    # a file that only costs restore time and confuses the next backup.\n    for snap_file in \"$session_dir\"/npmhub-*.snapshot; do\n      [ -f \"$snap_file\" ] || continue\n      base=\"${snap_file%.snapshot}\"\n      if [ -f \"$base.meta.json\" ]; then\n        snaps=$((snaps + 1))\n      else\n        rm -f \"$snap_file\" 2>/dev/null || true\n        log \"dropped orphan TUI snapshot $(basename \"$snap_file\") (no descriptor)\"\n      fi\n    done\n    # Tail of a snapshot write that a dead runner never finished.\n    find \"$session_dir\" -maxdepth 1 -name '*.snapshot.tmp' -type f -delete 2>/dev/null || true\n  fi\n  log \"sessions available after restore: $metas descriptor(s), $snaps TUI snapshot(s)\"\nfi\n\nlog \"done: $restored repo(s) restored\"\n[ \"$failed\" -eq 0 ] && [ \"$BLOBS_FAILED\" -eq 0 ]\n",
+                  "metadata": {
+                    "output": "519 tools/restore-work.sh\n#!/usr/bin/env bash\n# Restore the working tree from the newest `work-backup` snapshot.\n#\n# Runs at hub startup, after restore_audit_code.sh, so a runner that died with\n# unpushed work comes back with that work in place: each repo is rebuilt from\n# its git bundle, the uncommitted diff is reapplied and untracked files are\n# unpacked. Small non-repo files are restored only when missing.\n#\n# SAFETY\n#   An existing directory that is already a git repo is never touched: it holds\n#   newer work than the snapshot and clobbering it would be the very data loss\n#   this is meant to prevent. Restore only fills in paths that are absent.\n#\n# ENV\n#   WORK_BACKUP_ROOT        root to restore into   (default $HOME)\n#   WORK_BACKUP_BRANCH      source branch          (default work-backup)\n#   WORK_BACKUP_SNAPSHOT    explicit snapshot dir  (default: newest)\n#   SESSION_STATE_URL       git remote override for local tests\n#   WORK_BACKUP_RESTORE=0   skip entirely\nset -uo pipefail\n\nROOT=\"${WORK_BACKUP_ROOT:-$HOME}\"\nBRANCH=\"${WORK_BACKUP_BRANCH:-work-backup}\"\nHUB_LOGS=\"${HUB_LOGS:-$HOME/.npm-hub/logs}\"\nif ! mkdir -p \"$HUB_LOGS\" 2>/dev/null; then\n  printf '%s\\n' \"restore-work: cannot create log directory\" >&2\n  exit 1\nfi\nlog() { echo \"[restore-work $(date -u '+%H:%M:%S')] $*\" | tee -a \"$HUB_LOGS/restore-work.log\"; }\n\n[ \"${WORK_BACKUP_RESTORE:-1}\" = \"0\" ] && { log \"disabled\"; exit 0; }\n\n# Apply the WIP/untracked part without replacing a repo that the workflow\n# checked out freshly. This is enabled explicitly for the Hub checkout: the\n# old runner's local edits must come back on top of the new checkout.\napply_payload() {\n  local dir=\"$1\" repodir=\"$2\" label=\"$3\" result=0\n  if [ -s \"$repodir/wip.patch\" ]; then\n    if ( cd \"$dir\" && git apply --whitespace=nowarn \"$repodir/wip.patch\" 2>/dev/null ); then\n      log \"applied uncommitted changes to $label\"\n    else\n      log \"could not reapply uncommitted changes to $label (kept at $repodir/wip.patch)\"\n      result=1\n    fi\n  fi\n  if [ -s \"$repodir/untracked.tar.gz\" ]; then\n    if extract_keep_old \"$dir\" \"$repodir/untracked.tar.gz\"; then\n      log \"restored untracked files for $label\"\n    else\n      log \"could not restore untracked files for $label\"\n      result=1\n    fi\n  fi\n  return \"$result\"\n}\nextract_keep_old() {\n  local dir=\"$1\" archive=\"$2\" output rc=0\n  output=\"$(cd \"$dir\" && tar --keep-old-files -xzf \"$archive\" 2>&1)\" || rc=$?\n  if [ \"$rc\" -eq 0 ]; then return 0; fi\n  case \"$output\" in\n    *\"Cannot open: File exists\"*) return 0 ;;\n  esac\n  [ -n \"$output\" ] && log \"tar: ${output:0:200}\"\n  return 1\n}\n\n# Rebuild a repository from worktree.tar.gz - what backup-work.sh writes for a\n# shallow clone, whose bundle cannot be cloned (\"Failed to traverse parents\").\n# The result is a real repository (git init + one commit), so the next backup\n# can bundle it properly; the caller then applies the WIP diff and the untracked\n# files exactly as it does for a cloned repository.\nrebuild_from_archive() {\n  local repodir=\"$1\" dest=\"$2\" rel=\"$3\"\n  [ -s \"$repodir/worktree.tar.gz\" ] || return 1\n  mkdir -p \"$dest\" || return 1\n  if ! tar -xzf \"$repodir/worktree.tar.gz\" -C \"$dest\" 2>/dev/null; then\n    log \"could not unpack the archive of $rel\"\n    return 1\n  fi\n  ( cd \"$dest\" && git init -q ) || return 1\n  if [ -f \"$repodir/meta.json\" ]; then\n    META_REMOTE=$(python3 - \"$repodir/meta.json\" <<'META'\nimport json, sys\ntry:\n    print(json.load(open(sys.argv[1], encoding='utf-8')).get('remote', ''))\nexcept Exception:\n    print('')\nMETA\n)\n    [ -z \"$META_REMOTE\" ] || git -C \"$dest\" remote add origin \"$META_REMOTE\" 2>/dev/null || true\n  fi\n  # `git -c key=value`, with the equals sign: written as `-c user.email value`\n  # git reads the value as the subcommand, the commit silently never happens and\n  # the restored repository is left with no commits at all.\n  if ! ( cd \"$dest\" && git add -A && \\\n      GIT_AUTHOR_NAME=\"Restore\" GIT_AUTHOR_EMAIL=\"restore@zen-panel\" \\\n      GIT_COMMITTER_NAME=\"Restore\" GIT_COMMITTER_EMAIL=\"restore@zen-panel\" \\\n          git commit -q -m \"state restored from the previous runner\" ) >/dev/null 2>&1; then\n    log \"could not commit the restored tree of $rel (the files are there, but it is not a repository yet)\"\n    return 1\n  fi\n  return 0\n}\n\ncopy_legacy_manifest() {\n  local dir=\"$1\"\n  local legacy=\"$(dirname \"$dir\")/MANIFEST.md\"\n  if [ -f \"$legacy\" ] && [ ! -f \"$dir/MANIFEST.md\" ]; then\n    if ! cp \"$legacy\" \"$dir/MANIFEST.md\" 2>/dev/null; then\n      log \"could not migrate legacy manifest into $dir\"\n      return 1\n    fi\n    log \"migrated legacy manifest into $dir\"\n  fi\n  return 0\n}\n\nREMOTE=\"${SESSION_STATE_URL:-https://x-access-token:${GH_TOKEN:-${GITHUB_TOKEN:-}}@github.com/${GITHUB_REPOSITORY:-}.git}\"\n\nif ! WORK=\"$(mktemp -d)\"; then\n  log \"cannot create restore directory\"\n  exit 1\nfi\nTARGET=\"\"\ncleanup() { rm -rf \"$WORK\"; }\ntrap cleanup EXIT\n\nif git clone -q --depth 1 --branch \"$BRANCH\" \"$REMOTE\" \"$WORK/state\" 2>/dev/null; then\n  TARGET=\"$WORK/state\"\nelse\n  log \"no $BRANCH branch yet; nothing to restore\"\n  exit 0\nfi\n\nif [ -n \"${WORK_BACKUP_SNAPSHOT:-}\" ]; then\n  SNAP=\"$TARGET/$WORK_BACKUP_SNAPSHOT\"\nelif [ -f \"$TARGET/latest.json\" ]; then\n  LATEST_STAMP=$(python3 - \"$TARGET/latest.json\" <<'PY'\nimport json, sys\ntry:\n    print(json.load(open(sys.argv[1], encoding='utf-8')).get('stamp', ''))\nexcept Exception:\n    print('')\nPY\n)\n  if [ -n \"$LATEST_STAMP\" ] && [ -d \"$TARGET/snapshots/$LATEST_STAMP\" ]; then\n    SNAP=\"$TARGET/snapshots/$LATEST_STAMP\"\n  fi\nfi\nif [ -z \"${SNAP:-}\" ]; then\n  SNAP=\"$(ls -1d \"$TARGET\"/snapshots/*/ 2>/dev/null | LC_ALL=C sort -r | head -n1)\"\nfi\nif [ -z \"${SNAP:-}\" ] || [ ! -d \"$SNAP\" ]; then\n  log \"no snapshot found in $BRANCH\"\n  exit 0\nfi\nlog \"restoring from $SNAP\"\n\n# ── Glue back the split blobs ────────────────────────────────────────────\n# Anything over 100 MB cannot be a git blob on GitHub, so backup-work.sh split\n# it into big/<n>/part.NNN and wrote big-blobs.json. Rebuild every entry in\n# place, verify the size and the sha256, and only then read the snapshot. A\n# mismatch is reported and the file is left out rather than half-written.\nrebuild_split_blobs() {\n  local snap=\"$1\" failed=0\n  [ -f \"$snap/big-blobs.json\" ] || return 0\n  if python3 - \"$snap\" <<'BLOBS'\nimport hashlib, json, os, sys\nsnap = sys.argv[1]\ntry:\n    doc = json.load(open(os.path.join(snap, 'big-blobs.json'), encoding='utf-8'))\nexcept Exception as exc:\n    print('unreadable big-blobs.json: %s' % exc)\n    raise SystemExit(1)\nblobs = doc.get('blobs') or []\nok = True\nfor n, blob in enumerate(blobs, start=1):\n    rel = str(blob.get('rel') or '').strip('/')\n    parts = blob.get('parts') or []\n    if not rel or not parts:\n        continue\n    dest = os.path.join(snap, rel)\n    os.makedirs(os.path.dirname(dest) or snap, exist_ok=True)\n    tmp = dest + '.rebuilt'\n    digest = hashlib.sha256()\n    try:\n        with open(tmp, 'wb') as out:\n            for part in parts:\n                src = os.path.join(snap, 'blobs', str(n), part)\n                if not os.path.isfile(src):\n                    raise IOError('missing chunk %s' % part)\n                with open(src, 'rb') as fh:\n                    while True:\n                        block = fh.read(1 << 20)\n                        if not block:\n                            break\n                        digest.update(block)\n                        out.write(block)\n        want = str(blob.get('sha256') or '')\n        if want and digest.hexdigest() != want:\n            raise IOError('sha256 mismatch')\n        want_size = int(blob.get('size') or 0)\n        if want_size and os.path.getsize(tmp) != want_size:\n            raise IOError('size mismatch: %d != %d' % (os.path.getsize(tmp), want_size))\n        os.replace(tmp, dest)\n        print('rebuilt %s (%d bytes)' % (rel, os.path.getsize(dest)))\n    except Exception as exc:\n        if os.path.exists(tmp):\n            try:\n                os.remove(tmp)\n            except OSError:\n                pass\n        print('could not rebuild %s: %s' % (rel, exc))\n        ok = False\nraise SystemExit(0 if ok else 1)\nBLOBS\n  then\n    log \"rebuilt the split blobs\"\n  else\n    log \"some split blobs could not be rebuilt - the snapshot is incomplete\"\n    failed=1\n  fi\n  return \"$failed\"\n}\nBLOBS_FAILED=0\nrebuild_split_blobs \"$SNAP\" || BLOBS_FAILED=1\n\nfind_existing_repo() {\n  local meta=\"$1\"\n  [ \"${WORK_BACKUP_RESTORE_EXISTING:-0}\" = \"1\" ] || return 0\n  python3 - \"$ROOT\" \"$meta\" <<'PY'\nimport json, os, subprocess, sys\nroot, meta_path = sys.argv[1:]\ntry: meta = json.load(open(meta_path, encoding='utf-8'))\nexcept Exception: raise SystemExit(0)\nrel = str(meta.get('rel') or '').strip('/')\nwanted_remote = str(meta.get('remote') or '').strip()\n\ndef is_repo(path):\n    try:\n        return os.path.isdir(os.path.join(path, '.git')) or subprocess.run(\n            ['git', '-C', path, 'rev-parse', '--git-dir'],\n            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0\n    except Exception:\n        return False\n\ndef norm(url):\n    value = str(url or '').strip().rstrip('/')\n    if value.endswith('.git'): value = value[:-4]\n    if value.startswith('git@github.com:'): value = 'https://github.com/' + value.split(':', 1)[1]\n    if value.startswith('ssh://git@github.com/'):\n        value = 'https://github.com/' + value.split('github.com/', 1)[1]\n    return value\n\nwanted = norm(wanted_remote)\ndef remote_of(path):\n    try:\n        return subprocess.check_output(\n            ['git', '-C', path, 'remote', 'get-url', 'origin'],\n            text=True, stderr=subprocess.DEVNULL).strip()\n    except Exception:\n        return ''\n\nif rel:\n    exact = os.path.join(root, rel)\n    if is_repo(exact) and (not wanted or norm(remote_of(exact)) == wanted):\n        print(exact)\n        raise SystemExit(0)\nif not wanted:\n    raise SystemExit(0)\nfor base, dirs, files in os.walk(root):\n    dirs[:] = [d for d in dirs if d not in ('node_modules', '.cache', '.npm', '.gradle', '.git')]\n    if not is_repo(base):\n        continue\n    try:\n        remote = subprocess.check_output(\n            ['git', '-C', base, 'remote', 'get-url', 'origin'],\n            text=True, stderr=subprocess.DEVNULL).strip()\n    except Exception:\n        continue\n    if norm(remote) == wanted:\n        print(base)\n        raise SystemExit(0)\nPY\n}\n\nrestored=0\nfailed=0\nwhile IFS= read -r meta; do\n  [ -f \"$meta\" ] || continue\n  repodir=\"$(dirname \"$meta\")\"\n  rel=\"$(python3 - \"$meta\" <<'PY'\nimport json, sys, os\ntry:\n    d=json.load(open(sys.argv[1], encoding='utf-8'))\n    print(d.get('rel') or os.path.basename(os.path.dirname(sys.argv[1])))\nexcept Exception:\n    print(os.path.basename(os.path.dirname(sys.argv[1])))\nPY\n)\"\n  dest=\"$ROOT/$rel\"\n  existing=\"$(find_existing_repo \"$meta\")\"\n  if [ -n \"$existing\" ] && [ -e \"$existing/.git\" ]; then\n     if ! apply_payload \"$existing\" \"$repodir\" \"$(basename \"$existing\")\"; then failed=1; fi\n     if ! copy_legacy_manifest \"$existing\"; then failed=1; fi\n\n    restored=$((restored + 1))\n    log \"reused existing repo $existing for backup $rel\"\n    continue\n  fi\n  if [ -e \"$dest\" ] && [ -n \"$(ls -A \"$dest\" 2>/dev/null)\" ] \\\n    && ! git -C \"$dest\" rev-parse --git-dir >/dev/null 2>&1; then\n    partial=\"$dest.partial-$(date +%s)\"\n     if ! mv \"$dest\" \"$partial\" 2>/dev/null; then\n       log \"could not quarantine incomplete clone $dest\"\n       failed=1\n       continue\n     fi\n\n    log \"moved incomplete clone $dest to $partial\"\n  fi\n  if [ -e \"$dest/.git\" ] && git -C \"$dest\" rev-parse --git-dir >/dev/null 2>&1; then\n    log \"skip $rel: already a valid repo at $dest\"\n    continue\n  fi\n  mkdir -p \"$(dirname \"$dest\")\"\n  if [ -f \"$repodir/repo.bundle\" ]; then\n     if ! git clone -q \"$repodir/repo.bundle\" \"$dest\" 2>/dev/null; then\n       # A bundle that will not clone is still better than no repository: the\n       # archive next to it holds the committed tree, and the WIP patch plus\n       # the untracked pack that follow bring the working state with it.\n       if rebuild_from_archive \"$repodir\" \"$dest\" \"$rel\"; then\n         log \"restored $rel from its archive (the bundle would not clone)\"\n       else\n         log \"clone of $rel failed; skipped\"\n         failed=1\n         continue\n       fi\n     fi\n     if [ -f \"$repodir/meta.json\" ]; then\n       META_REMOTE=$(python3 - \"$repodir/meta.json\" <<'PY'\nimport json, sys\ntry:\n    print(json.load(open(sys.argv[1], encoding='utf-8')).get('remote', ''))\nexcept Exception:\n    print('')\nPY\n)\n       [ -z \"$META_REMOTE\" ] || git -C \"$dest\" remote set-url origin \"$META_REMOTE\" 2>/dev/null || true\n     fi\n\n  elif ! rebuild_from_archive \"$repodir\" \"$dest\" \"$rel\"; then\n    mkdir -p \"$dest\"\n    ( cd \"$dest\" && git init -q )\n  fi\n   if ! apply_payload \"$dest\" \"$repodir\" \"$rel\"; then failed=1; fi\n   if ! copy_legacy_manifest \"$dest\"; then failed=1; fi\n\n  restored=$((restored + 1))\n  log \"restored $rel -> $dest\"\ndone < <(find \"$SNAP/repos\" -type f -name meta.json -print 2>/dev/null)\n\n# ── OpenCode: settings + chat sessions from the SAME snapshot ──\n# Settings go back to the exact path the manifest recorded, never clobbering\n# whatever the fresh runner already wrote (--keep-old semantics via cp -n).\nif [ -f \"$SNAP/opencode/settings/manifest.json\" ]; then\n  python3 - \"$SNAP/opencode\" <<'PYP'\nimport json, os, shutil, sys\noc = sys.argv[1]\ntry:\n    manifest = json.load(open(os.path.join(oc, 'settings', 'manifest.json'), encoding='utf-8'))\nexcept Exception as exc:\n    print('opencode settings: bad manifest: %s' % exc)\n    raise SystemExit(1)\ndone = 0\nfor e in manifest if isinstance(manifest, list) else manifest.get('files', []):\n    rel, fn = e.get('rel', ''), e.get('file', '')\n    src = os.path.join(oc, fn)\n    if not rel or not fn or not os.path.isfile(src):\n        continue\n    dest = os.path.expanduser(rel) if rel.startswith('~') else rel\n    if rel.startswith('hub-work'):\n        dest = os.path.join(os.environ.get('WORK_BACKUP_ROOT', os.path.expanduser('~')), rel)\n    os.makedirs(os.path.dirname(dest), exist_ok=True)\n    if os.path.exists(dest):\n        continue  # keep the fresh runner's own copy\n    shutil.copy2(src, dest)\n    done += 1\nprint('opencode settings: %d file(s) restored' % done)\nPYP\nfi\n# Chat sessions: per-repo bundle from this very snapshot, imported back into\n# the repo we just restored (restore-chats.sh assigns sessions to the CWD).\nif [ -d \"$SNAP/opencode/chats\" ] && ls \"$SNAP/opencode/chats\"/*.json >/dev/null 2>&1; then\n  RESTORE_CHATS_BIN=\"$HOME/.local/bin/restore-chats.sh\"; [ -f \"$RESTORE_CHATS_BIN\" ] || RESTORE_CHATS_BIN=\"$(dirname \"$0\")/restore-chats.sh\"\n  for meta in \"$SNAP/repos\"/hub-work/*/meta.json; do\n    [ -f \"$meta\" ] || continue\n    name=\"$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding=\"utf-8\")); print(d.get(\"name\") or \"\")' \"$meta\" 2>/dev/null | tr -c 'A-Za-z0-9._-' '_')\"\n    [ -n \"$name\" ] || continue\n    bundle=\"$SNAP/opencode/chats/$name.json\"\n    [ -s \"$bundle\" ] || continue\n    rel=\"$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding=\"utf-8\")); print(d.get(\"rel\") or \"\")' \"$meta\" 2>/dev/null)\"\n    dest=\"$ROOT/$rel\"\n    [ -d \"$dest\" ] || continue\n    CHAT_BUNDLE=\"$bundle\" CHAT_REPO_DIR=\"$dest\" bash \"$RESTORE_CHATS_BIN\" >/dev/null 2>&1 && log \"chats restored for $name\" || log \"chats restore failed for $name\"\n  done\nfi\n\nif [ -s \"$SNAP/files.tar.gz\" ]; then\n  # --keep-old-files: never overwrite whatever the fresh runner already has.\n  if extract_keep_old \"$ROOT\" \"$SNAP/files.tar.gz\"; then\n    log \"restored loose home files (existing ones left untouched)\"\n  else\n    log \"could not restore loose home files\"\n    failed=1\n  fi\nfi\n\nif [ -d \"$SNAP/big\" ]; then\n  # Files that were too big for files.tar.gz arrived as chunks (see\n  # collect_big_files in backup-work.sh): glue them back, check the sha256 the\n  # backup recorded, and only then delete the chunks. A missing or corrupt\n  # part is reported instead of leaving a half file behind.\n  if python3 - \"$ROOT\" \"$SNAP/big\" <<'PY'\nimport hashlib, json, os, sys\nroot, bigdir = sys.argv[1], sys.argv[2]\nok = True\nfor name in sorted(os.listdir(bigdir)):\n    meta_path = os.path.join(bigdir, name, 'meta.json')\n    if not os.path.isfile(meta_path):\n        continue\n    try:\n        meta = json.load(open(meta_path, encoding='utf-8'))\n    except Exception as exc:\n        print('unreadable meta %s: %s' % (name, exc))\n        ok = False\n        continue\n    rel = str(meta.get('rel') or '').strip('/')\n    parts = [p for p in (meta.get('parts') or [])]\n    if not rel or not parts:\n        continue\n    dest = os.path.join(root, rel)\n    os.makedirs(os.path.dirname(dest) or root, exist_ok=True)\n    digest = hashlib.sha256()\n    tmp = dest + '.handoff-part'\n    try:\n        with open(tmp, 'wb') as out:\n            for part in parts:\n                src = os.path.join(bigdir, name, part)\n                if not os.path.isfile(src):\n                    raise IOError('missing chunk %s' % part)\n                with open(src, 'rb') as fh:\n                    while True:\n                        block = fh.read(1 << 20)\n                        if not block:\n                            break\n                        digest.update(block)\n                        out.write(block)\n        want = str(meta.get('sha256') or '')\n        if want and digest.hexdigest() != want:\n            raise IOError('sha256 mismatch (expected %s)' % want)\n        os.replace(tmp, dest)\n        print('restored %s (%d bytes)' % (rel, os.path.getsize(dest)))\n    except Exception as exc:\n        if os.path.exists(tmp):\n            try:\n                os.remove(tmp)\n            except OSError:\n                pass\n        print('could not rebuild %s: %s' % (rel, exc))\n        ok = False\nraise SystemExit(0 if ok else 1)\nPY\n  then\n    log \"rebuilt chunked big files\"\n  else\n    log \"some chunked big files could not be rebuilt\"\n    failed=1\n  fi\nfi\n\n# Descriptors and TUI snapshots of the sessions. cp -n: whatever the fresh\n# runner wrote itself is newer and must survive; everything missing comes back.\n# Then the counts, because a silent restore here is indistinguishable from\n# «the user has no unfinished sessions» - and the snapshot is exactly what\n# makes a reopened terminal show the last known screen instead of a black one.\nif [ -d \"$SNAP/descriptors\" ]; then\n  mkdir -p \"$ROOT/.npm-hub/sessions\" 2>/dev/null || failed=1\n  if ! cp -a -n \"$SNAP/descriptors/.\" \"$ROOT/.npm-hub/sessions/\" 2>/dev/null; then\n    log \"could not restore durable session descriptors\"\n    failed=1\n  else\n    log \"restored durable session descriptors\"\n  fi\n  session_dir=\"$ROOT/.npm-hub/sessions\"\n  metas=0; snaps=0\n  if [ -d \"$session_dir\" ]; then\n    metas=\"$(find \"$session_dir\" -maxdepth 1 -name 'npmhub-*.meta.json' -type f 2>/dev/null | wc -l | tr -d ' ')\"\n    # A snapshot without its descriptor is unusable: there is no session to\n    # attach it to, so nothing would ever read it. Drop it instead of leaving\n    # a file that only costs restore time and confuses the next backup.\n    for snap_file in \"$session_dir\"/npmhub-*.snapshot; do\n      [ -f \"$snap_file\" ] || continue\n      base=\"${snap_file%.snapshot}\"\n      if [ -f \"$base.meta.json\" ]; then\n        snaps=$((snaps + 1))\n      else\n        rm -f \"$snap_file\" 2>/dev/null || true\n        log \"dropped orphan TUI snapshot $(basename \"$snap_file\") (no descriptor)\"\n      fi\n    done\n    # Tail of a snapshot write that a dead runner never finished.\n    find \"$session_dir\" -maxdepth 1 -name '*.snapshot.tmp' -type f -delete 2>/dev/null || true\n  fi\n  log \"sessions available after restore: $metas descriptor(s), $snaps TUI snapshot(s)\"\nfi\n\nlog \"done: $restored repo(s) restored\"\n[ \"$failed\" -eq 0 ] && [ \"$BLOBS_FAILED\" -eq 0 ]\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/work/zen-panel/zen-panel/fork && wc -l tools/restore-work.sh && cat tools/restore-work.sh",
+                  "time": {
+                    "start": 1791042244214,
+                    "end": 1791042244234
+                  }
+                },
+                "id": "prt_1026fce71001tnU0tiztGUHPAs",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f7d6e001E2SpvQ32Rr4P4t"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_1026fcecb001pTRno1eECSKTq3",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026f7d6e001E2SpvQ32Rr4P4t"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042244426,
+                "completed": 1791042268794
+              },
+              "finish": "tool-calls",
+              "id": "msg_1026fcf4a001s6ciHPdR3Dl4bz",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": [
+              {
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-start",
+                "id": "prt_1026fda40001xuF7cL7EJXKa7Y",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026fcf4a001s6ciHPdR3Dl4bz"
+              },
+              {
+                "type": "reasoning",
+                "text": "Now I see the whole picture. Two concrete bugs I can identify with confidence:\n\n**Bug A — \"не могу выбирать сам что восстанавливать\":**\n`renderSnapList()` (mobile-app.js:4306-4312) groups by day and shows ONLY the newest snapshot per day. So if the branch has 50 snapshots from today, the user sees 1. That is literally \"не могу выбирать сам\". Also there's no way to select *which repos* to restore — the API accepts only `{snapshot: stamp}` and the script restores everything.\n\n**Bug B — restore fails with an error:**\nLook at the endpoint: it spawns `bash RESTORE_WORK_SH` with env `WORK_BACKUP_SNAPSHOT: 'snapshots/' + stamp`.\n\nBut `restore-work.sh` line: \n```bash\nif git clone -q --depth 1 --branch \"$BRANCH\" \"$REMOTE\" \"$WORK/state\" 2>/dev/null; then\n```\nThat's a full clone WITHOUT the blob filter (`--filter=blob:limit=1m`) that `restore_audit_code.sh` uses. Comment in restore_audit_code.sh:25-33 explicitly says the branch grew past 70MB and the unfiltered clone took 1:51 → 5:52. The snapshot tab has a **40-minute timeout** so that's not fatal.\n\nHmm, but more importantly — what error does the user see? Let me think about the actual failure.\n\nCritical: `restore-work.sh` line ~120:\n```bash\nif [ -n \"${WORK_BACKUP_SNAPSHOT:-}\" ]; then\n  SNAP=\"$TARGET/$WORK_BACKUP_SNAPSHOT\"\n```\nSo `SNAP=\"$TARGET/snapshots/<stamp>\"`. Then:\n```bash\nwhile IFS= read -r meta; do ... done < <(find \"$SNAP/repos\" -type f -name meta.json -print 2>/dev/null)\n```\n\nAnd the final exit code: `[ \"$failed\" -eq 0 ] && [ \"$BLOBS_FAILED\" -eq 0 ]`.\n\nNow — `find_existing_repo` requires `[ \"${WORK_BACKUP_RESTORE_EXISTING:-0}\" = \"1\" ]`, which the server sets. And the confirm dialog in the UI says \"Существующие git-репозитории не трогаются, дополняются только отсутствующие\" — but with `WORK_BACKUP_RESTORE_EXISTING=1` the script finds existing repos by REMOTE and calls `apply_payload` on them → applies the old WIP patch on top of the current checkout. That contradicts the dialog text but isn't an error.\n\nNow, the real error. Let me think about `extract_keep_old`:\n```bash\noutput=\"$(cd \"$dir\" && tar --keep-old-files -xzf \"$archive\" 2>&1)\" || rc=$?\n```\n`tar --keep-old-files` is **deprecated** in newer tar and on some systems errors. Not the main thing.\n\nThe most likely actual error the user sees: the hub `/api/work-snapshots` returns `success: false` with `'не прочитал work-backup: ' + e.message`. Possible failure: `git fetch --filter=blob:none` — GitHub supports partial clone, fine.\n\nI'm speculating. I should get evidence rather than guess. The user said \"вылазит ошибка\" — I should ask for the exact error text, OR check logs. But there's no runner here.\n\nActually — wait. There's a much more concrete and provable bug. Let me look at the UI markup: is `snap-list` / `snap-restore` / `fmConfirm` present in mobile.html? And is the snapshots tab wired? Let me check whether `initSnapshots` is even reachable and whether `p === 'snapshots'` routing exists. Line 296 handles it.\n\nBut here's a strong candidate: **`snapData.recommended` vs the grouping**. `snapSelected` is set to `recommended` (line 4290), which is the newest ACTIVE snapshot — possibly NOT the first shown item. Then `renderSnapList` only renders one-per-day rows; if `recommended` is a stamp that is not among `shown` (because a newer snapshot exists the same day), then `sel` is false for every row → **no radio appears checked**, and line 4337-4338 `btn.disabled = !(s && s.active)` → s is found (recommended exists in full list) so button enabled... Actually `snapData.snapshots.find(x => x.stamp === snapSelected)` searches the FULL list, so the button is enabled even though no visible row is selected. Then the user sees \"nothing selected\" but an enabled button. That's a real UX bug matching \"не могу выбирать сам\".\n\nHmm, but that doesn't produce \"ошибка\".\n\nLet me look for the error. Let me check `tests/tui-snapshot-test.js` — it tests TUI snapshots, and the term-replay path. The user said \"баг со снапшотами они не восстанавливаются вылазит ошибка\". Could \"снапшоты\" mean the **TUI snapshots** (terminal screen snapshots) rather than the work-backup snapshots? The repo has:\n1. work-backup snapshots (`/api/work-snapshots`) — repo backups.\n2. TUI snapshots (`npmhub-*.snapshot`) — terminal screen state.\n\n\"не восстанавливаются вылазит ошибка и не могу выбирать сам что востанавливать в них\" — \"не могу выбирать сам что восстанавливать в них\" strongly matches #1 (choose which snapshot/repo to restore). The TUI snapshots are automatic (last screen).\n\nSo it's the work-backup snapshot tab.\n\nRather than guessing the error, the honest move: ask the user for the exact error text/screenshot, while I fix what is provably broken. But per instructions, I should be proactive and not over-ask. However, \"вылазит ошибка\" without the text is a genuine ambiguity where guessing wastes effort.\n\nLet me first check whether there's a log I can inspect — the hub logs are on the runner, unavailable. But maybe there are e2e tests that exercise this endpoint and reveal a break. Let me grep tests for work-snapshots.\n\nLet me check tests/tui-snapshot-test.js and whether anything tests /api/work-snapshots.",
+                "time": {
+                  "start": 1791042247397,
+                  "end": 1791042268653
+                },
+                "id": "prt_1026fdae5001mEq63aBn3Kvvmk",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026fcf4a001s6ciHPdR3Dl4bz"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a102702cb775429daa6e36",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/work/zen-panel/zen-panel/fork && grep -rn \"work-snapshots\\|snapLoad\\|snapSelected\" tests/*.js | head -20; echo \"=== разметка во вьюхе ===\"; grep -n \"snap-list\\|snap-restore\\|snap-note\\|snap-prog\" npm-hub/public/mobile.html | head"
+                  },
+                  "output": "=== разметка во вьюхе ===\n577:            <button class=\"btn btn-p btn-sm\" id=\"snap-restore\" onclick=\"snapRestore()\" disabled>♻ Восстановить</button>\n579:          <div id=\"snap-note\" style=\"font-size:12px;color:var(--t2);margin-top:8px\">Снапшоты читаются по требованию (work-backup, только дерево — быстро).</div>\n580:          <div id=\"snap-list\" style=\"margin-top:10px\"></div>\n581:          <div id=\"snap-prog-wrap\" style=\"display:none;margin-top:10px\">\n584:              <span id=\"snap-prog-title\" style=\"font-size:12px;font-weight:600;color:var(--acc)\">Восстановление…</span>\n586:              <span id=\"snap-prog-time\" style=\"font-size:12px;color:var(--t3)\">0:00</span>\n588:            <div id=\"snap-prog\" style=\"margin-top:8px;max-height:220px;overflow-y:auto;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;padding:8px;font:11px/1.5 monospace;white-space:pre-wrap;word-break:break-word;color:var(--t2)\"></div>\n",
+                  "metadata": {
+                    "output": "=== разметка во вьюхе ===\n577:            <button class=\"btn btn-p btn-sm\" id=\"snap-restore\" onclick=\"snapRestore()\" disabled>♻ Восстановить</button>\n579:          <div id=\"snap-note\" style=\"font-size:12px;color:var(--t2);margin-top:8px\">Снапшоты читаются по требованию (work-backup, только дерево — быстро).</div>\n580:          <div id=\"snap-list\" style=\"margin-top:10px\"></div>\n581:          <div id=\"snap-prog-wrap\" style=\"display:none;margin-top:10px\">\n584:              <span id=\"snap-prog-title\" style=\"font-size:12px;font-weight:600;color:var(--acc)\">Восстановление…</span>\n586:              <span id=\"snap-prog-time\" style=\"font-size:12px;color:var(--t3)\">0:00</span>\n588:            <div id=\"snap-prog\" style=\"margin-top:8px;max-height:220px;overflow-y:auto;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;padding:8px;font:11px/1.5 monospace;white-space:pre-wrap;word-break:break-word;color:var(--t2)\"></div>\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/work/zen-panel/zen-panel/fork && grep -rn \"work-snapshots\\|snapLoad\\|snapSelected\" tests/*.js | head -20; echo \"=== разметка во вьюхе ===\"; grep -n \"snap-list\\|snap-restore\\|snap-note\\|snap-prog\" npm-hub/public/mobile.html | head",
+                  "time": {
+                    "start": 1791042268668,
+                    "end": 1791042268697
+                  }
+                },
+                "id": "prt_102702df100191Aq4KCZEPGMeU",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026fcf4a001s6ciHPdR3Dl4bz"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "591272f1f6d2a1d662ac768dda393d96fea6be59",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_102702e3d001uMzcL1l5IBOLYr",
+                "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d",
+                "messageID": "msg_1026fcf4a001s6ciHPdR3Dl4bz"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1026ee829001NGmm3ndgf3Hie4",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "big-pickle",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791042268816
+              },
+              "id": "msg_102702e90001lz1Anscd3KSDdQ",
+              "sessionID": "ses_f02ffbb93ffeRIB1q4jSKc235d"
+            },
+            "parts": []
           }
         ]
       }
@@ -18849,8 +19767,8 @@
     }
   ],
   "state": "updated",
-  "stamp": "20261003T151325",
-  "startedAt": "2026-10-03T15:13:43Z",
+  "stamp": "20261003T154430",
+  "startedAt": "2026-10-03T15:44:53Z",
   "runId": "37123283114",
   "runNumber": "363"
 }
