@@ -301,8 +301,14 @@ async function startCloudflare(port) {
   // ::1 first while the application is listening on IPv4 only; that gives the
   // tunnel a healthy process but a dead origin and eventually a 1033/502 page.
   const origin = `http://127.0.0.1:${n}`;
+  // http2 instead of the QUIC default. QUIC rides on UDP, which a cloud runner
+  // often throttles or drops, and the symptom is a tunnel whose address stays
+  // the same while every WebSocket dies after a few dozen seconds. http2 shares
+  // the TCP path the job already uses. HUB_TUNNEL_PROTOCOL=quic restores the
+  // old behaviour for a host whose UDP path is known to be clean.
+  const protocol = process.env.HUB_TUNNEL_PROTOCOL || 'http2';
   const result = await spawnTunnel(
-    [bin, 'tunnel', '--url', origin, '--no-autoupdate', '--loglevel', 'info'],
+    [bin, 'tunnel', '--url', origin, '--protocol', protocol, '--no-autoupdate', '--loglevel', 'info'],
     /(https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com)/,
     { timeoutMs: START_TIMEOUT_MS }
   );

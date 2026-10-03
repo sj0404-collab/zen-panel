@@ -18,8 +18,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -153,6 +155,22 @@ class MainActivity : ComponentActivity() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 bar.progress = newProgress
                 bar.visibility = if (newProgress in 1..99) View.VISIBLE else View.GONE
+            }
+
+            // Without this a WebView throws every console.log away, so the hub's
+            // own diagnostics were invisible exactly when they were needed: a
+            // page that cannot say "socket closed 1006" leaves nobody guessing.
+            // Tag carries the page URL, which is what tells a hub tab apart from
+            // the launcher or the panel when reading logcat.
+            override fun onConsoleMessage(
+                cm: ConsoleMessage?
+            ): Boolean {
+                if (cm == null) return false
+                val line = cm.messageLine ?: return false
+                if (line.isNotBlank()) {
+                    Log.d("ZenPanel", "[${cm.sourceId()}] $line")
+                }
+                return true
             }
 
             override fun onShowFileChooser(

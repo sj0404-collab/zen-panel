@@ -907,5 +907,47 @@ check('q103 the server owns the call, not the page',
   server.includes("method: 'DELETE'") &&
   server.includes('if (r.status === 204)'));
 
+// q104: every cloudflared spoke TCP, not QUIC. cloudflared defaults to QUIC on
+// UDP, which a cloud runner often throttles or blackholes; the symptom was an
+// address that stays put while every WebSocket dies after a few dozen seconds.
+// http2 shares the TCP the job already uses. The env escape hatch keeps a host
+// with clean UDP one flag away, and both spawners carry it.
+const desksWf = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'desks.yml'), 'utf8');
+const agentWf = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'agent.yml'), 'utf8');
+const tunnelJs = fs.readFileSync(path.join(__dirname, '..', 'npm-hub', 'src', 'tunnel.js'), 'utf8');
+check('q104 no cloudflared connector is left on QUIC',
+  openTunnel.includes('--protocol http2') &&
+  tunnelJs.includes("process.env.HUB_TUNNEL_PROTOCOL || 'http2'") &&
+  tunnelJs.includes("'--protocol', protocol") &&
+  [...desksWf.matchAll(/tunnel --url/g)].length === 2 &&
+  [...agentWf.matchAll(/tunnel --url/g)].length === 2 &&
+  [...(desksWf + agentWf).matchAll(/tunnel --url[^\n]*/g)].every(m => m[0].includes('--protocol http2')));
+check('q104 the reason why is written down where the flag is',
+  openTunnel.includes('cloudflared defaults to QUIC') &&
+  tunnelJs.includes('http2 instead of the QUIC default') &&
+  openTunnel.includes('UDP path is often throttled'));
+
+// q105: a drop was invisible from both ends. The server logged nothing on close,
+// and a WebView with no onConsoleMessage discards every console.log - so the
+// hub could not report why a socket died even in principle. Now both sides say
+// it out loud, and the panel forwards the page's own words to logcat.
+check('q105 the server says why a socket died',
+  server.includes("ws.openedAt = ws.lastSeen;") &&
+  server.includes('ws.on(\'close\', (code, reason) => {') &&
+  server.includes('[ws] terminal socket closed code=${code}') &&
+  server.includes('alive=${Math.round((Date.now() - (ws.openedAt || Date.now())) / 1000)}s') &&
+  server.includes('silent=${Math.round((Date.now() - (ws.lastSeen || Date.now())) / 1000)}s'));
+check('q105 both hub pages report the close code',
+  mob.includes('socket.onclose = (ev) => {') && desk.includes('socket.onclose = (ev) => {') &&
+  mob.includes('[hub] terminal socket closed code=') &&
+  desk.includes('[hub] terminal socket closed code=') &&
+  mob.includes('wasClean=${ev ? ev.wasClean : \'?\'}') &&
+  desk.includes('wasClean=${ev ? ev.wasClean : \'?\'}'));
+check('q105 the panel no longer swallows the page console',
+  panelKt.includes('override fun onConsoleMessage(') &&
+  panelKt.includes('Log.d("ZenPanel", "[${cm.sourceId()}] $line")') &&
+  panelKt.includes('import android.util.Log') &&
+  panelKt.includes('import android.webkit.ConsoleMessage'));
+
 console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

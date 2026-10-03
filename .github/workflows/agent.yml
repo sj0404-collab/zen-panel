@@ -562,7 +562,7 @@ jobs:
           # without redirects keeps the step waiting on it forever. Both were
           # measured on live runners.
           $log = "$env:TEMP\cf.log"
-          cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:8765 --no-autoupdate --loglevel info `
+          cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:8765 --protocol http2 --no-autoupdate --loglevel info `
             "1>$log" "2>$env:TEMP\cf.err"
 
           $url = $null
@@ -663,7 +663,7 @@ jobs:
             Write-Host "::warning::agent tunnel is unavailable; replacing the stale URL."
             Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
             $log = "$env:TEMP\cf2.log"
-            cmd /c start "" /b "$env:TEMP\cloudflared.exe" tunnel --url http://127.0.0.1:8765 --no-autoupdate --loglevel info `
+            cmd /c start "" /b "$env:TEMP\cloudflared.exe" tunnel --url http://127.0.0.1:8765 --protocol http2 --no-autoupdate --loglevel info `
               "1>$log" "2>$env:TEMP\cf2.err"
             $url = $null
             foreach ($k in 1..40) {

@@ -1209,8 +1209,14 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
       // the socket; onclose owns the single reconnect/backoff path.
       try { if (socket.readyState !== WebSocket.CLOSED) socket.close(); } catch {}
     };
-    socket.onclose = () => {
+    socket.onclose = (ev) => {
       if (td.manualClose) return;
+      // Same reason the mobile hub logs it: a code of 1006 (peer gone, no close
+      // frame) and a 1001 (page went away) are different faults, and both used
+      // to reach the user as the same silent countdown.
+      console.warn(`[hub] terminal socket closed code=${ev && ev.code}` +
+        `${(ev && ev.reason) ? ` reason="${ev.reason}"` : ''}` +
+        ` wasClean=${ev ? ev.wasClean : '?'} retry=${td.retry}`);
       if (td.ws !== socket) return; // superseded by a newer socket; it owns reconnection
       if (td.connectTimer) { clearTimeout(td.connectTimer); td.connectTimer = null; }
       if (td.reconnectTimer) { clearTimeout(td.reconnectTimer); td.reconnectTimer = null; }

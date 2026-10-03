@@ -2855,7 +2855,8 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('message', (raw) => {
-    ws.lastSeen = Date.now();
+ws.lastSeen = Date.now();
+  ws.openedAt = ws.lastSeen;
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
 
@@ -2997,7 +2998,22 @@ wss.on('connection', (ws) => {
       case 'close': { detachPtyClient(session, ws); return; }
     }
   });
-  ws.on('close', () => {
+  ws.on('close', (code, reason) => {
+    // Why did a terminal socket die? One line, because "it reconnects every
+    // thirty seconds" has two very different cures and only the close code
+    // tells them apart:
+    //   1006 / empty reason  the peer vanished without a close frame - a dead
+    //                         connector or a dropped mobile radio, never a
+    //                         deliberate goodbye;
+    //   1000 + our own reap  the heartbeat below terminated a socket that had
+    //                         been silent past its window (see silentMs).
+    // The text is stripped because a client may put anything in `reason`.
+    const why = (reason && reason.length ? String(reason) : '').replace(/\s+/g, ' ').slice(0, 120);
+    console.log(`[ws] terminal socket closed code=${code}` +
+      `${why ? ` reason="${why}"` : ''}` +
+      ` alive=${Math.round((Date.now() - (ws.openedAt || Date.now())) / 1000)}s` +
+      ` silent=${Math.round((Date.now() - (ws.lastSeen || Date.now())) / 1000)}s` +
+      ` session=${(session && session.id) || '-'}`);
     if (session && session.clients) {
       detachPtyClient(session, ws);
       // Halt tmux polling while unattached; pipe-pane keeps writing the log.
