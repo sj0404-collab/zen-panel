@@ -7,14 +7,14 @@
  *   /api/...                          — НЕ перехватываем: ответ кеширует
  *                                        offline.js, чтобы работал офлайн-баннер.
  * ========================================================================= */
-var CACHE = 'hub-shell-v4';
+var CACHE = 'hub-shell-v5';
 
 var SHELL = [
-  '/', '/d', '/m', '/term', '/files', '/git', '/linux',
+  '/', '/d', '/m', '/term', '/files', '/git', '/linux', '/apps',
   '/favicon.svg', '/manifest.webmanifest', '/hub.css',
   '/bridge.js', '/offline.js', '/remote-audio.js',
   '/dashboard-app.js', '/mobile-app.js', '/desktop-app.js', '/term-app.js',
-  '/files-app.js', '/git-app.js', '/linux-app.js',
+  '/files-app.js', '/git-app.js', '/linux-app.js', '/apps-app.js',
   // Внешняя память: офлайн-зеркало рабочей папки. Страница открывается в
   // iframe из панели, поэтому её shell кладём и в наш кеш — иначе при
   // недоступном хабе i-frame не поднимется (соединение утеряно).

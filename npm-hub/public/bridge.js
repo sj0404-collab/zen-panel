@@ -108,7 +108,8 @@ function renderTopbar() {
     ['term', 'Терминал'],
     ['files', 'Файлы'],
     ['linux', '🖥 Экран'],
-    ['git', '🐙 Git']
+    ['git', '🐙 Git'],
+    ['apps', '📲 Лаунчер']
   ].map(([p, label]) =>
     `<a class="tb ${HUB_PAGE === p ? 'on' : ''}" href="/${p === 'd' ? 'd' : p}">${label}</a>`
   ).join('');

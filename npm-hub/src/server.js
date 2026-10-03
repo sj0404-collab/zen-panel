@@ -362,6 +362,19 @@ app.get('/term/*', (req, res) => {
   noCache(res);
   res.sendFile(path.join(__dirname, '..', 'public', 'term.html'));
 });
+// Лаунчер телефона. Отдельная страница, потому что список установленных
+// приложений знает только сам телефон: внутри WebView панели его отдаёт
+// нативный ZenBridge.listApps(), в обычном браузере страница берёт то, что
+// панель в последний раз положила в хаб. Раннер, воркфлоу и ADB тут не
+// участвуют — ни одна строка ниже не спрашивает их про пакеты.
+app.get('/apps', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'apps.html'));
+});
+app.get('/apps/*', (req, res) => {
+  noCache(res);
+  res.sendFile(path.join(__dirname, '..', 'public', 'apps.html'));
+});
 
 // ─── CORS — allow all origins (for phone access) ───
 app.use((req, res, next) => {
@@ -697,6 +710,75 @@ app.get('/api/adb/info', (req, res) => {
   const AdbStorage = require('./storage/adb');
   const adb = new AdbStorage(deviceId);
   adb.getInfo().then(info => res.json({ success: true, info })).catch(e => res.json({ success: false, error: e.message }));
+});
+
+// ─── LAUNCHER — what the phone itself reported about its own apps ───
+// The list can only come from the phone, so the phone sends it: the panel's
+// WebView has the native answer, and the page hands it over once. The hub keeps
+// that report in its own tmp dir and serves it back, which is what lets a plain
+// browser on the same phone draw the launcher with no network and no runner.
+const hubTmp = require('./storage/hub-tmp');
+const APPS_CACHE = path.join(hubTmp(), 'phone-apps.json');
+const APPS_MAX = 400;
+const APPS_ICON_MAX = 96 * 1024;
+// The global body parser takes 50mb, and this handler runs after it, so the
+// route cannot narrow that with its own express.json(). The cache file is read
+// back whole on every page load, so its size is capped here instead.
+const APPS_JSON_MAX = 4 * 1024 * 1024;
+
+function readAppsCache() {
+  const empty = { success: true, updatedAt: 0, device: '', source: '', count: 0, apps: [] };
+  try {
+    const raw = JSON.parse(fs.readFileSync(APPS_CACHE, 'utf8'));
+    if (!raw || !Array.isArray(raw.apps)) return empty;
+    return {
+      success: true,
+      updatedAt: raw.updatedAt || 0,
+      device: raw.device || '',
+      source: raw.source || '',
+      count: raw.apps.length,
+      apps: raw.apps
+    };
+  } catch {
+    return empty;
+  }
+}
+
+app.get('/api/apps', (req, res) => {
+  res.json(readAppsCache());
+});
+
+app.post('/api/apps', (req, res) => {
+  const body = req.body || {};
+  if (!Array.isArray(body.apps)) return res.status(400).json({ success: false, error: 'нужен массив apps' });
+  const seen = new Set();
+  const apps = [];
+  for (const a of body.apps.slice(0, APPS_MAX)) {
+    const pkg = String((a && a.pkg) || '').trim();
+    if (!pkg || seen.has(pkg)) continue;
+    // Without the label a launcher row would show a bare package name, which is
+    // the one thing the phone knows and we do not.
+    const label = String((a && a.label) || '').trim().slice(0, 120) || pkg;
+    const icon = String((a && a.icon) || '');
+    seen.add(pkg);
+    apps.push(icon && icon.length <= APPS_ICON_MAX ? { label, pkg, icon } : { label, pkg });
+  }
+  const payload = {
+    updatedAt: Date.now(),
+    device: String(body.device || '').slice(0, 80),
+    source: String(body.source || '').slice(0, 40),
+    apps
+  };
+  const text = JSON.stringify(payload);
+  if (text.length > APPS_JSON_MAX) {
+    return res.status(413).json({ success: false, error: 'список слишком большой: ' + text.length + ' байт' });
+  }
+  try {
+    fs.writeFileSync(APPS_CACHE, text);
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+  res.json({ success: true, count: apps.length, updatedAt: payload.updatedAt });
 });
 
 // ─── DRIVES ───
