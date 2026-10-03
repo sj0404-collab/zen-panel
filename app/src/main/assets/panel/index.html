@@ -2468,7 +2468,11 @@ async function runnerPanelScan() {
   const onActs = !!(r.actions);
   const sp = $('pr-stop');
   if (sp) sp.disabled = !onActs;
-  if (onActs === false && line) line.innerHTML += ' <span class="note">(локальный запуск — кнопки управления живут на Actions-раннере)</span>';
+  // «Сохранить» works the same everywhere — it packs ~/hub-work and pushes to
+  // the branch. Only cancelling a run needs Actions, so only that button stays
+  // grey locally; saying «кнопки управления живут на Actions-раннере» here is
+  // what made a perfectly working save look broken.
+  if (onActs === false && line) line.innerHTML += ' <span class="note">(локальный хаб — «Сохранить» работает, «Выключить» отменяет прогон Actions и здесь недоступен)</span>';
   if (save) save.disabled = false;
 }
 async function runnerPanelSave() {
@@ -2522,6 +2526,11 @@ async function runnerPanelStop() {
     ? '<span class="ok">⏻ Остановка принята — ранер сворачивается ~минуту.</span>'
     : `<span class="danger">${esc(r.error || 'не вышло')}</span>`;
 }
+// Load the list when the panel opens. The only thing that ever called
+// runnerPanelScan() was runnerPanelSave() — the button it was meant to fill — and
+// that button ships disabled, so the list never appeared and «Сохранить» was
+// grey for good. Same deadlock as in the hub's own tabs, one layer over.
+runnerPanelScan();
 
 // ── Эстафета сессии ────────────────────────────────────────────────────
 // GitHub-hosted раннер живёт шесть часов и умирает вместе со всем диском.

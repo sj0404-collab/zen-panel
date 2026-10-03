@@ -854,6 +854,7 @@ function renderDashboard() {
 // ===== RUNNER CARD — сохранение / выключение / перезапуск ранера =====
 let RUNNER = null;        // last /api/runner answer
 let RUNNER_BUSY = false;  // stop/restart in flight
+let RUNNER_ASKED = false; // /api/runner already asked, so a failed hub is not re-asked on every render
 let HO_MORE = false;      // the folded relay settings, same reason
 function fmtBytes(n) {
   if (n == null) return '?';
@@ -874,17 +875,26 @@ function runnerRender() {
   if (!el) return;
   const onActs = !!(RUNNER && RUNNER.success && RUNNER.actions);
   const env = RUNNER && RUNNER.success ? RUNNER : null;
-  const info = env ? `<b>${escHtml(env.repo || '?')}</b> #${escHtml(env.runNumber || '')} · ${escHtml(env.os || '')} · ${escHtml(env.workflowFile || env.workflow || '')}`
-    + (env.hostname ? ' · ' + escHtml(env.hostname) : '')
-    + (env.workDir ? '<br>' + escHtml(env.workDir) : '')
-    + (env.tunnel ? '<br>🌐 ' + escHtml(env.tunnel) : '')
-    : 'Запуск вне GitHub Actions (PC-local) — кнопки управления активны только на Actions-раннере.';
+  // Three states, not two. RUNNER === null used to be printed as "PC-local"
+  // with both buttons greyed out — but null only means nobody has asked the hub
+  // yet, and nobody ever did, so the card arrived dead (see RUNNER_ASKED).
+  const info = !env
+    ? 'Спрашиваю хаб…'
+    : onActs
+      ? `<b>${escHtml(env.repo || '?')}</b> #${escHtml(env.runNumber || '')} · ${escHtml(env.os || '')} · ${escHtml(env.workflowFile || env.workflow || '')}`
+        + (env.hostname ? ' · ' + escHtml(env.hostname) : '')
+        + (env.workDir ? '<br>' + escHtml(env.workDir) : '')
+        + (env.tunnel ? '<br>🌐 ' + escHtml(env.tunnel) : '')
+      : `<b>PC-local</b> · ${escHtml(env.os || '')} · ${escHtml(env.hostname || '')}`
+        + (env.workDir ? '<br>📂 ' + escHtml(env.workDir) : '')
+        + (env.tunnel ? '<br>🌐 ' + escHtml(env.tunnel) : '')
+        + '<br>«Сохранить» работает и здесь. «Выключить» отменяет прогон GitHub Actions — на локальном хабе отменять нечего.';
   el.innerHTML = `<div class="runner-box">
     <div class="runner-h">🎛 Раннер <span class="runner-dot${onActs ? ' on' : ''}"></span></div>
     <div class="runner-line">${info}</div>
     <div class="runner-btns">
       <button class="btn btn-sm btn-ok" onclick="runnerSave()" id="runner-save" disabled>💾 Сохранить</button>
-      <button class="btn btn-sm btn-er" onclick="runnerStop()" id="runner-stop"${onActs ? '' : ' disabled'}>⏻ Выключить</button>
+      <button class="btn btn-sm btn-er" onclick="runnerStop()" id="runner-stop"${onActs ? '' : ' disabled title="Отменяет прогон GitHub Actions — доступно только на Actions-раннере"'}>⏻ Выключить</button>
     </div>
     <div id="runner-scan"></div>
     <div id="runner-res"></div>
@@ -915,6 +925,10 @@ function runnerRender() {
     const s = document.getElementById('runner-scan');
     if (s) s.innerHTML = '<div class="runner-busy">работаю…</div>';
   }
+  // Ask once. The only thing that ever called /api/runner was the «Сканировать»
+  // button q101 deleted, so opening the tab rendered a card with no state and
+  // no way to get one: both buttons stayed grey for good. One fetch fixes it.
+  if (!RUNNER && !RUNNER_ASKED) { RUNNER_ASKED = true; setTimeout(runnerScan, 0); }
 }
 
 // ===== ЭСТАФЕТА СЕССИИ (handoff) =====
