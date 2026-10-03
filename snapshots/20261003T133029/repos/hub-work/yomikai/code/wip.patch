@@ -12,7 +12,7 @@ index 3e27208..e6b3e40 100644
  - **Манифест:** /home/runner/hub-work/yomikai/code/MANIFEST.md
  
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
-index 9d31064..4f4863e 100644
+index 9d31064..0180d92 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
 @@ -538,7 +538,7 @@ class AutoReadEngine(
@@ -24,7 +24,30 @@ index 9d31064..4f4863e 100644
                                      // Озвучки нет: дочитывать страницу незачем.
                                      scan.cancel()
                                      break
-@@ -1301,6 +1301,7 @@ class AutoReadEngine(
+@@ -1247,15 +1247,18 @@ class AutoReadEngine(
+         // авточтении: одиночный бабл, нажатый значком 🔊, тоже должен уметь
+         // попасть под словарь ролей.
+         val spoken = SpeechMarkup.withSpeakerName(clean, SpeechMarkup.speakerNameOrGuess(text))
+-        if (_isReading.value) TtsSpeaker.stop()
+-        job?.cancel()
+         val myGen = ++generation
++        val prevJob = job
+         job = scope.launch {
+-            _isReading.value = true
++            // Отменяем предыдущую работу автопрохода кадра, но не сбрасываем
++            // флаги авточтения и не вызываем onPageFinished. Это ручной тап.
++            prevJob?.cancel()
+             try {
+                 speakAndAwait(spoken, gender, speakerSlot)
+             } finally {
+-                if (generation == myGen) _isReading.value = false
++                if (generation == myGen) {
++                    _isReading.value = false
++                }
+             }
+         }
+     }
+@@ -1301,6 +1304,7 @@ class AutoReadEngine(
      private suspend fun speakStreamingRegion(
          region: OcrRegion,
          language: String,
@@ -32,7 +55,7 @@ index 9d31064..4f4863e 100644
      ): Boolean {
          val text = normalizeOcrTextForDisplay(
              CyrillicTranslitFixer.autoFixCyrillic(region.text),
-@@ -1328,10 +1329,18 @@ class AutoReadEngine(
+@@ -1328,10 +1332,18 @@ class AutoReadEngine(
              SpeakOutcome.SPOKEN -> {
                  spokenLines += lineKey(text)
                  markSpokenInFrame(text)
