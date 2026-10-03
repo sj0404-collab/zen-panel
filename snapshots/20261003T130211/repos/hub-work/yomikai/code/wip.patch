@@ -1,0 +1,53 @@
+diff --git a/MANIFEST.md b/MANIFEST.md
+index 3e27208..e6b3e40 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -4,7 +4,7 @@
+ никакие файлы не прячутся в системном /tmp.
+ 
+ - **Клон (работай здесь):** /home/runner/hub-work/yomikai/code
+-- **Ветка:** main
++- **Ветка:** master
+ - **Только твои временные файлы (сборки, кеши, артефакты):** /home/runner/hub-work/yomikai/tmp
+ - **Манифест:** /home/runner/hub-work/yomikai/code/MANIFEST.md
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 9d31064..4f4863e 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -538,7 +538,7 @@ class AutoReadEngine(
+                                     scan.cancel()
+                                     break
+                                 }
+-                                if (!speakStreamingRegion(region, prefs.autoReadLanguage().get())) {
++                                if (!speakStreamingRegion(region, prefs.autoReadLanguage().get(), onLineSpoken)) {
+                                     // Озвучки нет: дочитывать страницу незачем.
+                                     scan.cancel()
+                                     break
+@@ -1301,6 +1301,7 @@ class AutoReadEngine(
+     private suspend fun speakStreamingRegion(
+         region: OcrRegion,
+         language: String,
++        onLineSpoken: ((mihon.domain.ocr.model.OcrBoundingBox) -> Unit)? = null,
+     ): Boolean {
+         val text = normalizeOcrTextForDisplay(
+             CyrillicTranslitFixer.autoFixCyrillic(region.text),
+@@ -1328,10 +1329,18 @@ class AutoReadEngine(
+             SpeakOutcome.SPOKEN -> {
+                 spokenLines += lineKey(text)
+                 markSpokenInFrame(text)
++                if (onLineSpoken != null) {
++                    runCatching { onLineSpoken(region.boundingBox) }
++                        .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
++                }
+                 rejectedStreak = 0
+                 true
+             }
+             SpeakOutcome.SILENT -> {
++                if (onLineSpoken != null) {
++                    runCatching { onLineSpoken(region.boundingBox) }
++                        .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
++                }
+                 rejectedStreak = 0
+                 true
+             }
