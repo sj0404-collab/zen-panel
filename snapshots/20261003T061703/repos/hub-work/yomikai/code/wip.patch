@@ -1,0 +1,663 @@
+diff --git a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsOcrScreen.kt b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsOcrScreen.kt
+index dd69257..cbe58e7 100644
+--- a/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsOcrScreen.kt
++++ b/app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsOcrScreen.kt
+@@ -195,21 +195,9 @@ object SettingsOcrScreen : SearchableSettings {
+                     entries = OcrContentType.entries.associate { it.id to it.title },
+                     title = stringResource(MR.strings.pref_ocr_content_type),
+                     subtitleProvider = { _, _ -> current.hint },
+-                    onValueChanged = { value ->
+-                        // Пресет типа контента задаёт и режим чтения: порядок
+-                        // распознавания и направление листания обязаны совпадать.
+-                        // BALANCED (KEEP) выбор пользователя не трогает.
+-                        val mode = ReadingMode.fromOcrHint(OcrContentType.fromId(value).viewer)
+-                        if (mode != null) readerPrefs.defaultReadingMode.set(mode.flagValue)
+-                        // Ручной выбор запоминаем для текущей манги: авто-пресет
+-                        // восстановит его при следующем входе без переклассификации.
+-                        mihon.data.ocr.ContentAutoPreset.rememberManual(
+-                            mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
+-                            value,
+-                            prefs,
+-                        )
+-                        true
+-                    },
++                    // Пресетов типа контента больше нет: остаётся один профиль
++                    // движка, а порядок чтения выводится из настроек читалки.
++                    onValueChanged = { true },
+                 ),
+                 Preference.PreferenceItem.ListPreference(
+                     preference = prefs.autoPreset(),
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrBubbleSettingsDialog.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrBubbleSettingsDialog.kt
+index e6b2e87..0d40ab0 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrBubbleSettingsDialog.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrBubbleSettingsDialog.kt
+@@ -29,7 +29,6 @@ import androidx.compose.ui.unit.dp
+ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+ import eu.kanade.tachiyomi.util.system.toast
+-import mihon.data.ocr.ContentAutoPreset
+ import mihon.data.ocr.OcrContentType
+ import mihon.data.ocr.OcrRegionRules
+ import mihon.data.ocr.ReaderContextBus
+@@ -74,15 +73,11 @@ fun OcrBubbleSettingsDialog(
+     // Пресет типа контента меняет число (максимум) — плюс, как в настройках,
+     // правит режим чтения вьюера и запоминается как ручной выбор для манги.
+     fun applyContentType(type: OcrContentType) {
++        // Пресетов типа контента больше нет; оставлен единственный профиль, и
++        // порядок чтения задаёт читалка, а не эта настройка.
+         contentType = type
+         contentOrder = type.id
+         prefs.contentType().set(type.id)
+-        val mode = ReadingMode.fromOcrHint(type.viewer)
+-        if (mode != null) readerPrefs.defaultReadingMode.set(mode.flagValue)
+-        ContentAutoPreset.rememberManual(ReaderContextBus.current.value?.mangaId, type.id, prefs)
+-        if (type.id != "balanced") {
+-            context.toast("Пресет «${type.title}»: порядок чтения определяет пресет")
+-        }
+     }
+ 
+     fun applyRegion(id: String) {
+@@ -91,14 +86,6 @@ fun OcrBubbleSettingsDialog(
+     }
+ 
+     fun applyOrder(order: String) {
+-        // Ручной порядок работает только у «Сбалансированного» пресета (увлечён
+-        // правилами OcrRegionRules.readingOrderFor). Иначе молча игнорируется.
+-        if (contentType.id != "balanced") {
+-            contentType = OcrContentType.BALANCED
+-            contentOrder = "balanced"
+-            prefs.contentType().set("balanced")
+-            context.toast("Пресет переведён в «Сбалансированный» — порядок чтения применяется")
+-        }
+         manualOrder = order
+         prefs.scanReadingOrder().set(order)
+         onReadingOrderChange(order)
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiReaderTools.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiReaderTools.kt
+index b8c32ad..53e48b9 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiReaderTools.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/AiReaderTools.kt
+@@ -3,9 +3,6 @@ package eu.kanade.tachiyomi.data.ai
+ import android.content.Context
+ import eu.kanade.tachiyomi.data.voice.VoiceBackend
+ import eu.kanade.tachiyomi.data.voice.VoicePlugins
+-import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+-import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+-import mihon.data.ocr.ContentAutoPreset
+ import mihon.data.ocr.OcrContentType
+ import mihon.data.ocr.ReaderContextBus
+ import mihon.data.ocr.OcrPluginAvailability
+@@ -129,41 +126,22 @@ object AiReaderTools {
+         prefs: OcrPreferences = Injekt.get(),
+     ): String {
+         val requested = id?.trim()?.lowercase().orEmpty()
+-        if (requested.isBlank()) {
+-            return "ОШИБКА: укажите id пресета. Доступны: " +
+-                OcrContentType.entries.joinToString(", ") { "${it.id} (${it.title})" }
+-        }
+-        val contentType = OcrContentType.entries.firstOrNull { it.id == requested }
+-            ?: return "ОШИБКА: пресет «$requested» не найден. Доступны: " +
+-                OcrContentType.entries.joinToString(", ") { it.id }
+-
+-        // Меняем ТОЛЬКО тип контента: область (`pref_ocr_preset_region`) и её
+-        // быстрое переопределение (`pref_scan_region`) принадлежат пользователю,
+-        // и пресет не имеет права их сбрасывать. Порядок чтения и параметры
+-        // детектора при этом всё равно следуют за типом контента.
+-        prefs.contentType().set(contentType.id)
+-        // Запоминаем выбор агента для текущей манги (память авто-пресета).
+-        ContentAutoPreset.rememberManual(
+-            ReaderContextBus.current.value?.mangaId,
+-            contentType.id,
+-            prefs,
+-        )
+-
+-        // Пресет задаёт и вьюер: порядок чтения OCR и направление листания —
+-        // одна сущность. BALANCED (KEEP) выбор пользователя не трогает.
+-        val viewerHint = contentType.viewer
+-        val readingMode = ReadingMode.fromOcrHint(viewerHint)
+-        if (readingMode != null) {
+-            Injekt.get<ReaderPreferences>().defaultReadingMode.set(readingMode.flagValue)
+-        }
+-
++        // Пресетов типа контента («Манга», «Манхва», «Комикс») больше нет:
++        // режим и порядок чтения задаёт сама читалка. Инструмент оставлен как
++        // отчёт о текущих параметрах, чтобы старые вызовы агента не падали.
+         val profile = OcrRegionRules.profileOf(prefs)
+         val tuning = profile.tuning()
+         return buildString {
+-            appendLine("Пресет применён: ${contentType.id} (${contentType.title})")
++            appendLine("Профиль движка: ${OcrContentType.BALANCED.title}")
+             appendLine("Область: ${OcrRegionRules.regionTitle(profile.scanRegion)}")
+             appendLine("Порядок чтения: ${OcrRegionRules.orderTitle(tuning.readingOrder)}")
+-            appendLine("Режим чтения: ${viewerHint.title}")
++            appendLine(
++                "Режим чтения: " + (
++                    ReaderContextBus.current.value?.let {
++                        if (it.webtoon) "вебтун" else if (it.vertical) "вертикальный" else "пейджинг"
++                    } ?: "неизвестно"
++                    ),
++            )
+             appendLine(
+                 "Параметры: порог=${tuning.detectorThreshold}, мин. площадь=${tuning.minComponentArea}, " +
+                     "макс. блоков=${tuning.maxTextBoxes}, зазор слов=${tuning.wordGapFactor}, " +
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReaderBookLookup.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReaderBookLookup.kt
+index 6a0caed..3825bbe 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReaderBookLookup.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReaderBookLookup.kt
+@@ -4,7 +4,6 @@ import android.content.Context
+ import android.graphics.Bitmap
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.withContext
+-import mihon.data.ocr.ContentAutoPreset
+ import mihon.data.ocr.OcrContentType
+ import mihon.data.ocr.OcrRegionRules
+ import mihon.data.ocr.OcrTuning
+@@ -138,30 +137,20 @@ object ReaderBookLookup {
+             )
+         }.getOrNull() ?: return null
+         val text = reply?.content.orEmpty().uppercase()
+-        val type = when {
+-            text.contains("MANHWA") -> OcrContentType.MANHWA
+-            text.contains("MANHUA") -> OcrContentType.MANHUA
+-            text.contains("COMIC") -> OcrContentType.COMIC
+-            text.contains("MANGA") -> OcrContentType.MANGA
+-            else -> return null
+-        }
++        // Тип контента больше не хранится: пресеты удалены, порядок чтения
++        // выводится из настроек читалки. Из ответа модели берём только
++        // направление, и то лишь когда оно названо явно.
+         val order = when {
+             text.contains("VERTICAL") -> "vertical"
+             text.contains("LTR") -> "ltr"
+             text.contains("RTL") -> "rtl"
+-            else -> OcrTuning.preset(type).readingOrder
++            else -> return null
+         }
+-        return Verdict(type = type, readingOrder = order)
++        return Verdict(type = OcrContentType.BALANCED, readingOrder = order)
+     }
+ 
+     private fun applyVerdict(prefs: OcrPreferences, mangaId: Long, verdict: Verdict) {
+-        val type = verdict.type
+-        if (type == OcrContentType.BALANCED) return
+-        val current = prefs.contentType().get()
+-        if (current != "balanced" && current != type.id) return
+-        prefs.contentType().set(type.id)
+         prefs.scanReadingOrder().set(verdict.readingOrder)
+-        ContentAutoPreset.rememberManual(mangaId, type.id, prefs)
+     }
+ 
+     private suspend fun research(
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 018cd0a..f0d4fd6 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -724,7 +724,13 @@ class AutoReadEngine(
+                         context = context,
+                         mangaId = mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
+                     )
+-                    scope.launch {
++                    // Ссылку на задание ОБЯЗАТЕЛЬНО держим. Раньше здесь стоял
++                    // голый scope.launch { … }, а следом aiRefine = null обнулял
++                    // поле ещё ДО присваивания: задание ни отменялось (finally),
++                    // ни попадало в preparedRef вовремя. Итог — на каждый кадр
++                    // улетал один бессрочный запрос к модели, который грел бэкенд
++                    // и душил авточтение, но почти никогда не успевал примениться.
++                    aiRefine = scope.launch {
+                         preparedRef.set(
+                             eu.kanade.tachiyomi.data.ai.AiAssistant.prepareFrame(
+                                 newLines = newLines,
+@@ -741,7 +747,6 @@ class AutoReadEngine(
+                 for (i in ordered.indices) {
+                     genders.set(i, localGenders[i] ?: detectGenderByDictionary(ordered[i].text))
+                 }
+-                aiRefine = null
+                 // Gemini Vision как ещё один фоновый уточнитель — только с ключом
+                 if (genderJpeg != null && ordered.isNotEmpty() &&
+                     prefs.googleApiKey().get().isNotBlank() && localGenders.any { it == null }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index 705f584..c9a9130 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -1180,19 +1180,14 @@ class ReaderActivity : BaseActivity() {
+                     readingOrder = readingOrderState,
+                     contentPreset = contentPresetId,
+                     onContentPresetChange = { id ->
++                        // Пресетов типа контента больше нет: порядок чтения
++                        // задаётся самой читалкой (вертикально/RTL) и явным
++                        // выбором в настройках области скана.
+                         val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+-                        val type = mihon.data.ocr.OcrContentType.fromId(id)
+-                        prefs.contentType().set(type.id)
+-                        contentPresetId = type.id
+-                        mihon.data.ocr.ContentAutoPreset.rememberManual(
+-                            mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
+-                            type.id,
+-                            prefs,
+-                        )
+-                        val order = mihon.data.ocr.OcrTuning.preset(type).readingOrder
+-                        prefs.scanReadingOrder().set(order)
++                        contentPresetId = id
++                        val order = mihon.data.ocr.OcrRegionRules.readingOrderFor(prefs)
+                         readingOrderState = order
+-                        toast("Режим: ${type.title} — ${mihon.data.ocr.OcrRegionRules.orderTitle(order)}")
++                        toast("Порядок чтения: ${mihon.data.ocr.OcrRegionRules.orderTitle(order)}")
+                     },
+                 )
+ 
+diff --git a/data/src/main/java/mihon/data/ocr/ContentAutoPreset.kt b/data/src/main/java/mihon/data/ocr/ContentAutoPreset.kt
+deleted file mode 100644
+index 240820e..0000000
+--- a/data/src/main/java/mihon/data/ocr/ContentAutoPreset.kt
++++ /dev/null
+@@ -1,87 +0,0 @@
+-package mihon.data.ocr
+-
+-import mihon.domain.ocr.service.OcrPreferences
+-
+-/**
+- * Авто-пресет типа контента без ручного «применить» (запрос пользователя).
+- *
+- * Правила:
+- *  - срабатывает ОДИН раз на главу, на первом скане;
+- *  - только пока пользователь не выбрал пресет явно (contentType == balanced);
+- *  - порядок чтения из читалки ([ReaderContextBus]): вебтун/непрерывно →
+- *    MANHWA, пейджинг справа налево → MANGA, пейджинг слева направо →
+- *    COMIC; вертикальный пейджинг и отсутствие контекста — геометрия
+- *    страницы (height/width >= 1.8 → MANHWA);
+- *  - память по манге: применённый (авто или вручную) пресет запоминается
+- *    для mangaId и восстанавливается при входе в читалку без переклассификации;
+- *  - область сканирования не трогает вообще: её выделяет пользователь;
+- *  - выключатель «Авто-пресет типа контента» (on/off).
+- */
+-object ContentAutoPreset {
+-
+-    private const val WEBTOON_RATIO = 1.8f
+-    private const val MAX_MAP_ENTRIES = 60
+-
+-    private val appliedChapters = mutableSetOf<Long>()
+-
+-    /** Вход в читалку: восстанавливаем запомненный пресет этой манги. */
+-    @Synchronized
+-    fun onReaderContext(ctx: ReaderContextBus.Ctx, prefs: OcrPreferences) {
+-        val mangaId = ctx.mangaId ?: return
+-        val remembered = readMap(prefs)[mangaId] ?: return
+-        if (OcrContentType.entries.any { it.id == remembered } &&
+-            prefs.contentType().get() != remembered
+-        ) {
+-            prefs.contentType().set(remembered)
+-        }
+-    }
+-
+-    /** Явный выбор пользователя (настройки/агент) запоминаем для этой манги. */
+-    @Synchronized
+-    fun rememberManual(mangaId: Long?, presetId: String, prefs: OcrPreferences) {
+-        if (mangaId == null) return
+-        if (OcrContentType.entries.none { it.id == presetId }) return
+-        val map = readMap(prefs).toMutableMap()
+-        map[mangaId] = presetId
+-        val tail = map.entries.toList().takeLast(MAX_MAP_ENTRIES)
+-        prefs.mangaPresetMap().set(tail.joinToString(",") { "${it.key}:${it.value}" })
+-    }
+-
+-    @Synchronized
+-    fun maybeApply(chapterId: Long, pageWidth: Int, pageHeight: Int, prefs: OcrPreferences) {
+-        if (prefs.autoPreset().get() != "on") return
+-        if (chapterId in appliedChapters) return
+-        appliedChapters.add(chapterId)
+-        // Явный выбор пользователя священен: авто-пресет его не перебивает.
+-        if (prefs.contentType().get() != "balanced") return
+-        val ctx = ReaderContextBus.current.value
+-        val decided: OcrContentType? = when {
+-            ctx?.webtoon == true -> OcrContentType.MANHWA
+-            ctx?.rtl == true -> OcrContentType.MANGA
+-            ctx != null && !ctx.vertical -> OcrContentType.COMIC
+-            pageWidth > 0 && pageHeight.toFloat() / pageWidth >= WEBTOON_RATIO -> OcrContentType.MANHWA
+-            else -> null
+-        }
+-        if (decided != null) {
+-            prefs.contentType().set(decided.id)
+-            rememberManual(ctx?.mangaId, decided.id, prefs)
+-        }
+-    }
+-
+-    private fun readMap(prefs: OcrPreferences): Map<Long, String> {
+-        val raw = prefs.mangaPresetMap().get()
+-        if (raw.isBlank()) return emptyMap()
+-        val out = HashMap<Long, String>()
+-        for (pair in raw.split(',')) {
+-            val idx = pair.indexOf(':')
+-            if (idx <= 0) continue
+-            val id = pair.substring(0, idx).toLongOrNull() ?: continue
+-            out[id] = pair.substring(idx + 1)
+-        }
+-        return out
+-    }
+-
+-    /** Для тестов: сброс отметок применения. */
+-    @Synchronized
+-    fun resetForTests() = appliedChapters.clear()
+-}
+diff --git a/data/src/main/java/mihon/data/ocr/OcrRegionRules.kt b/data/src/main/java/mihon/data/ocr/OcrRegionRules.kt
+index 2f81a1e..d6c9813 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrRegionRules.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrRegionRules.kt
+@@ -120,19 +120,23 @@ object OcrRegionRules {
+     }
+ 
+     /**
+-     * Порядок чтения, который должен применяться к кадру авточтения.
++     * Порядок чтения со страницы — из настроек читалки.
+      *
+-     * Раньше читалка брала `pref_scan_reading_order` (по умолчанию «rtl»)
+-     * напрямую, и на манхве/вебтуне текст шёл справа налево, хотя пресет
+-     * контента задаёт «vertical». Теперь явный пресет контента определяет
+-     * порядок: манга → rtl, манхва/вебтун → vertical, комикс → ltr.
+-     * `pref_scan_reading_order` остаётся ручным переопределением только для
+-     * «Сбалансированного» пресета (у него viewer = KEEP, т.е. порядок на
+-     * усмотрение пользователя).
++     * Раньше его диктовал пресет типа контента (манга → rtl, манхва →
++     * vertical, комикс → ltr), из-за чего вертикальный вебтун читался не так,
++     * как его настроили, а настройка дублировала режим чтения. Теперь приоритет
++     * такой:
++     *  1. явный выбор пользователя («Порядок чтения», pref_scan_reading_order);
++     *  2. иначе то, что реально стоит в читалке: вертикальный режим читается
++     *     сверху вниз, RTL — справа налево, иначе слева направо.
+      */
+     fun readingOrderFor(prefs: OcrPreferences): String {
+-        val contentId = prefs.contentType().get()
+-        if (contentId == "balanced") return prefs.scanReadingOrder().get()
+-        return OcrTuning.preset(OcrContentType.fromId(contentId)).readingOrder
++        val manual = prefs.scanReadingOrder().get()
++        if (manual.isNotBlank() && manual != "auto") return manual
++        val ctx = ReaderContextBus.current.value
++        return OcrTuning.readingOrderFor(
++            vertical = ctx?.vertical == true,
++            rtl = ctx?.rtl != false,
++        )
+     }
+ }
+diff --git a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+index 0d18da3..6db3b41 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+@@ -525,12 +525,6 @@ class OcrRepositoryImpl(
+         return withActiveOperation {
+             val regionChoice = ocrPreferences.scanRegion().get()
+             val result = image.useBitmap { originalBitmap ->
+-                ContentAutoPreset.maybeApply(
+-                    chapterId = chapterId,
+-                    pageWidth = originalBitmap.width,
+-                    pageHeight = originalBitmap.height,
+-                    prefs = ocrPreferences,
+-                )
+                 val sourceHeight = originalBitmap.height
+                 val cropTop = when (regionChoice) {
+                     mihon.domain.ocr.service.ScanRegion.BOTTOM_HALF -> sourceHeight / 2
+diff --git a/data/src/main/java/mihon/data/ocr/OcrTuning.kt b/data/src/main/java/mihon/data/ocr/OcrTuning.kt
+index 178833e..a286018 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrTuning.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrTuning.kt
+@@ -3,81 +3,43 @@ package mihon.data.ocr
+ import mihon.domain.ocr.service.ScanRegion
+ 
+ /**
+- * Тип контента, под который подбираются параметры детектора и распознавания.
++ * Тип контента для распознавания.
+  *
+- * Пресет меняет ТОЛЬКО числовые параметры и порядок чтения: он не подменяет
+- * модель и не включает словарную коррекцию. Значения подобраны под форму
+- * кадров, а не под конкретный тайтл.
++ * Пресетов по типу контента («Манга», «Манхва», «Маньхуа», «Комикс») больше
++ * нет: они подбирали числа детектора и заодно решали, какой режим вьювера
++ * показывать, из-за чего настройка дублировала настройки читалки и путала
++ * (вертикальный вебтун то читался как «Манхва», то как «Комикс»).
++ *
++ * Теперь параметры движка едины, а порядок чтения и ориентация берутся из
++ * настроек читалки. Тип оставлен как единственный профиль — старые значения
++ * настройки («manga», «manhwa», …) разбираются в [fromId] и молча сводятся
++ * к нему, чтобы не ломать сохранённые данные у пользователей.
+  */
+ enum class OcrContentType(
+     val id: String,
+     val title: String,
+     val hint: String,
+     /**
+-     * Режим чтения, который соответствует пресету. Совпадает с порядком чтения
+-     * OCR ([OcrTuning.readingOrder]) — связь проверяет `OcrViewerHintTest`.
++     * Режим чтения, который соответствует пресету. Всегда [OcrViewerHint.KEEP]:
++     * режим и так определяется настройками читалки (пейджинг/вебтун, RTL/LTR,
++     * вертикально).
+      */
+     val viewer: OcrViewerHint = OcrViewerHint.KEEP,
+ ) {
+     /**
+-     * Универсальный профиль. В точности повторяет значения, которые раньше
+-     * были зашиты константами в [CyrillicOcrEngine], поэтому поведение
+-     * приложения без явного выбора пресета не меняется.
++     * Единственный профиль. Значения повторяют те, что раньше были зашиты
++     * константами в движок, поэтому поведение не меняется.
+      */
+     BALANCED(
+         id = "balanced",
+         title = "Сбалансированный",
+-        hint = "Поведение по умолчанию: параметры прежних констант движка.",
+-    ),
+-
+-    /**
+-     * Японская манга: мелкие буквы, плотные баллоны, чтение справа налево,
+-     * много коротких реплик на страницу.
+-     */
+-    MANGA(
+-        id = "manga",
+-        title = "Манга",
+-        hint = "Мелкий плотный текст в баллонах, чтение справа налево.",
+-        viewer = OcrViewerHint.PAGER_RTL,
+-    ),
+-
+-    /**
+-     * Корейская манхва/вебтун: длинные вертикальные полосы, крупные надписи,
+-     * широкий межсловный пробел, много пустого фона между репликами.
+-     */
+-    MANHWA(
+-        id = "manhwa",
+-        title = "Манхва / вебтун",
+-        hint = "Вертикальные полосы, крупные надписи, широкие пробелы.",
+-        viewer = OcrViewerHint.WEBTOON,
+-    ),
+-
+-    /**
+-     * Китайская маньхуа: вертикальные колонки, читаются справа налево, текст
+-     * крупнее корейского, но леттеринг плотный и рамки узкие.
+-     */
+-    MANHUA(
+-        id = "manhua",
+-        title = "Маньхуа",
+-        hint = "Вертикальные колонки, чтение сверху вниз и справа налево.",
+-        viewer = OcrViewerHint.PAGER_RTL,
+-    ),
+-
+-    /**
+-     * Западный комикс: плотный леттеринг, крупные заголовки, чтение слева
+-     * направо, прямоугольные баллоны стоят близко друг к другу.
+-     */
+-    COMIC(
+-        id = "comic",
+-        title = "Комикс",
+-        hint = "Плотный леттеринг и заголовки, чтение слева направо.",
+-        viewer = OcrViewerHint.PAGER_LTR,
++        hint = "Параметры прежних констант движка.",
+     ),
+     ;
+ 
+     companion object {
+-        fun fromId(id: String?): OcrContentType =
+-            entries.firstOrNull { it.id == id } ?: BALANCED
++        /** Любое прежнее значение пресета сводится к единственному профилю. */
++        fun fromId(id: String?): OcrContentType = BALANCED
+     }
+ }
+ 
+@@ -285,80 +247,25 @@ data class OcrTuning(
+         val DEFAULT = OcrTuning()
+ 
+         /**
+-         * Пресет типа контента.
++         * Профиль движка. Пресетов по типу контента больше нет, поэтому
++         * параметры едины, а различается только выбранная область скана.
+          *
+-         * Меняются только те параметры, где форма кадров действительно
+-         * другая: у вебтуна длинные полосы и крупные буквы (можно реже
+-         * склеивать боксы и требовать меньше строк), у манги мелкий плотный
+-         * текст (нужен ниже порог детектора и больше боксов на страницу).
++         * Параметр [type] оставлен для совместимости вызовов: игнорируется.
+          */
++        @Suppress("UNUSED_PARAMETER")
+         fun preset(type: OcrContentType, scanRegion: ScanRegion = ScanRegion.FULL_PAGE): OcrTuning =
+-            when (type) {
+-                OcrContentType.BALANCED -> DEFAULT.copy(scanRegion = scanRegion)
+-
+-                OcrContentType.MANGA -> DEFAULT.copy(
+-                    detectorThreshold = 0.17f,
+-                    minComponentArea = 18,
+-                    maxTextBoxes = 128,
+-                    tilingMinTextBoxes = 6,
+-                    mergeOverlapYFactor = 0.60f,
+-                    mergeGapXFactor = 0.45f,
+-                    wordGapFactor = 1.5f,
+-                    minWordGapPx = 4,
+-                    contrastRetryConfidence = 0.88f,
+-                    minAcceptConfidence = 0.28f,
+-                    minCropInkRatio = 0.025f,
+-                    rescueMaxLines = 8,
+-                    readingOrder = "rtl",
+-                    scanRegion = scanRegion,
+-                )
+-
+-                OcrContentType.MANHWA -> DEFAULT.copy(
+-                    detectorThreshold = 0.18f,
+-                    minComponentArea = 28,
+-                    maxTextBoxes = 64,
+-                    tilingMinTextBoxes = 12,
+-                    mergeOverlapYFactor = 0.45f,
+-                    mergeGapXFactor = 0.80f,
+-                    splitMinWidthPx = 40,
+-                    wordGapFactor = 2.0f,
+-                    minWordGapPx = 7,
+-                    minAcceptConfidence = 0.34f,
+-                    rescueMaxLines = 5,
+-                    readingOrder = "vertical",
+-                    scanRegion = scanRegion,
+-                )
+-
+-                OcrContentType.MANHUA -> DEFAULT.copy(
+-                    detectorThreshold = 0.19f,
+-                    minComponentArea = 24,
+-                    maxTextBoxes = 80,
+-                    tilingMinTextBoxes = 8,
+-                    mergeOverlapYFactor = 0.50f,
+-                    mergeGapXFactor = 0.65f,
+-                    splitMinWidthPx = 36,
+-                    wordGapFactor = 1.8f,
+-                    minWordGapPx = 6,
+-                    minAcceptConfidence = 0.32f,
+-                    rescueMaxLines = 6,
+-                    readingOrder = "vertical",
+-                    scanRegion = scanRegion,
+-                )
+-
+-                OcrContentType.COMIC -> DEFAULT.copy(
+-                    detectorThreshold = 0.22f,
+-                    minComponentArea = 26,
+-                    maxTextBoxes = 96,
+-                    tilingMinTextBoxes = 10,
+-                    mergeOverlapYFactor = 0.58f,
+-                    mergeGapXFactor = 0.50f,
+-                    wordGapFactor = 1.6f,
+-                    minWordGapPx = 5,
+-                    minAcceptConfidence = 0.30f,
+-                    readingOrder = "ltr",
+-                    scanRegion = scanRegion,
+-                )
+-            }
++            DEFAULT.copy(scanRegion = scanRegion)
++
++        /**
++         * Порядок чтения со страницы — из настроек читалки, а не из пресета
++         * контента. Вертикальный вебтун и вертикальный пейджинг читаются
++         * сверху вниз, RTL — справа налево.
++         */
++        fun readingOrderFor(vertical: Boolean, rtl: Boolean): String = when {
++            vertical -> "vertical"
++            rtl -> "rtl"
++            else -> "ltr"
++        }
+     }
+ }
+ 
+diff --git a/data/src/main/java/mihon/data/ocr/ReaderContextBus.kt b/data/src/main/java/mihon/data/ocr/ReaderContextBus.kt
+index 7554e08..522c070 100644
+--- a/data/src/main/java/mihon/data/ocr/ReaderContextBus.kt
++++ b/data/src/main/java/mihon/data/ocr/ReaderContextBus.kt
+@@ -7,7 +7,7 @@ import uy.kohesive.injekt.api.get
+ 
+ /**
+  * Мост читалка → data-слой без прямой зависимости: ReaderActivity сообщает,
+- * какую мангу и в каком порядке чтения сейчас смотрят, а ContentAutoPreset
++ * какую мангу и в каком порядке чтения сейчас смотрят, а от него
+  * использует это для авто-пресета (манга/манхва/комикс) и памяти пресетов
+  * по манге.
+  */
+@@ -26,6 +26,5 @@ object ReaderContextBus {
+     fun set(mangaId: Long?, rtl: Boolean, webtoon: Boolean, vertical: Boolean) {
+         val ctx = Ctx(mangaId, rtl, webtoon, vertical)
+         _current.value = ctx
+-        runCatching { ContentAutoPreset.onReaderContext(ctx, Injekt.get()) }
+     }
+ }
+diff --git a/data/src/main/java/mihon/data/ui/UiActions.kt b/data/src/main/java/mihon/data/ui/UiActions.kt
+index 72d1320..d86aa74 100644
+--- a/data/src/main/java/mihon/data/ui/UiActions.kt
++++ b/data/src/main/java/mihon/data/ui/UiActions.kt
+@@ -167,42 +167,6 @@ object UiActions {
+             order = 12,
+             builtIn = true,
+         ),
+-        UiActionSpec(
+-            id = "preset_manga",
+-            title = "Пресет: манга",
+-            placement = UiPlacement.FLOATING_MENU,
+-            effect = UiEffect.OCR_PRESET,
+-            value = OcrContentType.MANGA.id,
+-            order = 20,
+-            builtIn = true,
+-        ),
+-        UiActionSpec(
+-            id = "preset_manhwa",
+-            title = "Пресет: манхва (вертикально)",
+-            placement = UiPlacement.FLOATING_MENU,
+-            effect = UiEffect.OCR_PRESET,
+-            value = OcrContentType.MANHWA.id,
+-            order = 21,
+-            builtIn = true,
+-        ),
+-        UiActionSpec(
+-            id = "preset_manhua",
+-            title = "Пресет: маньхуа (вертикально)",
+-            placement = UiPlacement.FLOATING_MENU,
+-            effect = UiEffect.OCR_PRESET,
+-            value = OcrContentType.MANHUA.id,
+-            order = 22,
+-            builtIn = true,
+-        ),
+-        UiActionSpec(
+-            id = "preset_comic",
+-            title = "Пресет: комикс",
+-            placement = UiPlacement.FLOATING_MENU,
+-            effect = UiEffect.OCR_PRESET,
+-            value = OcrContentType.COMIC.id,
+-            order = 23,
+-            builtIn = true,
+-        ),
+         UiActionSpec(
+             id = "preset_balanced",
+             title = "Пресет: сбалансированный",
