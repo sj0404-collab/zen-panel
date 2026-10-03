@@ -1,0 +1,177 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 63c9901..5c58c94 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -265,6 +265,11 @@ dependencies {
+     implementation(projects.domain)
+     implementation(projects.presentationCore)
+     implementation(projects.presentationWidget)
++
++    // Настройки читалки живут в её собственном модуле: читалка уезжает в
++    // отдельное приложение, и держать их в :app было бы ровно тем, от чего
++    // мы уходим. Сама читалка пока здесь — она переедет следующим шагом.
++    implementation(projects.reader)
+     implementation(projects.telemetry)
+ 
+     // Compose
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ui/UiActionRegistry.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ui/UiActionRegistry.kt
+index 0c567a2..67d14df 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ui/UiActionRegistry.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ui/UiActionRegistry.kt
+@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.data.ai.AiWorkspace
+ import eu.kanade.tachiyomi.data.voice.VoiceBackend
+ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
++import eu.kanade.tachiyomi.ui.reader.setting.fromOcrHint
+ import logcat.LogPriority
+ import mihon.data.ocr.OcrViewerHint
+ import mihon.data.ui.UiActionSpec
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index 7b4b2bb..5c2c240 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -109,6 +109,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
+ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+ import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
++import eu.kanade.tachiyomi.ui.reader.setting.toViewer
+ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderActiveOcrOverlay
+ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderOcrRegionSelection
+ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
+@@ -1461,7 +1462,7 @@ class ReaderActivity : BaseActivity() {
+      */
+     private fun updateViewer() {
+         val prevViewer = viewModel.state.value.viewer
+-        val newViewer = ReadingMode.toViewer(viewModel.getMangaReadingMode(), this)
++        val newViewer = ReadingMode.fromPreference(viewModel.getMangaReadingMode()).toViewer(this)
+ 
+         if (window.sharedElementEnterTransition is MaterialContainerTransform) {
+             // Wait until transition is complete to avoid crash on API 26
+diff --git a/i18n/src/commonMain/moko-resources/base/strings.xml b/i18n/src/commonMain/moko-resources/base/strings.xml
+index f8f373a..2cdbaa9 100644
+--- a/i18n/src/commonMain/moko-resources/base/strings.xml
++++ b/i18n/src/commonMain/moko-resources/base/strings.xml
+@@ -422,6 +422,7 @@
+     <string name="pref_always_decode_long_strip_with_ssiv_summary">Affects performance. Only enable if reducing bitmap threshold doesn\'t fix blank image issues</string>
+     <string name="pref_display_profile">Custom display profile</string>
+     <string name="pref_crop_borders">Crop borders</string>
++    <string name="pref_crop_borders_webtoon">Crop borders (webtoon)</string>
+     <string name="pref_custom_brightness">Custom brightness</string>
+     <string name="pref_grayscale">Grayscale</string>
+     <string name="pref_inverted_colors">Inverted</string>
+diff --git a/i18n/src/commonMain/moko-resources/ru/strings.xml b/i18n/src/commonMain/moko-resources/ru/strings.xml
+index 46d0611..f16d810 100644
+--- a/i18n/src/commonMain/moko-resources/ru/strings.xml
++++ b/i18n/src/commonMain/moko-resources/ru/strings.xml
+@@ -210,6 +210,7 @@
+     <string name="pref_create_backup">Создать резервную копию</string>
+     <string name="pref_create_backup_summ">Можно использовать для восстановления текущей библиотеки</string>
+     <string name="pref_crop_borders">Обрезать поля</string>
++    <string name="pref_crop_borders_webtoon">Обрезать поля (вебтун)</string>
+     <string name="pref_restore_backup">Восстановить из резервной копии</string>
+     <string name="pref_restore_backup_summ">Восстановить библиотеку из резервной копии</string>
+     <string name="restore_completed">Восстановление завершено</string>
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderOrientation.kt b/reader/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderOrientation.kt
+similarity index 100%
+rename from app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderOrientation.kt
+rename to reader/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderOrientation.kt
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderPreferences.kt b/reader/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderPreferences.kt
+similarity index 100%
+rename from app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderPreferences.kt
+rename to reader/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderPreferences.kt
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReadingMode.kt b/reader/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReadingMode.kt
+similarity index 54%
+rename from app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReadingMode.kt
+rename to reader/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReadingMode.kt
+index d3433f2..08ed20a 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReadingMode.kt
++++ b/reader/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReadingMode.kt
+@@ -1,15 +1,8 @@
+ package eu.kanade.tachiyomi.ui.reader.setting
+ 
+ import androidx.annotation.DrawableRes
++import app.yomikai.reader.R
+ import dev.icerock.moko.resources.StringResource
+-import eu.kanade.tachiyomi.R
+-import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+-import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
+-import eu.kanade.tachiyomi.ui.reader.viewer.pager.L2RPagerViewer
+-import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
+-import eu.kanade.tachiyomi.ui.reader.viewer.pager.VerticalPagerViewer
+-import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
+-import mihon.data.ocr.OcrViewerHint
+ import tachiyomi.i18n.MR
+ 
+ enum class ReadingMode(
+@@ -62,34 +55,10 @@ enum class ReadingMode(
+ 
+         fun fromPreference(preference: Int?): ReadingMode = entries.find { it.flagValue == preference } ?: DEFAULT
+ 
+-        /**
+-         * Режим чтения, который предписывает пресет типа контента OCR.
+-         *
+-         * `null` означает «пресет не трогает вьюер» ([OcrViewerHint.KEEP],
+-         * то есть BALANCED): выбор пользователя остаётся за ним.
+-         */
+-        fun fromOcrHint(hint: OcrViewerHint): ReadingMode? = when (hint) {
+-            OcrViewerHint.KEEP -> null
+-            OcrViewerHint.PAGER_RTL -> RIGHT_TO_LEFT
+-            OcrViewerHint.PAGER_LTR -> LEFT_TO_RIGHT
+-            OcrViewerHint.WEBTOON -> WEBTOON
+-        }
+-
+         fun isPagerType(preference: Int): Boolean {
+             val mode = fromPreference(preference)
+             return mode.type is ViewerType.Pager
+         }
+-
+-        fun toViewer(preference: Int?, activity: ReaderActivity): Viewer {
+-            return when (fromPreference(preference)) {
+-                LEFT_TO_RIGHT -> L2RPagerViewer(activity)
+-                RIGHT_TO_LEFT -> R2LPagerViewer(activity)
+-                VERTICAL -> VerticalPagerViewer(activity)
+-                WEBTOON -> WebtoonViewer(activity)
+-                CONTINUOUS_VERTICAL -> WebtoonViewer(activity, isContinuous = false)
+-                DEFAULT -> throw IllegalStateException("Preference value must be resolved: $preference")
+-            }
+-        }
+     }
+ 
+     sealed interface Direction {
+diff --git a/app/src/main/res/drawable/ic_reader_continuous_vertical_24dp.xml b/reader/src/main/res/drawable/ic_reader_continuous_vertical_24dp.xml
+similarity index 100%
+rename from app/src/main/res/drawable/ic_reader_continuous_vertical_24dp.xml
+rename to reader/src/main/res/drawable/ic_reader_continuous_vertical_24dp.xml
+diff --git a/app/src/main/res/drawable/ic_reader_default_24dp.xml b/reader/src/main/res/drawable/ic_reader_default_24dp.xml
+similarity index 100%
+rename from app/src/main/res/drawable/ic_reader_default_24dp.xml
+rename to reader/src/main/res/drawable/ic_reader_default_24dp.xml
+diff --git a/app/src/main/res/drawable/ic_reader_ltr_24dp.xml b/reader/src/main/res/drawable/ic_reader_ltr_24dp.xml
+similarity index 100%
+rename from app/src/main/res/drawable/ic_reader_ltr_24dp.xml
+rename to reader/src/main/res/drawable/ic_reader_ltr_24dp.xml
+diff --git a/app/src/main/res/drawable/ic_reader_rtl_24dp.xml b/reader/src/main/res/drawable/ic_reader_rtl_24dp.xml
+similarity index 100%
+rename from app/src/main/res/drawable/ic_reader_rtl_24dp.xml
+rename to reader/src/main/res/drawable/ic_reader_rtl_24dp.xml
+diff --git a/app/src/main/res/drawable/ic_reader_vertical_24dp.xml b/reader/src/main/res/drawable/ic_reader_vertical_24dp.xml
+similarity index 100%
+rename from app/src/main/res/drawable/ic_reader_vertical_24dp.xml
+rename to reader/src/main/res/drawable/ic_reader_vertical_24dp.xml
+diff --git a/app/src/main/res/drawable/ic_reader_webtoon_24dp.xml b/reader/src/main/res/drawable/ic_reader_webtoon_24dp.xml
+similarity index 100%
+rename from app/src/main/res/drawable/ic_reader_webtoon_24dp.xml
+rename to reader/src/main/res/drawable/ic_reader_webtoon_24dp.xml
+diff --git a/settings.gradle.kts b/settings.gradle.kts
+index 312d0cc..196e6b5 100644
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -39,6 +39,8 @@ include(":domain")
+ include(":i18n")
+ include(":presentation-core")
+ include(":presentation-widget")
++include(":reader")
++include(":reader-app")
+ include(":source-api")
+ include(":source-local")
+ include(":telemetry")
