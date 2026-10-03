@@ -4,7 +4,7 @@
   "repo": "sj0404-collab/zen-panel",
   "repoName": "yomikai",
   "workdir": "/home/runner/hub-work/yomikai/code",
-  "updatedAt": "2026-10-03T06:27:34Z",
+  "updatedAt": "2026-10-03T06:57:52Z",
   "count": 1,
   "sessions": [
     {
@@ -12,7 +12,7 @@
       "title": "Суть вчерашнего коммита",
       "slug": "jolly-comet",
       "directory": "/home/runner/hub-work/yomikai/code",
-      "timeUpdated": 1791008627785,
+      "timeUpdated": 1791009077521,
       "export": {
         "info": {
           "id": "ses_eff9fd609fferNVV27arfaDy3S",
@@ -36,7 +36,7 @@
           "cost": 0,
           "time": {
             "created": 1791007664630,
-            "updated": 1791008627785
+            "updated": 1791009077521
           }
         },
         "messages": [
@@ -6090,8 +6090,10 @@
               "modelID": "space-bunny-free",
               "providerID": "opencode",
               "time": {
-                "created": 1791008627783
+                "created": 1791008627783,
+                "completed": 1791009056439
               },
+              "finish": "tool-calls",
               "id": "msg_1006edc470011aGeO5IhZRoNji",
               "sessionID": "ses_eff9fd609fferNVV27arfaDy3S"
             },
@@ -6119,21 +6121,364 @@
                 "tool": "bash",
                 "callID": "call-f51a0e32-dfac-4725-8db0-ec8bd666f908",
                 "state": {
-                  "metadata": {
-                    "output": ""
-                  },
-                  "status": "running",
+                  "status": "completed",
                   "input": {
                     "command": "cd /home/runner/hub-work/yomikai/code && gh run watch 37102898116 --exit-status --compact 2>&1 | tail -12",
                     "timeout": 600000
                   },
+                  "output": "\nJOBS\n✓ Extract tag name in 3s (ID 111145777686)\n✓ Build in 6m54s (ID 111145792379)\n* Create GitHub Release (ID 111146873039)\n✓ v1.9.118 Release · 37102898116\nTriggered via push about 7 minutes ago\n\nJOBS\n✓ Extract tag name in 3s (ID 111145777686)\n✓ Build in 6m54s (ID 111145792379)\n✓ Create GitHub Release in 11s (ID 111146873039)\n",
+                  "metadata": {
+                    "output": "\nJOBS\n✓ Extract tag name in 3s (ID 111145777686)\n✓ Build in 6m54s (ID 111145792379)\n* Create GitHub Release (ID 111146873039)\n✓ v1.9.118 Release · 37102898116\nTriggered via push about 7 minutes ago\n\nJOBS\n✓ Extract tag name in 3s (ID 111145777686)\n✓ Build in 6m54s (ID 111145792379)\n✓ Create GitHub Release in 11s (ID 111146873039)\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/yomikai/code && gh run watch 37102898116 --exit-status --compact 2>&1 | tail -12",
                   "time": {
-                    "start": 1791008631658
+                    "start": 1791008631658,
+                    "end": 1791009056317
                   }
                 },
                 "id": "prt_1006ee9e8001eLBHanvbm0wfo2",
                 "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
                 "messageID": "msg_1006edc470011aGeO5IhZRoNji"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "32250379135751c93b9069de3ec4722a92b583ea",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_100756671001GxqnTApJpKlCtK",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_1006edc470011aGeO5IhZRoNji"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1006d70bb001QVMrcvRJKYh90Z",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791009056452,
+                "completed": 1791009058852
+              },
+              "finish": "tool-calls",
+              "id": "msg_1007566c4001ecGY8HQbHucvdO",
+              "sessionID": "ses_eff9fd609fferNVV27arfaDy3S"
+            },
+            "parts": [
+              {
+                "snapshot": "32250379135751c93b9069de3ec4722a92b583ea",
+                "type": "step-start",
+                "id": "prt_100756cc0001B7DYofMB3Q4fFL",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_1007566c4001ecGY8HQbHucvdO"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call-5d82e8cb-017d-4a83-8faf-f5c0e449385f",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/yomikai/code && gh release view v1.9.118 --json tagName,name,isLatest,createdAt,assets --jq '\"tag: \\(.tagName)\\nname: \\(.name)\\nlatest: \\(.isLatest)\\ncreated: \\(.createdAt)\\n\" + (.assets[] | \"asset: \\(.name)  \\(.size)B  \\(.downloadUrl)\")'"
+                  },
+                  "output": "Unknown JSON field: \"isLatest\"\nAvailable fields:\n  apiUrl\n  assets\n  author\n  body\n  createdAt\n  databaseId\n  id\n  isDraft\n  isImmutable\n  isPrerelease\n  name\n  publishedAt\n  tagName\n  tarballUrl\n  targetCommitish\n  uploadUrl\n  url\n  zipballUrl\n",
+                  "metadata": {
+                    "output": "Unknown JSON field: \"isLatest\"\nAvailable fields:\n  apiUrl\n  assets\n  author\n  body\n  createdAt\n  databaseId\n  id\n  isDraft\n  isImmutable\n  isPrerelease\n  name\n  publishedAt\n  tagName\n  tarballUrl\n  targetCommitish\n  uploadUrl\n  url\n  zipballUrl\n",
+                    "exit": 1,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/yomikai/code && gh release view v1.9.118 --json tagName,name,isLatest,createdAt,assets --jq '\"tag: \\(.tagName)\\nname: \\(.name)\\nlatest: \\(.isLatest)\\ncreated: \\(.createdAt)\\n\" + (.assets[] | \"asset: \\(.name)  \\(.size)B  \\(.downloadUrl)\")'",
+                  "time": {
+                    "start": 1791009058680,
+                    "end": 1791009058778
+                  }
+                },
+                "id": "prt_100756cc4001Gfka2LQlEWhQmS",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_1007566c4001ecGY8HQbHucvdO"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "32250379135751c93b9069de3ec4722a92b583ea",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_100756ffc001iWTD6fZghUXnIF",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_1007566c4001ecGY8HQbHucvdO"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1006d70bb001QVMrcvRJKYh90Z",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791009058866,
+                "completed": 1791009063874
+              },
+              "finish": "tool-calls",
+              "id": "msg_100757032001JKKbc8euC7I2TD",
+              "sessionID": "ses_eff9fd609fferNVV27arfaDy3S"
+            },
+            "parts": [
+              {
+                "snapshot": "32250379135751c93b9069de3ec4722a92b583ea",
+                "type": "step-start",
+                "id": "prt_1007574210015P5tshWYSbR6Ce",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_100757032001JKKbc8euC7I2TD"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call-5821e60e-7333-4ae2-a54f-d995b2762f22",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/yomikai/code && gh release view v1.9.118 --json tagName,name,publishedAt,targetCommitish,isDraft,isPrerelease,assets --jq '\"tag: \\(.tagName)\\nname: \\(.name)\\npublished: \\(.publishedAt)\\ncommitish: \\(.targetCommitish)\\ndraft: \\(.isDraft)  prerelease: \\(.isPrerelease)\\n\" + (.assets[] | \"asset: \\(.name)  \\(.size)B\")' && echo '--- шапка отчёта ---' && gh run view 37102898116 --log 2>/dev/null | grep -E 'APK versionName=|SHA-256|versionCode' | tail -5"
+                  },
+                  "output": "tag: v1.9.118\nname: Yomikai v1.9.118\npublished: 2026-10-03T06:30:50Z\ncommitish: main\ndraft: false  prerelease: false\nasset: OCR-QUALITY-REPORT-639be098f50c5c9a8b6d2d885993b73edcef3b58.md  6366B\ntag: v1.9.118\nname: Yomikai v1.9.118\npublished: 2026-10-03T06:30:50Z\ncommitish: main\ndraft: false  prerelease: false\nasset: yomikai-v1.9.118.apk  54186200B\n--- шапка отчёта ---\nBuild\tVerify version baked into the APK\t2026-10-03T06:30:32.7363088Z APK versionName=1.9.118 versionCode=11018\nBuild\tRender OCR quality report\t2026-10-03T06:30:32.7971964Z ^[[36;1m  echo \"| versionName / versionCode | \\`1.9.118\\` / \\`11018\\` |\"^[[0m\nBuild\tRender OCR quality report\t2026-10-03T06:30:32.7972437Z ^[[36;1m  echo \"| SHA-256 | \\`03f3ae798c31697e4bf7b4f78aa702bbd290a0f8fc4dd4552f554f62cef808b6\\` |\"^[[0m\nCreate GitHub Release\tCreate GitHub Release\t| versionName / versionCode | `1.9.118` / `11018` |\nCreate GitHub Release\tCreate GitHub Release\t| SHA-256 | `03f3ae798c31697e4bf7b4f78aa702bbd290a0f8fc4dd4552f554f62cef808b6` |\n",
+                  "metadata": {
+                    "output": "tag: v1.9.118\nname: Yomikai v1.9.118\npublished: 2026-10-03T06:30:50Z\ncommitish: main\ndraft: false  prerelease: false\nasset: OCR-QUALITY-REPORT-639be098f50c5c9a8b6d2d885993b73edcef3b58.md  6366B\ntag: v1.9.118\nname: Yomikai v1.9.118\npublished: 2026-10-03T06:30:50Z\ncommitish: main\ndraft: false  prerelease: false\nasset: yomikai-v1.9.118.apk  54186200B\n--- шапка отчёта ---\nBuild\tVerify version baked into the APK\t2026-10-03T06:30:32.7363088Z APK versionName=1.9.118 versionCode=11018\nBuild\tRender OCR quality report\t2026-10-03T06:30:32.7971964Z ^[[36;1m  echo \"| versionName / versionCode | \\`1.9.118\\` / \\`11018\\` |\"^[[0m\nBuild\tRender OCR quality report\t2026-10-03T06:30:32.7972437Z ^[[36;1m  echo \"| SHA-256 | \\`03f3ae798c31697e4bf7b4f78aa702bbd290a0f8fc4dd4552f554f62cef808b6\\` |\"^[[0m\nCreate GitHub Release\tCreate GitHub Release\t| versionName / versionCode | `1.9.118` / `11018` |\nCreate GitHub Release\tCreate GitHub Release\t| SHA-256 | `03f3ae798c31697e4bf7b4f78aa702bbd290a0f8fc4dd4552f554f62cef808b6` |\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/yomikai/code && gh release view v1.9.118 --json tagName,name,publishedAt,targetCommitish,isDraft,isPrerelease,assets --jq '\"tag: \\(.tagName)\\nname: \\(.name)\\npublished: \\(.publishedAt)\\ncommitish: \\(.targetCommitish)\\ndraft: \\(.isDraft)  prerelease: \\(.isPrerelease)\\n\" + (.assets[] | \"asset: \\(.name)  \\(.size)B\")' && echo '--- шапка отчёта ---' && gh run view 37102898116 --log 2>/dev/null | grep -E 'APK versionName=|SHA-256|versionCode' | tail -5",
+                  "time": {
+                    "start": 1791009061533,
+                    "end": 1791009063792
+                  }
+                },
+                "id": "prt_1007574760019lU1fHrK04zdw8",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_100757032001JKKbc8euC7I2TD"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "32250379135751c93b9069de3ec4722a92b583ea",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_10075839c001OyN90Suo1ddNFf",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_100757032001JKKbc8euC7I2TD"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1006d70bb001QVMrcvRJKYh90Z",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791009063887,
+                "completed": 1791009068752
+              },
+              "finish": "tool-calls",
+              "id": "msg_1007583cf001vqiyTwdy5fPBq6",
+              "sessionID": "ses_eff9fd609fferNVV27arfaDy3S"
+            },
+            "parts": [
+              {
+                "snapshot": "32250379135751c93b9069de3ec4722a92b583ea",
+                "type": "step-start",
+                "id": "prt_10075883a001i1bQmJmHZjn0qP",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_1007583cf001vqiyTwdy5fPBq6"
+              },
+              {
+                "type": "reasoning",
+                "text": "The release succeeded: v1.9.118, APK yomikai-v1.9.118.apk 54 MB, versionName 1.9.118, versionCode 11018 (higher than 10917 as intended), SHA-256 reported.\n\nNote `commitish: main` in the release metadata — that's just the release's target field default; the actual built commit is 639be098 (tag points there, confirmed by run headSha 639be098 and the report filename OCR-QUALITY-REPORT-639be098...).\n\nAlso: the v1.9.118 release — is it marked \"Latest\"? gh release list would show. Earlier v1.9.114 was \"Latest\". Let me not bother; the versionCode/name sorting makes 1.9.118 latest by version. Actually GitHub \"Latest\" flag is automatic by created_at for non-prereleases... v1.9.118 published now → should be Latest. Fine.\n\nShould I download the APK to /home/runner/hub-work/yomikai/tmp per MANIFEST rule 5 (\"Готовые сборки/артефакты клади в .../tmp — их видно вкладкой «Файлы»\")? That's a reasonable step and it's what the manifest asks. 54 MB download. Yes, do it — it makes the artifact visible in the panel.\n\nLet me download and verify sha256 matches.\n\nThen report concisely.\n\nAlso note: the earlier \"Tests\" run on main succeeded (36755375893), so main is validated as far as tests go.\n\nLet me download the APK + report.",
+                "time": {
+                  "start": 1791009065024,
+                  "end": 1791009068075
+                },
+                "id": "prt_100758840001fYGJ6OPLM86p47",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_1007583cf001vqiyTwdy5fPBq6"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call-3bc0feaf-b544-4764-a984-5e4ccfe35bbe",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/yomikai/tmp && gh release download v1.9.118 --pattern 'yomikai-v1.9.118.apk' --pattern 'OCR-QUALITY-REPORT-*.md' 2>&1 | tail -2; ls -la yomikai-v1.9.118.apk OCR-QUALITY-REPORT-*.md && sha256sum yomikai-v1.9.118.apk",
+                    "timeout": 300000
+                  },
+                  "output": "failed to run git: fatal: not a git repository (or any of the parent directories): .git\n\nls: cannot access 'yomikai-v1.9.118.apk': No such file or directory\nls: cannot access 'OCR-QUALITY-REPORT-*.md': No such file or directory\n",
+                  "metadata": {
+                    "output": "failed to run git: fatal: not a git repository (or any of the parent directories): .git\n\nls: cannot access 'yomikai-v1.9.118.apk': No such file or directory\nls: cannot access 'OCR-QUALITY-REPORT-*.md': No such file or directory\n",
+                    "exit": 2,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/yomikai/tmp && gh release download v1.9.118 --pattern 'yomikai-v1.9.118.apk' --pattern 'OCR-QUALITY-REPORT-*.md' 2>&1 | tail -2; ls -la yomikai-v1.9.118.apk OCR-QUALITY-REPORT-*.md && sha256sum yomikai-v1.9.118.apk",
+                  "time": {
+                    "start": 1791009068595,
+                    "end": 1791009068685
+                  }
+                },
+                "id": "prt_10075942d001LfBThTb9Da8jkJ",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_1007583cf001vqiyTwdy5fPBq6"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "32250379135751c93b9069de3ec4722a92b583ea",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_1007596b2001QKFsAGRTYruO3K",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_1007583cf001vqiyTwdy5fPBq6"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1006d70bb001QVMrcvRJKYh90Z",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791009068762,
+                "completed": 1791009072995
+              },
+              "finish": "tool-calls",
+              "id": "msg_1007596da0010X2Est5dE6kTy0",
+              "sessionID": "ses_eff9fd609fferNVV27arfaDy3S"
+            },
+            "parts": [
+              {
+                "snapshot": "32250379135751c93b9069de3ec4722a92b583ea",
+                "type": "step-start",
+                "id": "prt_100759b13001lAHJte5v6KomEP",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_1007596da0010X2Est5dE6kTy0"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call-b4d10f29-a5d0-46cc-9c9b-3792dd27ad78",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/hub-work/yomikai/tmp && gh release download v1.9.118 --repo sj0404-collab/yomikai --pattern 'yomikai-v1.9.118.apk' --pattern 'OCR-QUALITY-REPORT-*.md' 2>&1 | tail -2; ls -la yomikai-v1.9.118.apk OCR-QUALITY-REPORT-*.md; sha256sum yomikai-v1.9.118.apk",
+                    "timeout": 420000
+                  },
+                  "output": "-rw-r--r-- 1 runner runner     6366 Oct  3 06:31 OCR-QUALITY-REPORT-639be098f50c5c9a8b6d2d885993b73edcef3b58.md\n-rw-r--r-- 1 runner runner 54186200 Oct  3 06:31 yomikai-v1.9.118.apk\n03f3ae798c31697e4bf7b4f78aa702bbd290a0f8fc4dd4552f554f62cef808b6  yomikai-v1.9.118.apk\n",
+                  "metadata": {
+                    "output": "-rw-r--r-- 1 runner runner     6366 Oct  3 06:31 OCR-QUALITY-REPORT-639be098f50c5c9a8b6d2d885993b73edcef3b58.md\n-rw-r--r-- 1 runner runner 54186200 Oct  3 06:31 yomikai-v1.9.118.apk\n03f3ae798c31697e4bf7b4f78aa702bbd290a0f8fc4dd4552f554f62cef808b6  yomikai-v1.9.118.apk\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/yomikai/tmp && gh release download v1.9.118 --repo sj0404-collab/yomikai --pattern 'yomikai-v1.9.118.apk' --pattern 'OCR-QUALITY-REPORT-*.md' 2>&1 | tail -2; ls -la yomikai-v1.9.118.apk OCR-QUALITY-REPORT-*.md; sha256sum yomikai-v1.9.118.apk",
+                  "time": {
+                    "start": 1791009070784,
+                    "end": 1791009072934
+                  }
+                },
+                "id": "prt_100759b7e001YnhgjqMh4KIShy",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_1007596da0010X2Est5dE6kTy0"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "32250379135751c93b9069de3ec4722a92b583ea",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_10075a7450014Q18lZPb2JIsjz",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_1007596da0010X2Est5dE6kTy0"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_1006d70bb001QVMrcvRJKYh90Z",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791009073003,
+                "completed": 1791009077509
+              },
+              "finish": "stop",
+              "id": "msg_10075a76b001m8PHbfT5ef37fH",
+              "sessionID": "ses_eff9fd609fferNVV27arfaDy3S"
+            },
+            "parts": [
+              {
+                "snapshot": "32250379135751c93b9069de3ec4722a92b583ea",
+                "type": "step-start",
+                "id": "prt_10075aac2001IcnkvA9mlt7faY",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_10075a76b001m8PHbfT5ef37fH"
+              },
+              {
+                "type": "text",
+                "text": "Релиз собран и опубликован.\n\n**Yomikai v1.9.118** — run `37102898116`, все три джобы зелёные (Build 6m54s), релиз опубликован 06:30:50 UTC.\n- Тег `v1.9.118` → коммит `639be098` (master), APK `yomikai-v1.9.118.apk`, 54.2 МБ\n- `versionName=1.9.118`, `versionCode=11018` — выше universal 1.9.117 (10917), так что APK встанет поверх\n- SHA-256 `03f3ae79…808b6`, сошёлся с отчётом сборки\n- Файлы сложены в `/home/runner/hub-work/yomikai/tmp/` (по правилу 5), хеш пересчитан локально — совпал\n\nТесты на main (run `36755375893`) тоже зелёные, так что моя правка `6415b59` собирается и проходит их локально на CI.\n\nОткрытым осталось расхождение веток: `main` — тупиковый корень от 30 сентября с 42 лишними файлами (модуль `overlay-reader/`, `keystore.properties`, архивы, старый APK), а свежая работа живёт в `master`. Могу свести main с master (перенести overlay-reader в отдельную ветку и переставить main на master) — но это переписывание истории main, скажи, если нужно.",
+                "time": {
+                  "start": 1791009073919,
+                  "end": 1791009077443
+                },
+                "id": "prt_10075aaff001gglTtEN9XkfQqy",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_10075a76b001m8PHbfT5ef37fH"
+              },
+              {
+                "reason": "stop",
+                "snapshot": "32250379135751c93b9069de3ec4722a92b583ea",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_10075b8e1001Z6qpGFnsPogxuJ",
+                "sessionID": "ses_eff9fd609fferNVV27arfaDy3S",
+                "messageID": "msg_10075a76b001m8PHbfT5ef37fH"
               }
             ]
           }
@@ -6142,8 +6487,8 @@
     }
   ],
   "state": "updated",
-  "stamp": "20261003T062734",
-  "startedAt": "2026-10-03T06:27:35Z",
+  "stamp": "20261003T065752",
+  "startedAt": "2026-10-03T06:57:53Z",
   "runId": "37101330139",
   "runNumber": "362"
 }
