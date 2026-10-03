@@ -839,6 +839,40 @@ check('q101 what is left is the two buttons worth a tap',
 check('q101 the APK list still loads on its own',
   mob.includes('async function runnerScan(') && desk.includes('async function runnerScan(') &&
   dashApp.includes('async function runnerScan(') && panel.includes('async function runnerPanelScan('));
+// q107 Both buttons of the runner card were dead on a PC-local hub, and the card
+// said so. Two independent reasons, and neither was the user's fault:
+//   1. /api/runner answered with an empty list outside Actions — but the scan is
+//      plain filesystem work over the work dir and needs no runner at all — so
+//      the page printed «Ничего не нашлось в ~/hub-work» and greyed out save.
+//   2. Nothing ever fetched /api/runner in the first place: RUNNER stayed null,
+//      and the «Сканировать» button that did the fetching was deleted in q101.
+//      A null RUNNER was then printed as «PC-local — кнопки активны только на
+//      Actions-раннере», which is how a working feature looked like a disabled one.
+// Cancelling a run genuinely does need Actions; that button stays off locally,
+// with a title that says so, and «Сохранить» works everywhere.
+check('q107 the runner card asks the hub instead of guessing PC-local',
+  mob.includes('let RUNNER_ASKED = false;') && desk.includes('let RUNNER_ASKED = false;') &&
+  dashApp.includes('let RUNNER_ASKED = false;') &&
+  mob.includes('if (!RUNNER && !RUNNER_ASKED) { RUNNER_ASKED = true; setTimeout(runnerScan, 0); }') &&
+  desk.includes('if (!RUNNER && !RUNNER_ASKED) { RUNNER_ASKED = true; setTimeout(runnerScan, 0); }') &&
+  dashApp.includes('if (!RUNNER && !RUNNER_ASKED) { RUNNER_ASKED = true; setTimeout(runnerScan, 0); }') &&
+  panel.includes('runnerPanelScan();\n\n// ── Эстафета сессии'));
+check('q107 an unknown runner state is no longer called PC-local',
+  !mob.includes('Запуск вне GitHub Actions') && !desk.includes('Запуск вне GitHub Actions') &&
+  !dashApp.includes('Запуск вне GitHub Actions') &&
+  !panel.includes('(локальный запуск — кнопки управления живут на Actions-раннере)') &&
+  mob.includes('«Сохранить» работает и здесь') && desk.includes('«Сохранить» работает и здесь') &&
+  dashApp.includes('«Сохранить» работает и здесь') &&
+  panel.includes('«Сохранить» работает, «Выключить» отменяет прогон Actions'));
+check('q107 the hub scans the work dir whether or not a runner is behind it',
+  server.includes('const scan = await scanRunnerFiles();') &&
+  !server.includes('env.actions ? await scanRunnerFiles()') &&
+  server.includes('actions: onActions,'));
+check('q107 only cancelling a run stays Actions-only, and says why',
+  mob.includes('disabled title="Отменяет прогон GitHub Actions — доступно только на Actions-раннере"') &&
+  desk.includes('disabled title="Отменяет прогон GitHub Actions — доступно только на Actions-раннере"') &&
+  dashApp.includes('disabled title="Отменяет прогон GitHub Actions — доступно только на Actions-раннере"') &&
+  server.includes("if (!env.actions || !env.runId) return res.json({ success: false, actions: false, error: 'не на Actions-раннере' })"));
 check('q100 the switch state moved into the fold summary',
   mob.includes("id=\"ho-more-sum\"") && mob.includes("document.getElementById('ho-more-sum')") &&
   !mob.includes("bits.push(p.auto ?") && panel.includes("id=\"ho-more-sum\"") &&

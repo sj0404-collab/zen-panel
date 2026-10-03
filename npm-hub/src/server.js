@@ -1334,7 +1334,12 @@ const scanRunnerFiles = async () => {
 app.get('/api/runner', async (req, res) => {
   try {
     const env = runnerEnv();
-    const scan = env.actions ? await scanRunnerFiles() : { apks: [], folders: [] };
+    // Scan on a PC-local hub too. This is plain filesystem work over the work
+    // dir — nothing about it needs a GitHub runner — and gating it on
+    // `actions` meant a local hub always answered with an empty list, so the
+    // page reported «Ничего не нашлось в ~/hub-work» and greyed out «Сохранить»
+    // for good. That is the whole reason the save button did nothing here.
+    const scan = await scanRunnerFiles();
     res.json({ success: true, ...env, ...scan });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
