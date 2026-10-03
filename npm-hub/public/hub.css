@@ -5,8 +5,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .topbar{height:40px;background:var(--bg2);display:flex;align-items:center;padding:0 12px;gap:8px;border-bottom:1px solid var(--bdr);flex-shrink:0}
 .logo{font-size:14px;font-weight:800;background:linear-gradient(135deg,var(--acc),var(--pur));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .logo .hub-ver{font-size:9px;font-weight:600;color:var(--t3);-webkit-text-fill-color:var(--t3);background:none;margin-left:4px;vertical-align:super}
-.topbar-nav{display:flex;gap:2px;margin-left:12px}
-.tb{padding:5px 12px;border-radius:6px;border:none;background:transparent;color:var(--t2);font-size:11px;font-weight:500;cursor:pointer;transition:all .12s;text-decoration:none}
+/* The nav has more entries than a phone is wide, so it scrolls sideways rather
+   than squeezing the labels into unreadable slivers. */
+.topbar-nav{display:flex;gap:2px;margin-left:12px;flex:1;min-width:0;overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;scrollbar-width:none}
+.topbar-nav::-webkit-scrollbar{display:none}
+.tb{padding:5px 12px;border-radius:6px;border:none;background:transparent;color:var(--t2);font-size:11px;font-weight:500;cursor:pointer;transition:all .12s;text-decoration:none;white-space:nowrap;flex:0 0 auto}
 .tb:hover{background:var(--bg4);color:var(--t1)}.tb.on{background:var(--bg4);color:var(--acc)}
 .topbar-right{margin-left:auto;display:flex;align-items:center;gap:8px}
 .access-badge{font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600}
@@ -180,9 +183,29 @@ details.more[open]>summary{color:var(--t2)}
 
 /* Xterm fullscreen for the standalone /term page */
 .term-fullscreen{position:fixed;inset:0;z-index:200;background:#000;display:flex;flex-direction:column}
+
+/* ===== Launcher (/apps) — the phone's own app grid ===== */
+.lc-note{font-size:11.5px;color:var(--t2);line-height:1.5;margin-top:10px}
+.lc-note:empty{display:none}
+.lc-note code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;background:var(--bg0);padding:1px 4px;border-radius:4px}
+.apps-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:10px;margin-top:4px}
+/* A tile is tapped, not read: the long press that opens a context menu on a
+   grid of icons is what makes a launcher feel like the home screen. */
+.app-tile{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 6px 10px;background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;cursor:pointer;text-align:center;transition:all .12s;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none}
+.app-tile:hover{border-color:var(--acc)}
+.app-tile:active{transform:scale(.96);background:var(--bg4)}
+.app-ico{width:46px;height:46px;border-radius:11px;object-fit:cover;background:var(--bg4);flex:0 0 46px}
+.app-ico-txt{display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:var(--t2)}
+.app-name{font-size:11.5px;font-weight:600;line-height:1.25;word-break:break-word}
+.app-pkg{font-size:9px;color:var(--t3);font-family:ui-monospace,Menlo,Consolas,monospace;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lc-fallback{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:120;display:none;align-items:center;gap:10px;background:rgba(13,17,23,.96);border:1px solid var(--bdr);border-radius:10px;padding:9px 12px;font-size:12px;color:var(--t1);box-shadow:0 8px 24px rgba(0,0,0,.5);max-width:92vw}
+.lc-fallback.on{display:flex}
+.lc-fallback a{color:var(--acc);text-decoration:none;font-weight:600;cursor:pointer}
+
 @media (max-width:700px){
   .stats{grid-template-columns:repeat(2,1fr)}
   .grid{grid-template-columns:1fr}
   .sidebar{display:none}
   .newterm-grid{grid-template-columns:1fr}
+  .apps-grid{grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}
 }

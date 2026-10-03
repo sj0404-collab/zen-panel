@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0e14">
+  <title>Лаунчер — NPM Hub</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="hub.css">
+</head>
+<body data-page="apps">
+  <div class="topbar" id="topbar"></div>
+
+  <div class="main">
+    <div class="content">
+      <div class="page on">
+        <div class="ph">
+          <h1>📲 Лаунчер</h1>
+          <p>Приложения этого телефона. Список и запуск берутся с самого устройства,
+             а не с раннера: внутри панели-APK его отдаёт нативный код, в браузере
+             приложение открывается через <code>intent://</code>.</p>
+        </div>
+
+        <div class="card" id="lc-gate">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <button class="btn btn-p" id="lc-enable" onclick="lcEnable()">📲 Включить лаунчер</button>
+            <div style="flex:1;min-width:220px">
+              <div id="lc-what" style="font-size:12px;color:var(--t2)">Нажмите, чтобы взять список приложений с телефона.</div>
+              <div id="lc-state" style="font-size:11px;color:var(--t3);margin-top:3px">ничего не загружено</div>
+            </div>
+          </div>
+          <div id="lc-note" class="lc-note"></div>
+        </div>
+
+        <div id="lc-tools" style="display:none;margin:14px 0 10px;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="lc-q" placeholder="поиск по названию или пакету" autocomplete="off"
+                 oninput="lcRender()" style="flex:1;min-width:200px;padding:7px 10px;background:var(--bg0);border:1px solid var(--bdr);border-radius:6px;color:var(--t1);font-size:12px;outline:none">
+          <button class="btn btn-sm" onclick="lcEnable()">⟳ Обновить</button>
+          <span id="lc-count" style="font-size:11px;color:var(--t3)"></span>
+        </div>
+
+        <div id="lc-grid" class="apps-grid"></div>
+        <div id="lc-empty" style="display:none;font-size:12px;color:var(--t2);padding:18px 0"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="lc-fallback" class="lc-fallback">
+    <span id="lc-fallback-text">Не открылось?</span>
+    <a id="lc-fallback-link" href="#">Открыть в Play Market</a>
+  </div>
+
+  <script src="offline.js"></script>
+  <script src="bridge.js"></script>
+  <script src="apps-app.js"></script>
+</body>
+</html>
