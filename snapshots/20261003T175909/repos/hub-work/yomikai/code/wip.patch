@@ -1,0 +1,227 @@
+diff --git a/app/src/main/java/eu/kanade/domain/DomainModule.kt b/app/src/main/java/eu/kanade/domain/DomainModule.kt
+index 2ae4bbe..0cb2eec 100644
+--- a/app/src/main/java/eu/kanade/domain/DomainModule.kt
++++ b/app/src/main/java/eu/kanade/domain/DomainModule.kt
+@@ -77,6 +77,7 @@ import mihon.domain.ocr.interactor.GetCachedChapterIdsOcr
+ import mihon.domain.ocr.interactor.GetCachedPageOcr
+ import mihon.domain.ocr.interactor.GetOcrCacheSize
+ import mihon.domain.ocr.interactor.OcrProcessor
++import mihon.domain.ocr.interactor.SaveCachedPageOcr
+ import mihon.domain.ocr.interactor.ScanPageOcr
+ import mihon.domain.ocr.interactor.WithOcrScanSession
+ import mihon.domain.ocr.repository.OcrRepository
+@@ -295,13 +296,14 @@ class DomainModule : InjektModule {
+         addSingletonFactory { OcrPageSourceResolver(get(), get(), get()) }
+         addSingletonFactory { ReaderSelectionCropper(get()) }
+         addSingletonFactory { OcrScanNotifier(get<Application>()) }
+-        addSingletonFactory { OcrChapterScanner(get<Application>(), get(), get(), get(), get(), get(), get(), get()) }
++        addSingletonFactory { OcrChapterScanner(get<Application>(), get(), get(), get(), get(), get(), get(), get(), get()) }
+         addFactory { OcrChapterAiVerifier(get()) }
+         addSingletonFactory { OcrScanManager(get<Application>(), get(), get(), get()) }
+         addFactory { OcrQueueActions(get(), get()) }
+         addFactory { OcrProcessor(get()) }
+         addFactory { WithOcrScanSession(get()) }
+         addFactory { ScanPageOcr(get()) }
++        addFactory { SaveCachedPageOcr(get()) }
+         addFactory { GetCachedChapterIdsOcr(get()) }
+         addFactory { GetCachedPageOcr(get()) }
+         addFactory { ClearCachedChapterOcr(get()) }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ocr/OcrChapterAiVerifier.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ocr/OcrChapterAiVerifier.kt
+index 901921a..3acbfda 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ocr/OcrChapterAiVerifier.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ocr/OcrChapterAiVerifier.kt
+@@ -56,21 +56,40 @@ class OcrChapterAiVerifier(
+     )
+ 
+     suspend fun verifyPage(
+-        chapterId: Long,
+-        pageIndex: Int,
+         pageName: String,
+         bitmap: Bitmap,
+-        lines: List<String>,
++        regions: List<mihon.domain.ocr.model.OcrRegion>,
+         onStage: (Phase, String) -> Unit = { _, _ -> },
+-    ): PageRoleVerifier.PageCheck? {
+-        val draft = lines.map { it.trim() }.filter { it.isNotEmpty() }
++    ): List<mihon.domain.ocr.model.OcrRegion>? {
++        val ordered = regions.sortedBy { it.order }
++        val draft = ordered.map { it.text.trim() }.filter { it.isNotEmpty() }
+         if (draft.isEmpty()) return null
+         val jpeg = encodeJpeg(bitmap) ?: return null
+-        return PageRoleVerifier.verify(jpeg, pageName, draft, prefs).also { check ->
+-            if (check.checked) collectRoles(check, draft, pageIndex, onStage)
++        val check = PageRoleVerifier.verify(jpeg, pageName, draft, prefs)
++        if (!check.checked) {
++            // Модель не ответила или ответила мусором: страница остаётся
++            // локальной. Иначе половина страницы была бы догадкой модели, а
++            // половина — распознаванием, и отладить это было бы невозможно.
++            onStage(Phase.OCR, "ИИ не ответил (${check.reason ?: "неизвестно"}) — беру локальный разбор")
++            return null
+         }
++        collectRoles(check, onStage)
++        return applyToRegions(check, ordered)
+     }
+ 
++    /**
++     * Проверенный текст возвращается в страницу.
++     *
++     * Что можно сделать честно:
++     *  • исправить текст региона, когда модель вернула строку из черновика с
++     *    другим написанием (это настоящая правка OCR);
++     *  • убрать регион, который модель признала не репликой (титул, примечание) —
++     *    читать его нечего.
++     *
++     * Чего НЕ делаем: строки, которых не было в черновике, не добавляем. У них
++     * нет рамки, а выдуманная рамка означала бы подсветку и тап в пустоте.
++     * Такие строки остаются в отчёте как dropped/uncertain.
++     */
+     /**
+      * Накопитель ролей главы.
+      *
+@@ -82,8 +101,6 @@ class OcrChapterAiVerifier(
+ 
+     private fun collectRoles(
+         check: PageRoleVerifier.PageCheck,
+-        draft: List<String>,
+-        pageIndex: Int,
+         onStage: (Phase, String) -> Unit,
+     ) {
+         check.lines.forEach { line ->
+@@ -99,7 +116,7 @@ class OcrChapterAiVerifier(
+             draftEntry.pages++
+             if (draftEntry.text.isBlank()) draftEntry.text = line.text
+         }
+-        onStage(Phase.AI, "страница ${pageIndex + 1}: найдено персонажей ${collected.size}")
++        onStage(Phase.AI, "найдено персонажей ${collected.size}, не-реплик ${check.dropped.size}")
+     }
+ 
+     private data class RoleDraft(val name: String) {
+@@ -168,6 +185,43 @@ class OcrChapterAiVerifier(
+     }.onFailure { logcat(LogPriority.WARN, it) { "Chapter AI jpeg encode failed" } }.getOrNull()
+ 
+     companion object {
++        /**
++         * Чистая функция: проверка страницы -> новые регионы.
++         *
++         * Объект-обёртка не нужен и состояния не касается, поэтому вынесена в
++         * companion: её проверяют тесты без Android и без Injekt.
++         */
++        fun applyToRegions(
++        check: PageRoleVerifier.PageCheck,
++        ordered: List<mihon.domain.ocr.model.OcrRegion>,
++    ): List<mihon.domain.ocr.model.OcrRegion>? = applyToRegions(check, ordered)
++
++    fun applyToRegions(
++        check: PageRoleVerifier.PageCheck,
++        ordered: List<mihon.domain.ocr.model.OcrRegion>,
++    ): List<mihon.domain.ocr.model.OcrRegion>? {
++        val byText = check.lines
++            .filter { it.kept && !it.uncertain }
++            .associateBy { normalize(it.text) }
++        val corrected = ordered.mapNotNull { region ->
++            val fixed = byText[normalize(region.text)]?.text
++            when {
++                // Модель признала это не репликой — регион уходит из чтения.
++                check.lines.any { !it.kept && normalize(it.text) == normalize(region.text) } -> null
++                fixed != null && fixed != region.text -> region.copy(text = fixed)
++                else -> region
++            }
++        }
++        if (corrected.size == ordered.size && corrected.zip(ordered).all { (a, b) -> a.text == b.text }) {
++            return null // ничего не изменилось — кэш не трогаем зря
++        }
++        return corrected.mapIndexed { i, r -> r.copy(order = i) }
++    }
++
++    private fun normalize(text: String): String =
++        text.lowercase().filter { it.isLetterOrDigit() }
++
++
+         private const val MAX_JPEG_EDGE = 1024
+         private const val JPEG_QUALITY = 80
+     }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ocr/OcrChapterScanner.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ocr/OcrChapterScanner.kt
+index f2bfe42..14b6e35 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ocr/OcrChapterScanner.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ocr/OcrChapterScanner.kt
+@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.util.system.activeNetworkState
+ import kotlinx.coroutines.CancellationException
+ import logcat.LogPriority
+ import mihon.domain.ocr.interactor.ClearCachedChapterOcr
++import mihon.domain.ocr.interactor.SaveCachedPageOcr
+ import mihon.domain.ocr.interactor.ScanPageOcr
+ import mihon.domain.ocr.interactor.WithOcrScanSession
+ import tachiyomi.core.common.util.system.logcat
+@@ -23,6 +24,7 @@ internal class OcrChapterScanner(
+     private val clearCachedChapterOcr: ClearCachedChapterOcr,
+     private val withOcrScanSession: WithOcrScanSession,
+     private val scanPageOcr: ScanPageOcr,
++    private val saveCachedPageOcr: SaveCachedPageOcr,
+     private val pageSourceResolver: OcrPageSourceResolver,
+     private val downloadPreferences: DownloadPreferences,
+ ) {
+@@ -120,13 +122,21 @@ internal class OcrChapterScanner(
+                                     // только что распознанным черновиком. Кадр
+                                     // гасится флагом scanChapter(aiVerifier = null),
+                                     // поэтому часовой оффлайн-скан остаётся как был.
+-                                    if (aiVerifier != null) {
+-                                        aiVerifier.verifyPage(
+-                                            chapterId = chapterId,
+-                                            pageIndex = page.pageIndex,
+-                                            pageName = "${chapter.name} #${index + 1}",
+-                                            bitmap = bitmap,
+-                                            lines = ocr.regions.map { it.text },
++                                    val fixed = aiVerifier?.verifyPage(
++                                        pageName = "${chapter.name} #${index + 1}",
++                                        bitmap = bitmap,
++                                        regions = ocr.regions,
++                                    )
++                                    // Проверенный текст возвращается в кэш, иначе
++                                    // читатель получил бы старый распознанный текст,
++                                    // а правка модели осталась бы в отчёте.
++                                    if (fixed != null) {
++                                        saveCachedPageOcr.await(
++                                            ocr.copy(
++                                                chapterId = chapterId,
++                                                pageIndex = page.pageIndex,
++                                                regions = fixed,
++                                            ),
+                                         )
+                                     }
+                                 } finally {
+diff --git a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+index 6f77b63..c545ed7 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+@@ -582,6 +582,10 @@ class OcrRepositoryImpl(
+         }
+     }
+ 
++    override suspend fun savePage(result: OcrPageResult) {
++        cacheStore.upsert(result)
++    }
++
+     override suspend fun getCachedPage(
+         chapterId: Long,
+         pageIndex: Int,
+diff --git a/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt b/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
+index ed0ad86..c5bea9b 100644
+--- a/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
++++ b/domain/src/main/java/mihon/domain/ocr/repository/OcrRepository.kt
+@@ -72,6 +72,16 @@ interface OcrRepository {
+         pageIndex: Int,
+     ): OcrPageResult?
+ 
++    /**
++     * Перезаписать результат страницы в кэше.
++     *
++     * Нужна после проверки моделью: локальный OCR отдаёт текст с ошибками и
++     * пропусками, а читать должен проверенный вариант. Регионы приходят уже
++     * с рамками — у строк, добавленных моделью, рамки нет, и выдумывать её
++     * значило бы подсветить текст в пустоте.
++     */
++    suspend fun savePage(result: OcrPageResult)
++
+     suspend fun getCachedChapterIds(chapterIds: Collection<Long>): Set<Long>
+ 
+     suspend fun clearCachedChapter(chapterId: Long)
