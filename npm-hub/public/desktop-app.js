@@ -3569,7 +3569,7 @@ async function ghLoadRepos() {
   if (!grid) return;
   grid.innerHTML = '<div style="color:var(--t3);font-size:12px;grid-column:1/-1">Загрузка...</div>';
   try {
-    const r = await fetch('/api/gh/repos?per_page=50');
+    const r = await fetch('/api/gh/repos?per_page=100');
     const d = await r.json();
     if (!d.success) { grid.innerHTML = '<div style="color:var(--err);font-size:12px;grid-column:1/-1">' + escHtml(d.error || 'ошибка') + '</div>'; return; }
     ghRepos = d.repos || [];
@@ -4002,14 +4002,38 @@ function ghDownloadRepo(fullName) {
 
 // ===== GITHUB REPO: DELETE =====
 let ghDeleteFullName = '';
+// The on-screen keyboard capitalises the first letter of every word, so what
+// actually lands in the box is "Sj0404-collab/Zen-panel". Compared case
+// sensitively against "sj0404-collab/zen-panel" it never matches, so the
+// button stayed grey for good — no request, no error, nothing happened. GitHub
+// repo names are case-insensitive anyway, so compare them that way, accept the
+// bare repo name too, and say out loud whether it matches instead of leaving
+// the user to guess why the button is dead.
+function delrepoTyped(fullName, v) {
+  const t = String(v || '').trim().toLowerCase();
+  if (!t) return false;
+  return t === String(fullName).toLowerCase()
+    || t === String(fullName).split('/').pop().toLowerCase();
+}
+function delrepoVerdict(fullName) {
+  const el = document.getElementById('delrepo-verdict');
+  if (!el) return;
+  const t = String((document.getElementById('delrepo-confirm') || {}).value || '').trim();
+  el.style.color = delrepoTyped(fullName, t) ? 'var(--ok,#3fb950)' : 'var(--t2)';
+  el.textContent = !t ? 'ждём: ' + fullName
+    : delrepoTyped(fullName, t) ? '✓ совпадает — можно удалять'
+    : 'пока не совпадает с ' + fullName;
+}
 function ghDeleteRepoModal(fullName) {
   ghDeleteFullName = fullName;
   document.getElementById('delrepo-info').textContent = 'Вы уверены, что хотите удалить ' + fullName + '?';
   document.getElementById('delrepo-confirm').value = '';
   document.getElementById('delrepo-confirm').oninput = function() {
-    document.getElementById('delrepo-btn').disabled = this.value.trim() !== fullName;
+    document.getElementById('delrepo-btn').disabled = !delrepoTyped(fullName, this.value);
+    delrepoVerdict(fullName);
   };
   document.getElementById('delrepo-btn').disabled = true;
+  delrepoVerdict(fullName);
   document.getElementById('modal-delrepo').classList.add('on');
 }
 

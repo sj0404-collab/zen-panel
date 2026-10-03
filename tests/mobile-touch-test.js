@@ -924,10 +924,33 @@ check('q103 every repo list offers a delete button',
 check('q103 the button is on the card, not only on the opened repo',
   mob.indexOf("ghDeleteRepoModal('${escAttr(r.full_name)}')") < mob.indexOf('async function ghOpenRepo(') &&
   desk.indexOf("ghDeleteRepoModal('${escAttr(r.full_name)}')") < desk.indexOf('async function ghOpenRepo('));
+// q103 asked for `this.value.trim() !== fullName` in all three clients. That is
+// exactly the compare that never fired on a phone (q108): the keyboard
+// capitalises, so the strict compare left the button grey with no error. The
+// requirement is still "the name has to be typed out", so assert that instead.
 check('q103 deleting needs the repo name typed out',
-  [mob, desk, gitApp].every(c => c.includes('this.value.trim() !== fullName')) &&
+  [mob, desk, gitApp].every(c => c.includes('function delrepoTyped(fullName, v)') &&
+    c.includes("t === String(fullName).toLowerCase()")) &&
+  [mob, desk, gitApp].every(c => !c.includes('this.value.trim() !== fullName')) &&
   [mobHtml2, deskHtml2, gitHtml].every(h => h.includes('id="delrepo-confirm"') && h.includes('id="delrepo-btn"') &&
     h.includes('onclick="confirmDeleteRepo()"') && h.includes('id="modal-delrepo"')));
+// q108 The typed name never reached GitHub: the box compares case sensitively
+// and every phone keyboard capitalises the first letter of each word, so
+// "sj0404-collab/zen-panel" arrived as "Sj0404-collab/Zen-panel" and the delete
+// button stayed grey for good — no request, no error, nothing to read. The field
+// now refuses autocapitalisation, the compare is case-insensitive (GitHub names
+// are), the bare repo name is accepted, and the box says whether it matched.
+// tests/repo-delete-test.js drives the real functions for this.
+check('q108 the confirm field stops the keyboard from breaking the compare',
+  [mobHtml2, deskHtml2, gitHtml].every(h => /id="delrepo-confirm"[^>]*autocapitalize="off"/.test(h) &&
+    /id="delrepo-confirm"[^>]*autocorrect="off"/.test(h) && /id="delrepo-confirm"[^>]*spellcheck="false"/.test(h)) &&
+  [mobHtml2, deskHtml2, gitHtml].every(h => h.includes('id="delrepo-verdict"')));
+check('q108 a mismatch is explained where the user is looking',
+  [mob, desk, gitApp].every(c => c.includes('function delrepoVerdict(fullName)') &&
+    c.includes('не совпадает с ') && c.includes('✓ совпадает — можно удалять')));
+check('q108 the repo list is not silently capped at 50',
+  [mob, desk, gitApp].every(c => c.includes("/api/gh/repos?per_page=100") &&
+    !c.includes("/api/gh/repos?per_page=50")));
 check('q103 the mobile hub got the guard too, not just the modal',
   mob.includes('function ghDeleteRepoModal(') && mob.includes('async function confirmDeleteRepo(') &&
   mob.includes("fetch('/api/gh/delete-repo'") && mob.includes('ghDeleteFullName = null') &&

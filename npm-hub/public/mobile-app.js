@@ -430,7 +430,7 @@ async function ghLoadRepos() {
   if (grid.dataset.loaded && !ghRepos.length) return;
   grid.innerHTML = '<div style="color:var(--t3);font-size:12px">Загрузка...</div>';
   try {
-    const r = await fetch('/api/gh/repos?per_page=50');
+    const r = await fetch('/api/gh/repos?per_page=100');
     const d = await r.json();
     if (!d.success) { grid.innerHTML = '<div style="color:var(--err);font-size:12px">' + escHtml(d.error || 'ошибка') + '</div>'; return; }
     ghRepos = d.repos || [];
@@ -527,14 +527,40 @@ async function ghCloneAndOpen(toolId){
 // повод копия. Поэтому имя репозитория нада #1ывает нет, пока имя
 // совпадает с ним.
 let ghDeleteFullName = null;
+// The on-screen keyboard capitalises the first letter of every word, so what
+// actually lands in the box is "Sj0404-collab/Zen-panel". Compared case
+// sensitively against "sj0404-collab/zen-panel" it never matches, so the
+// button stayed grey for good — no request, no error, nothing happened. GitHub
+// repo names are case-insensitive anyway, so compare them that way, accept the
+// bare repo name too, and say out loud whether it matches instead of leaving
+// the user to guess why the button is dead.
+function delrepoTyped(fullName, v) {
+  const t = String(v || '').trim().toLowerCase();
+  if (!t) return false;
+  return t === String(fullName).toLowerCase()
+    || t === String(fullName).split('/').pop().toLowerCase();
+}
+function delrepoVerdict(fullName) {
+  const el = document.getElementById('delrepo-verdict');
+  if (!el) return;
+  const t = String((document.getElementById('delrepo-confirm') || {}).value || '').trim();
+  el.style.color = delrepoTyped(fullName, t) ? 'var(--ok,#3fb950)' : 'var(--t2)';
+  el.textContent = !t ? 'ждём: ' + fullName
+    : delrepoTyped(fullName, t) ? '✓ совпадает — можно удалять'
+    : 'пока не совпадает с ' + fullName;
+}
 function ghDeleteRepoModal(fullName) {
   ghDeleteFullName = fullName;
   const info = document.getElementById('delrepo-info');
   if (info) info.textContent = 'Вы уверены, что хотите удалить ' + fullName + '?';
   const input = document.getElementById('delrepo-confirm');
   const btn = document.getElementById('delrepo-btn');
-  if (input) { input.value = ''; input.oninput = function () { btn.disabled = this.value.trim() !== fullName; }; }
+  if (input) {
+    input.value = '';
+    input.oninput = function () { if (btn) btn.disabled = !delrepoTyped(fullName, this.value); delrepoVerdict(fullName); };
+  }
   if (btn) { btn.disabled = true; btn.textContent = 'Удалить навсегда'; }
+  delrepoVerdict(fullName);
   const bg = document.getElementById('modal-delrepo');
   if (bg) bg.classList.add('on');
   // The backdrop is wired once for every modal at the bottom of this file, so
