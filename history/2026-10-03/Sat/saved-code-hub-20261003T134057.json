@@ -1,0 +1,128 @@
+{
+  "kind": "snapshot-code.json",
+  "slot": "hub",
+  "stamp": "2026-10-03T13:41:23Z",
+  "changedFiles": [
+    {
+      "code": " M",
+      "path": ".github/workflows/agent.yml"
+    },
+    {
+      "code": " M",
+      "path": ".github/workflows/desks.yml"
+    },
+    {
+      "code": " M",
+      "path": "app/src/main/java/dev/zen/panel/MainActivity.kt"
+    },
+    {
+      "code": " M",
+      "path": "npm-hub/.zen-agent/audit.jsonl"
+    },
+    {
+      "code": " M",
+      "path": "npm-hub/public/desktop-app.js"
+    },
+    {
+      "code": " M",
+      "path": "npm-hub/public/mobile-app.js"
+    },
+    {
+      "code": " M",
+      "path": "npm-hub/src/server.js"
+    },
+    {
+      "code": " M",
+      "path": "npm-hub/src/tunnel.js"
+    },
+    {
+      "code": " M",
+      "path": "tests/mobile-touch-test.js"
+    },
+    {
+      "code": " M",
+      "path": "tools/open_tunnel.sh"
+    },
+    {
+      "code": "??",
+      "path": ".zen-agent/"
+    },
+    {
+      "code": "??",
+      "path": "audit.json"
+    },
+    {
+      "code": "??",
+      "path": "code.json"
+    }
+  ],
+  "gitStatus": " M .github/workflows/agent.yml\n M .github/workflows/desks.yml\n M app/src/main/java/dev/zen/panel/MainActivity.kt\n M npm-hub/.zen-agent/audit.jsonl\n M npm-hub/public/desktop-app.js\n M npm-hub/public/mobile-app.js\n M npm-hub/src/server.js\n M npm-hub/src/tunnel.js\n M tests/mobile-touch-test.js\n M tools/open_tunnel.sh\n?? .zen-agent/\n?? audit.json\n?? code.json\n",
+  "gitDiffStat": " .github/workflows/agent.yml                     |  4 +--\n .github/workflows/desks.yml                     |  4 +--\n app/src/main/java/dev/zen/panel/MainActivity.kt | 18 +++++++++++\n npm-hub/.zen-agent/audit.jsonl                  | 14 +++++++++\n npm-hub/public/desktop-app.js                   |  8 ++++-\n npm-hub/public/mobile-app.js                    | 10 +++++-\n npm-hub/src/server.js                           | 20 ++++++++++--\n npm-hub/src/tunnel.js                           |  8 ++++-\n tests/mobile-touch-test.js                      | 42 +++++++++++++++++++++++++\n tools/open_tunnel.sh                            |  9 +++++-\n 10 files changed, 127 insertions(+), 10 deletions(-)\n",
+  "gitDiff": "diff --git a/.github/workflows/agent.yml b/.github/workflows/agent.yml\nindex c2fd017..ed7020a 100644\n--- a/.github/workflows/agent.yml\n+++ b/.github/workflows/agent.yml\n@@ -562,7 +562,7 @@ jobs:\n           # without redirects keeps the step waiting on it forever. Both were\n           # measured on live runners.\n           $log = \"$env:TEMP\\cf.log\"\n-          cmd /c start \"\" /b \"$cf\" tunnel --url http://127.0.0.1:8765 --no-autoupdate --loglevel info `\n+          cmd /c start \"\" /b \"$cf\" tunnel --url http://127.0.0.1:8765 --protocol http2 --no-autoupdate --loglevel info `\n             \"1>$log\" \"2>$env:TEMP\\cf.err\"\n \n           $url = $null\n@@ -663,7 +663,7 @@ jobs:\n             Write-Host \"::warning::agent tunnel is unavailable; replacing the stale URL.\"\n             Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue\n             $log = \"$env:TEMP\\cf2.log\"\n-            cmd /c start \"\" /b \"$env:TEMP\\cloudflared.exe\" tunnel --url http://127.0.0.1:8765 --no-autoupdate --loglevel info `\n+            cmd /c start \"\" /b \"$env:TEMP\\cloudflared.exe\" tunnel --url http://127.0.0.1:8765 --protocol http2 --no-autoupdate --loglevel info `\n               \"1>$log\" \"2>$env:TEMP\\cf2.err\"\n             $url = $null\n             foreach ($k in 1..40) {\ndiff --git a/.github/workflows/desks.yml b/.github/workflows/desks.yml\nindex c592789..7c4d962 100644\n--- a/.github/workflows/desks.yml\n+++ b/.github/workflows/desks.yml\n@@ -139,7 +139,7 @@ jobs:\n           # allows one, so it could never do this.\n           # Detached, so the step can finish while the tunnel keeps running.\n           $log = \"$env:TEMP\\cf.log\"\n-          cmd /c start \"\" /b \"$cf\" tunnel --url http://127.0.0.1:6080 --no-autoupdate --loglevel info `\n+          cmd /c start \"\" /b \"$cf\" tunnel --url http://127.0.0.1:6080 --protocol http2 --no-autoupdate --loglevel info `\n             \"1>$log\" \"2>$env:TEMP\\cf.err\"\n \n           $url = $null\n@@ -219,7 +219,7 @@ jobs:\n             Write-Host \"::warning::the desk tunnel is unavailable; replacing the stale URL.\"\n             Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue\n             $log = \"$env:TEMP\\cf2.log\"\n-            cmd /c start \"\" /b \"$cf\" tunnel --url http://127.0.0.1:6080 --no-autoupdate --loglevel info `\n+            cmd /c start \"\" /b \"$cf\" tunnel --url http://127.0.0.1:6080 --protocol http2 --no-autoupdate --loglevel info `\n               \"1>$log\" \"2>$env:TEMP\\cf2.err\"\n             $url = $null\n             foreach ($try in 1..30) {\ndiff --git a/app/src/main/java/dev/zen/panel/MainActivity.kt b/app/src/main/java/dev/zen/panel/MainActivity.kt\nindex cc4c963..5e71e36 100644\n--- a/app/src/main/java/dev/zen/panel/MainActivity.kt\n+++ b/app/src/main/java/dev/zen/panel/MainActivity.kt\n@@ -18,8 +18,10 @@ import android.net.Uri\n import android.os.Build\n import android.os.Bundle\n import android.os.Environment\n+import android.util.Log\n import android.view.View\n import android.view.ViewGroup\n+import android.webkit.ConsoleMessage\n import android.webkit.CookieManager\n import android.webkit.WebChromeClient\n import android.webkit.WebResourceError\n@@ -155,6 +157,22 @@ class MainActivity : ComponentActivity() {\n                 bar.visibility = if (newProgress in 1..99) View.VISIBLE else View.GONE\n             }\n \n+            // Without this a WebView throws every console.log away, so the hub's\n+            // own diagnostics were invisible exactly when they were needed: a\n+            // page that cannot say \"socket closed 1006\" leaves nobody guessing.\n+            // Tag carries the page URL, which is what tells a hub tab apart from\n+            // the launcher or the panel when reading logcat.\n+            override fun onConsoleMessage(\n+                cm: ConsoleMessage?\n+            ): Boolean {\n+                if (cm == null) return false\n+                val line = cm.messageLine ?: return false\n+                if (line.isNotBlank()) {\n+                    Log.d(\"ZenPanel\", \"[${cm.sourceId()}] $line\")\n+                }\n+                return true\n+            }\n+\n             override fun onShowFileChooser(\n                 view: WebView?, callback: ValueCallback<Array<Uri>>?,\n                 params: FileChooserParams?\ndiff --git a/npm-hub/.zen-agent/audit.jsonl b/npm-hub/.zen-agent/audit.jsonl\nindex 4c303fc..8c4e1f1 100644\n--- a/npm-hub/.zen-agent/audit.jsonl\n+++ b/npm-hub/.zen-agent/audit.jsonl\n@@ -22,3 +22,17 @@\n {\"at\":\"2026-09-12T09:47:09.788Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"ling-3.0-flash-fin-free\"],\"retired\":[],\"live\":8,\"total\":11}\n {\"at\":\"2026-09-12T09:57:14.977Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n {\"at\":\"2026-09-12T09:57:14.978Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"ling-3.0-flash-fin-free\"],\"retired\":[],\"live\":8,\"total\":11}\n+{\"at\":\"2026-10-03T12:35:23.353Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-03T12:35:23.353Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"ling-3.0-flash-fin-free\",\"fledge-alpha-free\",\"ling-3.1-flash-free\"],\"retired\":[\"hy3-free\",\"x-preview-f-free\",\"laguna-s-2.1-free\"],\"live\":14,\"total\":17}\n+{\"at\":\"2026-10-03T12:45:36.119Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-03T12:45:36.120Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"ling-3.0-flash-fin-free\",\"fledge-alpha-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":14,\"total\":17}\n+{\"at\":\"2026-10-03T12:55:50.820Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-03T12:55:50.820Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"ling-3.0-flash-fin-free\",\"fledge-alpha-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":14,\"total\":17}\n+{\"at\":\"2026-10-03T13:05:53.197Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-03T13:05:53.201Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"ling-3.0-flash-fin-free\",\"fledge-alpha-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":14,\"total\":17}\n+{\"at\":\"2026-10-03T13:15:57.472Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-03T13:15:57.473Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"ling-3.0-flash-fin-free\",\"fledge-alpha-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":14,\"total\":17}\n+{\"at\":\"2026-10-03T13:26:00.834Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-03T13:26:00.834Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"ling-3.0-flash-fin-free\",\"fledge-alpha-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":14,\"total\":17}\n+{\"at\":\"2026-10-03T13:36:10.431Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-03T13:36:10.432Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"ling-3.0-flash-fin-free\",\"fledge-alpha-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":14,\"total\":17}\ndiff --git a/npm-hub/public/desktop-app.js b/npm-hub/public/desktop-app.js\nindex 67b977b..a973705 100644\n--- a/npm-hub/public/desktop-app.js\n+++ b/npm-hub/public/desktop-app.js\n@@ -1209,8 +1209,14 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {\n       // the socket; onclose owns the single reconnect/backoff path.\n       try { if (socket.readyState !== WebSocket.CLOSED) socket.close(); } catch {}\n     };\n-    socket.onclose = () => {\n+    socket.onclose = (ev) => {\n       if (td.manualClose) return;\n+      // Same reason the mobile hub logs it: a code of 1006 (peer gone, no close\n+      // frame) and a 1001 (page went away) are different faults, and both used\n+      // to reach the user as the same silent countdown.\n+      console.warn(`[hub] terminal socket closed code=${ev && ev.code}` +\n+        `${(ev && ev.reason) ? ` reason=\"${ev.reason}\"` : ''}` +\n+        ` wasClean=${ev ? ev.wasClean : '?'} retry=${td.retry}`);\n       if (td.ws !== socket) return; // superseded by a newer socket; it owns reconnection\n       if (td.connectTimer) { clearTimeout(td.connectTimer); td.connectTimer = null; }\n       if (td.reconnectTimer) { clearTimeout(td.reconnectTimer); td.reconnectTimer = null; }\ndiff --git a/npm-hub/public/mobile-app.js b/npm-hub/public/mobile-app.js\nindex 6a9d515..037795a 100644\n--- a/npm-hub/public/mobile-app.js\n+++ b/npm-hub/public/mobile-app.js\n@@ -1654,8 +1654,16 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {\n       // the close path so the existing reconnect/backoff logic always runs.\n       try { if (socket.readyState !== WebSocket.CLOSED) socket.close(); } catch {}\n     };\n-    socket.onclose = () => {\n+    socket.onclose = (ev) => {\n       if (tab.manualClose) return;\n+      // The close code is the whole diagnosis. 1006 means the peer vanished\n+      // without a close frame (dead connector, dropped radio); 1001 is the page\n+      // going away; anything else carries a reason worth reading. Without this\n+      // line every drop looks identical from the outside.\n+      console.warn(`[hub] terminal socket closed code=${ev && ev.code}` +\n+        `${(ev && ev.reason) ? ` reason=\"${ev.reason}\"` : ''}` +\n+        ` wasClean=${ev ? ev.wasClean : '?'} retry=${tab.retry}` +\n+        ` silent=${Math.round((Date.now() - (tab.lastPong || Date.now())) / 1000)}s`);\n       if (tab.socket !== socket) return; // superseded by a newer socket; it owns reconnection\n       if (tab.connectTimer) { clearTimeout(tab.connectTimer); tab.connectTimer = null; }\n       if (tab.reconnectTimer) { clearTimeout(tab.reconnectTimer); tab.reconnectTimer = null; }\ndiff --git a/npm-hub/src/server.js b/npm-hub/src/server.js\nindex 1e15596..65559a8 100644\n--- a/npm-hub/src/server.js\n+++ b/npm-hub/src/server.js\n@@ -2855,7 +2855,8 @@ wss.on('connection', (ws) => {\n   });\n \n   ws.on('message', (raw) => {\n-    ws.lastSeen = Date.now();\n+ws.lastSeen = Date.now();\n+  ws.openedAt = ws.lastSeen;\n     let msg;\n     try { msg = JSON.parse(raw); } catch { return; }\n \n@@ -2997,7 +2998,22 @@ wss.on('connection', (ws) => {\n       case 'close': { detachPtyClient(session, ws); return; }\n     }\n   });\n-  ws.on('close', () => {\n+  ws.on('close', (code, reason) => {\n+    // Why did a terminal socket die? One line, because \"it reconnects every\n+    // thirty seconds\" has two very different cures and only the close code\n+    // tells them apart:\n+    //   1006 / empty reason  the peer vanished without a close frame - a dead\n+    //                         connector or a dropped mobile radio, never a\n+    //                         deliberate goodbye;\n+    //   1000 + our own reap  the heartbeat below terminated a socket that had\n+    //                         been silent past its window (see silentMs).\n+    // The text is stripped because a client may put anything in `reason`.\n+    const why = (reason && reason.length ? String(reason) : '').replace(/\\s+/g, ' ').slice(0, 120);\n+    console.log(`[ws] terminal socket closed code=${code}` +\n+      `${why ? ` reason=\"${why}\"` : ''}` +\n+      ` alive=${Math.round((Date.now() - (ws.openedAt || Date.now())) / 1000)}s` +\n+      ` silent=${Math.round((Date.now() - (ws.lastSeen || Date.now())) / 1000)}s` +\n+      ` session=${(session && session.id) || '-'}`);\n     if (session && session.clients) {\n       detachPtyClient(session, ws);\n       // Halt tmux polling while unattached; pipe-pane keeps writing the log.\ndiff --git a/npm-hub/src/tunnel.js b/npm-hub/src/tunnel.js\nindex 09157cb..9fa530c 100644\n--- a/npm-hub/src/tunnel.js\n+++ b/npm-hub/src/tunnel.js\n@@ -301,8 +301,14 @@ async function startCloudflare(port) {\n   // ::1 first while the application is listening on IPv4 only; that gives the\n   // tunnel a healthy process but a dead origin and eventually a 1033/502 page.\n   const origin = `http://127.0.0.1:${n}`;\n+  // http2 instead of the QUIC default. QUIC rides on UDP, which a cloud runner\n+  // often throttles or drops, and the symptom is a tunnel whose address stays\n+  // the same while every WebSocket dies after a few dozen seconds. http2 shares\n+  // the TCP path the job already uses. HUB_TUNNEL_PROTOCOL=quic restores the\n+  // old behaviour for a host whose UDP path is known to be clean.\n+  const protocol = process.env.HUB_TUNNEL_PROTOCOL || 'http2';\n   const result = await spawnTunnel(\n-    [bin, 'tunnel', '--url', origin, '--no-autoupdate', '--loglevel', 'info'],\n+    [bin, 'tunnel', '--url', origin, '--protocol', protocol, '--no-autoupdate', '--loglevel', 'info'],\n     /(https:\\/\\/[a-zA-Z0-9-]+\\.trycloudflare\\.com)/,\n     { timeoutMs: START_TIMEOUT_MS }\n   );\ndiff --git a/tests/mobile-touch-test.js b/tests/mobile-touch-test.js\nindex 87a4e40..f476b30 100644\n--- a/tests/mobile-touch-test.js\n+++ b/tests/mobile-touch-test.js\n@@ -907,5 +907,47 @@ check('q103 the server owns the call, not the page',\n   server.includes(\"method: 'DELETE'\") &&\n   server.includes('if (r.status === 204)'));\n \n+// q104: every cloudflared spoke TCP, not QUIC. cloudflared defaults to QUIC on\n+// UDP, which a cloud runner often throttles or blackholes; the symptom was an\n+// address that stays put while every WebSocket dies after a few dozen seconds.\n+// http2 shares the TCP the job already uses. The env escape hatch keeps a host\n+// with clean UDP one flag away, and both spawners carry it.\n+const desksWf = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'desks.yml'), 'utf8');\n+const agentWf = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'agent.yml'), 'utf8');\n+const tunnelJs = fs.readFileSync(path.join(__dirname, '..', 'npm-hub', 'src', 'tunnel.js'), 'utf8');\n+check('q104 no cloudflared connector is left on QUIC',\n+  openTunnel.includes('--protocol http2') &&\n+  tunnelJs.includes(\"process.env.HUB_TUNNEL_PROTOCOL || 'http2'\") &&\n+  tunnelJs.includes(\"'--protocol', protocol\") &&\n+  [...desksWf.matchAll(/tunnel --url/g)].length === 2 &&\n+  [...agentWf.matchAll(/tunnel --url/g)].length === 2 &&\n+  [...(desksWf + agentWf).matchAll(/tunnel --url[^\\n]*/g)].every(m => m[0].includes('--protocol http2')));\n+check('q104 the reason why is written down where the flag is',\n+  openTunnel.includes('cloudflared defaults to QUIC') &&\n+  tunnelJs.includes('http2 instead of the QUIC default') &&\n+  openTunnel.includes('UDP path is often throttled'));\n+\n+// q105: a drop was invisible from both ends. The server logged nothing on close,\n+// and a WebView with no onConsoleMessage discards every console.log - so the\n+// hub could not report why a socket died even in principle. Now both sides say\n+// it out loud, and the panel forwards the page's own words to logcat.\n+check('q105 the server says why a socket died',\n+  server.includes(\"ws.openedAt = ws.lastSeen;\") &&\n+  server.includes('ws.on(\\'close\\', (code, reason) => {') &&\n+  server.includes('[ws] terminal socket closed code=${code}') &&\n+  server.includes('alive=${Math.round((Date.now() - (ws.openedAt || Date.now())) / 1000)}s') &&\n+  server.includes('silent=${Math.round((Date.now() - (ws.lastSeen || Date.now())) / 1000)}s'));\n+check('q105 both hub pages report the close code',\n+  mob.includes('socket.onclose = (ev) => {') && desk.includes('socket.onclose = (ev) => {') &&\n+  mob.includes('[hub] terminal socket closed code=') &&\n+  desk.includes('[hub] terminal socket closed code=') &&\n+  mob.includes('wasClean=${ev ? ev.wasClean : \\'?\\'}') &&\n+  desk.includes('wasClean=${ev ? ev.wasClean : \\'?\\'}'));\n+check('q105 the panel no longer swallows the page console',\n+  panelKt.includes('override fun onConsoleMessage(') &&\n+  panelKt.includes('Log.d(\"ZenPanel\", \"[${cm.sourceId()}] $line\")') &&\n+  panelKt.includes('import android.util.Log') &&\n+  panelKt.includes('import android.webkit.ConsoleMessage'));\n+\n console.log(`MOBILE-TOUCH: ${pass} passed, ${fail} failed`);\n process.exit(fail ? 1 : 0);\ndiff --git a/tools/open_tunnel.sh b/tools/open_tunnel.sh\nindex 02bdf0c..c7aceed 100755\n--- a/tools/open_tunnel.sh\n+++ b/tools/open_tunnel.sh\n@@ -80,8 +80,15 @@ fi\n \n # Use IPv4 explicitly. On some hosts localhost resolves to ::1 while the\n # service listens only on IPv4; cloudflared then stays alive with a dead origin.\n+#\n+# --protocol http2 is deliberate and not cosmetic. cloudflared defaults to QUIC,\n+# which rides on UDP; on a cloud runner that UDP path is often throttled,\n+# blackholed or duplicated, and the symptom is precisely \"the address stays the\n+# same but every WebSocket dies after half a minute\". http2 runs over the same\n+# TCP the rest of the job already uses, so a tunnel drop now means the whole\n+# runner lost the network - which is the truth we want to see in a log.\n nohup \"$CF\" tunnel --url \"http://127.0.0.1:$PORT\" \\\n-  --no-autoupdate --loglevel info >\"$LOG\" 2>&1 &\n+  --protocol http2 --no-autoupdate --loglevel info >\"$LOG\" 2>&1 &\n PID=$!\n echo \"$PID\" > \"$PIDFILE\"\n \n",
+  "gitLog": [
+    "8e647e9 A launcher inside the hub that never asks the runner (#122)",
+    "2bab3a5 Add a repo delete button to the mobile hub's Git tab (#121)",
+    "1437784 Delete the runner's dead buttons, add a launcher tab, hold the hub (#120)",
+    "c48842c Fold the rarely pressed hub controls behind one \"Ещё\" (#119)",
+    "87652e5 handoff: a runner only starts when you press (#118)",
+    "53baf87 tui: keep the last screen on disk so a dead tunnel is not a black terminal (#117)",
+    "b2cc771 reaper: fire on workflow_run so dead slots close at once, not up to 10 min later (#116)",
+    "b029861 reaper: close session slots whose runner is gone (#115)",
+    "92868a0 Dual tunnels with automatic reserve failover (#114)",
+    "1abb3da Rescue channels round 2: dual-VM, heartbeats, in-place repair (#113)",
+    "7bd371d Runner rescue channels: tmate ssh + safe command queue (#112)",
+    "973ffdb tests: q74 asserts the new retention rule (newest + newest-2-with-repos)",
+    "c9c1aa2 Work backups: snapshot hub-work repos, opencode chats and settings only (#111)",
+    "3eff344 Stage Z8: вход за 1–3 минуты; вкладка «Снапшот» — восстановление репо по кнопке (#110)",
+    "ca3fb42 Stage Z7: «сессия завершена» во время загрузки хаба → «запуск ещё идёт». (#109)",
+    "92ecf89 Stage Z6b: «Failed to fetch» → понятная подсказка. (#108)",
+    "47ea4b7 Stage Z6: карточка не крутится вечно. (#107)",
+    "a6fe6b2 Stage Z5: «Неизвестная ошибка» при скачивании из Git-вкладки (#106)",
+    "7301e27 Stage Z4: живые opencode-сессии после открытия хаба. (#105)",
+    "c49fcce Stage Z3: терминал больше не «сужается» при обрыве и восстановлении. (#104)"
+  ],
+  "sessions": [],
+  "topFiles": [
+    "AGENTS.md",
+    "README.md",
+    "TESTING.md",
+    "agent",
+    "app",
+    "artifacts",
+    "audit.json",
+    "build.gradle.kts",
+    "ci",
+    "code.json",
+    "desktop",
+    "free-multimodal-models.txt",
+    "gradle.properties",
+    "hub",
+    "models-agent.json",
+    "models-hub-linux.json",
+    "models-hub-windows.json",
+    "models-hub.json",
+    "models-opencode.json",
+    "npm-hub",
+    "opencode.json",
+    "pc-local",
+    "restore-session.sh",
+    "saved",
+    "session-agent.json",
+    "session-hub-linux.json",
+    "session-hub-windows.json",
+    "session-hub.json",
+    "session-linux.json",
+    "session-opencode.json",
+    "session-windows.json",
+    "settings.gradle.kts",
+    "tests",
+    "tools",
+    "workflow-cloudflare-fixes.patch"
+  ],
+  "changedCount": 13,
+  "startedAt": "2026-10-03T13:41:54Z",
+  "state": "live",
+  "runId": "37123283114",
+  "runNumber": "363",
+  "repo": "sj0404-collab/zen-panel"
+}
