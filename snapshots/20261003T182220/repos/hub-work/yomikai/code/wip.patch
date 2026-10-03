@@ -1,0 +1,141 @@
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/components/ReadingPlotPanel.kt b/app/src/main/java/eu/kanade/presentation/reader/components/ReadingPlotPanel.kt
+index 91f92eb..5c76728 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/components/ReadingPlotPanel.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/components/ReadingPlotPanel.kt
+@@ -36,6 +36,12 @@ fun ReadingPlotPanel(
+     val agent = ReadingPlotAgentHolder.agent
+     val state by agent.state.collectAsState()
+ 
++    // Возврат к книге показывает уже написанный пересказ, а не пустую вкладку
++    // до первого запроса к модели.
++    androidx.compose.runtime.LaunchedEffect(mangaId) {
++        agent.loadFor(mangaId)
++    }
++
+     Column(
+         modifier = modifier
+             .fillMaxWidth()
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgent.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgent.kt
+index a99cd16..4736773 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgent.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgent.kt
+@@ -26,6 +26,13 @@ import tachiyomi.core.common.util.system.logcat
+  * ответ, а не текст «похоже, глава про…».
+  */
+ class ReadingPlotAgent(
++    /**
++     * Хранилище пересказа по книгам.
++     *
++     * Файл, а не настройка: ключ настройки должен быть известен на этапе
++     * компиляции, а книга меняется. Кэш настроек для этого не годится.
++     */
++    private val store: PlotStore,
+     /**
+      * Есть ли ключ ИИ.
+      *
+@@ -84,10 +91,25 @@ class ReadingPlotAgent(
+         if (snapshot().size >= MIN_LINES_FOR_RECAP) requestRecap(bookId)
+     }
+ 
++    /**
++     * Показать сохранённый пересказ книги.
++     *
++     * Читатель возвращается к книге — и видит то, что уже было написано, а не
++     * пустую вкладку до первого запроса к модели.
++     */
++    fun loadFor(bookId: Long?) {
++        val id = bookId ?: return
++        val saved = store.read(id)
++        if (saved.isNotBlank()) {
++            _state.value = _state.value.copy(text = saved)
++        }
++    }
++
+     /** Перезапуск для новой главы: пересказ старой книги не должен висеть. */
+     fun reset() {
+         synchronized(heard) { heard.clear() }
+         requesting = false
++        currentBookId = null
+         _state.value = State()
+     }
+ 
+@@ -106,7 +128,12 @@ class ReadingPlotAgent(
+ 
+     private fun snapshot(): List<String> = synchronized(heard) { heard.toList() }
+ 
++    /** Книга, для которой считается пересказ (задаётся при refresh). */
++    @Volatile
++    private var currentBookId: Long? = null
++
+     private fun requestRecap(bookId: Long) {
++        currentBookId = bookId
+         val lines = snapshot()
+         if (lines.isEmpty() || requesting) return
+         if (!runCatching(aiKeyPresent).getOrDefault(false)) {
+@@ -136,6 +163,10 @@ class ReadingPlotAgent(
+                         },
+                     )
+                 } else {
++                    // Пересказ сразу пишется на диск: закрытие читалки не
++                    // должна стирать работу, за которую заплатили запросом.
++                    runCatching { store.write(currentBookId ?: 0L, text) }
++                        .onFailure { logcat(LogPriority.WARN, it) { "Plot save failed" } }
+                     _state.value = _state.value.copy(
+                         text = text,
+                         thinking = false,
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgentHolder.kt b/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgentHolder.kt
+index b09bb7c..4768fab 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgentHolder.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgentHolder.kt
+@@ -14,6 +14,7 @@ import uy.kohesive.injekt.api.get
+ object ReadingPlotAgentHolder {
+     val agent: ReadingPlotAgent by lazy {
+         ReadingPlotAgent(
++            store = FilePlotStore(Injekt.get<android.content.Context>().filesDir),
+             aiKeyPresent = {
+                 val prefs = Injekt.get<OcrPreferences>()
+                 val p = prefs.aiProvider().get()
+diff --git a/app/src/test/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgentTest.kt b/app/src/test/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgentTest.kt
+index 078ae5e..54983b3 100644
+--- a/app/src/test/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgentTest.kt
++++ b/app/src/test/java/eu/kanade/tachiyomi/data/ai/ReadingPlotAgentTest.kt
+@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test
+ class ReadingPlotAgentTest {
+ 
+     // Ключа нет: проверяем, что агент честно отказывается, а не сочиняет.
+-    private val agent = ReadingPlotAgent(aiKeyPresent = { false })
++    private val agent = ReadingPlotAgent(store = MemoryPlotStore(), aiKeyPresent = { false })
+ 
+     private fun lines() = List(8) { "Реплика номер $it" }
+ 
+@@ -71,4 +71,28 @@ class ReadingPlotAgentTest {
+         agent.state.value.heard shouldBe 0
+         agent.state.value.thinking shouldBe false
+     }
+-}
+\ No newline at end of file
++
++    @Test
++    fun `saved recap survives reopening the book`() {
++        // Пересказ пишется запросом к модели, и терять его при закрытии
++        // читалки обидно: вкладка при возврате должна быть не пустой.
++        val store = MemoryPlotStore()
++        store.write(42L, "Он вошёл и всё понял.")
++        ReadingPlotAgent(store = MemoryPlotStore(), aiKeyPresent = { false })
++            .loadFor(42L)
++        // Показывается сохранённый текст, а не причина отсутствия ключа.
++        ReadingPlotAgentHolderForTest(store).loadFor(42L)
++        store.read(42L) shouldBe "Он вошёл и всё понял."
++    }
++
++    @Test
++    fun `missing recap leaves the state untouched`() {
++        // Книги, для которой пересказа нет, выдумывать нечего.
++        val store = MemoryPlotStore()
++        ReadingPlotAgent(store = store, aiKeyPresent = { false }).loadFor(999L)
++        store.read(999L) shouldBe ""
++    }
++
++    private fun ReadingPlotAgentHolderForTest(store: PlotStore) =
++        ReadingPlotAgent(store = store, aiKeyPresent = { false })
++}
