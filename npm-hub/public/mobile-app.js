@@ -1654,8 +1654,16 @@ async function createTerm(toolId, cwdOverride, plainTerminal, resumeSession) {
       // the close path so the existing reconnect/backoff logic always runs.
       try { if (socket.readyState !== WebSocket.CLOSED) socket.close(); } catch {}
     };
-    socket.onclose = () => {
+    socket.onclose = (ev) => {
       if (tab.manualClose) return;
+      // The close code is the whole diagnosis. 1006 means the peer vanished
+      // without a close frame (dead connector, dropped radio); 1001 is the page
+      // going away; anything else carries a reason worth reading. Without this
+      // line every drop looks identical from the outside.
+      console.warn(`[hub] terminal socket closed code=${ev && ev.code}` +
+        `${(ev && ev.reason) ? ` reason="${ev.reason}"` : ''}` +
+        ` wasClean=${ev ? ev.wasClean : '?'} retry=${tab.retry}` +
+        ` silent=${Math.round((Date.now() - (tab.lastPong || Date.now())) / 1000)}s`);
       if (tab.socket !== socket) return; // superseded by a newer socket; it owns reconnection
       if (tab.connectTimer) { clearTimeout(tab.connectTimer); tab.connectTimer = null; }
       if (tab.reconnectTimer) { clearTimeout(tab.reconnectTimer); tab.reconnectTimer = null; }

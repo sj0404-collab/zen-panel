@@ -80,8 +80,15 @@ fi
 
 # Use IPv4 explicitly. On some hosts localhost resolves to ::1 while the
 # service listens only on IPv4; cloudflared then stays alive with a dead origin.
+#
+# --protocol http2 is deliberate and not cosmetic. cloudflared defaults to QUIC,
+# which rides on UDP; on a cloud runner that UDP path is often throttled,
+# blackholed or duplicated, and the symptom is precisely "the address stays the
+# same but every WebSocket dies after half a minute". http2 runs over the same
+# TCP the rest of the job already uses, so a tunnel drop now means the whole
+# runner lost the network - which is the truth we want to see in a log.
 nohup "$CF" tunnel --url "http://127.0.0.1:$PORT" \
-  --no-autoupdate --loglevel info >"$LOG" 2>&1 &
+  --protocol http2 --no-autoupdate --loglevel info >"$LOG" 2>&1 &
 PID=$!
 echo "$PID" > "$PIDFILE"
 

@@ -139,7 +139,7 @@ jobs:
           # allows one, so it could never do this.
           # Detached, so the step can finish while the tunnel keeps running.
           $log = "$env:TEMP\cf.log"
-          cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:6080 --no-autoupdate --loglevel info `
+          cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:6080 --protocol http2 --no-autoupdate --loglevel info `
             "1>$log" "2>$env:TEMP\cf.err"
 
           $url = $null
@@ -219,7 +219,7 @@ jobs:
             Write-Host "::warning::the desk tunnel is unavailable; replacing the stale URL."
             Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
             $log = "$env:TEMP\cf2.log"
-            cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:6080 --no-autoupdate --loglevel info `
+            cmd /c start "" /b "$cf" tunnel --url http://127.0.0.1:6080 --protocol http2 --no-autoupdate --loglevel info `
               "1>$log" "2>$env:TEMP\cf2.err"
             $url = $null
             foreach ($try in 1..30) {
