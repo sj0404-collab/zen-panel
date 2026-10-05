@@ -84,7 +84,19 @@ case "$1 $2" in
   "pr create")
     n=77; echo "$n" > "$GH_STUB_PR"; echo "https://example/pr/$n"; exit 0 ;;
   "pr merge")
-    echo "merged $3" >> "$GH_STUB_CALLS"; exit 0 ;;
+    # A real squash-merge on the bare origin, not just a note in a file. Without
+    # it main never moves, the work branch keeps diverging from it, and the
+    # fixture starts failing for reasons that have nothing to do with the script.
+    echo "merged $3" >> "$GH_STUB_CALLS"
+    pr="$3"; base="main"
+    head_sha=$(git -C "$GH_STUB_W" rev-parse "refs/remotes/origin/$base" 2>/dev/null)
+    br_sha=$(git -C "$GH_STUB_W" rev-parse HEAD 2>/dev/null)
+    if [ -n "$br_sha" ]; then
+      ( cd "$GH_STUB_BARE" &&
+        git update-ref "refs/heads/$base" "$br_sha" &&
+        git symbolic-ref HEAD "refs/heads/$base" ) >/dev/null 2>&1
+    fi
+    exit 0 ;;
 esac
 exit 0
 STUB
@@ -96,6 +108,7 @@ export AUTOSHIP_GH=1   # the stub gh on PATH is real for this case
 # statusCheckRollup empty => a repo with no CI configured: green by default,
 # otherwise a repo without workflows could never merge anything.
 PATH="$TMP/bin:$PATH" GH_STUB_PR="$TMP/prnum" GH_STUB_CALLS="$TMP/calls" \
+GH_STUB_W="$TMP/w" GH_STUB_BARE="$TMP/origin.git" \
 AUTOSHIP_TEST_CMD='sh -c "echo 9 passed, 0 failed"' \
   bash "$TOOLS/auto-ship.sh" --once >/dev/null 2>&1
 check "green CI merges the PR" "$(grep -q 'merged 77' "$TMP/calls" && echo 1 || echo 0)"
@@ -107,6 +120,7 @@ check "it returns to main afterwards" "$([ "$(git -C "$TMP/w" rev-parse --abbrev
 export AUTOSHIP_GH=1   # the stub gh below is real for this case
 ( cd "$TMP/w" && echo no-merge >> base.txt )
 PATH="$TMP/bin:$PATH" GH_STUB_PR="$TMP/prnum" GH_STUB_CALLS="$TMP/calls" \
+GH_STUB_W="$TMP/w" GH_STUB_BARE="$TMP/origin.git" \
 AUTOSHIP_NO_MERGE=1 AUTOSHIP_TEST_CMD='sh -c "echo 9 passed, 0 failed"' \
   bash "$TOOLS/auto-ship.sh" --once >/dev/null 2>&1
 check "AUTOSHIP_NO_MERGE=1 never merges" "$(grep -q 'merged' "$TMP/calls" && echo 0 || echo 1)"
@@ -121,10 +135,25 @@ check "AUTOSHIP_NO_MERGE=1 never merges" "$(grep -q 'merged' "$TMP/calls" && ech
 # "cannot tell" case; the log line is asserted too, so a future change that made
 # this merge would have to also rewrite the log to keep passing.
 PATH="$TMP/bin:$PATH" GH_STUB_PR="$TMP/prnum" GH_STUB_CALLS="$TMP/calls" \
+GH_STUB_W="$TMP/w" GH_STUB_BARE="$TMP/origin.git" \
 AUTOSHIP_TEST_CMD='' \
   bash "$TOOLS/auto-ship.sh" --once >/dev/null 2>&1
-check "no test verdict never merges" "$(grep -q 'merged' "$TMP/calls" && echo 0 || echo 1)"
-check "and it says why" "$(grep -q 'no test verdict to merge on' "$HUB_LOGS/auto-ship.log" && echo 1 || echo 0)"
+# A repo cloned from GitHub often has no local suite at all, and an autopilot
+# that never merges for that reason is worse than useless - it is exactly what
+# the user reported. So the verdict falls through to CI, which is the real gate.
+check "no local suite still merges on a green CI" "$(grep -q 'merged 77' "$TMP/calls" && echo 1 || echo 0)"
+check "and the log says what it merged on" "$(grep -q 'merge rests on CI/git state alone' "$HUB_LOGS/auto-ship.log" && echo 1 || echo 0)"
+
+# AUTOSHIP_MERGE_UNVERIFIED=1 is the strict setting: with no local suite and no
+# verdict from anywhere, refuse. The default is permissive on purpose, but the
+# switch has to actually work or it is decoration.
+: > "$TMP/calls"; rm -f "$TMP/prnum"
+( cd "$TMP/w" && echo strict >> base.txt )
+PATH="$TMP/bin:$PATH" GH_STUB_PR="$TMP/prnum" GH_STUB_CALLS="$TMP/calls" \
+GH_STUB_W="$TMP/w" GH_STUB_BARE="$TMP/origin.git" \
+AUTOSHIP_TEST_CMD='' AUTOSHIP_MERGE_UNVERIFIED=1 \
+  bash "$TOOLS/auto-ship.sh" --once >/dev/null 2>&1
+check "AUTOSHIP_MERGE_UNVERIFIED=1 forbids the unverified merge" "$(grep -q 'merged' "$TMP/calls" && echo 0 || echo 1)"
 
 # ── 8. a clean tree is a no-op, not a spurious commit ────────────────────────
 # Counted on the work branch, and the tick is pinned to that same branch: the
@@ -138,6 +167,72 @@ AUTOSHIP_TEST_CMD='sh -c "echo 9 passed, 0 failed"' \
   bash "$TOOLS/auto-ship.sh" --once >/dev/null 2>&1
 check "clean tree makes no commit" "$([ "$before" = "$(git -C "$TMP/w" rev-list --count autoship)" ] && echo 1 || echo 0)"
 check "clean tree leaves nothing uncommitted" "$([ -z "$(git -C "$TMP/w" status --porcelain)" ] && echo 1 || echo 0)"
+
+# ── 9. the base branch is this repo's own, not a guess ───────────────────────
+# One of the user's own repositories is on `master`. A hardcoded `main` opens
+# the PR into a branch that does not exist there, so the default branch is
+# detected: origin/HEAD first, then gh, then whichever of main/master exists.
+M="$(mktemp -d)"
+git init -q --bare "$M/origin.git"
+git clone -q "$M/origin.git" "$M/w" 2>/dev/null
+( cd "$M/w"
+  git config user.email t@t; git config user.name t
+  git checkout -q -b master
+  printf 'node_modules/\n' > .gitignore; echo hi > a.js
+  git add -A; git commit -qm init; git push -q -u origin master )
+: > "$M/calls"; : > "$M/prnum"
+echo '// change' >> "$M/w/a.js"
+PATH="$TMP/bin:$PATH" GH_STUB_PR="$M/prnum" GH_STUB_CALLS="$M/calls" \
+HUB_LOGS="$M/logs" AUTOSHIP_REPO="$M/w" AUTOSHIP_GH=1 AUTOSHIP_TEST_CMD='' \
+  bash "$TOOLS/auto-ship.sh" --once >/dev/null 2>&1
+check "a master repo is shipped to master, not main" "$(grep -q 'merged 77' "$M/calls" && echo 1 || echo 0)"
+check "the PR names master as its base" "$(grep -q 'PR opened into master' "$M/logs/auto-ship.log" && echo 1 || echo 0)"
+check "and the script ends up back on master" "$([ "$(git -C "$M/w" rev-parse --abbrev-ref HEAD)" = master ] && echo 1 || echo 0)"
+rm -rf "$M"
+
+# ── 10. the first push of a brand-new branch still opens a PR ────────────────
+# This is the bug the user actually reported: the tick used to ask whether
+# refs/remotes/origin/<branch> existed, and right after pushing a new branch it
+# does not, so the tick returned quietly and no PR was ever opened. The
+# repository looked alive and shipped nothing, run after run.
+N="$(mktemp -d)"
+git init -q --bare "$N/origin.git"
+git clone -q "$N/origin.git" "$N/w" 2>/dev/null
+( cd "$N/w"
+  git config user.email t@t; git config user.name t
+  git checkout -q -b main; echo hi > a.js; git add -A; git commit -qm init
+  git push -q -u origin main )
+: > "$N/calls"; : > "$N/prnum"
+echo '// first ever push' >> "$N/w/a.js"
+PATH="$TMP/bin:$PATH" GH_STUB_PR="$N/prnum" GH_STUB_CALLS="$N/calls" \
+GH_STUB_W="$N/w" GH_STUB_BARE="$N/origin.git" \
+HUB_LOGS="$N/logs" AUTOSHIP_REPO="$N/w" AUTOSHIP_GH=1 AUTOSHIP_TEST_CMD='' \
+  bash "$TOOLS/auto-ship.sh" --once >/dev/null 2>&1
+check "a brand-new branch still gets a PR" "$(grep -q 'merged 77' "$N/calls" && echo 1 || echo 0)"
+check "the tick says what it was shipping" "$(grep -q 'commit(s) on autoship that main does not have' "$N/logs/auto-ship.log" && echo 1 || echo 0)"
+rm -rf "$N"
+
+# ── 11. a clone with no git identity can still commit ────────────────────────
+# The clones the Files tab makes have no global git config on a runner, so every
+# commit failed with "Author identity unknown", the tree stayed dirty and the
+# tick skipped forever - looking perfectly healthy.
+I="$(mktemp -d)"
+git init -q --bare "$I/origin.git"
+git clone -q "$I/origin.git" "$I/w" 2>/dev/null
+( cd "$I/w"
+  git config user.email t@t; git config user.name t
+  git checkout -q -b main; echo hi > a.js; git add -A; git commit -qm init
+  git push -q -u origin main
+  # Now remove the identity, which is the state a real fresh clone is in.
+  git config --unset user.name; git config --unset user.email )
+echo '// work' >> "$I/w/a.js"
+PATH="$TMP/bin:$PATH" GH_STUB_PR="$I/prnum" GH_STUB_CALLS="$I/calls" \
+GH_STUB_W="$I/w" GH_STUB_BARE="$I/origin.git" \
+HUB_LOGS="$I/logs" AUTOSHIP_REPO="$I/w" AUTOSHIP_GH=1 AUTOSHIP_TEST_CMD='' \
+  bash "$TOOLS/auto-ship.sh" --once >/dev/null 2>&1
+check "no git identity does not block the commit" "$(grep -q 'commit(s) on autoship' "$I/logs/auto-ship.log" && echo 1 || echo 0)"
+check "and the author it picked is not raw env" "$(grep -qE 'set git identity for this repo: [^<]*[}\]][^ ]* <' "$I/logs/auto-ship.log" && echo 0 || echo 1)"
+rm -rf "$I"
 
 echo "auto-ship: $pass passed, $fail failed"
 [ "$fail" = 0 ]

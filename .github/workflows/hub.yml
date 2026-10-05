@@ -362,6 +362,51 @@ jobs:
           echo $! > "$HUB_LOGS/tunnel-keeper.pid"
           echo "tunnel keeper: hub endpoint now carries main + reserve addresses"
 
+      - name: Start the autopilot for every repo the Files tab cloned
+        run: |
+          # THIS IS THE STEP THE HUB WAS MISSING. The hub clones the user's
+          # repositories into ~/hub-work and the agent edits them there, but
+          # hub.yml deliberately had no autosave ("it edits nothing by itself"),
+          # so work done in a hub session only survived as a snapshot and
+          # reached the remote only when somebody remembered to push. The panel
+          # showed a runner that looked alive and produced nothing.
+          #
+          # One autopilot per repository: yomikai and zen-panel share neither a
+          # history, nor a base branch, nor a test suite, so a single
+          # repo-wide daemon would push one into the other.
+          set -u
+          AUTOSHIP="$GITHUB_WORKSPACE/fork/tools/auto-ship.sh"
+          mkdir -p "$HOME/.npm-hub/logs" 2>/dev/null || true
+          chmod +x "$AUTOSHIP" 2>/dev/null || true
+          ROOT="${HUB_WORK_DIR:-$HOME/hub-work}"
+          started=0
+          for gitdir in $(find "$ROOT" -maxdepth 4 -type d -name .git 2>/dev/null); do
+            repo="$(dirname "$gitdir")"
+            remote="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
+            [ -n "$remote" ] || continue
+            # Each repo's own default branch is its base. Hardcoding `main`
+            # would open PRs into branches that do not exist in some repos.
+            base="$(git -C "$repo" symbolic-ref --short "refs/remotes/origin/HEAD" 2>/dev/null | sed 's|^origin/||')"
+            [ -n "$base" ] || base="main"
+            owner="$(basename "$(dirname "$remote")")"
+            name="$(printf '%s-%s' "$owner" "$(basename "$repo")" | tr -c 'A-Za-z0-9._-' '_')"
+            echo "autopilot: $repo -> $base (log: ~/.npm-hub/logs/auto-ship-$name.log)"
+            nohup env \
+              HUB_LOGS="$HOME/.npm-hub/logs" \
+              GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              AUTOSHIP_REPO="$repo" \
+              AUTOSHIP_BASE="$base" \
+              AUTOSHIP_INTERVAL=180 \
+              bash "$AUTOSHIP" >"$HOME/.npm-hub/logs/auto-ship-$name.log" 2>&1 &
+            started=$((started + 1))
+          done
+          if [ "$started" = 0 ]; then
+            echo "::warning::no repository with a remote under $ROOT - nothing to autopilot"
+          else
+            echo "autopilot running for $started repo(s): commit -> push -> PR -> merge (never red)"
+          fi
+
       - name: Keep the session alive
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"

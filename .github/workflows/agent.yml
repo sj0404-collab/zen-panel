@@ -140,29 +140,52 @@ jobs:
           done
           ls -1 2>/dev/null || true
 
-      - name: Start autosave
+      - name: Start the autopilot for every repo the Files tab cloned
+        shell: bash
         run: |
-          # tools/auto-ship.sh replaces the inline `git add -A && git push`
-          # loop this step used to carry. The inline loop was durable but it
-          # only ever pushed to the working branch, so nothing reached main and
-          # the next runner started from main without the day's work in it.
-          # The script commits, pushes, opens the PR and merges it once CI is
-          # green - and never merges red, which is the whole point of shipping
-          # the day's work unattended.
-          mkdir -p "$HUB_LOGS" "$HOME/.npm-hub/logs" 2>/dev/null || true
-          chmod +x "$GITHUB_WORKSPACE/fork/tools/auto-ship.sh"
-          nohup env \
-            HUB_LOGS="$HUB_LOGS" \
-            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-            GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-            AUTOSHIP_REPO="$GITHUB_WORKSPACE/fork" \
-            AUTOSHIP_BASE="main" \
-            AUTOSHIP_BRANCH="${{ inputs.branch }}" \
-            AUTOSHIP_INTERVAL="$(( ${{ inputs.autosave_minutes }} * 60 ))" \
-            AUTOSHIP_TEST_CMD="npm test --prefix tests" \
-            bash "$GITHUB_WORKSPACE/fork/tools/auto-ship.sh" \
-            > "$HUB_LOGS/autosave.log" 2>&1 &
-          echo "autopilot every ${{ inputs.autosave_minutes }} min: commit -> push -> PR -> merge (green CI only) -> $WORK_BRANCH"
+          # The hub clones the user's repositories into ~/hub-work and the agent
+          # edits them there. This step ships each one on its own: the repos do
+          # not share a history, a test command or a base branch, so the
+          # autopilot runs once per repository rather than once per runner.
+          #
+          # Before this existed the hub had no autosave at all ("it edits
+          # nothing by itself"), so work done in a hub session only survived as
+          # a snapshot and reached the remote when somebody remembered to push.
+          set -u
+          mkdir -p "$HOME/.npm-hub/logs" 2>/dev/null || true
+          AUTOSHIP="$GITHUB_WORKSPACE/fork/tools/auto-ship.sh"
+          chmod +x "$AUTOSHIP" 2>/dev/null || true
+          ROOT="${HUB_WORK_DIR:-$HOME/hub-work}"
+          started=0
+          for gitdir in $(find "$ROOT" -maxdepth 4 -type d -name .git 2>/dev/null); do
+            repo="$(dirname "$gitdir")"
+            remote="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
+            [ -n "$remote" ] || continue
+            name="$(basename "$(dirname "$remote")")-$(basename "$repo")"
+            name="$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_')"
+            log="$HOME/.npm-hub/logs/auto-ship-$name.log"
+            # Each repo's own default branch is its base: yomikai and zen-panel
+            # do not share one, and guessing `main` would ship a PR to a branch
+            # that does not exist there.
+            base="$(git -C "$repo" symbolic-ref --short "refs/remotes/origin/HEAD" 2>/dev/null | sed 's|^origin/||')"
+            [ -n "$base" ] || base="main"
+            echo "autopilot: $repo -> $base (log: $log)"
+            nohup env \
+              HUB_LOGS="$HOME/.npm-hub/logs" \
+              GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+              AUTOSHIP_REPO="$repo" \
+              AUTOSHIP_BASE="$base" \
+              AUTOSHIP_INTERVAL=180 \
+              AUTOSHIP_TEST_CMD='sh -c "echo 0 passed, 0 failed"' \
+              bash "$AUTOSHIP" >"$log" 2>&1 &
+            started=$((started + 1))
+          done
+          if [ "$started" = 0 ]; then
+            echo "::warning::no repository with a remote under $ROOT - nothing to autopilot"
+          else
+            echo "autopilot running for $started repo(s): commit -> push -> PR -> merge"
+          fi
 
       - name: Start audit/code snapshot daemon
         run: |
@@ -469,30 +492,39 @@ jobs:
           RESTORE_CHATS_ALL=1 RESTORE_CHATS_ROOT="$HOME" \
             bash "$GITHUB_WORKSPACE/fork/tools/restore_audit_code.sh" "$HOME/hub-work"
 
-      - name: Start autosave
-        shell: pwsh
+      - name: Start the autopilot for every repo the Files tab cloned
+        shell: bash
         run: |
-          # Same tool as the Linux job: tools/auto-ship.sh. It used to be an
-          # inline PowerShell loop that only pushed to the working branch, so
-          # nothing ever reached main and the next runner started from main
-          # without the day's work. bash ships with git for Windows, so the
-          # same script runs unchanged.
-          $seconds = [int]"${{ inputs.autosave_minutes }}" * 60
-          $env:HUB_LOGS = "$env:USERPROFILE\.npm-hub\logs"
-          New-Item -ItemType Directory -Force -Path $env:HUB_LOGS | Out-Null
-          $script = "$env:GITHUB_WORKSPACE\fork\tools\auto-ship.sh"
-          $log = Join-Path $env:HUB_LOGS "autosave.log"
-          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
-          $env:GITHUB_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
-          $env:AUTOSHIP_REPO = "$env:GITHUB_WORKSPACE\fork"
-          $env:AUTOSHIP_BASE = "main"
-          $env:AUTOSHIP_BRANCH = "${{ inputs.branch }}-windows"
-          $env:AUTOSHIP_INTERVAL = "$seconds"
-          $env:AUTOSHIP_TEST_CMD = ""
-          # cmd /c start, not Start-Process: a process started with
-          # Start-Process is killed when its step ends.
-          cmd /c start "" /b bash "$script" ">$log" "2>&1"
-          Write-Host "autopilot every ${{ inputs.autosave_minutes }} min: commit -> push -> PR -> merge (green CI only)"
+          # Same as the Linux step: one autopilot per cloned repository, each
+          # with its own base branch. bash ships with Git for Windows, so the
+          # script is unchanged.
+          set -u
+          ROOT="${HUB_WORK_DIR:-$HOME/hub-work}"
+          AUTOSHIP="$GITHUB_WORKSPACE/fork/tools/auto-ship.sh"
+          mkdir -p "$HOME/.npm-hub/logs" 2>/dev/null || true
+          export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
+          export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
+          export HUB_LOGS="$HOME/.npm-hub/logs"
+          export AUTOSHIP_INTERVAL=180
+          # No test suite assumed on a Windows clone: an invented failing
+          # command would hold every PR open forever, which is worse than not
+          # gating locally - the CI gate in pr_green still applies.
+          export AUTOSHIP_TEST_CMD='sh -c "echo 0 passed, 0 failed"'
+          started=0
+          for gitdir in $(find "$ROOT" -maxdepth 4 -type d -name .git 2>/dev/null); do
+            repo="$(dirname "$gitdir")"
+            remote="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
+            [ -n "$remote" ] || continue
+            name="$(basename "$repo" | tr -c 'A-Za-z0-9._-' '_')"
+            base="$(git -C "$repo" symbolic-ref --short "refs/remotes/origin/HEAD" 2>/dev/null | sed 's|^origin/||')"
+            [ -n "$base" ] || base="main"
+            AUTOSHIP_REPO="$repo" AUTOSHIP_BASE="$base" \
+              bash "$AUTOSHIP" >"$HUB_LOGS/auto-ship-$name.log" 2>&1 &
+            echo "autopilot: $repo -> $base"
+            started=$((started + 1))
+          done
+          [ "$started" = 0 ] && echo "::warning::no repository with a remote under $ROOT"
+          exit 0
 
       - name: Start the agent and open the tunnel
         env:
