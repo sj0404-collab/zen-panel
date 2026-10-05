@@ -142,24 +142,27 @@ jobs:
 
       - name: Start autosave
         run: |
-          # printf, not a heredoc: this run: block is indented, and an indented
-          # heredoc writes those spaces into the file - fatal for a shebang.
-          printf '%s\n' \
-            '#!/bin/bash' \
-            'cd "$1" || exit 1' \
-            'while true; do' \
-            '  sleep "$2"' \
-            '  if [ -n "$(git status --porcelain)" ]; then' \
-            '    git add -A' \
-            '    git commit -q -m "agent autosave $(date -u "+%Y-%m-%d %H:%M:%S")" >/dev/null 2>&1' \
-            '    git push -q origin HEAD >/dev/null 2>&1' \
-            '  fi' \
-            'done' > "$HOME/autosave.sh"
-          chmod +x "$HOME/autosave.sh"
+          # tools/auto-ship.sh replaces the inline `git add -A && git push`
+          # loop this step used to carry. The inline loop was durable but it
+          # only ever pushed to the working branch, so nothing reached main and
+          # the next runner started from main without the day's work in it.
+          # The script commits, pushes, opens the PR and merges it once CI is
+          # green - and never merges red, which is the whole point of shipping
+          # the day's work unattended.
           mkdir -p "$HUB_LOGS" "$HOME/.npm-hub/logs" 2>/dev/null || true
-          nohup "$HOME/autosave.sh" "$GITHUB_WORKSPACE/fork" \
-            "$(( ${{ inputs.autosave_minutes }} * 60 ))" > $HUB_LOGS/autosave.log 2>&1 &
-          echo "autosave every ${{ inputs.autosave_minutes }} min -> $WORK_BRANCH"
+          chmod +x "$GITHUB_WORKSPACE/fork/tools/auto-ship.sh"
+          nohup env \
+            HUB_LOGS="$HUB_LOGS" \
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            AUTOSHIP_REPO="$GITHUB_WORKSPACE/fork" \
+            AUTOSHIP_BASE="main" \
+            AUTOSHIP_BRANCH="${{ inputs.branch }}" \
+            AUTOSHIP_INTERVAL="$(( ${{ inputs.autosave_minutes }} * 60 ))" \
+            AUTOSHIP_TEST_CMD="npm test --prefix tests" \
+            bash "$GITHUB_WORKSPACE/fork/tools/auto-ship.sh" \
+            > "$HUB_LOGS/autosave.log" 2>&1 &
+          echo "autopilot every ${{ inputs.autosave_minutes }} min: commit -> push -> PR -> merge (green CI only) -> $WORK_BRANCH"
 
       - name: Start audit/code snapshot daemon
         run: |
@@ -469,30 +472,27 @@ jobs:
       - name: Start autosave
         shell: pwsh
         run: |
-          # Built line by line rather than with a here-string: a PowerShell
-          # here-string has to start at column zero, which breaks out of this
-          # indented YAML block scalar and corrupts the whole file. Same trap
-          # as the shebang-in-a-heredoc one on the Linux side.
-          $lines = @(
-            'param($Root, $Seconds)',
-            'Set-Location $Root',
-            'while ($true) {',
-            '  Start-Sleep -Seconds $Seconds',
-            '  if (git status --porcelain) {',
-            '    git add -A',
-            '    git commit -q -m ("agent autosave " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) 2>$null',
-            '    git push -q origin HEAD 2>$null',
-            '  }',
-            '}'
-          )
-          $path = Join-Path $env:USERPROFILE 'autosave.ps1'
-          $lines | Out-File -FilePath $path -Encoding utf8
+          # Same tool as the Linux job: tools/auto-ship.sh. It used to be an
+          # inline PowerShell loop that only pushed to the working branch, so
+          # nothing ever reached main and the next runner started from main
+          # without the day's work. bash ships with git for Windows, so the
+          # same script runs unchanged.
           $seconds = [int]"${{ inputs.autosave_minutes }}" * 60
-          Start-Process pwsh -ArgumentList @(
-            "-NoProfile", "-File", $path,
-            "-Root", "$env:GITHUB_WORKSPACE\fork", "-Seconds", "$seconds"
-          ) -WindowStyle Hidden
-          Write-Host "autosave every ${{ inputs.autosave_minutes }} min"
+          $env:HUB_LOGS = "$env:USERPROFILE\.npm-hub\logs"
+          New-Item -ItemType Directory -Force -Path $env:HUB_LOGS | Out-Null
+          $script = "$env:GITHUB_WORKSPACE\fork\tools\auto-ship.sh"
+          $log = Join-Path $env:HUB_LOGS "autosave.log"
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          $env:GITHUB_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          $env:AUTOSHIP_REPO = "$env:GITHUB_WORKSPACE\fork"
+          $env:AUTOSHIP_BASE = "main"
+          $env:AUTOSHIP_BRANCH = "${{ inputs.branch }}-windows"
+          $env:AUTOSHIP_INTERVAL = "$seconds"
+          $env:AUTOSHIP_TEST_CMD = ""
+          # cmd /c start, not Start-Process: a process started with
+          # Start-Process is killed when its step ends.
+          cmd /c start "" /b bash "$script" ">$log" "2>&1"
+          Write-Host "autopilot every ${{ inputs.autosave_minutes }} min: commit -> push -> PR -> merge (green CI only)"
 
       - name: Start the agent and open the tunnel
         env:
