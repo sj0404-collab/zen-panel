@@ -21,3 +21,15 @@ The user is often asleep, away, or fully offline. Work must never block on them.
 - Full access is granted: bash, edit, `/tmp`, installing and downloading
   packages, `sudo`-less system changes. Do not hedge on whether you are allowed.
 - Record what you did and what you assumed in the commit body, not in a prompt.
+
+## Виджон: сначала проверь себя (user requirement)
+- **Прежде чем звать внешний движок — проверь, не видишь ли ты сам.**
+  ```bash
+  bash .opencode/skills/free-vision/can-see.sh "<твоя-модель-id>"
+  ```
+- exit 0 → ты работаешь на модели с вижном. **Читай картинку инструментом
+  `read` и отвечай сам.** Ни base64, ни curl к Kilo/OVH, ни делегирования.
+- exit 1 → модель текстовая, тогда делегируй субагенту `vision` или используй
+  эндпоинты из скилла `free-vision`.
+- Одно изображение — один вызов. Не гоняй внешние движки, если картинка уже
+  перед глазами.
