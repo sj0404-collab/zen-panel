@@ -22,6 +22,17 @@ The user is often asleep, away, or fully offline. Work must never block on them.
   packages, `sudo`-less system changes. Do not hedge on whether you are allowed.
 - Record what you did and what you assumed in the commit body, not in a prompt.
 
+## Два пилота (user requirement)
+- Агенты-пилоты: `pilot` (реализация: код, тесты, commit/push/PR) и
+  `pilot-two` (решение: проектирование, ревью, разбор причины, риски).
+- **Не делай работу одного пилота сам, если она явно его.** Правки и тесты —
+  `pilot`, разбор и ревью — `pilot-two`.
+- **Спорное место → делегируй ДО правки, а не после.** Найти причину,
+  выбрать из двух вариантов, оценить последствия — работа для `pilot-two`.
+- Оба работают параллельно, если разошлись по разным файлам. Один и тот же
+  файл одновременно не трогать.
+- Рутина («поправь опечатку», «добавь поле в JSON») — без делегирования.
+
 ## Виджон: сначала проверь себя (user requirement)
 - **Прежде чем звать внешний движок — проверь, не видишь ли ты сам.**
   ```bash
