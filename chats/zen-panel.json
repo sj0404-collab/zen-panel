@@ -3,8 +3,8 @@
   "sz_tip": "chats",
   "repo": "sj0404-collab/zen-panel",
   "repoName": "zen-panel",
-  "workdir": "/home/runner/work/zen-panel/zen-panel/fork",
-  "updatedAt": "2026-10-05T18:59:51Z",
+  "workdir": "/home/runner/hub-work/zen-panel/code",
+  "updatedAt": "2026-10-05T19:01:10Z",
   "count": 30,
   "sessions": [
     {
@@ -12,7 +12,7 @@
       "title": "Design split of VNC screen tabs (@pilot-two subagent)",
       "slug": "proud-orchid",
       "directory": "/home/runner/work/zen-panel/zen-panel/fork",
-      "timeUpdated": 1791226781427,
+      "timeUpdated": 1791226835125,
       "export": {
         "info": {
           "id": "ses_ef2914fedffeg4Q43EbOuYMGYM",
@@ -49,7 +49,7 @@
           ],
           "time": {
             "created": 1791226720274,
-            "updated": 1791226781427
+            "updated": 1791226835125
           }
         },
         "messages": [
@@ -1806,8 +1806,10 @@
               "modelID": "space-bunny-free",
               "providerID": "opencode",
               "time": {
-                "created": 1791226781425
+                "created": 1791226781425,
+                "completed": 1791226835112
               },
+              "finish": "tool-calls",
               "id": "msg_10d6f9ef1001daUa70yvHs32kK",
               "sessionID": "ses_ef2914fedffeg4Q43EbOuYMGYM"
             },
@@ -1821,13 +1823,99 @@
               },
               {
                 "type": "reasoning",
-                "text": "",
+                "text": "I now have a complete, verified picture. Let me write the decision.\n\n## Verified facts summary\n\n**Correction to briefing (E):** `agent/hub/index.html` and `app/src/main/assets/panel/index.html` contain **no** VNC/linux UI at all. Verified: 0 hits for `p-linux`, `nav-linux`, `linuxOpen`, `linux-frame`, `vnc`, `novnc`, `/api/linux`. The Android panel's «Экран» (line 350, `screen-card`) is a **launcher** that embeds the hub/desktop URL — comment at line 1319 explicitly: «VNC desks are gone; the only embeddable screen left is a hub launcher root». `agent/hub/index.html` is self-contained (app.js is a placeholder). So **no third/fourth copy to update**. Good news — plan is smaller than briefing assumed. But: the Android panel's `switchDeskTab('linux')`/`desk-frame-linux` slot is a *different* \"linux\" (slot name in session-linux.json) — must NOT be confused, and tests/panel-tabs-e2e.js p7/p9 lock it.\n\n**Only two VNC UI copies exist:** `npm-hub/public/mobile.html` (+mobile-app.js) and `npm-hub/public/desktop.html` (+desktop-app.js). And `linux.html` (+linux-app.js) which is screen-only.\n\n## The decision\n\nVariant 2 (UI split + lazy keepalive), but with one crucial correction: **`registerProxy` must stay unconditional**. Reason: `NOVNC_QUERY = '...&path=ws/desktop'` — the iframe served from the hub origin connects its websocket to `/ws/desktop`, and that upgrade handler is registered **only** inside `registerProxy(app, server)`, which is called **only** inside `start()` (line 1049-1051). If we simply stop calling `start()`, `/ws/desktop` 404/never-upgrades → `linux.html` shows a permanently broken iframe. That is the single biggest trap and it kills naive implementations of both variant 1 and variant 2.\n\nSo the right cut is: **split `start()` into `arm()` (proxy + routes + status plumbing, always) and `wake()` (fullStart + tick timer, only on demand)**.\n\nVariant 1 is rejected outright: it does not satisfy the requirement — `vncKeeper.start()` still boots Xvfb/openbox/x11vnc at line 1055-1068 and starts the 15s repair timer. Removing the buttons only hides the symptom.\n\nVariant 3 (separate server/workflow) rejected: it's a much bigger change (new runner, new publish slot, auth, tunnel), and the user explicitly said the screen page should live in the *same* hub origin but be *off* by default — the whole point is the existing always-on/self-healing machinery, just lazy. Also the existing `vnc` job in hub.yml already gives an off-hub screen, and vncStatus already prefers local. Overkill.\n\n## Why \"lazy\" is right and what \"lazy\" must mean\n\nRequirement: \"не должен подниматься при старте npm-hаба; стартовать только когда открыта отдельная страница «Экран»\".\n\nNote: the hub runner and the \"other runner\" are different. Keep in mind: the desktop that `/api/linux/run` paints into is the **hub's own** DISPLAY=:99. So the \"Экран\" page on the hub origin shows the hub's own runner desktop. That's consistent. The \"other runner\" screen (session-vnc.json) is the fallback. Good.\n\nLazy trigger: `POST /api/vnc/keepalive {action:'ensure'}` fired by `linux-app.js` on `pageInit()`. Then the page's existing 8s poll of `/api/vnc/status` will find `url` once X+x11vnc are up (install takes ~1 min first time). The page already handles \"not ready yet\" (`linuxAutoConnect` polls every 8s, placeholder says «запускается…»). So no new UI needed — that's important: **the existing linux.html already implements exactly the \"start on page open\" UX.** The bug is only that the desktop starts *without* the page.\n\n## Detailed plan\n\n### 1. npm-hub/src/vnc-keepalive.js — split arm/wake\n- Export `arm(opts)`: platform + script-root checks, `state.enabled = true` (rename semantics: `armed`), `repoRootRef = root`, `state.gate`, `registerProxy(app, server)`. **No** fullStart, **no** tick timer. Returns the same API surface so server.js barely changes.\n- Export `wake(reason)`: idempotent (guard `state.woke`/reuse `state.busy`), runs `fullStart(repoRootRef)` + paint probe, and **then** starts the 15s `tick()` interval + the 5s first tick. This keeps self-healing alive once woken (requirement: \"не должен гаснуть\").\n- Export `woken()` / include `woke` in `status()` so server can distinguish \"armed but asleep\" from \"asleep because no script\".\n- Add `ensureNow()` reuse: existing `ensureNow: () => fullStart(repoRootRef)` already exists — but it does NOT start the tick timer. **Must make `ensureNow` call `wake()`**, otherwise the POST endpoint starts the desktop but nothing heals it afterwards → regression against the owner requirement. This is a subtle but critical point.\n- `lowerDesktopIcons`/`dismissStrayDialogs`/`ensureFilesLauncher`: **no change** — verified they only use `which`, `sh`, `DISPLAY`, and return 0/false when X is down. Safe to call pre-wake.\n\n### 2. npm-hub/src/server.js\n- Line ~4737: `vncKeeper = require('./vnc-keepalive').start({...})` → `arm({...})`. Keep the same `opts` (repoRoot/app/server/port/gate/log). Log line changes to «🖥 Screen armed (lazy)».\n- `POST /api/vnc/keepalive`: add `action === 'ensure'` (and make `rebuild` also wake) → `await vncKeeper.ensureNow()`. Existing `'repair'` → `repair()` which needs `repoRootRef`; fine, armed already. But if not woken, `repair()` would call `repair(repoRootRef,...)` — check it handles repoRootRef set. It is set in arm(). OK.\n- `vncStatus()` (3592): **critical trap** — `localStatus()` early-returns `{url:null, ready:false}` when `!state.enabled`, with **no `pending`** flag. Then `vncStatus` falls through to `vncRemoteStatus()` and would happily show the *other runner's* screen while our own desktop is merely asleep-by-design. That's precisely the \"чёрный экран / чужой раннер\" complaint. Fix: when armed && !woken → return `{running:false, pending:true, source:'local-asleep', asleep:true}` and **do not** fall back to remote. Only allow remote fallback when `state.hopeless` (as the existing comment intends).\n- `/api/linux/run` (3694): the guard at 3699-3701 checks `/tmp/.X11-unix/X<n>` and returns `ok:false, error:'Linux VNC desktop не запущен...'`. With lazy start this becomes the **normal** first state. Two options: (a) leave as-is and have the client show «экран ещё не поднят, откройте вкладку Экран»; (b) server calls `ensureNow()` and returns `{ok:true,pending:true}`. Recommendation: (b) with a distinct `pending:true` field — because the button lives on the Экран page now, which has already woken the desktop; the user pressing Go means X should be up. If X is genuinely absent, `ensureNow` will install (~60s) and the honest answer is `ok:true, pending:true, message:'экран поднимается'`. Must NOT silently return ok:true when nothing was launched.\n- Lines 3808/3835/3849 `lowerDesktopIcons()/dismissStrayDialogs()` — verified safe, no change. They run inside `/api/linux/run` which by then has X.\n\n### 3. UI: mobile.html + mobile-app.js\n- **Remove** from mobile.html: `#p-linux` (401-511), `#p-screen-settings` (515-567), `nav-linux`, `nav-screen-settings` buttons.\n- **Add** one nav entry replacing them: `id=\"nav-linux\"` (keep the id so nothing else breaks) with `onclick=\"linuxOpenPage()\"` → `location.href='/linux'` (or `window.open`). Keep label «Экран» — user is used to it.\n- **But** settings must not be lost: `p-screen-settings` has real unique value (browser URL + Go, pulse/volume/mute, AVD, TTS/OCR). It must move to `linux.html`, not be deleted. So: move `#linux-more` and `#linux-read` blocks (plus the `<style>` at 561-566) into linux.html.\n- mobile-app.js: `showPage('linux')` branch (283-299: linuxStatus+linuxConnect, pg-linux toggle) becomes dead → remove; `document.body.classList.toggle('pg-linux')` — verified `pg-linux` is **not in hub.css** (0 hits), so it's a dead class; drop it. Keep `showPage('screen-settings')` fallback → redirect to `/linux#settings`.\n- The ~15 `document.getElementById('linux-frame')` / `'p-linux'` call sites in mobile-app.js (3274, 3308-09, 3569, 3587, 3611, 3621, 3634, 3676, 3686, 3704, 3960, plus the two `if (document.getElementById('p-linux'))` guards at 3240 and 4111) become dead code. **Decision: delete the block wholesale** (from the `p-linux` guard at 3240 to its end ~4111) rather than leaving 400 lines of unreachable code that still parse-passes the old tests. This is the biggest diff and the most likely place to introduce a regression — must be done as one atomic cut with `node -c` syntax check after.\n- Functions that MOVE to linux-app.js (copy, don't reference): `linuxKeyboard`, `linuxZoomToggle`, `linuxPerfToggle`, `linuxMouseToggle`, `linuxRunBrowser`, `pulseSetVol`, `pulseToggleMute`, `remoteAudioToggle`, `saveEmulatorDefault`, `tts*` (9 fns), `ocrCapture`, `getPageText`.\n- Functions that must NOT be copied because they'd break: `linuxFullscreen()` (hub variant rotates the phone to landscape and touches term/`hub_nofs`) — linux-app.js already has `linuxFullscreen('desktop')`, keep that. `linuxOpen()` — replaced by `linuxOpenPage()`.\n- Dependency audit for moved code:\n  - `remoteAudioStart()` lives in **remote-audio.js**, which linux.html does NOT load → must add `<script src=\"remote-audio.js\">` to linux.html. (mobile.html:877, desktop.html:697 both load it.)\n  - `fmInfo()` is a **hub global defined in mobile-app.js/desktop-app.js**, absent in linux-app.js → either add a tiny toast to linux.html or drop the calls. Recommend a minimal `fmInfo` stub using the same DOM contract.\n  - `getPageText()` reads the hub's own DOM — on the bare screen page it's meaningless; OCR's real path is `POST /api/ocr` which is a **server-side `import -window root`** on DISPLAY=:99 (server.js:3891) and does **not** touch the iframe at all. So OCR keeps working after the move.\n  - `tts-autoscroll`'s VNC scroll (3960) is already guarded by `if (vnc && vnc.contentWindow)` → after the cut `linux-frame` doesn't exist, no-op. Should also handle `linux-frame-desktop`.\n  - `sessionStorage 'hub_nofs'` / term-mode: only used by hub `linuxFullscreen`; goes away with it.\n  - `offline.js` + `bridge.js` are already loaded by linux.html (39-40) → `pageInit()`/topbar work. bridge.js:110 already lists `['linux','🖥 Экран']`, so nav chips are fine.\n\n### 4. desktop.html + desktop-app.js — same treatment\nq37e asserts `id=\"p-linux\"`, `showPage('linux')`, `linuxFullscreen('desktop')`, `linux-frame-desktop`, `linuxConnect('desktop')` — i.e. desktop.html has its own copy of the whole linux page. Verified: 0 hits for nav-linux/nav-screen-settings (it's a sidebar, not bottom-nav), but 4× `linuxRunBrowser`, 2× `linux-frame`, 1× ttsToggle, 1× ocrCapture, 2× linuxRepair. So it duplicates the screen-settings content too.\nRecommendation: apply the **same** cut. Leaving desktop.html with an embedded always-on screen while mobile loses it re-creates the exact problem (desktop.html is served by the same server.js, so the same keepalive; but the user asked \"не запускался вместе с npm hub\" — server-side, so fixing server.js satisfies the core requirement for both). **Minimal-risk alternative**: fix server.js (satisfies the literal requirement for both surfaces) and make desktop.html's linux page a link to `/linux` too, for consistency. Consistency matters because q37e will have to be rewritten anyway.\n\n### 5. Tests\n**mobile-touch-test.js q37d** must be rewritten to the NEW contract, and per the #135 pattern it must **fail on the old code first**. New q37d (mobile no longer hosts the screen; it links to the separate page):\n- `!mobHtml.includes('id=\"p-linux\"')`\n- `!mobHtml.includes('id=\"p-screen-settings\"')`\n- `!mobHtml.includes('id=\"nav-screen-settings\"')`\n- nav still has an «Экран» entry: `mobHtml.includes('id=\"nav-linux\"') && /nav-linux[\\s\\S]{0,200}Экран/.test(mobHtml)` and it points to the page: `/nav-linux[\\s\\S]{0,300}(\\/linux|linuxOpenPage)/`\n- `!mob.includes('function linuxStatus(')` and `!mob.includes('function linuxConnect(')` — moved out\n- `!mob.includes('linuxRunBrowser(')` and `!mob.includes('ttsToggle')`/`!mob.includes('ocrCapture')` — moved out\n- server must be lazy: `server.includes('vnc-keepalive').arm(')` (or `.arm(`) and `!/\\bvncKeeper\\s*=\\s*require\\('\\.\\/vnc-keepalive'\\)\\.start\\(/.test(server)`\n- keepalive must arm proxy unconditionally: `keeper.includes('registerProxy')` inside arm and `keeper.includes('function wake(')` and `keeper.includes('path=ws/desktop')` (NOVNC_QUERY) — this is the guard against the naive \"just don't call start()\" bug.\n\n**New q37g (separate page owns the screen)** — `tests/mobile-touch-test.js` or better a new file:\n- `linuxHtml.includes('id=\"linux-frame-desktop\"') && linuxHtml.includes('data-page=\"linux\"')`\n- `linuxHtml.includes('remote-audio.js')` (needed by pulse/remoteAudio)\n- `linuxHtml.includes('linuxRunBrowser(')` and `linuxHtml.includes('ttsToggle')`/`ocrCapture` — settings moved here\n- `linuxApp.includes('function pageInit(') && linuxApp.includes('linuxAutoConnect(')` and now also `linuxApp.includes('/api/vnc/keepalive')` — the page **arms** the desktop on open\n- `server.includes(\"app.get('/linux'\")` and `server.includes(\"app.get('/api/vnc/status'\")`\n- `keeper` lazy: `keeper.includes(\"'ensure'\")` or `action === 'ensure'` handled in server.js POST handler\n\n**q37e (desktop)** — mirror q37d: `!deskHtml.includes('id=\"p-linux\"')`, no `showPage('linux')` in markup, keeps `linux-frame-desktop` only in linux.html; assert `deskHtml` links to `/linux`.\n\n**New negative test for the trap (most valuable one):** assert that a *bare* boot does not spawn the desktop: i.e. in `vnc-keepalive.js`, `fullStart(` appears only inside `wake()`/repair paths and NOT in `arm()`; plus `arm()` does call `registerProxy`. String-level: slice `arm()`'s body and assert `!/fullStart\\(|setInterval/.test(armBody)` while `/registerProxy\\(/.test(armBody)`. That's a precise, non-vacuous check.\n\nAlso `tests/hub-shell-test.js` (36 checks) has **no** linux/vnc refs (only `{ os: 'linux' }` fixture at line 173) → unaffected.\n\n**Untouched, must not break:** `tests/panel-tabs-e2e.js` p7/p9 `desk-frame-linux` + `switchDeskTab('linux')` — that's the Android panel's launcher slot named \"linux\", a completely different thing. Do not rename. `tests/panel-buttons-test.js` `session-linux.json` fixtures likewise.\n\n### Risks\n1. **/ws/desktop missing** (highest). registerProxy only inside start → moving to arm is mandatory. Mitigation: q37g assertion + manual `curl` check on a live hub.\n2. **Desktop starts but nothing heals it**: `ensureNow()` currently returns `fullStart` without starting the tick timer. Must route through `wake()`. Mitigation: assert in test that `wake` sets the interval; manual check `GET /api/vnc/keepalive` shows `lastTick` advancing.\n3. **Cold-start UX regression**: user opens /linux, must wait ~60s for apt install + desktop. Existing placeholder says «запускается…» — good, but the *status tag* says «○ запускается…» only when `!d.url`; with the remote fallback allowed it'd flip to a black screen from another runner. Mitigation: vncStatus must return `pending/asleep` and **not** fall back to remote while merely asleep.\n4. **First-run install happens on the user's tap, not on deploy** → perceived slowness & possible failure if the runner lacks sudo at that moment. Acceptable; surface `installing` array (already in localStatus) into the page placeholder.\n5. **Losing screen settings**: user had browser/Go/pulse/AVD/TTS-OCR habits. If we delete `p-screen-settings` without moving it, that's a functional regression. Mitigation: move the blocks, don't drop them.\n6. **Dead-code cut in mobile-app.js/desktop-app.js is the most dangerous edit** (400+ lines, near-duplicate function names, `node -c` won't catch wrong-but-valid JS; some code is referenced by other pages via `showPage`). Mitigation: atomic cut + full `npm test` + manual load of every hub page.\n7. **Offline/service-worker caching** (`sw.js`, `offline.js`): a stale cached mobile.html/mobile-app.js after cut → nav button present, page dead. Mitigation: bump cache name in sw.js; `noCache(res)` is already applied to /linux.\n\nLet me double check the sw.js cache name to make a concrete recommendation. And confirm node -c works. Let me do one quick check.",
                 "time": {
-                  "start": 1791226782396
+                  "start": 1791226782396,
+                  "end": 1791226834932
                 },
                 "id": "prt_10d6fa2bc001hWYWLw1n2piKSy",
                 "sessionID": "ses_ef2914fedffeg4Q43EbOuYMGYM",
                 "messageID": "msg_10d6f9ef1001daUa70yvHs32kK"
+              },
+              {
+                "type": "tool",
+                "tool": "bash",
+                "callID": "call_01a10d706fbe7321822067a2",
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "cd /home/runner/work/zen-panel/zen-panel/fork\necho \"=== sw.js cache name + precache list ===\"; grep -n 'CACHE\\|addAll\\|precache\\|urlsToCache' npm-hub/public/sw.js | head -20\necho; echo \"=== offline.js: does it cache mobile.html/linux.html? ===\"; grep -n \"mobile.html\\|linux.html\\|'/m'\\|/linux\" npm-hub/public/offline.js | head"
+                  },
+                  "output": "=== sw.js cache name + precache list ===\n10:var CACHE = 'hub-shell-v5';\n26:    caches.open(CACHE).then(function (c) {\n42:        if (n.indexOf('hub-shell-') === 0 && n !== CACHE) return caches.delete(n);\n65:          caches.open(CACHE).then(function (c) { c.put(req, copy); });\n86:        caches.open(CACHE).then(function (c) { c.put(req, copy); });\n105:            caches.open(CACHE).then(function (c) { c.put(req, copy); });\n\n=== offline.js: does it cache mobile.html/linux.html? ===\n",
+                  "metadata": {
+                    "output": "=== sw.js cache name + precache list ===\n10:var CACHE = 'hub-shell-v5';\n26:    caches.open(CACHE).then(function (c) {\n42:        if (n.indexOf('hub-shell-') === 0 && n !== CACHE) return caches.delete(n);\n65:          caches.open(CACHE).then(function (c) { c.put(req, copy); });\n86:        caches.open(CACHE).then(function (c) { c.put(req, copy); });\n105:            caches.open(CACHE).then(function (c) { c.put(req, copy); });\n\n=== offline.js: does it cache mobile.html/linux.html? ===\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/work/zen-panel/zen-panel/fork\necho \"=== sw.js cache name + precache list ===\"; grep -n 'CACHE\\|addAll\\|precache\\|urlsToCache' npm-hub/public/sw.js | head -20\necho; echo \"=== offline.js: does it cache mobile.html/linux.html? ===\"; grep -n \"mobile.html\\|linux.html\\|'/m'\\|/linux\" npm-hub/public/offline.js | head",
+                  "time": {
+                    "start": 1791226834943,
+                    "end": 1791226834961
+                  }
+                },
+                "id": "prt_10d706ff9001T9rloDJrpeu15n",
+                "sessionID": "ses_ef2914fedffeg4Q43EbOuYMGYM",
+                "messageID": "msg_10d6f9ef1001daUa70yvHs32kK"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "3f242543a42628ad2aa5a1ec61cb3110ecdc226a",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_10d7070660016YIbNR8TFCWTP5",
+                "sessionID": "ses_ef2914fedffeg4Q43EbOuYMGYM",
+                "messageID": "msg_10d6f9ef1001daUa70yvHs32kK"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_10d6eb01a0011JMSEnPH2nm481",
+              "role": "assistant",
+              "mode": "pilot-two",
+              "agent": "pilot-two",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/work/zen-panel/zen-panel/fork",
+                "root": "/home/runner/work/zen-panel/zen-panel/fork"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1791226835121
+              },
+              "id": "msg_10d7070b1001qXYPeTSE3g5ZPM",
+              "sessionID": "ses_ef2914fedffeg4Q43EbOuYMGYM"
+            },
+            "parts": [
+              {
+                "snapshot": "3f242543a42628ad2aa5a1ec61cb3110ecdc226a",
+                "type": "step-start",
+                "id": "prt_10d7074ca001JCfQHadQVgduol",
+                "sessionID": "ses_ef2914fedffeg4Q43EbOuYMGYM",
+                "messageID": "msg_10d7070b1001qXYPeTSE3g5ZPM"
+              },
+              {
+                "type": "reasoning",
+                "text": "I have everything. Now let me write the decision concisely but completely.\n\nStructure:\n1. Допущение + выбранный вариант\n2. Главная находка, ломающая наивную реализацию (registerProxy)\n3. Опровержение briefing'а про дубли (E)\n4. Пошаговый план по файлам\n5. Риски + mitigations\n6. Формулировки новых проверок\n7. Что нельзя сломать\n\nKeep it tight but complete. This is a design doc, so some length is justified, but I should be disciplined.",
+                "time": {
+                  "start": 1791226836174,
+                  "end": 1791226837688
+                },
+                "id": "prt_10d7074ce001Cq2ntBraa3zeFJ",
+                "sessionID": "ses_ef2914fedffeg4Q43EbOuYMGYM",
+                "messageID": "msg_10d7070b1001qXYPeTSE3g5ZPM"
+              },
+              {
+                "type": "text",
+                "text": "",
+                "time": {
+                  "start": 1791226837691
+                },
+                "id": "prt_10d707abb001kMvJthmkpmhWwQ",
+                "sessionID": "ses_ef2914fedffeg4Q43EbOuYMGYM",
+                "messageID": "msg_10d7070b1001qXYPeTSE3g5ZPM"
               }
             ]
           }
@@ -8657,8 +8745,8 @@
     }
   ],
   "state": "updated",
-  "stamp": "20261005T185951",
-  "startedAt": "2026-10-05T19:00:30Z",
+  "stamp": "20261005T190110",
+  "startedAt": "2026-10-05T19:01:50Z",
   "runId": "37355545037",
   "runNumber": "369"
 }
