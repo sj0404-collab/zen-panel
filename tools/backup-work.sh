@@ -60,6 +60,11 @@
 #   WORK_BACKUP_MAX_FILE_MB max single file to pack (default 25)
 #   WORK_BACKUP_MAX_TOTAL_MB bail out over this     (default 400)
 #   WORK_BACKUP_MAX_BIG_MB  largest split-and-send file (default 200)
+#   WORK_BACKUP_MAX_LOOSE_MB  byte budget for ALL split loose files (default 400)
+#                           Nothing above this budget is packed, whatever its own
+#                           size: the branch had a 1.5GB Android emulator disk
+#                           image in every snapshot, which made the Snapshot tab
+#                           unable to list anything (see collect_big_files).
 #   WORK_BACKUP_CHUNK_MB    chunk size for those     (default 20)
 #   WORK_BACKUP_MAX_BLOB_MB anything bigger inside the snapshot is split
 #                           before the push (default 80)
@@ -78,15 +83,23 @@ KEEP="${WORK_BACKUP_KEEP:-4}"
 MAX_FILE_MB="${WORK_BACKUP_MAX_FILE_MB:-25}"
 MAX_TOTAL_MB="${WORK_BACKUP_MAX_TOTAL_MB:-400}"
 MAX_BIG_MB="${WORK_BACKUP_MAX_BIG_MB:-200}"
+# Whole loose-file budget, not a per-file one. Repos have always had a budget
+# (MAX_TOTAL_MB); the split loose files had none, so a single big file decided
+# the size of every snapshot.
+MAX_LOOSE_MB="${WORK_BACKUP_MAX_LOOSE_MB:-400}"
 CHUNK_MB="${WORK_BACKUP_CHUNK_MB:-20}"
 # GitHub refuses a blob over 100 MB. Stay well under it: the limit applies to
 # the file as stored, so a snapshot is only pushable if every part of it is.
 MAX_BLOB_MB="${WORK_BACKUP_MAX_BLOB_MB:-80}"
-for _v in MAX_BIG_MB CHUNK_MB; do
+for _v in MAX_BIG_MB CHUNK_MB MAX_LOOSE_MB; do
   case "${!_v}" in
     ''|*[!0-9]*) eval "$_v=200" ;;
   esac
 done
+case "$MAX_LOOSE_MB" in
+  ''|*[!0-9]*) MAX_LOOSE_MB=400 ;;
+esac
+[ "$MAX_LOOSE_MB" -gt 0 ] || MAX_LOOSE_MB=400
 case "$MAX_BLOB_MB" in
   ''|*[!0-9]*) MAX_BLOB_MB=80 ;;
 esac
@@ -154,6 +167,12 @@ EXCLUDES=(
   '*/.dotnet/tools/.store/*' '*/optimization_guide_model_store/*'
   '*/component_crx_cache/*' '*/ShaderCache/*' '*/.local/state/*'
   '*/.vscode-server/*' '*/.java/*' '*/.sonar/*'
+  # Emulator and container disk images. A single Android AVD is ~1.5GB and one
+  # docker overlay is the same story; both are thrown away and rebuilt by the
+  # tool that owns them, and either one alone made a snapshot unlistable.
+  '*/.android/*' '*.qcow2' '*.qcow' '*.img' '*.iso' '*.vmdk' '*.vdi'
+'*/.local/share/docker/*' '*/.local/share/containers/*'
+'*/.ollama/*' '*/.cache/huggingface/*'
   # Gradle/Android build outputs: regenerable and routinely >500MB per build.
   # They were filling the snapshots (one gradle build alone was ~700MB) and
   # restoring them only re-triggered a rebuild anyway. `gradle/wrapper` stays
@@ -230,6 +249,14 @@ loose_listing() {
 # (and unsendable as one git blob), so each is split into CHUNK_MB parts under
 # big/<n>/ next to a meta.json with size + sha256. restore-work.sh rebuilds and
 # verifies them. Anything over MAX_BIG_MB is reported, never silently dropped.
+#
+# The budget is the important part. These files used to go in whole, so one
+# oversized file decided the size of every snapshot: a live runner packed
+# ~/.config/.android/avd/*/userdata-qemu.img.qcow2 (1.5GB) into 74 chunks and
+# every snapshot was 1600MB, of which the repositories were 60MB. A snapshot
+# that size cannot be listed - the panel needs the size of every blob to draw
+# the list, and materialising 1.5GB to read numbers off it times the request
+# out. The budget means a big file is now a choice, not an accident.
 collect_big_files() {
   local stage="$1" list chunks=0 skipped=0
   list="$(mktemp)" || return 1
@@ -245,10 +272,11 @@ collect_big_files() {
     return 0
   fi
   mkdir -p "$stage/big" || { rm -f "$list"; return 1; }
-  if ! python3 - "$ROOT" "$stage" "$list" "$((CHUNK_MB * 1024 * 1024))" <<'PY'
+  if ! python3 - "$ROOT" "$stage" "$list" "$((CHUNK_MB * 1024 * 1024))" "$((MAX_LOOSE_MB * 1024 * 1024))" <<'PY'
 import hashlib, json, os, sys
 root, stage, listfile, chunk = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-index = 0
+budget = int(sys.argv[5])
+candidates = []
 for raw in open(listfile, 'rb').read().split(b'\0'):
     if not raw:
         continue
@@ -258,6 +286,17 @@ for raw in open(listfile, 'rb').read().split(b'\0'):
         continue
     size = os.path.getsize(src)
     if size <= 0:
+        continue
+    candidates.append((size, rel, src))
+# Smallest first: when the budget runs out, what is left unsent is the giant
+# file nobody can use, not the 30MB one that was sitting behind it.
+candidates.sort()
+index = 0
+packed_bytes = 0
+refused = []
+for size, rel, src in candidates:
+    if packed_bytes + size > budget:
+        refused.append((size, rel))
         continue
     index += 1
     out = os.path.join(stage, 'big', str(index))
@@ -277,6 +316,11 @@ for raw in open(listfile, 'rb').read().split(b'\0'):
     with open(os.path.join(out, 'meta.json'), 'w', encoding='utf-8') as w:
         json.dump({'rel': rel, 'size': size, 'sha256': digest.hexdigest(),
                    'parts': parts, 'chunkBytes': chunk}, w, ensure_ascii=False, indent=2)
+    packed_bytes += size
+with open(os.path.join(stage, 'big-over-budget.txt'), 'w', encoding='utf-8') as w:
+    for size, rel in sorted(refused, reverse=True):
+        w.write('%d %s\n' % (size, rel))
+print('%d %d %d' % (index, packed_bytes, len(refused)))
 PY
   then
     log "python could not split the big files"
@@ -290,10 +334,14 @@ PY
       -size +"${MAX_BIG_MB}"M -printf '%s %P\n' 2>/dev/null > "$stage/big-skipped.txt" ); then
     : > "$stage/big-skipped.txt"
   fi
+  # Refused by the budget, not by the per-file limit: same report, so a file that
+  # was left behind is never a mystery.
+  cat "$stage/big-over-budget.txt" >> "$stage/big-skipped.txt" 2>/dev/null || true
+  rm -f "$stage/big-over-budget.txt"
   skipped="$(wc -l < "$stage/big-skipped.txt" 2>/dev/null | tr -d ' ')"
   [ -n "$skipped" ] || skipped=0
   if [ "$skipped" -gt 0 ]; then
-    log "$skipped file(s) over ${MAX_BIG_MB}MB not sent (raise WORK_BACKUP_MAX_BIG_MB to include them):"
+    log "$skipped loose file(s) not sent (over ${MAX_BIG_MB}MB, or over the ${MAX_LOOSE_MB}MB loose budget - raise WORK_BACKUP_MAX_BIG_MB / WORK_BACKUP_MAX_LOOSE_MB):"
     while read -r size rel; do log "  skipped $rel ($((size / 1024 / 1024))MB)"; done \
       < "$stage/big-skipped.txt"
   fi
@@ -501,7 +549,14 @@ PY
     while IFS= read -r gitdir; do
       [ -n "$gitdir" ] || continue
       dir="$(dirname "$gitdir")"
-      name="$(basename "$dir" | tr -c 'A-Za-z0-9._-' '_')"; [ -n "$name" ] || name=repo
+      # The bundle is named after the repo's PATH, not its basename. Every
+      # clone the Files tab makes lands in a folder called `code`, so
+      # basename gave zen-panel/code and yomikai/code the same file name: one
+      # bundle wrote over the other and the loser's sessions were gone from the
+      # snapshot with nothing saying so. The path is unique per repository, and
+      # restore-work.sh derives the same name from the same path.
+      rel="${dir#"$ROOT"/}"; [ "$rel" = "$dir" ] && rel="$(basename "$dir")"
+      name="$(sanitize "$rel")"; [ -n "$name" ] || name=repo
       CHAT_REPO_DIR="$dir" CHAT_BUNDLE_OUT="$stage/opencode/chats/$name.json" PUBLISH=0         bash "$(dirname "$0")/export-chats.sh" >/dev/null 2>&1 || log "chat export failed for $name"
     done < <(find_repos)
   fi
