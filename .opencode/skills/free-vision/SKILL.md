@@ -1,13 +1,37 @@
 ---
 name: free-vision
-description: Use when the user asks to describe/analyze/read an image, screenshot, photo, or a picture in code without providing an API key. Covers free no-key vision models (OpenCode Zen mimo-v2-omni-free, Kilo 200 req/h, OVH 2 req/min, plus fallbacks). Use when asked "what's on the image", OCR of screens, UI mockups, diagram reading.
+description: Use when the user asks to describe/analyze/read an image, screenshot, photo, or a picture in code. Covers the vision models that need no API key (OpenCode Zen mimo-v2-omni-free, Kilo 200 req/h, OVH 2 req/min, plus fallbacks). Use when asked "what's on the image", OCR of screens, UI mockups, diagram reading.
 ---
 
 # Free vision models (no API key)
 
+## Шаг 0 — сначала проверь, не видишь ли ты сам
+
+Это правило важнее всех остальных в этом файле. **Никогда не зови внешний движок,
+если ты сам работаешь на модели с вижном.**
+
+```bash
+bash .opencode/skills/free-vision/can-see.sh "<твоя-модель-id>"
+```
+
+- exit 0 → **читай картинку сам** инструментом `read`. Всё. Ни base64, ни curl,
+  ни делегирования: ты уже видишь её, а внешний вызов — это лишний расход,
+  лишний rate-limit и лишнее ожидание.
+- exit 1 → модель текстовая, тогда и примени эту инструкцию: субагент `vision`
+  или один из эндпоинтов ниже.
+
+Список всех vision-моделей конфига: `bash .opencode/skills/free-vision/can-see.sh`.
+
+Команда читает флаг `attachment` из resolved-конфига opencode, так что ответ —
+факт, а не догадка. У bare-id модели (`mimo-v2-omni-free`) тоже работает.
+
+**Только когда exit 1** — дальше по списку ниже. Шаг 0 не опционален: агент
+регулярно нырял в curl к Kilo/OVH с картинкой, которую видел сам.
+
 Бесплатные вижн-модели **без ключа и регистрации**. Проверено 22.09.2026 (живой запрос с изображением). Источник: `free-multimodal-models.txt` в корне репозитория.
 
 ## Правила
+- **Сначала Шаг 0.** Видишь сам — читай сам, внешние движки не трогай.
 - Эндпоинты Kilo/OVH анонимные: **НЕ добавляй заголовок `Authorization`** (иначе 401).
 - Изображение передаётся как data URL: `data:image/png;base64,....` (jpg → `data:image/jpeg;base64,...`).
 - Парс ответа: `choices[0].message.content`. У Kilo может прийти `reasoning` — бери итоговый `content`.
