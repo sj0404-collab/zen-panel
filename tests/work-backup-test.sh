@@ -289,6 +289,30 @@ check "the ticked repository is restored" "$([ -d "$TMP/home/shallow-code/.git" 
 check "an unticked repository stays away" "$([ ! -e "$TMP/home/proj" ] && echo 1 || echo 0)"
 check "unticked: no terminal descriptors" "$([ ! -e "$TMP/home/.npm-hub/sessions" ] && echo 1 || echo 0)"
 
+# The very same tick, spelled the way the panel sends it: a repository is
+# ticked by its path inside the snapshot, and that path carries the repos/
+# prefix (snapshots/<stamp>/repos/<rel>/...). The meta.json the script
+# iterates keeps <rel> without it, so the prefixed spelling matched nothing:
+# every ticked repository came back as «not selected» and the run finished
+# with 0 repositories restored while reporting success. This is the shape the
+# user actually clicked.
+rm -rf "$TMP/home/proj" "$TMP/home/shallow-code"
+WORK_BACKUP_SNAPSHOT="snapshots/$SELECT_SNAP" WORK_BACKUP_ONLY_REPOS='repos/shallow-code' \
+WORK_BACKUP_SKIP_CHATS=1 WORK_BACKUP_SKIP_SETTINGS=1 WORK_BACKUP_SKIP_FILES=1 WORK_BACKUP_SKIP_SESSIONS=1 \
+  bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
+check "a repository ticked by its snapshot path is restored" "$([ -d "$TMP/home/shallow-code/.git" ] && echo 1 || echo 0)"
+check "a repository ticked by its snapshot path leaves the rest alone" "$([ ! -e "$TMP/home/proj" ] && echo 1 || echo 0)"
+
+# Several repositories at once with the two spellings mixed, the way a nested
+# clone and a top-level one get ticked in the same restore.
+rm -rf "$TMP/home/proj" "$TMP/home/shallow-code"
+WORK_BACKUP_SNAPSHOT="snapshots/$SELECT_SNAP" WORK_BACKUP_ONLY_REPOS='repos/proj
+shallow-code' \
+WORK_BACKUP_SKIP_CHATS=1 WORK_BACKUP_SKIP_SETTINGS=1 WORK_BACKUP_SKIP_FILES=1 WORK_BACKUP_SKIP_SESSIONS=1 \
+  bash "$TOOLS/restore-work.sh" >/dev/null 2>&1
+check "a mixed list restores every ticked repository" \
+  "$([ -d "$TMP/home/proj/.git" ] && [ -d "$TMP/home/shallow-code/.git" ] && echo 1 || echo 0)"
+
 # The same snapshot with only the sessions ticked and no repositories at all:
 # the sessions are what the user came for, and a repo they did not ask for must
 # not appear just because its chats were wanted.

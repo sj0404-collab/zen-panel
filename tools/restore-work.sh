@@ -353,6 +353,24 @@ SKIP_CHATS="${WORK_BACKUP_SKIP_CHATS:-0}"
 SKIP_SETTINGS="${WORK_BACKUP_SKIP_SETTINGS:-0}"
 SKIP_FILES="${WORK_BACKUP_SKIP_FILES:-0}"
 SKIP_SESSIONS="${WORK_BACKUP_SKIP_SESSIONS:-0}"
+# The panel ticks a repository by the path it has INSIDE the snapshot, and that
+# path starts with repos/ (snapshots/<stamp>/repos/<rel>/...). The meta.json
+# beside the bundle keeps <rel> - root-relative, no prefix - and that is what
+# this script iterates over. Comparing the two verbatim matched nothing: the
+# restore ran to the end, reported every ticked repository as "not selected"
+# and finished with 0 repositories restored. Both spellings are accepted, so
+# the prefixes are stripped from the incoming list once here.
+ONLY_REPOS_NORM=""
+if [ "$ONLY_REPOS_SET" = "1" ] && [ "$ONLY_REPOS" != "*" ] && [ -n "$ONLY_REPOS" ]; then
+  while IFS= read -r one; do
+    [ -n "$one" ] || continue
+    case "$one" in repos/*) one="${one#repos/}";; esac
+    ONLY_REPOS_NORM="$ONLY_REPOS_NORM$one
+"
+  done <<EOF
+$ONLY_REPOS
+EOF
+fi
 selection_is_partial() {
   [ "$ONLY_REPOS_SET" = "1" ] && [ "$ONLY_REPOS" != "*" ] \
     || [ "$SKIP_CHATS" = "1" ] || [ "$SKIP_SETTINGS" = "1" ] \
@@ -363,7 +381,7 @@ repo_selected() {
   [ "$ONLY_REPOS_SET" = "1" ] || return 0
   [ -n "$ONLY_REPOS" ] || return 1
   [ "$ONLY_REPOS" = "*" ] && return 0
-  printf '%s\n' "$ONLY_REPOS" | grep -qxF -- "$rel"
+  printf '%s\n' "$ONLY_REPOS_NORM" | grep -qxF -- "$rel"
 }
 SELECTED_METAS="$WORK/selected-metas.txt"
 : > "$SELECTED_METAS"
