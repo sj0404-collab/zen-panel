@@ -293,7 +293,7 @@ function showPage(p) {
   }
   if (p === 'files') initFM();
   if (p === 'git') loadGit();
-  if (p === 'snapshots') initSnapshots();
+  if (p === 'snapshots') { initSnapshots(); aiLoad(); }
   if (p === 'linux') { linuxStatus(); setTimeout(()=>{ try{ linuxConnect(); }catch{} }, 400); }
   document.body.classList.toggle('pg-linux', p === 'linux');
 }
@@ -4330,7 +4330,14 @@ function snapSel(stamp) {
   return snapPick_[stamp];
 }
 function snapEsc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
-function snapMb(n) { const v = Math.round((n || 0) / 104857.6) / 10; return v >= 1 ? (v + ' МБ') : ((Math.round((n || 0) / 1048.576)) + ' КБ'); }
+function snapMb(n) {
+  // null/undefined = the panel could not learn this file's size (the API call
+  // that carries sizes failed). Say so instead of printing "0 КБ" for a 60MB
+  // repo - a wrong number reads as a fact, an unknown one reads as an unknown.
+  if (n == null || isNaN(n)) return 'размер неизвестен';
+  const v = Math.round(n / 104857.6) / 10;
+  return v >= 1 ? (v + ' МБ') : ((Math.round(n / 1048.576)) + ' КБ');
+}
 async function initSnapshots() {
   // Висящий рестарт хаба не теряет уже работающее восстановление — подхватываем.
   try {
@@ -4387,7 +4394,7 @@ function renderSnapList() {
     if (s.stamp === snapData.recommended) marks.push('<span style="color:var(--acc);font-weight:600">⭐ последний, где что-то делали</span>');
     if (!act) marks.push('<span style="color:var(--warn,#e0a642);font-weight:600">⚠ ничего не делали (пусто)</span>');
     const what = [];
-    if (s.repos.length) what.push('репо: ' + s.repos.map(r => snapEsc(r.rel) + ' (' + r.kind + ', ' + snapMb(r.bytes) + ')').join(' | '));
+    if (s.repos.length) what.push('репо: ' + s.repos.map(r => snapEsc(r.rel) + ' (' + r.kind + ', ' + (r.sized ? snapMb(r.bytes) : 'размер неизвестен') + ')').join(' | '));
     if (s.extrasMb > 0) what.push('дифы/новое: ' + s.extrasMb + ' МБ');
     if (s.chats) what.push('чаты opencode: ' + s.chats);
     if (s.settings) what.push('настройки opencode');
@@ -4400,7 +4407,7 @@ function renderSnapList() {
         <div style="font-size:11px;margin-top:2px">${marks.join(' ')}</div>
         <div style="font-size:11px;color:var(--t3);margin-top:3px">${what.join(' · ')}</div>
       </div>
-      <div style="font-size:11px;color:var(--t3)">${s.totalMb} МБ</div>
+      <div style="font-size:11px;color:var(--t3)">${s.sized ? s.totalMb + ' МБ' : '—'}</div>
     </label>` + (sel ? snapTicks(s) : '');
   }).join('');
   const hidden = snapHiddenCount();
@@ -4421,7 +4428,7 @@ function snapTicks(s) {
   for (const r of s.repos) {
     rows.push(`<label class="snap-tick" onclick="event.stopPropagation()">
       <input type="checkbox" ${p.repos.indexOf(r.rel) >= 0 ? 'checked' : ''} onchange="snapRepo('${snapEsc(s.stamp)}','${snapEsc(r.rel)}',this.checked)">
-      <span>📁 ${snapEsc(r.rel)} <span style="color:var(--t3)">(${r.kind}, ${snapMb(r.bytes)})</span></span>
+      <span>📁 ${snapEsc(r.rel)} <span style="color:var(--t3)">(${r.kind}, ${r.sized ? snapMb(r.bytes) : 'размер неизвестен'})</span></span>
     </label>`);
   }
   const bucket = (id, label, on, count) => `<label class="snap-tick" onclick="event.stopPropagation()">
@@ -4515,3 +4522,91 @@ function pollSnap() {
   }, 2000);
 }
 
+
+// ===== ФОНОВЫЕ ИИ-РАННЕРЫ (tmux) =====
+// Терминальная вкладка умирает вместе со страницей, а «работает, пока я сплю» —
+// это ровно то, зачем нужен tmux new -d. Панель тут только витрина: она может
+// закрыться, телефон потерять связь, хаб перезапуститься — раннер в tmux
+// продолжает иметь свой лог на диске, к которому можно вернуться.
+let aiData = { available: true, runners: [] }, aiPoll = null, aiOpen = '';
+// Where a runner starts: the terminal the user is looking at, else the hub's
+// work directory. The server refuses anything outside WORK_DIR regardless.
+const aiCwd = () => (activeTab && activeTab.cwd) || workDir || homeDir || '';
+async function aiLoad(quiet) {
+  const note = document.getElementById('ai-note'), list = document.getElementById('ai-list');
+  try {
+    const j = await fetch('/api/ai-runners').then(r => r.json());
+    if (!j || j.success !== true) {
+      aiData = { available: false, runners: [] };
+      note.textContent = (j && j.error) || 'раннеры недоступны';
+      list.innerHTML = '';
+      aiStopPoll();
+      return;
+    }
+    aiData = { available: true, runners: j.runners || [] };
+    const alive = aiData.runners.filter(r => r.alive).length;
+    note.textContent = aiData.runners.length
+      ? ('Работает: ' + alive + ', всего: ' + aiData.runners.length + '. Живут своей сессией tmux.')
+      : 'Задача уходит в отдельную сессию tmux: работает, пока закрыта вкладка, перезапускается хаб и пропадает связь.';
+    aiRender();
+    aiPollRunners();
+  } catch (e) {
+    if (!quiet) note.textContent = 'Нет связи: ' + (e && e.message || e);
+  }
+}
+function aiStopPoll() { if (aiPoll) { clearInterval(aiPoll); aiPoll = null; } }
+// Poll only while something is running: a finished runner's tail is already on
+// the page, and a quiet page should not keep asking the hub every two seconds.
+function aiPollRunners() {
+  aiStopPoll();
+  if (!aiData.runners.some(r => r.alive)) return;
+  aiPoll = setInterval(() => aiLoad(true), 2500);
+}
+function aiRender() {
+  const list = document.getElementById('ai-list');
+  if (!aiData.runners.length) { list.innerHTML = ''; return; }
+  list.innerHTML = aiData.runners.map(r => {
+    const open = aiOpen === r.id;
+    const when = r.started ? new Date(r.started).toLocaleTimeString() : '';
+    const state = r.alive ? 'работает' : (r.exitCode === 143 ? 'остановлен' : 'закончил' + (r.exitCode != null ? ' (код ' + r.exitCode + ')' : ''));
+    return `<div class="ai-row ${r.alive ? '' : 'done'}">
+      <span class="ai-dot"></span>
+      <div style="flex:1;min-width:0">
+        <div class="ai-title">${snapEsc(r.title || r.id)}</div>
+        <div class="ai-meta">${state} · ${when}${r.model ? ' · ' + snapEsc(r.model) : ''}</div>
+      </div>
+      <button class="btn btn-sm" onclick="aiToggle('${snapEsc(r.id)}')">${open ? '▴' : '▾'}</button>
+      ${r.alive ? `<button class="btn btn-sm" onclick="aiStop('${snapEsc(r.id)}')">⏹</button>` : ''}
+    </div>` + (open ? `<div class="ai-tail">${snapEsc(r.tail || 'вывода пока нет')}</div>` : '');
+  }).join('');
+}
+function aiToggle(id) { aiOpen = aiOpen === id ? '' : id; aiRender(); }
+async function aiStart() {
+  const btn = document.getElementById('ai-start');
+  const prompt = document.getElementById('ai-prompt').value.trim();
+  if (!prompt) { document.getElementById('ai-note').textContent = 'Введи задачу'; return; }
+  btn.disabled = true;
+  try {
+    const j = await fetch('/api/ai-runners', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, model: document.getElementById('ai-model').value.trim(), cwd: aiCwd() })
+    }).then(r => r.json());
+    if (!j || j.success !== true) {
+      document.getElementById('ai-note').textContent = (j && j.error) || 'не запустился';
+      return;
+    }
+    document.getElementById('ai-prompt').value = '';
+    aiOpen = j.runner.id;
+    await aiLoad();
+  } catch (e) {
+    document.getElementById('ai-note').textContent = 'Нет связи: ' + (e && e.message || e);
+  } finally { btn.disabled = false; }
+}
+async function aiStop(id) {
+  try {
+    await fetch('/api/ai-runners/' + encodeURIComponent(id) + '/stop', { method: 'POST' });
+    await aiLoad();
+  } catch (e) {
+    document.getElementById('ai-note').textContent = 'Нет связи: ' + (e && e.message || e);
+  }
+}

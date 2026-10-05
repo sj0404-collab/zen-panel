@@ -3158,6 +3158,141 @@ app.post('/api/sessions/:id/kill', (req, res) => {
   res.json({ success: true });
 });
 
+// ─── DETACHED AI RUNNERS (tmux new -d) ───
+// A terminal tab dies with the page, and the whole point of the hub is that the
+// agent keeps going while the user is asleep, on the train, or off the network
+// entirely. A runner is `opencode run` inside a detached tmux session with its
+// output on disk: it outlives the tab, the hub restart and the lost connection,
+// and can be attached later to watch it or take the wheel.
+//
+// The prompt never goes near a shell command line. It is written to a file and
+// the command reads it back, because a prompt is exactly the kind of text that
+// contains quotes, `$`, backticks and newlines, and a runner that builds
+// `bash -lc "... $PROMPT ..."` is a runner waiting to execute the user's words.
+const AI_PREFIX = 'npmhub-ai-';
+const AI_DIR = path.join(DATA_DIR, 'ai-runners');
+const AI_TAIL_BYTES = 96 * 1024;
+const AI_MAX_RUNNERS = 12;
+const aiSafe = id => AI_PREFIX + String(id).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80);
+const aiIdOk = id => /^ai_[0-9]{8}_[0-9]+_[A-Za-z0-9]{4}$/.test(String(id || ''));
+const aiPath = (id, ext) => path.join(AI_DIR, aiSafe(id) + ext);
+// Model ids are the one thing that must reach the command line, so they are
+// matched rather than escaped: nothing but provider/model characters.
+const aiModelOk = m => !m || /^[A-Za-z0-9._:/-]{1,120}$/.test(String(m));
+
+const aiTail = (id) => {
+  const p = aiPath(id, '.log');
+  try {
+    const st = fs.statSync(p);
+    const fd = fs.openSync(p, 'r');
+    try {
+      const len = Math.min(st.size, AI_TAIL_BYTES);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, st.size - len);
+      return buf.toString('utf8');
+    } finally { fs.closeSync(fd); }
+  } catch { return ''; }
+};
+const aiRead = (id) => {
+  try { return JSON.parse(fs.readFileSync(aiPath(id, '.meta.json'), 'utf8')); }
+  catch { return null; }
+};
+const aiState = (m) => {
+  const id = m.id;
+  let code = null;
+  try { code = parseInt(fs.readFileSync(aiPath(id, '.done'), 'utf8').trim(), 10); } catch {}
+  const alive = !!(tmuxHas() && tmuxRun(['has-session', '-t', aiSafe(id)], 2000).status === 0);
+  return {
+    ...m, alive, done: code !== null && !alive,
+    exitCode: code, tail: aiTail(id)
+  };
+};
+const aiList = () => {
+  let names = [];
+  try { names = fs.readdirSync(AI_DIR); } catch {}
+  const out = [];
+  for (const n of names) {
+    if (!n.endsWith('.meta.json')) continue;
+    const m = aiRead(n.slice(0, -'.meta.json'.length).replace(new RegExp('^' + AI_PREFIX), ''));
+    if (m && m.id) out.push(aiState(m));
+  }
+  return out.sort((a, b) => (b.started || 0) - (a.started || 0));
+};
+
+app.get('/api/ai-runners', (req, res) => {
+  if (!tmuxHas()) return res.json({ success: false, available: false, error: 'tmux не установлен', runners: [] });
+  res.json({ success: true, available: true, runners: aiList() });
+});
+
+// The command that runs inside tmux. Fixed text plus two validated values; the
+// prompt is read from disk at run time and never interpolated here.
+const aiCommand = (id, model) => {
+  const log = aiPath(id, '.log'), done = aiPath(id, '.done'), prompt = aiPath(id, '.prompt.txt');
+  const q = s => "'" + String(s).replace(/'/g, "'\\''") + "'";
+  const oc = model ? `opencode run --model ${q(model)}` : 'opencode run';
+  // `exec bash` at the end keeps the pane alive: a finished runner stays
+  // attachable so its last screen is still there to read, which is the whole
+  // reason this is tmux and not a background spawn.
+  return `bash -lc ${q(`${oc} "$(cat ${q(prompt)})" >${q(log)} 2>&1; echo $? >${q(done)}`)}; exec bash`;
+};
+
+app.post('/api/ai-runners', express.json({ limit: '1mb' }), (req, res) => {
+  if (!tmuxHas()) return res.status(503).json({ success: false, error: 'tmux не установлен' });
+  const body = req.body || {};
+  const prompt = String(body.prompt || '').trim();
+  if (!prompt) return res.status(400).json({ success: false, error: 'пустой промпт' });
+  if (prompt.length > 20000) return res.status(400).json({ success: false, error: 'промпт длиннее 20000 символов' });
+  const model = String(body.model || '').trim();
+  if (!aiModelOk(model)) return res.status(400).json({ success: false, error: 'некорректная модель' });
+  // Same boundary as everything else the hub is allowed to touch.
+  if (!runnerRoot(body.cwd)) return res.status(400).json({ success: false, error: 'папка вне рабочего каталога хаба' });
+  const cwd = path.resolve(String(body.cwd));
+  try { fs.mkdirSync(AI_DIR, { recursive: true }); } catch (e) { return res.status(500).json({ success: false, error: e.message }); }
+
+  // Cap the pile: these keep running after the panel is closed, so an
+  // accidental double-tap would otherwise leave the runner chewing the same
+  // token budget twice.
+  const live = aiList().filter(r => r.alive);
+  if (live.length >= AI_MAX_RUNNERS) return res.status(429).json({ success: false, error: 'уже работает ' + AI_MAX_RUNNERS + ' раннеров' });
+
+  const id = 'ai_' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+  const meta = {
+    id, cwd, model: model || null, started: Date.now(),
+    title: prompt.replace(/\s+/g, ' ').slice(0, 90)
+  };
+  try {
+    fs.writeFileSync(aiPath(id, '.prompt.txt'), prompt, 'utf8');
+    fs.writeFileSync(aiPath(id, '.log'), '', 'utf8');
+    fs.writeFileSync(aiPath(id, '.meta.json'), JSON.stringify(meta, null, 2), 'utf8');
+  } catch (e) { return res.status(500).json({ success: false, error: e.message }); }
+
+  const r = tmuxRun(['new-session', '-d', '-s', aiSafe(id), '-x', '120', '-y', '30', '-c', cwd, aiCommand(id, model)], 10000);
+  if (r.status !== 0) {
+    return res.status(500).json({ success: false, error: (r.stderr || 'tmux не смог создать сессию').trim().slice(0, 300) });
+  }
+  res.json({ success: true, runner: aiState(meta) });
+});
+
+app.get('/api/ai-runners/:id/tail', (req, res) => {
+  const id = String(req.params.id || '');
+  if (!aiIdOk(id)) return res.status(400).json({ success: false, error: 'плохой id' });
+  const m = aiRead(id);
+  if (!m) return res.status(404).json({ success: false, error: 'раннер не найден' });
+  res.json({ success: true, runner: aiState(m) });
+});
+
+// tmux survives the hub, so "stop" means stop it for real - kill-server-side,
+// not just forget about it.
+app.post('/api/ai-runners/:id/stop', (req, res) => {
+  const id = String(req.params.id || '');
+  if (!aiIdOk(id)) return res.status(400).json({ success: false, error: 'плохой id' });
+  tmuxRun(['kill-session', '-t', aiSafe(id)], 5000);
+  try { fs.writeFileSync(aiPath(id, '.done'), '143\n', 'utf8'); } catch {}
+  const m = aiRead(id);
+  if (m) res.json({ success: true, runner: aiState(m) });
+  else res.json({ success: true });
+});
+
 // Manual update from GitHub: pull main, then exit so the workflow keep-alive
 // loop restarts the hub on the new code. tmux sessions and the tunnel live
 // outside this process, so they survive the restart untouched.
@@ -4656,16 +4791,70 @@ const wbRemote = () => {
   if (!token || !repo) return '';
   return `https://x-access-token:${token}@github.com/${repo}.git`;
 };
+// stdout and stderr are kept apart on purpose. They used to be concatenated
+// into one `out`, which is how a failing `git ls-tree` ended up reporting its
+// own partial stdout to the user as the error text: "не прочитал work-backup:
+// ls-tree: 100644 blob 4ce8c879..." - a wall of tree lines instead of a reason.
 const wbRunCmd = (cmd, args, timeoutMs) => new Promise((resolve) => {
-  let out = '', expired = false, child;
+  let out = '', err = '', expired = false, child;
   try { child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] }); }
   catch (e) { return resolve({ code: 1, out: '', err: e.message }); }
   const timer = setTimeout(() => { expired = true; try { child.kill('SIGKILL'); } catch {} }, timeoutMs || 60000);
   child.stdout.on('data', d => { out += String(d); });
-  child.stderr.on('data', d => { out += String(d); });
-  child.on('error', e => { clearTimeout(timer); resolve({ code: 1, out, err: e.message }); });
-  child.on('close', code => { clearTimeout(timer); resolve({ code: expired ? 124 : (code || 0), out: out.slice(0, 400000), err: '' }); });
+  child.stderr.on('data', d => { err += String(d); });
+  child.on('error', e => { clearTimeout(timer); resolve({ code: 1, out, err: err + e.message }); });
+  child.on('close', code => {
+    clearTimeout(timer);
+    resolve({
+      code: expired ? 124 : (typeof code === 'number' ? code : 1),
+      out: out.slice(0, 400000), err: err.slice(0, 4000)
+    });
+  });
 });
+// What a git failure actually said, in one line. `err` first: stderr is where
+// git puts the reason, stdout is where it puts whatever it managed to print.
+const wbWhy = (r, what) => {
+  const why = String(r.err || '').trim().split('\n').filter(Boolean).slice(-3).join(' / ');
+  return what + ' (код ' + r.code + (why ? '): ' + why.slice(0, 300) : ')');
+};
+
+// Blob sizes, without downloading a byte of the blobs.
+//
+// `git ls-tree -l` used to be asked for these. That was the whole bug behind
+// "Снапшотов: 4" turning into "Не прочиталось": the long format prints the size
+// of every blob, and a blob's size exists only inside the blob - precisely what
+// --filter=blob:none had deliberately not downloaded. So git lazily fetched the
+// blobs to read numbers off them, and one snapshot was 1600MB (1.5GB of it an
+// Android emulator disk image that collect_big_files should never have packed),
+// so the fetch ran past the timeout and the tab reported a dead listing.
+//
+// The names come from tree objects, which are local and free. The sizes come
+// from the API, which already knows every blob's size. If the API is unhappy we
+// list the snapshots with sizes unknown rather than not at all.
+const wbSizeCache = new Map();
+const wbTreeSizes = async (repo, stamp, treeSha) => {
+  const hit = wbSizeCache.get(treeSha);
+  if (hit) return hit;
+  const map = new Map();
+  try {
+    const r = await fetch(`https://api.github.com/repos/${repo}/git/trees/${treeSha}?recursive=1`, {
+      headers: ghHeaders(), signal: AbortSignal.timeout(20000)
+    });
+    if (r.ok) {
+      const j = await r.json();
+      if (Array.isArray(j.tree)) {
+        for (const e of j.tree) {
+          if (e && e.type === 'blob' && typeof e.size === 'number') {
+            map.set('snapshots/' + stamp + '/' + e.path, e.size);
+          }
+        }
+      }
+    }
+  } catch (e) { /* no sizes this round; the listing still stands */ }
+  wbSizeCache.set(treeSha, map);
+  if (wbSizeCache.size > 96) wbSizeCache.delete(wbSizeCache.keys().next().value);
+  return map;
+};
 const wbPushTail = (s) => {
   for (const ln of String(s).split('\n')) {
     const v = ln.trim();
@@ -4695,26 +4884,51 @@ app.get('/api/work-snapshots', async (req, res) => {
         if (init.code !== 0) throw new Error('git init: ' + init.out.slice(0, 200));
       }
       const fch = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'fetch', '-q', '--depth=1', '--filter=blob:none', remote, '+refs/heads/work-backup:refs/wb'], 180000);
-      if (fch.code !== 0) throw new Error('fetch: ' + fch.out.slice(0, 200));
-      const tree = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'ls-tree', '-r', '-l', 'refs/wb', '--', 'snapshots/'], 60000);
-      if (tree.code !== 0) throw new Error('ls-tree: ' + tree.out.slice(0, 200));
+      if (fch.code !== 0) throw new Error(wbWhy(fch, 'не скачал ветку work-backup'));
+      // No -l here, on purpose: the long format needs every blob to print a
+      // size, and this fetch is a blob:none partial clone. See wbTreeSizes.
+      const tree = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'ls-tree', '-r', 'refs/wb', '--', 'snapshots/'], 60000);
+      if (tree.code !== 0) throw new Error(wbWhy(tree, 'не прочитал дерево снапшотов'));
+      // stamp -> tree object id, so the sizes can be asked for per snapshot.
+      const tops = await wbRunCmd('git', ['--git-dir=' + WB_CACHE_DIR, 'ls-tree', 'refs/wb:snapshots'], 30000);
+      const stampTree = new Map();
+      if (tops.code === 0) {
+        for (const line of tops.out.split('\n')) {
+          const m = line.match(/^040000 tree ([0-9a-f]{40})\s+(\S+)$/);
+          if (m) stampTree.set(m[2], m[1]);
+        }
+      }
+      const repo = process.env.GITHUB_REPOSITORY || '';
+      // One request per snapshot (there are a handful), then cached by tree id.
+      const sizesByStamp = new Map();
+      for (const [stamp, sha2] of stampTree) {
+        if (repo) sizesByStamp.set(stamp, await wbTreeSizes(repo, stamp, sha2));
+      }
       const snaps = new Map();
       for (const line of tree.out.split('\n')) {
-        const m = line.match(/^\S+ blob +\S+ +(\d+)\tsnapshots\/([^/]+)\/(.+)$/);
+        const m = line.match(/^\S+ blob +\S+\t?snapshots\/([^/]+)\/(.+)$/);
         if (!m) continue;
-        const size = parseInt(m[1], 10) || 0;
-        const stamp = m[2], rel = m[3];
+        const stamp = m[1], rel = m[2];
         let s = snaps.get(stamp);
-        if (!s) { s = { stamp, repos: new Map(), extras: 0, chats: 0, chatNames: [], settings: false, sessions: false, total: 0 }; snaps.set(stamp, s); }
-        s.total += size;
+        if (!s) { s = { stamp, repos: new Map(), extras: 0, chats: 0, chatNames: [], settings: false, sessions: false, total: 0, sized: 0 }; snaps.set(stamp, s); }
+        const sizes = sizesByStamp.get(stamp);
+        const size = sizes && sizes.has('snapshots/' + stamp + '/' + rel) ? sizes.get('snapshots/' + stamp + '/' + rel) : null;
+        // Presence is the reliable signal for "this repo was really packed":
+        // backup-work only commits a bundle/archive when it has content, so a
+        // blob here means a non-empty repo. Sizes may be unknown; that must
+        // never decide what the panel offers to restore.
+        s.sized += size == null ? 0 : 1;
+        s.total += size || 0;
         const base = rel.split('/').pop();
         const dir = rel.slice(0, -(base.length + 1));
         if (base === 'repo.bundle' || base === 'worktree.tar.gz') {
-          const e = s.repos.get(dir) || { rel: dir, bytes: 0, kind: '' };
-          if (size > 0) { e.bytes += size; e.kind = base === 'repo.bundle' ? 'git' : 'архив'; }
+          const e = s.repos.get(dir) || { rel: dir, bytes: 0, kind: '', sized: 0 };
+          e.sized += size == null ? 0 : 1;
+          e.bytes += size || 0;
+          e.kind = base === 'repo.bundle' ? 'git' : 'архив';
           s.repos.set(dir, e);
         } else if (base === 'wip.patch' || base === 'untracked.tar.gz') {
-          if (size > 0) s.extras += size;
+          s.extras += size || 0;
         } else if (rel.startsWith('opencode/chats/') && base.endsWith('.json')) {
           s.chats += 1;
           s.chatNames.push(base.replace(/\.json$/, ''));
@@ -4732,11 +4946,13 @@ app.get('/api/work-snapshots', async (req, res) => {
         const active = s.repos.size > 0 || s.chats > 0 || s.settings || s.sessions;
         return {
           stamp: s.stamp,
-          repos: [...s.repos.values()].filter(r => r.bytes > 0).sort((a, b) => a.rel.localeCompare(b.rel)),
+          // every repo whose bundle/archive is in the tree, size unknown or not
+          repos: [...s.repos.values()].sort((a, b) => a.rel.localeCompare(b.rel)),
           extrasMb: Math.round(s.extras / 104857.6) / 10,
           chats: s.chats, chatNames: s.chatNames.sort(), settings: s.settings,
           sessions: s.sessions, active,
-          totalMb: Math.round(s.total / 104857.6) / 10
+          totalMb: Math.round(s.total / 104857.6) / 10,
+          sized: s.sized > 0
         };
       });
       list.sort((a, b) => b.stamp.localeCompare(a.stamp));

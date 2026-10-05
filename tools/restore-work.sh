@@ -36,6 +36,9 @@ if ! mkdir -p "$HUB_LOGS" 2>/dev/null; then
   exit 1
 fi
 log() { echo "[restore-work $(date -u '+%H:%M:%S')] $*" | tee -a "$HUB_LOGS/restore-work.log"; }
+# Same shape as backup-work.sh's sanitize: the chat bundle name is derived from
+# this on both sides, so the two must agree exactly.
+sanitize() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-160; }
 
 [ "${WORK_BACKUP_RESTORE:-1}" = "0" ] && { log "disabled"; exit 0; }
 
@@ -503,14 +506,27 @@ elif [ -d "$SNAP/opencode/chats" ] && ls "$SNAP/opencode/chats"/*.json >/dev/nul
   RESTORE_CHATS_BIN="$HOME/.local/bin/restore-chats.sh"; [ -f "$RESTORE_CHATS_BIN" ] || RESTORE_CHATS_BIN="$(dirname "$0")/restore-chats.sh"
   while IFS= read -r meta; do
     [ -f "$meta" ] || continue
-    name="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); print(d.get("name") or "")' "$meta" 2>/dev/null | tr -c 'A-Za-z0-9._-' '_')"
-    [ -n "$name" ] || continue
-    bundle="$SNAP/opencode/chats/$name.json"
-    [ -s "$bundle" ] || continue
-    rel="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); print(d.get("rel") or "")' "$meta" 2>/dev/null)"
+    rel="$(python3 -c 'import json,sys
+try: d=json.load(open(sys.argv[1],encoding="utf-8"))
+except Exception: raise SystemExit(0)
+sys.stdout.write(str(d.get("rel") or ""))' "$meta" 2>/dev/null)"
+    [ -n "$rel" ] || continue
     dest="$ROOT/$rel"
     [ -d "$dest" ] || continue
-    CHAT_BUNDLE="$bundle" CHAT_REPO_DIR="$dest" bash "$RESTORE_CHATS_BIN" >/dev/null 2>&1 && log "chats restored for $name" || log "chats restore failed for $name"
+    # Named after the repo's PATH, not its basename. Every clone the Files tab
+    # makes lands in a folder called `code`, so a basename name handed
+    # zen-panel/code and yomikai/code the same bundle file and one repository's
+    # sessions silently replaced the other's. The older snapshots on the branch
+    # still carry basename-named bundles, so those names are tried too - a
+    # rename must not cost the user the sessions already in the snapshot.
+    base="${rel##*/}"
+    bundle=""
+    for candidate in "$(sanitize "$rel")" "$(sanitize "$base")" "$(sanitize "$base")_" "$base"; do
+      [ -n "$candidate" ] || continue
+      if [ -s "$SNAP/opencode/chats/$candidate.json" ]; then bundle="$SNAP/opencode/chats/$candidate.json"; break; fi
+    done
+    [ -n "$bundle" ] || continue
+    CHAT_BUNDLE="$bundle" CHAT_REPO_DIR="$dest" bash "$RESTORE_CHATS_BIN" >/dev/null 2>&1 && log "chats restored for $rel" || log "chats restore failed for $rel"
   done < "$SELECTED_METAS"
 fi
 
