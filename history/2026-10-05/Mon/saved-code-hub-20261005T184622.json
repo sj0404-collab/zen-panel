@@ -1,0 +1,82 @@
+{
+  "kind": "snapshot-code.json",
+  "slot": "hub",
+  "stamp": "2026-10-05T18:46:42Z",
+  "changedFiles": [
+    {
+      "code": " M",
+      "path": "npm-hub/.zen-agent/audit.jsonl"
+    },
+    {
+      "code": " M",
+      "path": "tests/work-backup-test.sh"
+    },
+    {
+      "code": " M",
+      "path": "tools/restore-work.sh"
+    },
+    {
+      "code": "??",
+      "path": ".zen-agent/"
+    },
+    {
+      "code": "??",
+      "path": "audit.json"
+    },
+    {
+      "code": "??",
+      "path": "code.json"
+    }
+  ],
+  "gitStatus": " M npm-hub/.zen-agent/audit.jsonl\n M tests/work-backup-test.sh\n M tools/restore-work.sh\n?? .zen-agent/\n?? audit.json\n?? code.json\n",
+  "gitDiffStat": " npm-hub/.zen-agent/audit.jsonl |  6 ++++++\n tests/work-backup-test.sh      | 24 ++++++++++++++++++++++++\n tools/restore-work.sh          | 20 +++++++++++++++++++-\n 3 files changed, 49 insertions(+), 1 deletion(-)\n",
+  "gitDiff": "diff --git a/npm-hub/.zen-agent/audit.jsonl b/npm-hub/.zen-agent/audit.jsonl\nindex 4c303fc..607ee21 100644\n--- a/npm-hub/.zen-agent/audit.jsonl\n+++ b/npm-hub/.zen-agent/audit.jsonl\n@@ -22,3 +22,9 @@\n {\"at\":\"2026-09-12T09:47:09.788Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"ling-3.0-flash-fin-free\"],\"retired\":[],\"live\":8,\"total\":11}\n {\"at\":\"2026-09-12T09:57:14.977Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n {\"at\":\"2026-09-12T09:57:14.978Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"ling-3.0-flash-fin-free\"],\"retired\":[],\"live\":8,\"total\":11}\n+{\"at\":\"2026-10-05T18:25:12.659Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-05T18:25:12.659Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"ling-3.0-flash-fin-free\",\"fledge-alpha-free\",\"ling-3.1-flash-free\"],\"retired\":[\"hy3-free\",\"x-preview-f-free\",\"laguna-s-2.1-free\"],\"live\":14,\"total\":17}\n+{\"at\":\"2026-10-05T18:35:13.585Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-05T18:35:13.586Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"ling-3.0-flash-fin-free\",\"fledge-alpha-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":14,\"total\":17}\n+{\"at\":\"2026-10-05T18:45:18.855Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-05T18:45:18.856Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"ling-3.0-flash-fin-free\",\"fledge-alpha-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":14,\"total\":17}\ndiff --git a/tests/work-backup-test.sh b/tests/work-backup-test.sh\nindex a166227..b37edbc 100755\n--- a/tests/work-backup-test.sh\n+++ b/tests/work-backup-test.sh\n@@ -289,6 +289,30 @@ check \"the ticked repository is restored\" \"$([ -d \"$TMP/home/shallow-code/.git\"\n check \"an unticked repository stays away\" \"$([ ! -e \"$TMP/home/proj\" ] && echo 1 || echo 0)\"\n check \"unticked: no terminal descriptors\" \"$([ ! -e \"$TMP/home/.npm-hub/sessions\" ] && echo 1 || echo 0)\"\n \n+# The very same tick, spelled the way the panel sends it: a repository is\n+# ticked by its path inside the snapshot, and that path carries the repos/\n+# prefix (snapshots/<stamp>/repos/<rel>/...). The meta.json the script\n+# iterates keeps <rel> without it, so the prefixed spelling matched nothing:\n+# every ticked repository came back as «not selected» and the run finished\n+# with 0 repositories restored while reporting success. This is the shape the\n+# user actually clicked.\n+rm -rf \"$TMP/home/proj\" \"$TMP/home/shallow-code\"\n+WORK_BACKUP_SNAPSHOT=\"snapshots/$SELECT_SNAP\" WORK_BACKUP_ONLY_REPOS='repos/shallow-code' \\\n+WORK_BACKUP_SKIP_CHATS=1 WORK_BACKUP_SKIP_SETTINGS=1 WORK_BACKUP_SKIP_FILES=1 WORK_BACKUP_SKIP_SESSIONS=1 \\\n+  bash \"$TOOLS/restore-work.sh\" >/dev/null 2>&1\n+check \"a repository ticked by its snapshot path is restored\" \"$([ -d \"$TMP/home/shallow-code/.git\" ] && echo 1 || echo 0)\"\n+check \"a repository ticked by its snapshot path leaves the rest alone\" \"$([ ! -e \"$TMP/home/proj\" ] && echo 1 || echo 0)\"\n+\n+# Several repositories at once with the two spellings mixed, the way a nested\n+# clone and a top-level one get ticked in the same restore.\n+rm -rf \"$TMP/home/proj\" \"$TMP/home/shallow-code\"\n+WORK_BACKUP_SNAPSHOT=\"snapshots/$SELECT_SNAP\" WORK_BACKUP_ONLY_REPOS='repos/proj\n+shallow-code' \\\n+WORK_BACKUP_SKIP_CHATS=1 WORK_BACKUP_SKIP_SETTINGS=1 WORK_BACKUP_SKIP_FILES=1 WORK_BACKUP_SKIP_SESSIONS=1 \\\n+  bash \"$TOOLS/restore-work.sh\" >/dev/null 2>&1\n+check \"a mixed list restores every ticked repository\" \\\n+  \"$([ -d \"$TMP/home/proj/.git\" ] && [ -d \"$TMP/home/shallow-code/.git\" ] && echo 1 || echo 0)\"\n+\n # The same snapshot with only the sessions ticked and no repositories at all:\n # the sessions are what the user came for, and a repo they did not ask for must\n # not appear just because its chats were wanted.\ndiff --git a/tools/restore-work.sh b/tools/restore-work.sh\nindex e711957..1e994ba 100755\n--- a/tools/restore-work.sh\n+++ b/tools/restore-work.sh\n@@ -353,6 +353,24 @@ SKIP_CHATS=\"${WORK_BACKUP_SKIP_CHATS:-0}\"\n SKIP_SETTINGS=\"${WORK_BACKUP_SKIP_SETTINGS:-0}\"\n SKIP_FILES=\"${WORK_BACKUP_SKIP_FILES:-0}\"\n SKIP_SESSIONS=\"${WORK_BACKUP_SKIP_SESSIONS:-0}\"\n+# The panel ticks a repository by the path it has INSIDE the snapshot, and that\n+# path starts with repos/ (snapshots/<stamp>/repos/<rel>/...). The meta.json\n+# beside the bundle keeps <rel> - root-relative, no prefix - and that is what\n+# this script iterates over. Comparing the two verbatim matched nothing: the\n+# restore ran to the end, reported every ticked repository as \"not selected\"\n+# and finished with 0 repositories restored. Both spellings are accepted, so\n+# the prefixes are stripped from the incoming list once here.\n+ONLY_REPOS_NORM=\"\"\n+if [ \"$ONLY_REPOS_SET\" = \"1\" ] && [ \"$ONLY_REPOS\" != \"*\" ] && [ -n \"$ONLY_REPOS\" ]; then\n+  while IFS= read -r one; do\n+    [ -n \"$one\" ] || continue\n+    case \"$one\" in repos/*) one=\"${one#repos/}\";; esac\n+    ONLY_REPOS_NORM=\"$ONLY_REPOS_NORM$one\n+\"\n+  done <<EOF\n+$ONLY_REPOS\n+EOF\n+fi\n selection_is_partial() {\n   [ \"$ONLY_REPOS_SET\" = \"1\" ] && [ \"$ONLY_REPOS\" != \"*\" ] \\\n     || [ \"$SKIP_CHATS\" = \"1\" ] || [ \"$SKIP_SETTINGS\" = \"1\" ] \\\n@@ -363,7 +381,7 @@ repo_selected() {\n   [ \"$ONLY_REPOS_SET\" = \"1\" ] || return 0\n   [ -n \"$ONLY_REPOS\" ] || return 1\n   [ \"$ONLY_REPOS\" = \"*\" ] && return 0\n-  printf '%s\\n' \"$ONLY_REPOS\" | grep -qxF -- \"$rel\"\n+  printf '%s\\n' \"$ONLY_REPOS_NORM\" | grep -qxF -- \"$rel\"\n }\n SELECTED_METAS=\"$WORK/selected-metas.txt\"\n : > \"$SELECTED_METAS\"\n",
+  "gitLog": [
+    "7b26cfe Autopilot: it now actually runs — on the hub, on master, with a git identity (#134)"
+  ],
+  "sessions": [],
+  "topFiles": [
+    "AGENTS.md",
+    "MANIFEST.md",
+    "README.md",
+    "TESTING.md",
+    "agent",
+    "app",
+    "artifacts",
+    "audit.json",
+    "build.gradle.kts",
+    "ci",
+    "code.json",
+    "desktop",
+    "free-multimodal-models.txt",
+    "gradle.properties",
+    "hub",
+    "models-agent.json",
+    "models-hub-linux.json",
+    "models-hub-windows.json",
+    "models-hub.json",
+    "models-opencode.json",
+    "npm-hub",
+    "opencode.json",
+    "pc-local",
+    "restore-session.sh",
+    "saved",
+    "session-agent.json",
+    "session-hub-linux.json",
+    "session-hub-windows.json",
+    "session-hub.json",
+    "session-linux.json",
+    "session-opencode.json",
+    "session-windows.json",
+    "settings.gradle.kts",
+    "tests",
+    "tools",
+    "workflow-cloudflare-fixes.patch"
+  ],
+  "changedCount": 6,
+  "startedAt": "2026-10-05T18:47:25Z",
+  "state": "live",
+  "runId": "37355545037",
+  "runNumber": "369",
+  "repo": "sj0404-collab/zen-panel"
+}
