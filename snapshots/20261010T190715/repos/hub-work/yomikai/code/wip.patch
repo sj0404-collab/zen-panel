@@ -1,0 +1,128 @@
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/webbrowser/BrowserTab.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/webbrowser/BrowserTab.kt
+index c6be6f8..b1d1eab 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/webbrowser/BrowserTab.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/webbrowser/BrowserTab.kt
+@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
+ import androidx.compose.foundation.layout.offset
+ import androidx.compose.foundation.layout.width
+ import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.outlined.Block
+ import androidx.compose.material.icons.outlined.Close
+ import androidx.compose.material.icons.outlined.KeyboardArrowUp
+ import androidx.compose.material.icons.outlined.KeyboardArrowDown
+@@ -560,9 +561,27 @@ data object BrowserTab : Tab {
+                 }
+             }
+             webViewClient = object : WebViewClient() {
++                // Сетевая половина AdBlock: запросы рекламных сетей (включая
++                // iframe-баннеры со звуком) не отдаём странице вовсе.
++                override fun shouldInterceptRequest(
++                    view: WebView,
++                    request: android.webkit.WebResourceRequest,
++                ): android.webkit.WebResourceResponse? {
++                    if (BrowserAdBlock.isEnabled(view.context) &&
++                        BrowserAdBlock.shouldBlock(request.url?.toString())
++                    ) {
++                        return BrowserAdBlock.emptyResponse()
++                    }
++                    return super.shouldInterceptRequest(view, request)
++                }
++
+                 override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                     if (view !== sharedWebView) return
+                     if (!url.isNullOrBlank()) urlState.value = url
++                    // Блокировщик рекламы разворачивается на СТАРТЕ страницы:
++                    // иначе промо-карточка успевает мигнуть и отыграть звук
++                    // («тук-тук» поверх диалога авточтения).
++                    BrowserAdBlock.inject(view)
+                 }
+                 override fun onReceivedError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError) {
+                     if (view !== sharedWebView) return
+@@ -605,6 +624,9 @@ data object BrowserTab : Tab {
+                             null,
+                         )
+                     }
++                    // Косметический фильтр: страница догрузилась — промо-карточки,
++                    // которые сайт досыпает после рендера, снимаем сразу.
++                    BrowserAdBlock.inject(view)
+                     url?.let { urlState.value = it }
+                 }
+             }
+@@ -1374,6 +1396,37 @@ data object BrowserTab : Tab {
+                                     Icon(Icons.Outlined.Lock, contentDescription = "SSL-политика")
+                                 }
+                             }
++                            // AdBlock: рекламные сети режем по сети, промо-карточки
++                            // («В паках больше выбора» и подобные) убирает контент-
++                            // скрипт — попап больше не лезет в диалог авточтения и
++                            // не отыгрывает звуки поверх речи.
++                            var adBlockOn by remember { mutableStateOf(BrowserAdBlock.isEnabled(ctx)) }
++                            Row(verticalAlignment = Alignment.CenterVertically) {
++                                Text(
++                                    if (adBlockOn) "AdBlock: вкл  " else "AdBlock: выкл  ",
++                                    style = MaterialTheme.typography.labelMedium,
++                                )
++                                SmallFloatingActionButton(onClick = {
++                                    adBlockOn = !adBlockOn
++                                    BrowserAdBlock.setEnabled(ctx, adBlockOn)
++                                    if (adBlockOn) {
++                                        // Новая страница развернёт фильтр сама;
++                                        // на открытой — включаем обратно на месте.
++                                        BrowserAdBlock.inject(sharedWebView)
++                                        BrowserAdBlock.setEnabled(sharedWebView, true)
++                                        ctx.toast("AdBlock включён — реклама убирается со страницы")
++                                    } else {
++                                        BrowserAdBlock.setEnabled(sharedWebView, false)
++                                        ctx.toast("AdBlock выключен — страница как есть")
++                                    }
++                                }) {
++                                    Icon(
++                                        Icons.Outlined.Block,
++                                        contentDescription = "AdBlock",
++                                        tint = if (adBlockOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
++                                    )
++                                }
++                            }
+                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                 Text(
+                                     if (voiceIcons) "Значки озвучки: вкл  " else "Значки озвучки: выкл  ",
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/webbrowser/MiniOverlayService.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/webbrowser/MiniOverlayService.kt
+index c0ccdd3..c252dce 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/webbrowser/MiniOverlayService.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/webbrowser/MiniOverlayService.kt
+@@ -215,6 +215,20 @@ class MiniOverlayService : Service() {
+             }
+         }
+         wv.webViewClient = object : WebViewClient() {
++            // Тот же AdBlock, что и в браузере: рекламные сети режем по сети,
++            // промо-карточки снимает вживлённый контент-скрипт.
++            override fun shouldInterceptRequest(
++                view: WebView,
++                request: android.webkit.WebResourceRequest,
++            ): android.webkit.WebResourceResponse? {
++                if (BrowserAdBlock.isEnabled(view.context) &&
++                    BrowserAdBlock.shouldBlock(request.url?.toString())
++                ) {
++                    return BrowserAdBlock.emptyResponse()
++                }
++                return super.shouldInterceptRequest(view, request)
++            }
++
+             override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean {
+                 if (url != null) view.loadUrl(url)
+                 return true
+@@ -222,12 +236,14 @@ class MiniOverlayService : Service() {
+ 
+             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                 urlView?.text = url ?: ""
++                BrowserAdBlock.inject(view)
+             }
+ 
+             override fun onPageFinished(view: WebView, url: String?) {
+                 urlView?.text = view.title?.takeIf { it.isNotBlank() } ?: url
+                 backBtn?.isEnabled = view.canGoBack()
+                 fwdBtn?.isEnabled = view.canGoForward()
++                BrowserAdBlock.inject(view)
+             }
+         }
+         wv.loadUrl(currentUrl)
