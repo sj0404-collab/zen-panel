@@ -131,13 +131,28 @@ const pgrep = async (name) => {
   return r.out.endsWith('0');
 };
 
-const portOpen = (port, timeout = 1500) => new Promise((resolve) => {
-  const sock = net.connect(Number(port), '127.0.0.1');
-  const done = (v) => { try { sock.destroy(); } catch {} resolve(v); };
-  sock.setTimeout(timeout);
-  sock.on('connect', () => done(true));
-  sock.on('timeout', () => done(false));
-  sock.on('error', () => done(false));
+// A single failed probe is not a dead server. x11vnc runs with -threads and,
+// while it is busy encoding a burst for a connected client, it can fail to
+// answer a TCP connect inside the timeout. Calling that "dead" killed the
+// very session the user was watching: measured on a live hub, 22 repairs in
+// five hours, every one of them «нет x11vnc:5901», every one a pkill of a
+// perfectly alive x11vnc. Two probes with a longer timeout, before anything
+// is declared down.
+const portOpen = (port, timeout = 2500, attempts = 2) => new Promise((resolve) => {
+  let left = attempts;
+  const tryOnce = () => {
+    const sock = net.connect(Number(port), '127.0.0.1');
+    const done = (v) => {
+      try { sock.destroy(); } catch {}
+      if (v || --left <= 0) resolve(v);
+      else setTimeout(tryOnce, 300);
+    };
+    sock.setTimeout(timeout);
+    sock.on('connect', () => done(true));
+    sock.on('timeout', () => done(false));
+    sock.on('error', () => done(false));
+  };
+  tryOnce();
 });
 
 const httpOk = (url, timeout = 3000) => new Promise((resolve) => {
@@ -904,10 +919,41 @@ function registerProxy(app, server) {
     try {
     wss.handleUpgrade(req, socket, head, (ws) => {
       const tcp = net.connect(Number(VNC_PORT), '127.0.0.1');
-      const kill = () => { try { tcp.destroy(); } catch {} try { ws.terminate(); } catch {} };
+      const kill = () => {
+        if (resumeTimer) { clearInterval(resumeTimer); resumeTimer = null; }
+        try { tcp.destroy(); } catch {} try { ws.terminate(); } catch {}
+      };
+      // Back-pressure, at last. x11vnc does not know what a phone tunnel can
+      // take: a full 1600x900 frame is 5.7 MB raw, and forwarding every chunk
+      // into a socket that is not draining made Node hold the whole burst in
+      // memory. The hub died on exactly that (see the crash comments in
+      // server.js). Pause the framebuffer while the socket is congested,
+      // resume when it drains, and never hold more than a couple of frames.
+      const MAX_BUFFERED = 2 * 1024 * 1024;
+      let paused = false, resumeTimer = null;
+      const maybeResume = () => {
+        if (!paused) return;
+        if (ws.readyState === 1 && ws.bufferedAmount < MAX_BUFFERED / 2) {
+          paused = false;
+          if (resumeTimer) { clearInterval(resumeTimer); resumeTimer = null; }
+          try { tcp.resume(); } catch {}
+        }
+      };
       tcp.on('error', kill);
       tcp.on('connect', () => state.x11vnc = 'up');
-      tcp.on('data', (d) => { if (ws.readyState === 1) ws.send(d, { binary: true }); });
+      tcp.on('data', (d) => {
+        if (ws.readyState !== 1) return kill();
+        if (paused) return;
+        if (ws.bufferedAmount > MAX_BUFFERED) {
+          paused = true;
+          if (!resumeTimer) resumeTimer = setInterval(maybeResume, 250);
+          try { tcp.pause(); } catch {}
+          return;
+        }
+        ws.send(d, { binary: true });
+      });
+      // Input flows the other way: a stalled socket must not wedge the TCP
+      // side either — the client's pauses are the flow control here.
       ws.on('message', (d) => { try { tcp.write(d); } catch {} });
       ws.on('close', kill);
       ws.on('error', kill);
@@ -985,6 +1031,14 @@ async function tick() {
       const why = [!x && 'нет X', !wm && 'нет openbox', !icons && 'нет idesk (иконки)',
         !bar && 'нет tint2 (панель)', !vnc && `нет x11vnc:${VNC_PORT}`, !ui && 'нет noVNC-UI']
         .filter(Boolean).join(', ');
+      // One fresh confirmation before the destructive repair: repair pkills
+      // x11vnc (start_desktop.sh always does) and that drops every connected
+      // screen. A busy encoder must cost a probe, not a session. If everything
+      // answers on the second look, nothing was wrong.
+      const again = await Promise.all([
+        xDisplayUp(), portOpen(VNC_PORT, 2500, 1), pgrep('openbox'), pgrep('idesk'), pgrep('tint2'),
+      ]);
+      if (again.every(Boolean) && ui) { state.lastTick = Date.now(); return; }
       await repair(repoRootRef, why);
     }
   } catch (e) {

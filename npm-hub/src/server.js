@@ -2094,22 +2094,27 @@ const wss = new WebSocketServer({ noServer: true });
 // This is deliberately separate from the VNC socket: video remains VNC, audio
 // remains an ordinary browser audio stream and works on phones too.
 const audioWss = new WebSocketServer({ noServer: true });
+// 16 kHz mono is the default on purpose: video audio lives in the voice band,
+// and a phone tunnel cannot afford 48 kHz stereo. The PCM fallback (no
+// WebCodecs) stays cheap the same way. Raise with HUB_AUDIO_RATE /
+// HUB_AUDIO_CHANNELS if a source really needs it.
 const audioRate = (req) => {
   try {
     const u = new URL(req.url, 'http://localhost');
-    const def = Number(process.env.HUB_AUDIO_RATE) || 22050;
+    const def = Number(process.env.HUB_AUDIO_RATE) || 16000;
     const n = Number(u.searchParams.get('rate') || def);
     return Math.max(8000, Math.min(96000, Number.isFinite(n) ? Math.round(n) : def));
-  } catch { return 22050; }
+  } catch { return 16000; }
 };
-// Stereo doubles the raw-PCM bill for a phone that usually listens through a
-// single speaker. HUB_AUDIO_CHANNELS=1 (or ?channels=1) halves it again.
+// Mono by default: it halves the raw-PCM bill for a phone that usually
+// listens through a single speaker. HUB_AUDIO_CHANNELS=2 (or ?channels=2)
+// brings stereo back.
 const audioChannels = (req) => {
   try {
     const u = new URL(req.url, 'http://localhost');
-    const def = Number(process.env.HUB_AUDIO_CHANNELS) || 2;
-    return Number(u.searchParams.get('channels') || def) === 1 ? 1 : 2;
-  } catch { return 2; }
+    const def = Number(process.env.HUB_AUDIO_CHANNELS) || 1;
+    return Number(u.searchParams.get('channels') || def) === 2 ? 2 : 1;
+  } catch { return 1; }
 };
 const ensureBrowserAudioSink = async () => {
   const ls = await pulseRun('pactl list short sinks 2>/dev/null');
@@ -2129,12 +2134,17 @@ audioWss.on('connection', async (ws, req) => {
   let rec = null;
   let closed = false;
   let pendingAudio = Buffer.alloc(0);
-  let channels = 2;
+  let channels = 1;
   let codec = 'pcm';        // negotiated below: 'opus' when the client can decode
   let opusEnc = null;       // OpusScript encoder while codec === 'opus'
   let opusFrameSamples = 0; // samples per channel in one 20 ms Opus frame
   let opusFrameBytes = 0;
-  const AUDIO_PACKET = 8192; // ~46 ms at 22.05 kHz stereo s16le: one cheap WS packet
+  // One WS packet ≈ 50 ms of captured audio: enough to amortise the syscalls
+  // without letting a late packet cost a stutter. The old fixed 8192 bytes was
+  // ~46 ms at the previous 22.05 kHz stereo default; at the current 16 kHz
+  // mono it would have been a quarter of a second, so it is derived from the
+  // negotiated format below.
+  let AUDIO_PACKET = 8192;
   // Silence gate: an idle remote sink streams pure zeros. Pushing those keeps
   // the phone's radio and decoder busy for nothing and drains the battery
   // during background listening. Let the tail through, then throttle to one
@@ -2216,7 +2226,9 @@ audioWss.on('connection', async (ws, req) => {
       opusFrameBytes = opusFrameSamples * channels * 2;
       try {
         opusEnc = new OpusScript(captureRate, channels, OpusScript.Application.AUDIO);
-        const bitrate = Number(process.env.HUB_OPUS_BITRATE) || (channels === 1 ? 24000 : 48000);
+        // 16 kbps mono at 16 kHz is plenty for video audio and a sixth of
+        // what 48 kHz stereo cost the tunnel. HUB_OPUS_BITRATE overrides.
+        const bitrate = Number(process.env.HUB_OPUS_BITRATE) || (channels === 1 ? 16000 : 32000);
         try { opusEnc.encoderCTL(4002, bitrate); } catch {} // OPUS_SET_BITRATE
         codec = 'opus';
       } catch { opusEnc = null; codec = 'pcm'; }
@@ -2227,6 +2239,7 @@ audioWss.on('connection', async (ws, req) => {
       ws.send(JSON.stringify({ type: 'error', error: 'parec не установлен (нужен пакет pulseaudio-utils)' }));
       return stop();
     }
+    AUDIO_PACKET = Math.max(1024, Math.round(captureRate * channels * 2 / 20));
     const source = await audioSource();
     const recordArgs = /pacat(?:\.exe)?$/.test(recorder) ? ['--record'] : [];
     rec = spawn(recorder, recordArgs.concat([
