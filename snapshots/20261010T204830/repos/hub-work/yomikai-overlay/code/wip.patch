@@ -1,0 +1,78 @@
+diff --git a/app/src/main/java/app/yomikaioverlay/OverlayService.kt b/app/src/main/java/app/yomikaioverlay/OverlayService.kt
+index 957980e..de8423c 100644
+--- a/app/src/main/java/app/yomikaioverlay/OverlayService.kt
++++ b/app/src/main/java/app/yomikaioverlay/OverlayService.kt
+@@ -43,6 +43,7 @@ import android.widget.Button
+ import android.widget.FrameLayout
+ import android.widget.ImageView
+ import android.widget.LinearLayout
++import android.widget.ScrollView
+ import android.widget.TextView
+ import android.widget.Toast
+ import app.yomikaioverlay.ot.EnginePrefs
+@@ -140,6 +141,7 @@ class OverlayService : Service() {
+     private var bubbleView: View? = null
+     private var stopWin: View? = null
+     private var stopLp: WindowManager.LayoutParams? = null
++    private var panelScroll: MaxScrollView? = null
+     private var panelCard: LinearLayout? = null
+     private var previewText: TextView? = null
+     private var frameView: View? = null
+@@ -465,14 +467,24 @@ class OverlayService : Service() {
+         val card = LinearLayout(this).apply {
+             orientation = LinearLayout.VERTICAL
+             background = rounded(cardBg, 18f)
+-            visibility = View.GONE
+-            val w = minOf(dp(356f), s.x - dp(24))
+-            layoutParams = LinearLayout.LayoutParams(w, LinearLayout.LayoutParams.WRAP_CONTENT)
+         }
+         val pad = dp(8)
+         card.setPadding(pad, pad, pad, pad)
+         panelCard = card
+-        root.addView(card)
++        val cardW = minOf(dp(356f), s.x - dp(24))
++        val scroll = MaxScrollView(this).apply {
++            visibility = View.GONE
++            layoutParams = LinearLayout.LayoutParams(cardW, LinearLayout.LayoutParams.WRAP_CONTENT)
++        }
++        scroll.addView(
++            card,
++            FrameLayout.LayoutParams(
++                FrameLayout.LayoutParams.MATCH_PARENT,
++                FrameLayout.LayoutParams.WRAP_CONTENT
++            )
++        )
++        panelScroll = scroll
++        root.addView(scroll)
+ 
+         try { wm.addView(root, mainLp) } catch (e: Exception) { }
+     }
+@@ -487,6 +499,8 @@ class OverlayService : Service() {
+         try { frameView?.let { wm.removeView(it) } } catch (e: Exception) { }
+         mainRoot = null
+         frameView = null
++        panelScroll = null
++        panelCard = null
+     }
+ 
+     private fun showMain(visible: Boolean) {
+@@ -813,7 +827,18 @@ class OverlayService : Service() {
+ 
+     private fun setExpanded(v: Boolean) {
+         expanded = v
+-        panelCard?.visibility = if (v) View.VISIBLE else View.GONE
++        val scroll = panelScroll
++        if (scroll != null) {
++            scroll.visibility = if (v) View.VISIBLE else View.GONE
++            if (v) {
++                // Панель открывается под пузырём и растёт вниз. Высоту карточки
++                // ограничиваем свободным местом до низа экрана, а содержимое
++                // делаем прокручиваемым — иначе меню уезжает за экран.
++                val s = screenSize()
++                val top = (mainLp?.y ?: 0) + dp(56 + 10)
++                scroll.maxHeightPx = (s.y - top - dp(16)).coerceAtLeast(dp(160))
++            }
++        }
+         if (v) rebuildPanel()
+         refreshFrame()
+     }
