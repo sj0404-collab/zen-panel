@@ -97,9 +97,13 @@ URL=""
 # for up to 80 seconds, but stop immediately if the connector exits.
 for _ in $(seq 1 40); do
   if ! kill -0 "$PID" 2>/dev/null; then
-    echo "open_tunnel: cloudflared exited before reporting an address" >&2
+    if grep -qE '429|too many|rate.?limit' "$LOG" 2>/dev/null; then
+      echo "open_tunnel: Cloudflare refused a new quick tunnel (HTTP 429 rate limit)" >&2
+    else
+      echo "open_tunnel: cloudflared exited before reporting an address" >&2
+    fi
     tail -30 "$LOG" >&2 2>/dev/null || true
-    rm -f "$PIDFILE"
+    rm -f "$PIDFILE" "$URLFILE"
     exit 1
   fi
   URL="$(grep -Eo 'https://[a-zA-Z0-9-]+[.]trycloudflare[.]com' "$LOG" 2>/dev/null | head -1 || true)"
@@ -111,7 +115,7 @@ if [ -z "$URL" ]; then
   echo "open_tunnel: no address after 80s" >&2
   tail -30 "$LOG" >&2 2>/dev/null || true
   kill "$PID" 2>/dev/null || true
-  rm -f "$PIDFILE"
+  rm -f "$PIDFILE" "$URLFILE"
   exit 1
 fi
 

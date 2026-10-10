@@ -94,6 +94,18 @@ check "older run cannot end newer session" "$(git --git-dir="$TMP/remote.git" sh
 GITHUB_RUN_ID=300 GITHUB_RUN_NUMBER=30 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub-third.example >/dev/null 2>&1
 check "newer run replaces live session" "$(git --git-dir="$TMP/remote.git" show session-state:live/session-hub-linux.json | grep -q 'https://hub-third.example' && echo 1 || echo 0)"
 
+# The reserve (url2) must survive a same-run republish that omits it: the
+# initial publish in hub.yml runs before the tunnel keeper's reserve is up, so
+# when that initial publish lands after a keeper publish that set url2, the
+# whole-file overwrite must not erase the reserve. A newer run must not inherit
+# a dead foreign reserve either.
+GITHUB_RUN_ID=500 GITHUB_RUN_NUMBER=50 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub-r.example url2=https://reserve.example >/dev/null 2>&1
+check "reserve published with the session" "$(git --git-dir="$TMP/remote.git" show session-state:live/session-hub-linux.json | grep -q 'reserve.example' && echo 1 || echo 0)"
+GITHUB_RUN_ID=500 GITHUB_RUN_NUMBER=50 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub-r.example >/dev/null 2>&1
+check "same-run republish keeps the reserve" "$(git --git-dir="$TMP/remote.git" show session-state:live/session-hub-linux.json | grep -q 'reserve.example' && echo 1 || echo 0)"
+GITHUB_RUN_ID=600 GITHUB_RUN_NUMBER=60 bash "$TOOLS/publish_session.sh" slot=hub-linux state=live url=https://hub-s.example >/dev/null 2>&1
+check "a newer run does not inherit the old reserve" "$(git --git-dir="$TMP/remote.git" show session-state:live/session-hub-linux.json | grep -q 'reserve.example' && echo 0 || echo 1)"
+
 # ── the branch is sorted into folders: live/, models/, snapshots/, history/ ──
 check "live descriptor moved into live/" "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only session-state | grep -qx 'live/session-hub-linux.json' && echo 1 || echo 0)"
 check "root is free of flat session files" "$([ "$(git --git-dir="$TMP/remote.git" ls-tree -r --name-only session-state | grep -c '^session-')" = 0 ] && echo 1 || echo 0)"

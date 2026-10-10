@@ -37,6 +37,12 @@ else
 fi
 INTERVAL="${KEEPER_INTERVAL:-20}"
 MAIN_FAILS=0
+# After a reserve open fails, stop retrying every loop. A quick tunnel that
+# Cloudflare refuses (HTTP 429, "too many tunnels") only gets angrier when asked
+# every 20 seconds; waiting minutes is what lets it succeed. The count is also
+# how many loops to skip before touching the reserve again.
+RESERVE_COOLDOWN="${KEEPER_RESERVE_COOLDOWN:-15}"
+RESERVE_SKIP=0
 
 log() { echo "[tunnel-keeper:$VM $(date -u '+%H:%M:%S')] $*" | tee -a "$HUB_LOGS/tunnel-keeper.log"; }
 
@@ -46,6 +52,7 @@ healthy() {  # $1 = url
 
 url_for_pidfile() {  # $1 = pidfile path
   local p
+  [ -f "$1" ] || return 1
   p="$(tr -dc '0-9' < "$1" 2>/dev/null || true)" || true
   [ -n "${p:-}" ] && kill -0 "$p" 2>/dev/null || return 1
   cat "${1%.pid}.url" 2>/dev/null || true
@@ -72,13 +79,20 @@ publish_pair() {  # args k=v ... (always includes both base urls we know)
 
 open_reserve() {
   local url
+  # Drop any previously published reserve BEFORE opening: if this open fails the
+  # client must not keep probing a dead address (a stale url2 is exactly what
+  # made the panel report «ни основной, ни резервный адрес не отвечает»).
+  rm -f "$R_URLFILE"
   url="$(TUNNEL_TAG=reserve bash "$TOOLS_DIR/open_tunnel.sh" "$PORT" "$HUB_LOGS/tunnel-reserve.log" 2>/dev/null || echo)"
   if [ -n "$url" ]; then
     echo "$url" > "$R_URLFILE"
     log "reserve tunnel up: $url"
-  else
-    log "reserve tunnel reopen failed (retry next loop)"
+    RESERVE_SKIP=0
+    return 0
   fi
+  RESERVE_SKIP="$RESERVE_COOLDOWN"
+  log "reserve tunnel reopen failed; backing off $RESERVE_COOLDOWN loops (see tunnel-reserve.log)"
+  return 1
 }
 
 open_main() {
@@ -97,12 +111,15 @@ log "keeper up ($VM, port $PORT; reserve pid via TUNNEL_TAG=reserve)"
 while true; do
   sleep "$INTERVAL"
   # ── reserve ──
-  r_pid_ok=0; r_url="$(url_for_pidfile "$HUB_LOGS/cloudflared-$PORT-reserve.pid" || true)"
-  [ -n "${r_url:-}" ] && healthy "$r_url" && r_pid_ok=1
-  if [ "$r_pid_ok" = "0" ]; then
-    open_reserve
-    r_url="$(cat "$R_URLFILE" 2>/dev/null || true)"
-    publish_pair || true
+  if [ "$RESERVE_SKIP" -gt 0 ]; then
+    RESERVE_SKIP=$((RESERVE_SKIP - 1))
+  else
+    r_pid_ok=0; r_url="$(url_for_pidfile "$HUB_LOGS/cloudflared-$PORT-reserve.pid" || true)"
+    [ -n "${r_url:-}" ] && healthy "$r_url" && r_pid_ok=1
+    if [ "$r_pid_ok" = "0" ]; then
+      open_reserve
+      publish_pair || true
+    fi
   fi
   # ── main (only kick it after several consecutive dead probes: a busy CPU
   # can make a single probe time out, same rule as the job watchdog) ──

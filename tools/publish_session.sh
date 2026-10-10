@@ -351,6 +351,45 @@ if session_publish_blocked; then
   exit 0
 fi
 
+# The reserve address must survive a republish that does not know about it. The
+# initial publish (hub.yml) runs BEFORE the tunnel keeper's reserve is up, so it
+# carries no url2; if that initial publish retries after a keeper publish that
+# DID set url2, the whole-file overwrite would erase the reserve and the panel
+# would lose its only fallback. Carry url2 over from the on-branch descriptor
+# when the incoming payload omits it and both belong to the same run.
+carry_url2() {
+  [ "$IS_SESSION_FILE" = 1 ] || return 0
+  [ -f "$FILE" ] || return 0
+  python3 - "$FILE" "$STAGE" "${GITHUB_RUN_ID:-}" <<'PY'
+import json, sys
+file_path, stage_path, run_id = sys.argv[1:]
+
+def read(p):
+    try:
+        with open(p, encoding='utf-8') as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else {}
+    except Exception:
+        return {}
+
+old = read(file_path)
+new = read(stage_path)
+if new.get('state') != 'live':
+    raise SystemExit(1)
+if new.get('url2') or not old.get('url2'):
+    raise SystemExit(1)
+old_run = str(old.get('runId', ''))
+new_run = str(new.get('runId', '')) or run_id
+if old_run and new_run and old_run != new_run:
+    raise SystemExit(1)
+new['url2'] = old['url2']
+with open(stage_path, 'w', encoding='utf-8') as f:
+    json.dump(new, f, ensure_ascii=False, indent=2)
+    f.write('\n')
+print('publish_session: preserved url2 from the live descriptor', file=sys.stderr)
+PY
+}
+
 if [ "$IS_SESSION_FILE" = 1 ] && [ "$EXPLICIT_STARTED_AT" -eq 0 ] && [ -f "$FILE" ]; then
   EXISTING_RUN=$(python3 - "$FILE" <<'PY'
 import json, sys
@@ -389,6 +428,7 @@ PY
 fi
 
 mkdir -p "$(dirname "$FILE")"
+carry_url2
 cp "$STAGE" "$FILE"
 git config user.email "session@symbiosis"
 git config user.name  "Session state"
@@ -426,6 +466,7 @@ for attempt in $(seq 1 12); do
       exit 0
     fi
     mkdir -p "$(dirname "$FILE")"
+    carry_url2
     cp "$STAGE" "$FILE"
     git add "$FILE"
     git commit -q -m "session $(date -u '+%Y-%m-%d %H:%M:%S')" 2>/dev/null || true

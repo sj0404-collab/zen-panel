@@ -619,6 +619,34 @@ async function preflightHub(base, zt, expectedRunId) {
   }
   return true;
 }
+// Walk the candidate addresses (main first, then the warm reserve) and return
+// the first that accepts our token, together with WHY every earlier one failed.
+// The old code threw the same blanket «Ни основной, ни резервный адрес не
+// отвечает» no matter what happened, and printed it even when the reserve had
+// never been published and only one address existed - which turned a plain 401
+// (missing launch token) into a phantom network outage.
+async function firstReachableBase(bases, zt, runId) {
+  const errors = [];
+  for (let i = 0; i < bases.length; i++) {
+    if (i > 0) log('Основной адрес молчит — пробую резервный…');
+    try { await preflightHub(bases[i], zt, runId); return { base: bases[i], errors }; }
+    catch (e) { errors.push({ base: bases[i], reason: (e && e.message) || String(e) }); }
+  }
+  return { base: '', errors };
+}
+// Turn the collected per-base failures into the honest message the user sees:
+// an empty token is called out as such, a single address is never blamed on a
+// reserve that does not exist, and the actual reason is always included.
+function describeBaseFailure(bases, errors, zt) {
+  const reasons = [];
+  for (const e of errors) if (e && e.reason && reasons.indexOf(e.reason) < 0) reasons.push(e.reason);
+  const detail = reasons.join('; ') || 'нет ответа';
+  if (!String(zt || '')) {
+    return 'Нет токена запуска (zt): адрес отвечает 401. Откройте хаб тем же устройством, что запускало раннер, либо запустите хаб заново.';
+  }
+  if (bases.length > 1) return 'Ни основной, ни резервный адрес не отвечает: ' + detail;
+  return 'Адрес не отвечает: ' + detail;
+}
 function buildOpenUrl(s, zt, baseOpt) {
   const base = String(baseOpt || s.hubUrl || s.url || '').replace(/\/+$/, '');
   return base + '/m?zt=' + encodeURIComponent(zt);
@@ -758,14 +786,11 @@ async function afterDispatch(token, zt, since, label) {
     return false;
   }
   const bases = sessionBases(s);
-  let base = '';
   progStage('Проверяю доступ…');
   log('Адрес получен: ' + (bases[0] || ''));
-  for (const b of bases) {
-    if (bases.indexOf(b) > 0) log('Основной адрес молчит — пробую резервный…');
-    try { await preflightHub(b, zt, s.runId); base = b; break; } catch (e) { /* резерв дальше */ }
-  }
-  if (!base) throw new Error('Ни основной, ни резервный адрес не отвечает.');
+  const probe = await firstReachableBase(bases, zt, s.runId);
+  const base = probe.base;
+  if (!base) throw describeBaseFailure(bases, probe.errors, zt);
   const url = buildOpenUrl(s, zt, base);
   saveLast(url, bases.filter(b => b !== base)[0] || '');
   clearPending();
@@ -1041,12 +1066,9 @@ async function openSlot(slot, btn) {
       // address first, warm reserve (url2) second.
       const zt = (readPending() && readPending().zt) || lastOriginToken().zt || '';
       const bases = sessionBases(s);
-      let got = '';
-      for (const b of bases) {
-        if (bases.indexOf(b) > 0) log('Основной адрес молчит — пробую резервный…');
-        try { const base = b; await preflightHub(base, zt, s.runId); got = base; break; } catch (e) { /* дальше */ }
-      }
-      if (!got) throw new Error('Ни основной, ни резервный адрес не отвечает.');
+      const probe = await firstReachableBase(bases, zt, s.runId);
+      if (!probe.base) throw describeBaseFailure(bases, probe.errors, zt);
+      const got = probe.base;
       saveLast(buildOpenUrl(s, zt, got), bases.filter(b => b !== got)[0] || '');
       if (bases.indexOf(got) > 0) log('Перешёл на резервный адрес.', 'ok');
       location.href = buildOpenUrl(s, zt, got);
