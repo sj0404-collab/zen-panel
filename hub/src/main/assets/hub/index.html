@@ -549,7 +549,16 @@ async function tryOpenLive(token) {
   const bases = sessionBases(s);
   const probe = await firstReachableBase(bases, candidates, s.runId);
   if (!probe.base) {
-    log('Хаб запущен, но закрыт токеном запуска. Войдите по запасному входу: введите GitHub-токен, которым запускали хаб, и нажмите «Открыть» снова. Либо нажмите «Остановить и перезапустить ранер».', 'err');
+    // Различаем «адрес мёртв» (туннель/ран уже убит извне) и «401 чужой токен»:
+    // второе лечится запасным входом, первое — только перезапуском.
+    const reasons = (probe.errors || []).map(e => e && e.reason).filter(Boolean);
+    const dead = reasons.filter(r => /failed to fetch|networkerror|load failed/i.test(r));
+    if (dead.length && dead.length === reasons.length) {
+      log('Адрес хаба молчит (туннель мёртв — ран, скорее всего, остановлен извне). Нажмите «Остановить и перезапустить ранер».', 'err');
+    } else {
+      const detail = reasons.join('; ');
+      log('Хаб запущен, но закрыт токеном запуска' + (detail ? ' (' + detail + ')' : '') + '. Войдите по запасному входу: введите GitHub-токен, которым запускали хаб, и нажмите «Открыть» снова. Либо нажмите «Остановить и перезапустить ранер».', 'err');
+    }
     return false;
   }
   const viaSpare = !!(spare && probe.zt === spare);
@@ -602,8 +611,21 @@ async function readHubSession(token) {
   if (viaRaw) return viaRaw;
   return await readHubSessionViaApi(token);
 }
-async function waitForHub(token, sinceMs, sleepMs, cancelled) {
+async function waitForHub(token, sinceMs, sleepMs, cancelled, runId) {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // Если ран нашёлся, следим и за ним самим: при внешней отмене (другой
+  // клиент с тем же токеном, кнопка на GitHub) файл сессии так и останется
+  // «ended» прошлого рана, и без этой проверки ждали бы адрес до таймаута.
+  let runChecks = 0;
+  const runGone = async () => {
+    if (!token || !runId) return false;
+    if (++runChecks % 6 !== 0) return false; // раз в ~30 с, не каждый цикл
+    try {
+      const r = await api('/repos/' + REPO + '/actions/runs/' + runId, token);
+      if (r && r.status === 'completed') return r.conclusion || ' completed';
+    } catch (e) { /* сеть мигнула — не диагноз */ }
+    return false;
+  };
   // raw.githubusercontent sometimes serves an edge copy that is minutes old
   // (measured: >2 min against a ?t= cache-buster). When the raw file keeps
   // being older than OUR dispatch, the rest of the wait reads the session file
@@ -617,6 +639,11 @@ async function waitForHub(token, sinceMs, sleepMs, cancelled) {
     const s = token && staleReads >= 3 ? await readHubSessionViaApi(token) : await readHubSession(token);
     const born = s && s.startedAt ? new Date(s.startedAt).getTime() : 0;
     if (s && s.state === 'live' && born >= sinceMs - 15000 && (s.hubUrl || s.url)) return s;
+    const gone = await runGone();
+    if (gone) {
+      log('Ран #' + (runId || '?') + ' завершён извне (' + gone + ') — адреса не будет. Жмите «Остановить и перезапустить ранер».', 'err');
+      return null;
+    }
     // An 'ended' state only means OUR run died if it was BORN after we
     // dispatched. Otherwise it is yesterday's corpse, and the file simply
     // has not been republished yet — keep waiting like it is not there.
@@ -904,7 +931,7 @@ async function afterDispatch(token, zt, since, label) {
     followRun(token, run.id, { attempts: 90 }).catch(() => {});
   }
   progStage(run ? ('Прогон #' + run.run_number + ' — жду адрес хаба') : 'Жду адрес хаба');
-  const s = await waitForHub(token, since, 5000, () => stopWaiting);
+  const s = await waitForHub(token, since, 5000, () => stopWaiting, run && run.id);
   if (!s) {
     progFinish(false, 'Ожидание прервано. Раннер, возможно, ещё поднимается — обновите вкладку GitHub.');
     return false;
@@ -1181,8 +1208,18 @@ async function openSlot(slot, btn) {
       // (репозитории/VNC — это минуты), а не «завершён».
       const cachedRuns = window.__ghActiveRuns;
       const cachedAt = window.__ghActiveRunsAt || 0;
-      if (s && s.state === 'ended' && cachedRuns && (Date.now() - cachedAt) < 60000) {
-        const run = cachedRuns.find(r => isHubRun(r) || (typeof SLOT_OF_RUN !== 'undefined' && SLOT_OF_RUN[r.path] === slot));
+      if (s && s.state === 'ended') {
+        // 60-сек кэша мало: если вкладка не обновлялась минуту, слот «завершён»
+        // прошлого рана подменяет «новый ран ещё раскатывается» — и кнопка
+        // «Открыть» врёт «сессия завершена». Один свежий запрос — и правда на месте.
+        let runs = (cachedRuns && (Date.now() - cachedAt) < 60000) ? cachedRuns : null;
+        if (!runs) {
+          try {
+            runs = await listActiveRuns(tokenNow(), isSessionRun);
+            window.__ghActiveRuns = runs; window.__ghActiveRunsAt = Date.now();
+          } catch (e) { runs = cachedRuns; }
+        }
+        const run = runs && runs.find(r => isHubRun(r) || (typeof SLOT_OF_RUN !== 'undefined' && SLOT_OF_RUN[r.path] === slot));
         if (run) {
           const ageMin = Math.max(1, Math.round((Date.now() - new Date(run.created_at).getTime()) / 60000));
           why = 'запуск ещё идёт (' + ageMin + ' мин) — адрес сам появится, дождись и нажми «Открыть» снова';
