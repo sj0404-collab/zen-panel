@@ -513,31 +513,21 @@ async function tryOpenLive(token) {
     return false;
   }
   log('Хаб уже запущен. Подбираю доступ…');
-  const ztStored = lastOriginToken().zt;
-  const pend = readPending();
-  const seen = {};
-  const candidates = [];
-  for (const v of [pend && pend.zt, ztStored, '']) {
-    const k = String(v || '');
-    if (seen[k]) continue; seen[k] = 1; candidates.push(k);
-  }
+  const { list: candidates, spare } = await hubCandidates(s);
   const bases = sessionBases(s);
-  for (const base of bases) {
-    if (bases.indexOf(base) > 0) log('Основной адрес молчит — пробую резервный…');
-    for (const zk of candidates) {
-      try {
-        await preflightHub(base, zk, s.runId);
-        const url = buildOpenUrl(s, zk, base);
-        saveLast(url, bases.filter(b => b !== base)[0] || '');
-        clearPending();
-        log(bases.indexOf(base) > 0 ? 'Перешёл на резервный адрес. Открываю…' : 'Подключился к уже запущенному хабу. Открываю…', 'ok');
-        location.href = url;
-        return true;
-      } catch (e) { /* следующий кандидат */ }
-    }
+  const probe = await firstReachableBase(bases, candidates, s.runId);
+  if (!probe.base) {
+    log('Хаб запущен, но закрыт токеном запуска. Войдите по запасному входу: введите GitHub-токен, которым запускали хаб, и нажмите «Открыть» снова. Либо нажмите «Остановить и перезапустить ранер».', 'err');
+    return false;
   }
-  log('Хаб запущен, но закрыт токеном запуска, которого на этом устройстве уже нет. Нажми «Остановить и перезапустить ранер».', 'err');
-  return false;
+  const viaSpare = !!(spare && probe.zt === spare);
+  const url = buildOpenUrl(s, probe.zt, probe.base);
+  saveLast(url, bases.filter(b => b !== probe.base)[0] || '');
+  clearPending();
+  log(viaSpare ? 'Запасной вход: вошёл по коду из GitHub-токена. Открываю…'
+    : (bases.indexOf(probe.base) > 0 ? 'Перешёл на резервный адрес. Открываю…' : 'Подключился к уже запущенному хабу. Открываю…'), 'ok');
+  location.href = url;
+  return true;
 }
 async function restartRunner(token, zt, runner) {
   const active = await listActiveRuns(token, isSessionRun);
@@ -620,29 +610,39 @@ async function preflightHub(base, zt, expectedRunId) {
   return true;
 }
 // Walk the candidate addresses (main first, then the warm reserve) and return
-// the first that accepts our token, together with WHY every earlier one failed.
-// The old code threw the same blanket «Ни основной, ни резервный адрес не
-// отвечает» no matter what happened, and printed it even when the reserve had
-// never been published and only one address existed - which turned a plain 401
-// (missing launch token) into a phantom network outage.
-async function firstReachableBase(bases, zt, runId) {
+// the first that accepts one of our tokens, together with WHY every earlier
+// one failed. Accepts a single token (string) or a list of candidates (array,
+// best first - see hubCandidates). The old code threw the same blanket
+// «Ни основной, ни резервный адрес не отвечает» no matter what happened, and
+// printed it even when the reserve had never been published and only one
+// address existed - which turned a plain 401 (missing launch token) into a
+// phantom network outage.
+async function firstReachableBase(bases, ztOrCandidates, runId) {
+  const candidates = Array.isArray(ztOrCandidates) ? ztOrCandidates : [ztOrCandidates];
   const errors = [];
   for (let i = 0; i < bases.length; i++) {
     if (i > 0) log('Основной адрес молчит — пробую резервный…');
-    try { await preflightHub(bases[i], zt, runId); return { base: bases[i], errors }; }
-    catch (e) { errors.push({ base: bases[i], reason: (e && e.message) || String(e) }); }
+    for (const zk of candidates) {
+      try { await preflightHub(bases[i], zk, runId); return { base: bases[i], zt: zk, errors }; }
+      catch (e) { errors.push({ base: bases[i], reason: (e && e.message) || String(e) }); }
+    }
   }
-  return { base: '', errors };
+  return { base: '', zt: '', errors };
 }
 // Turn the collected per-base failures into the honest message the user sees:
 // an empty token is called out as such, a single address is never blamed on a
-// reserve that does not exist, and the actual reason is always included.
-function describeBaseFailure(bases, errors, zt) {
+// reserve that does not exist, and the actual reason is always included. When
+// the spare entrance was tried and still failed, the message says so and
+// points at the GitHub token that unlocks it (or at a runner restart).
+function describeBaseFailure(bases, errors, zt, spareTried) {
   const reasons = [];
   for (const e of errors) if (e && e.reason && reasons.indexOf(e.reason) < 0) reasons.push(e.reason);
   const detail = reasons.join('; ') || 'нет ответа';
+  if (spareTried) {
+    return 'Токен запуска не подходит, и запасной вход не прошёл: ' + detail + '. Войдите GitHub-токеном, которым запускали хаб, либо нажмите «Остановить и перезапустить ранер».';
+  }
   if (!String(zt || '')) {
-    return 'Нет токена запуска (zt): адрес отвечает 401. Откройте хаб тем же устройством, что запускало раннер, либо запустите хаб заново.';
+    return 'Нет токена запуска (zt): адрес отвечает 401. Откройте хаб тем же устройством, что запускало раннер, либо введите GitHub-токен, которым запускали хаб, и нажмите «Открыть» — запасной вход откроет хаб.';
   }
   if (bases.length > 1) return 'Ни основной, ни резервный адрес не отвечает: ' + detail;
   return 'Адрес не отвечает: ' + detail;
@@ -667,6 +667,98 @@ function readPending() {
 }
 function clearPending() {
   try { localStorage.removeItem('hub_pending'); } catch (e) {}
+}
+// ── Запасной вход ──
+// The panel can lose the per-launch gate token (cleared storage, another
+// device) and then every address answers 401. The one secret it always has is
+// the GitHub token it launches with; the server holds the same value (hub.yml
+// passes the panel's gh_token input as GH_TOKEN) and derives the same
+// run-scoped spare token from it - see SPARE_TOKEN in npm-hub/src/server.js.
+// The raw GitHub token never travels in URLs or cookies, and the spare dies
+// with the run, so a leaked ?zt=<spare> is not a permanent key.
+function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+// Compact pure-JS SHA-256 (FIPS 180-4), lowercase hex, byte-identical to
+// Node's crypto.createHash('sha256').update(s,'utf8').digest('hex'). Used only
+// when crypto.subtle is unavailable (non-secure context).
+function sha256Hex(s) {
+  const K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  const H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const bytes = [];
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) bytes.push(c);
+    else if (c < 0x800) bytes.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+    else if (c < 0xd800 || c >= 0xe000) bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+    else {
+      const c2 = s.charCodeAt(++i);
+      const cp = 0x10000 + (((c & 0x3ff) << 10) | (c2 & 0x3ff));
+      bytes.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    }
+  }
+  const bitLen = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  const lenHi = Math.floor(bitLen / 0x100000000), lenLo = bitLen >>> 0;
+  bytes.push((lenHi >>> 24) & 0xff, (lenHi >>> 16) & 0xff, (lenHi >>> 8) & 0xff, lenHi & 0xff,
+             (lenLo >>> 24) & 0xff, (lenLo >>> 16) & 0xff, (lenLo >>> 8) & 0xff, lenLo & 0xff);
+  const w = new Array(64);
+  let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+  for (let i = 0; i < bytes.length; i += 64) {
+    for (let t = 0; t < 16; t++) {
+      w[t] = ((bytes[i + t*4] << 24) | (bytes[i + t*4+1] << 16) | (bytes[i + t*4+2] << 8) | bytes[i + t*4+3]) >>> 0;
+    }
+    for (let t = 16; t < 64; t++) {
+      const s0 = rotr(w[t-15], 7) ^ rotr(w[t-15], 18) ^ (w[t-15] >>> 3);
+      const s1 = rotr(w[t-2], 17) ^ rotr(w[t-2], 19) ^ (w[t-2] >>> 10);
+      w[t] = (w[t-16] + s0 + w[t-7] + s1) >>> 0;
+    }
+    let A = a, B = b, C = c, D = d, E = e, F = f, G = g, Hh = h;
+    for (let t = 0; t < 64; t++) {
+      const S1 = rotr(E, 6) ^ rotr(E, 11) ^ rotr(E, 25);
+      const ch = (E & F) ^ (~E & G);
+      const temp1 = (Hh + S1 + ch + K[t] + w[t]) >>> 0;
+      const S0 = rotr(A, 2) ^ rotr(A, 13) ^ rotr(A, 22);
+      const maj = (A & B) ^ (A & C) ^ (B & C);
+      const temp2 = (S0 + maj) >>> 0;
+      Hh = G; G = F; F = E; E = (D + temp1) >>> 0; D = C; C = B; B = A; A = (temp1 + temp2) >>> 0;
+    }
+    a = (a + A) >>> 0; b = (b + B) >>> 0; c = (c + C) >>> 0; d = (d + D) >>> 0;
+    e = (e + E) >>> 0; f = (f + F) >>> 0; g = (g + G) >>> 0; h = (h + Hh) >>> 0;
+  }
+  return [a,b,c,d,e,f,g,h].map(x => ('00000000' + x.toString(16)).slice(-8)).join('');
+}
+// The run-scoped spare token for a live session, or '' when it cannot exist
+// (no GitHub token entered, no run id in the session file).
+async function spareToken(runId) {
+  const gh = tokenNow();
+  if (!gh || !runId) return '';
+  const s = gh.trim() + ':hub-spare:' + String(runId).trim();
+  try {
+    if (window.crypto && crypto.subtle && crypto.subtle.digest) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch (e) { /* fall through to the pure-JS implementation */ }
+  return sha256Hex(s);
+}
+// Candidate gate tokens for an already-running hub, best first: the token of
+// the launch we dispatched, the token of the last hub we opened, the spare
+// entrance derived from the GitHub token, and finally the open gate (empty).
+async function hubCandidates(s) {
+  const pend = readPending();
+  const spare = await spareToken(s && s.runId);
+  const out = [];
+  const seen = {};
+  const push = (v) => {
+    const k = String(v || '');
+    if (!k || seen[k]) return;
+    seen[k] = 1; out.push(k);
+  };
+  push(pend && pend.zt);
+  push(lastOriginToken().zt);
+  push(spare);
+  if (!seen['']) out.push(''); // the open gate is always the last resort
+  return { list: out, spare };
 }
 // ── UI ──
 try { $('token').value = localStorage.getItem('hub_gh_token') || ''; } catch (e) {}
@@ -1063,15 +1155,19 @@ async function openSlot(slot, btn) {
     if (slot === 'hub-linux') {
       // A hub is gated: the token that opened it has to be the one the launch
       // used, or it answers 401 to a page that looks perfectly fine. Main
-      // address first, warm reserve (url2) second.
-      const zt = (readPending() && readPending().zt) || lastOriginToken().zt || '';
+      // address first, warm reserve (url2) second; the launch token, the last
+      // connected token and the spare entrance (from the GitHub token) are all
+      // tried, in that order.
+      const { list: candidates, spare } = await hubCandidates(s);
       const bases = sessionBases(s);
-      const probe = await firstReachableBase(bases, zt, s.runId);
-      if (!probe.base) throw describeBaseFailure(bases, probe.errors, zt);
+      const probe = await firstReachableBase(bases, candidates, s.runId);
+      if (!probe.base) throw describeBaseFailure(bases, probe.errors, candidates[candidates.length - 1] || '', !!spare);
       const got = probe.base;
-      saveLast(buildOpenUrl(s, zt, got), bases.filter(b => b !== got)[0] || '');
-      if (bases.indexOf(got) > 0) log('Перешёл на резервный адрес.', 'ok');
-      location.href = buildOpenUrl(s, zt, got);
+      const viaSpare = !!(spare && probe.zt === spare);
+      saveLast(buildOpenUrl(s, probe.zt, got), bases.filter(b => b !== got)[0] || '');
+      if (viaSpare) log('Запасной вход: вошёл по коду из GitHub-токена.', 'ok');
+      else if (bases.indexOf(got) > 0) log('Перешёл на резервный адрес.', 'ok');
+      location.href = buildOpenUrl(s, probe.zt, got);
       return;
     }
     const base = String(s.hubUrl || s.agentUrl || s.url || s.deskUrl).replace(/\/+$/, '');

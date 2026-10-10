@@ -181,6 +181,20 @@ app.use(express.json({ limit: '50mb' }));
 // WITHOUT HUB_TOKEN the gate stays wide open, exactly as before: a local
 // `node src/server.js` with no env keeps working with no password.
 const HUB_TOKEN = String(process.env.HUB_TOKEN || '').trim();
+// Spare entrance: the panel can lose the per-launch gate token (cleared
+// storage, another device) and then every address answers 401. The one secret
+// it always has is the GitHub token it launches with - and the server holds
+// the same value, because hub.yml passes the panel's gh_token input as
+// GH_TOKEN (not the repo secret). Derive a one-way, run-scoped spare token
+// from it: the raw GitHub token never travels in URLs or cookies, and the
+// spare dies with the run (bound to GITHUB_RUN_ID), so a leaked ?zt=<spare>
+// is not a permanent key. Empty GH_TOKEN or run id disables the spare.
+const SPARE_TOKEN = (() => {
+  const gh = String(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '').trim();
+  const runId = String(process.env.GITHUB_RUN_ID || '').trim();
+  if (!gh || !runId) return '';
+  return require('crypto').createHash('sha256').update(gh + ':hub-spare:' + runId, 'utf8').digest('hex');
+})();
 const GATE_COOKIE = 'hub_zt';
 // The tunnel dies with the run, so the cookie only has to outlive a reload.
 const GATE_COOKIE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -251,7 +265,10 @@ function gateGranted(req) {
   if (gateIsLoopback(req)) return true;
   const header = (req.get && req.get('x-hub-token')) || (req.headers && req.headers['x-hub-token']) || '';
   const candidates = [gateQueryToken(req), Array.isArray(header) ? header[0] : header, gateCookieToken(req)];
-  return candidates.some((v) => v && gateEquals(v, HUB_TOKEN));
+  // The spare is accepted only when it exists (SPARE_TOKEN non-empty): with an
+  // empty GH_TOKEN the constant hash would be a universal key, and the `v &&`
+  // guard keeps an empty candidate from matching an empty secret.
+  return candidates.some((v) => v && (gateEquals(v, HUB_TOKEN) || (SPARE_TOKEN && gateEquals(v, SPARE_TOKEN))));
 }
 if (HUB_TOKEN) {
   app.use((req, res, next) => {

@@ -9,6 +9,10 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub
 const now = new Date().toISOString();
 const liveSession = { state: 'live', kind: 'NPM-Hub', runId: '999', hubUrl: 'https://hub.local/', url: 'https://hub.local/', startedAt: now };
 function b64(o) { return Buffer.from(JSON.stringify(o)).toString('base64'); }
+// The spare entrance is the run-scoped hash of the GitHub token the panel
+// launches with; the server derives the same value from its GH_TOKEN (hub.yml
+// passes the panel's gh_token input). See SPARE_TOKEN in npm-hub/src/server.js.
+const SPARE = require('crypto').createHash('sha256').update('ghp_x:hub-spare:999', 'utf8').digest('hex');
 
 const dispatches = [];
 const runStates = new Map();
@@ -39,9 +43,11 @@ async function stubFetch(url, opts) {
   if (u.includes('/api/tools')) {
     // dead.local is an address that never answers (a dropped tunnel); the feed
     // only works out of trouble when the reserve is tested. Everything else:
-    // zt=good answers, anything else is a token rejection.
+    // zt=good answers, the spare entrance answers, anything else is a token
+    // rejection.
     if (u.includes('dead.local')) return { ok: false, status: 502, json: async () => ({}) };
-    return u.includes('zt=good')
+    const ok = u.includes('zt=good') || u.includes('zt=' + SPARE);
+    return ok
       ? { ok: true, status: 200, json: async () => ({ success: true, runId: '999', tools: [] }) }
       : { ok: false, status: 401, json: async () => ({ success: false, error: 'hub token?' }) };
   }
@@ -49,6 +55,12 @@ async function stubFetch(url, opts) {
     polls++;
     if (sessionMode === 'missing') return { ok: false, status: 404, json: async () => ({}) };
     if (sessionMode === 'flaky' && polls < 3) return { ok: false, status: 404, json: async () => ({}) };
+    // raw.githubusercontent serves the file content as text; the contents API
+    // wraps it in the base64 envelope. readHubSessionRaw and
+    // readHubSessionViaApi each need their own shape.
+    if (u.includes('raw.githubusercontent.com')) {
+      return { ok: true, status: 200, text: async () => JSON.stringify(liveSession), json: async () => liveSession };
+    }
     return { ok: true, status: 200, json: async () => ({ content: b64(liveSession) }) };
   }
   return { ok: false, status: 404, json: async () => ({}) };
@@ -159,6 +171,23 @@ function check(name, cond, extra) {
   const probeTwo = await window.firstReachableBase(['https://dead.local', 'https://hub.local'], 'bad', '999');
   const m14 = window.describeBaseFailure(['https://dead.local', 'https://hub.local'], probeTwo.errors, 'bad');
   check('c14 two dead bases keep the dual-address wording', /Ни основной, ни резервный/.test(m14), m14);
+
+  // Spare entrance (запасной вход): a panel that lost the launch token
+  // (cleared storage, another device) still gets in with the GitHub token it
+  // launches with. The server derives the same run-scoped hash from its
+  // GH_TOKEN, so the raw GitHub token never travels in URLs or cookies.
+  window.localStorage.clear();
+  window.document.getElementById('token').value = 'ghp_x';
+  const spare = await window.spareToken('999');
+  check('c15 spare token is the run-scoped hash of the GitHub token', spare === SPARE, spare);
+  const cands = await window.hubCandidates(liveSession);
+  check('c16 spare is a candidate after the stored tokens', cands.list.length === 2 && cands.list[0] === spare && cands.list[1] === "", JSON.stringify(cands.list));
+  const opened = await window.tryOpenLive('ghp_x');
+  const last = JSON.parse(window.localStorage.getItem('hub_last') || 'null');
+  check('c17 locked-out panel opens via the spare entrance', opened === true && last &&
+    last.url.indexOf('zt=' + SPARE) >= 0, JSON.stringify(last));
+  const m17 = window.describeBaseFailure(['https://hub.local'], [{ base: 'https://hub.local', reason: 'Хаб не принял токен (HTTP 401)' }], '', true);
+  check('c18 spare failure names the spare entrance', /запасной вход/.test(m17), m17);
 
   console.log(`HUB-CONNECT: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

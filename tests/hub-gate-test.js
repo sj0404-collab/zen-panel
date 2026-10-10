@@ -26,18 +26,19 @@ if (from < 0 || to < 0 || to < from) {
 const gateBlock = source.slice(from, to);
 
 // A no-op app: the gate registers one middleware, and nothing else in the
-// block runs at load time.
+// block runs at load time. `require` is passed in because the spare token is
+// derived with Node's crypto inside the block.
 const app = { use() {} };
 const mod = { exports: {} };
 try {
-  new Function('app', 'module', 'exports', gateBlock
-    + '\n;module.exports = { gateGranted, gateDenySocket, HUB_TOKEN, GATE_COOKIE };')(
-    app, mod, mod.exports);
+  new Function('app', 'module', 'exports', 'require', gateBlock
+    + '\n;module.exports = { gateGranted, gateDenySocket, HUB_TOKEN, GATE_COOKIE, SPARE_TOKEN };')(
+    app, mod, mod.exports, require);
 } catch (e) {
   console.error('FAIL g0 gate block does not evaluate: ' + e.message);
   process.exit(1);
 }
-const { gateGranted, gateDenySocket, HUB_TOKEN, GATE_COOKIE } = mod.exports;
+const { gateGranted, gateDenySocket, HUB_TOKEN, GATE_COOKIE, SPARE_TOKEN } = mod.exports;
 
 let pass = 0, fail = 0;
 function check(name, cond, extra) {
@@ -66,16 +67,31 @@ check('g2 no token = no gate (local runs keep working)', gateGranted(req({ url: 
 // The real value has to be injected: the constant above is bound to this
 // process' env. Re-evaluate the block with a token set to test the checks.
 function loadWith(token) {
+  return loadWithEnv({ HUB_TOKEN: token });
+}
+
+// The spare entrance is derived from GH_TOKEN + GITHUB_RUN_ID, so those have
+// to be injectable too. The block is re-evaluated with the given env and the
+// middleware is captured (the no-op app above never runs it).
+function loadWithEnv(env, captureMiddleware) {
   const m = { exports: {} };
-  const saved = process.env.HUB_TOKEN;
-  process.env.HUB_TOKEN = token;
-  try {
-    new Function('app', 'module', 'exports', gateBlock
-      + '\n;module.exports = { gateGranted, gateDenySocket, HUB_TOKEN, GATE_COOKIE };')(app, m, m.exports);
-  } finally {
-    if (saved === undefined) delete process.env.HUB_TOKEN; else process.env.HUB_TOKEN = saved;
+  let captured = null;
+  const targetApp = captureMiddleware ? { use(fn) { captured = fn; } } : app;
+  const saved = {};
+  for (const k of ['HUB_TOKEN', 'GH_TOKEN', 'GITHUB_RUN_ID']) {
+    saved[k] = process.env[k];
+    if (env[k] === undefined) delete process.env[k]; else process.env[k] = env[k];
   }
-  return m.exports;
+  try {
+    new Function('app', 'module', 'exports', 'require', gateBlock
+      + '\n;module.exports = { gateGranted, gateDenySocket, HUB_TOKEN, GATE_COOKIE, SPARE_TOKEN };')(
+      targetApp, m, m.exports, require);
+  } finally {
+    for (const k of Object.keys(saved)) {
+      if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+    }
+  }
+  return captureMiddleware ? { exports: m.exports, middleware: captured } : m.exports;
 }
 
 const T = 'a'.repeat(32);
@@ -152,6 +168,43 @@ check('g22 allowed socket passes through', gated.gateDenySocket(req({ url: '/ws?
   write: () => { written += 'SHOULD-NOT-WRITE'; }, destroy: () => { destroyed = 'BAD'; },
 }) === false);
 check('g23 allowed socket untouched', !written.includes('SHOULD-NOT-WRITE') && destroyed === true);
+
+// ── Spare entrance (запасной вход) ──
+// The panel can lose the per-launch token; the spare is a one-way, run-scoped
+// hash of the GitHub token it launches with (the server holds the same value:
+// hub.yml passes the panel's gh_token input as GH_TOKEN). It must grant like
+// the real token, die with the run, and never become a universal key when the
+// GitHub token is empty.
+const crypto = require('crypto');
+const spareOf = (gh, runId) => crypto.createHash('sha256').update(gh + ':hub-spare:' + runId, 'utf8').digest('hex');
+
+const spareGated = loadWithEnv({ HUB_TOKEN: T, GH_TOKEN: 'ghp_x', GITHUB_RUN_ID: '999' });
+const SPARE = spareOf('ghp_x', '999');
+check('g24 spare token is derived from GH_TOKEN + run id', spareGated.SPARE_TOKEN === SPARE, spareGated.SPARE_TOKEN);
+check('g25 ?zt=<spare> grants', spareGated.gateGranted(req({ url: '/m?zt=' + SPARE })) === true);
+check('g26 wrong spare denied', spareGated.gateGranted(req({ url: '/m?zt=' + spareOf('ghp_y', '999') })) === false);
+check('g27 spare of another run denied', spareGated.gateGranted(req({ url: '/m?zt=' + spareOf('ghp_x', '998') })) === false);
+check('g28 spare works for a raw upgrade socket', spareGated.gateDenySocket(req({ url: '/ws?zt=' + SPARE }), {
+  write: () => { written += 'SHOULD-NOT-WRITE'; }, destroy: () => { destroyed = 'BAD'; },
+}) === false);
+
+// Empty GH_TOKEN must disable the spare entirely: the constant hash of an
+// empty string would otherwise be a universal key, and an empty candidate must
+// never match an empty secret (gateEquals('','') is true).
+const noGh = loadWithEnv({ HUB_TOKEN: T, GH_TOKEN: '', GITHUB_RUN_ID: '999' });
+check('g29 empty GH_TOKEN disables the spare', noGh.SPARE_TOKEN === '', noGh.SPARE_TOKEN);
+check('g30 empty candidate still denied with the spare disabled', noGh.gateGranted(req({ url: '/m?zt=' })) === false);
+check('g31 no run id disables the spare too', loadWithEnv({ HUB_TOKEN: T, GH_TOKEN: 'ghp_x', GITHUB_RUN_ID: '' }).SPARE_TOKEN === '');
+
+// The middleware sets the real run cookie even when the request came in with
+// the spare: the browser then holds the proper run-scoped token, not the hash.
+const captured = loadWithEnv({ HUB_TOKEN: T, GH_TOKEN: 'ghp_x', GITHUB_RUN_ID: '999' }, true);
+let cookieSet = null, nextCalled = false;
+captured.middleware(req({ url: '/m?zt=' + SPARE }), {
+  cookie(name, val) { cookieSet = [name, val]; },
+}, () => { nextCalled = true; });
+check('g32 spare entrance sets the real run cookie', cookieSet && cookieSet[0] === 'hub_zt' && cookieSet[1] === T, JSON.stringify(cookieSet));
+check('g33 spare entrance passes the middleware', nextCalled === true);
 
 console.log(`HUB-GATE: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
