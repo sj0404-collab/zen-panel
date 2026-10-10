@@ -1,0 +1,23 @@
+diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+index 6319e24..db9ff8e 100644
+--- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
++++ b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+@@ -587,4 +587,18 @@ class OcrPreferences(
+      * Выключено = только изображение без текстовых рамок.
+      */
+     fun screenshotShowTextOverlay() = preferenceStore.getBoolean("pref_screenshot_text_overlay", true)
++
++    /**
++     * Наложение поверх страницы в читалке: рамки/пятна реплик, номера и
++     * значки 🔊. Выключено = страница без всяких наложений, озвучка идёт
++     * сама по себе (кто-то читает мангу чисто глазами, а звук — фоном).
++     */
++    fun readerOverlayEnabled() = preferenceStore.getBoolean("pref_reader_overlay_enabled", true)
++
++    /**
++     * Читать ВСЁ, что видно на странице: одиночные буквы, междометия
++     * («а…», «мгм», вздохи) и прочие короткие реплики, которые обычный
++     * фильтр осмысленности отбрасывает как мусор.
++     */
++    fun autoReadReadEverything() = preferenceStore.getBoolean("pref_autoread_read_everything", true)
+ }
