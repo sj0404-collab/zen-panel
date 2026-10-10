@@ -4366,6 +4366,23 @@ async function snapLoad(force) {
   }
 }
 function snapDay(s) { return s.replace(/^\d+$|\D/g, '').slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'); }
+// Штампы снапшотов пишутся раннером в UTC. Карточка показывала их как есть, и
+// телефон в UTC+3 видел «18:26» там, где по факту 21:26. Показываем локальное
+// время браузера (и подписываем его), а сырым остаётся только stamp для API.
+function snapLocal(stamp) {
+  const m = String(stamp || '').match(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/);
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+  if (isNaN(d.getTime())) return null;
+  return d;
+}
+function snapLocalLabel(stamp) {
+  const d = snapLocal(stamp);
+  if (!d) return snapDay(stamp) + ' · ' + String(stamp || '').slice(-6).replace(/(\d{2})(\d{2})(\d{2})/, '$1:$2:$3') + ' UTC';
+  const pad = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+    ' · ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
 // Which snapshots are on screen. It used to collapse each day to its newest
 // entry, which quietly threw away every earlier snapshot of that day: the one
 // the user actually wanted was often the one taken before a bad hour, and it
@@ -4403,7 +4420,7 @@ function renderSnapList() {
     return `<label class="snap-row ${sel ? 'sel' : ''}" data-stamp="${snapEsc(s.stamp)}" onclick="snapPick('${snapEsc(s.stamp)}')">
       <input type="radio" name="snap" ${sel ? 'checked' : ''}>
       <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:700;color:var(--t1)">📅 ${snapEsc(snapDay(s.stamp))} · ${snapEsc(s.stamp.slice(-6).replace(/(\d{2})(\d{2})(\d{2})/, '$1:$2:$3'))}</div>
+        <div style="font-size:12px;font-weight:700;color:var(--t1)">📅 ${snapEsc(snapLocalLabel(s.stamp))}</div>
         <div style="font-size:11px;margin-top:2px">${marks.join(' ')}</div>
         <div style="font-size:11px;color:var(--t3);margin-top:3px">${what.join(' · ')}</div>
       </div>
