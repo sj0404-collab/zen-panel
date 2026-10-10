@@ -1,0 +1,205 @@
+diff --git a/helper/app/build.gradle.kts b/helper/app/build.gradle.kts
+index 3da0aa3..30aa2a8 100644
+--- a/helper/app/build.gradle.kts
++++ b/helper/app/build.gradle.kts
+@@ -10,8 +10,8 @@ android {
+         applicationId = "com.aclg.helper"
+         minSdk = 26
+         targetSdk = 35
+-        versionCode = 1
+-        versionName = "0.1.0"
++        versionCode = 2
++        versionName = "0.1.1"
+     }
+ 
+     buildTypes {
+diff --git a/helper/app/src/main/java/com/aclg/helper/HelperService.kt b/helper/app/src/main/java/com/aclg/helper/HelperService.kt
+index 80611fc..4da73b0 100644
+--- a/helper/app/src/main/java/com/aclg/helper/HelperService.kt
++++ b/helper/app/src/main/java/com/aclg/helper/HelperService.kt
+@@ -11,6 +11,7 @@ import android.os.Build
+ import android.os.IBinder
+ import android.os.PowerManager
+ import android.util.Log
++import androidx.core.app.ServiceCompat
+ import org.json.JSONObject
+ 
+ /**
+@@ -21,22 +22,38 @@ class HelperService : Service() {
+ 
+     private var ws: WsServer? = null
+     private var wakeLock: PowerManager.WakeLock? = null
+-    private var lastError: String? = null
+ 
+     override fun onCreate() {
+         super.onCreate()
+         startForegroundCompat()
+-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "aclg:helper").apply { acquire() }
+-        startWs()
++        try {
++            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
++            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "aclg:helper").apply { acquire() }
++            startWs()
++        } catch (e: Exception) {
++            lastError = "onCreate: ${e.javaClass.simpleName}: ${e.message}"
++            Log.e(TAG, "service init failed", e)
++        }
+     }
+ 
+     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+ 
++    override fun onTaskRemoved(rootIntent: Intent?) {
++        // если юзер смахнул приложение — не даём серверу умереть
++        try {
++            val restart = Intent(applicationContext, HelperService::class.java)
++            applicationContext.startForegroundService(restart)
++        } catch (e: Exception) {
++            Log.w(TAG, "restart on task removed failed", e)
++        }
++        super.onTaskRemoved(rootIntent)
++    }
++
+     override fun onDestroy() {
+         ws?.close()
+         ws = null
+         wakeLock?.let { if (it.isHeld) it.release() }
++        lastError = null
+         super.onDestroy()
+     }
+ 
+@@ -49,9 +66,10 @@ class HelperService : Service() {
+             }
+             server.start()
+             ws = server
++            lastError = null
+             Log.i(TAG, "WS listening on 9100")
+         } catch (e: Exception) {
+-            lastError = e.message
++            lastError = "port 9100: ${e.javaClass.simpleName}: ${e.message}"
+             Log.e(TAG, "WS start failed", e)
+         }
+     }
+@@ -62,7 +80,11 @@ class HelperService : Service() {
+             val type = obj.getString("type")
+             val args = obj.toSerializableArgs()
+             val ok = InputBridge.inject(type, args)
+-            if (!ok) Log.w(TAG, "inject failed for $type (service bound? ${InputBridge.service != null})")
++            if (!ok) {
++                val reason = if (InputBridge.service == null) "accessibility service not bound" else "inject failed"
++                Log.w(TAG, "$reason for $type")
++                ws?.broadcast("{\"status\":\"error\",\"reason\":\"$reason\",\"type\":\"$type\"}")
++            }
+         } catch (e: Exception) {
+             Log.w(TAG, "bad ws message: $raw", e)
+         }
+@@ -91,7 +113,7 @@ class HelperService : Service() {
+             .setContentIntent(openIntent)
+             .setOngoing(true)
+             .build()
+-        startForeground(1, notif)
++        ServiceCompat.startForeground(this, 1, notif, ServiceCompat.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+     }
+ 
+     private fun pendingFlags(): Int =
+@@ -99,6 +121,7 @@ class HelperService : Service() {
+ 
+     companion object {
+         private const val TAG = "ACLGHelper"
++        @Volatile var lastError: String? = null
+     }
+ }
+ 
+diff --git a/helper/app/src/main/java/com/aclg/helper/MainActivity.kt b/helper/app/src/main/java/com/aclg/helper/MainActivity.kt
+index 762a9f0..9d13971 100644
+--- a/helper/app/src/main/java/com/aclg/helper/MainActivity.kt
++++ b/helper/app/src/main/java/com/aclg/helper/MainActivity.kt
+@@ -9,11 +9,15 @@ import android.os.Bundle
+ import android.provider.Settings
+ import android.widget.Button
+ import android.widget.TextView
++import android.widget.Toast
+ import androidx.appcompat.app.AppCompatActivity
++import java.net.InetSocketAddress
++import java.net.Socket
+ 
+ class MainActivity : AppCompatActivity() {
+ 
+     private val status: TextView get() = findViewById(R.id.status)
++    private var probing = false
+ 
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+@@ -32,21 +36,55 @@ class MainActivity : AppCompatActivity() {
+     }
+ 
+     private fun startHelper() {
+-        startForegroundService(Intent(this, HelperService::class.java))
++        try {
++            startForegroundService(Intent(this, HelperService::class.java))
++            refresh()
++            Toast.makeText(this, "Сервис запускается… проверь уведомление", Toast.LENGTH_SHORT).show()
++        } catch (e: Exception) {
++            status.append("\nОШИБКА СТАРТА: ${e.javaClass.simpleName}: ${e.message}")
++            Toast.makeText(this, "Ошибка: ${e.message}", Toast.LENGTH_LONG).show()
++        }
+     }
+ 
+     private fun stopHelper() {
+-        stopService(Intent(this, HelperService::class.java))
++        try {
++            stopService(Intent(this, HelperService::class.java))
++            refresh()
++        } catch (e: Exception) {
++            status.append("\nОШИБКА: ${e.message}")
++        }
+     }
+ 
+     private fun refresh() {
+         val isRunning = isServiceRunning(HelperService::class.java)
+         val accEnabled = isAccessibilityEnabled()
+-        status.text = buildString {
+-            append("Сервис: ").append(if (isRunning) "вкл" else "выкл").append('\n')
+-            append("Спец. возможности (инпут): ").append(if (accEnabled) "вкл" else "ВЫКЛ — без инпута\n").append('\n')
+-            append("WS-порт: 9100 (хосту указать ws://127.0.0.1:9100)")
+-        }
++        status.text = contextStatus(isRunning, accEnabled)
++        probePort()
++    }
++
++    private fun contextStatus(isRunning: Boolean, accEnabled: Boolean) = buildString {
++        append("Приложение: ").append(if (isRunning) "в фоне (сервис вкл)" else "в фоне (сервис выкл)").append('\n')
++        append("Спец. возможности (инпут): ").append(if (accEnabled) "вкл" else "ВЫКЛ — жесты не будут работать").append('\n')
++        HelperService.lastError?.let { append("посл. ошибка сервиса: ").append(it).append('\n') }
++        append("WS-порт 9100: ").append(PORT_STATE)
++        append("\nхосту в браузере укажи ws://127.0.0.1:9100")
++    }
++
++    private fun probePort() {
++        if (probing) return
++        probing = true
++        Thread {
++            val open = try {
++                Socket().use { s -> s.connect(InetSocketAddress("127.0.0.1", 9100), 800); true }
++            } catch (_: Exception) {
++                false
++            }
++            runOnUiThread {
++                probing = false
++                PORT_STATE = if (open) "ВКЛ (порт слушает)" else "выкл"
++                status.text = status.text.toString().replaceFirst(Regex("WS-порт 9100: .*"), "WS-порт 9100: $PORT_STATE")
++            }
++        }.start()
+     }
+ 
+     private fun isServiceRunning(cls: Class<*>): Boolean {
+@@ -62,4 +100,8 @@ class MainActivity : AppCompatActivity() {
+         ) ?: return false
+         return enabled.split(':').any { ComponentName.unflattenFromString(it)?.flattenToString() == expected }
+     }
++
++    companion object {
++        @Volatile var PORT_STATE = "проверка…"
++    }
+ }
+\ No newline at end of file
