@@ -1,0 +1,82 @@
+{
+  "kind": "snapshot-code.json",
+  "slot": "hub",
+  "stamp": "2026-10-10T11:36:22Z",
+  "changedFiles": [
+    {
+      "code": " M",
+      "path": "hub/src/main/assets/hub/index.html"
+    },
+    {
+      "code": " M",
+      "path": "npm-hub/.zen-agent/audit.jsonl"
+    },
+    {
+      "code": " M",
+      "path": "tools/tunnel_keeper.sh"
+    },
+    {
+      "code": "??",
+      "path": ".zen-agent/"
+    },
+    {
+      "code": "??",
+      "path": "audit.json"
+    },
+    {
+      "code": "??",
+      "path": "code.json"
+    }
+  ],
+  "gitStatus": " M hub/src/main/assets/hub/index.html\n M npm-hub/.zen-agent/audit.jsonl\n M tools/tunnel_keeper.sh\n?? .zen-agent/\n?? audit.json\n?? code.json\n",
+  "gitDiffStat": " hub/src/main/assets/hub/index.html | 46 ++++++++++++++++++++++++++++----------\n npm-hub/.zen-agent/audit.jsonl     | 10 +++++++++\n tools/tunnel_keeper.sh             |  7 ++++++\n 3 files changed, 51 insertions(+), 12 deletions(-)\n",
+  "gitDiff": "diff --git a/hub/src/main/assets/hub/index.html b/hub/src/main/assets/hub/index.html\nindex 6c2ab67..72d8a27 100644\n--- a/hub/src/main/assets/hub/index.html\n+++ b/hub/src/main/assets/hub/index.html\n@@ -619,6 +619,34 @@ async function preflightHub(base, zt, expectedRunId) {\n   }\n   return true;\n }\n+// Walk the candidate addresses (main first, then the warm reserve) and return\n+// the first that accepts our token, together with WHY every earlier one failed.\n+// The old code threw the same blanket «Ни основной, ни резервный адрес не\n+// отвечает» no matter what happened, and printed it even when the reserve had\n+// never been published and only one address existed - which turned a plain 401\n+// (missing launch token) into a phantom network outage.\n+async function firstReachableBase(bases, zt, runId) {\n+  const errors = [];\n+  for (let i = 0; i < bases.length; i++) {\n+    if (i > 0) log('Основной адрес молчит — пробую резервный…');\n+    try { await preflightHub(bases[i], zt, runId); return { base: bases[i], errors }; }\n+    catch (e) { errors.push({ base: bases[i], reason: (e && e.message) || String(e) }); }\n+  }\n+  return { base: '', errors };\n+}\n+// Turn the collected per-base failures into the honest message the user sees:\n+// an empty token is called out as such, a single address is never blamed on a\n+// reserve that does not exist, and the actual reason is always included.\n+function describeBaseFailure(bases, errors, zt) {\n+  const reasons = [];\n+  for (const e of errors) if (e && e.reason && reasons.indexOf(e.reason) < 0) reasons.push(e.reason);\n+  const detail = reasons.join('; ') || 'нет ответа';\n+  if (!String(zt || '')) {\n+    return 'Нет токена запуска (zt): адрес отвечает 401. Откройте хаб тем же устройством, что запускало раннер, либо запустите хаб заново.';\n+  }\n+  if (bases.length > 1) return 'Ни основной, ни резервный адрес не отвечает: ' + detail;\n+  return 'Адрес не отвечает: ' + detail;\n+}\n function buildOpenUrl(s, zt, baseOpt) {\n   const base = String(baseOpt || s.hubUrl || s.url || '').replace(/\\/+$/, '');\n   return base + '/m?zt=' + encodeURIComponent(zt);\n@@ -758,14 +786,11 @@ async function afterDispatch(token, zt, since, label) {\n     return false;\n   }\n   const bases = sessionBases(s);\n-  let base = '';\n   progStage('Проверяю доступ…');\n   log('Адрес получен: ' + (bases[0] || ''));\n-  for (const b of bases) {\n-    if (bases.indexOf(b) > 0) log('Основной адрес молчит — пробую резервный…');\n-    try { await preflightHub(b, zt, s.runId); base = b; break; } catch (e) { /* резерв дальше */ }\n-  }\n-  if (!base) throw new Error('Ни основной, ни резервный адрес не отвечает.');\n+  const probe = await firstReachableBase(bases, zt, s.runId);\n+  const base = probe.base;\n+  if (!base) throw describeBaseFailure(bases, probe.errors, zt);\n   const url = buildOpenUrl(s, zt, base);\n   saveLast(url, bases.filter(b => b !== base)[0] || '');\n   clearPending();\n@@ -1041,12 +1066,9 @@ async function openSlot(slot, btn) {\n       // address first, warm reserve (url2) second.\n       const zt = (readPending() && readPending().zt) || lastOriginToken().zt || '';\n       const bases = sessionBases(s);\n-      let got = '';\n-      for (const b of bases) {\n-        if (bases.indexOf(b) > 0) log('Основной адрес молчит — пробую резервный…');\n-        try { const base = b; await preflightHub(base, zt, s.runId); got = base; break; } catch (e) { /* дальше */ }\n-      }\n-      if (!got) throw new Error('Ни основной, ни резервный адрес не отвечает.');\n+      const probe = await firstReachableBase(bases, zt, s.runId);\n+      if (!probe.base) throw describeBaseFailure(bases, probe.errors, zt);\n+      const got = probe.base;\n       saveLast(buildOpenUrl(s, zt, got), bases.filter(b => b !== got)[0] || '');\n       if (bases.indexOf(got) > 0) log('Перешёл на резервный адрес.', 'ok');\n       location.href = buildOpenUrl(s, zt, got);\ndiff --git a/npm-hub/.zen-agent/audit.jsonl b/npm-hub/.zen-agent/audit.jsonl\nindex 4c303fc..6dce623 100644\n--- a/npm-hub/.zen-agent/audit.jsonl\n+++ b/npm-hub/.zen-agent/audit.jsonl\n@@ -22,3 +22,13 @@\n {\"at\":\"2026-09-12T09:47:09.788Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"ling-3.0-flash-fin-free\"],\"retired\":[],\"live\":8,\"total\":11}\n {\"at\":\"2026-09-12T09:57:14.977Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n {\"at\":\"2026-09-12T09:57:14.978Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"deepseek-v4-flash-free\",\"muse-spark-1.3-contributor-free\",\"ling-3.0-flash-fin-free\"],\"retired\":[],\"live\":8,\"total\":11}\n+{\"at\":\"2026-10-10T10:48:48.296Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-10T10:48:48.297Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"exo-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"step-5-preview-free\",\"ling-3.0-flash-fin-free\",\"ling-3.1-flash-free\"],\"retired\":[\"hy3-free\",\"x-preview-f-free\",\"mimo-v2.5-free\",\"laguna-s-2.1-free\"],\"live\":13,\"total\":17}\n+{\"at\":\"2026-10-10T10:58:51.268Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-10T10:58:51.269Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"exo-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"step-5-preview-free\",\"ling-3.0-flash-fin-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":13,\"total\":17}\n+{\"at\":\"2026-10-10T11:09:00.423Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-10T11:09:00.424Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"exo-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"step-5-preview-free\",\"ling-3.0-flash-fin-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":13,\"total\":17}\n+{\"at\":\"2026-10-10T11:19:07.190Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-10T11:19:07.191Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"exo-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"step-5-preview-free\",\"ling-3.0-flash-fin-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":13,\"total\":17}\n+{\"at\":\"2026-10-10T11:29:12.161Z\",\"event\":\"model_autoswitched\",\"provider\":\"zen\",\"session\":\"default\",\"from\":\"laguna-s-2.1-free\",\"to\":\"nemotron-3.5-lightning-free\"}\n+{\"at\":\"2026-10-10T11:29:12.161Z\",\"event\":\"models_refreshed\",\"provider\":\"zen\",\"session\":\"default\",\"added\":[\"jev-1.13-free\",\"exo-free\",\"muse-spark-1.3-contributor-free\",\"mimo-v2.6-flash-free\",\"space-bunny-free\",\"longcat-2.5-preview-free\",\"step-5-preview-free\",\"ling-3.0-flash-fin-free\",\"ling-3.1-flash-free\"],\"retired\":[],\"live\":13,\"total\":17}\ndiff --git a/tools/tunnel_keeper.sh b/tools/tunnel_keeper.sh\nindex bae633e..f0c8649 100755\n--- a/tools/tunnel_keeper.sh\n+++ b/tools/tunnel_keeper.sh\n@@ -37,6 +37,12 @@ else\n fi\n INTERVAL=\"${KEEPER_INTERVAL:-20}\"\n MAIN_FAILS=0\n+# After a reserve open fails, stop retrying every loop. A quick tunnel that\n+# Cloudflare refuses (HTTP 429, \"too many tunnels\") only gets angrier when asked\n+# every 20 seconds; waiting minutes is what lets it succeed. The count is also\n+# how many loops to skip before touching the reserve again.\n+RESERVE_COOLDOWN=\"${KEEPER_RESERVE_COOLDOWN:-15}\"\n+RESERVE_SKIP=0\n \n log() { echo \"[tunnel-keeper:$VM $(date -u '+%H:%M:%S')] $*\" | tee -a \"$HUB_LOGS/tunnel-keeper.log\"; }\n \n@@ -46,6 +52,7 @@ healthy() {  # $1 = url\n \n url_for_pidfile() {  # $1 = pidfile path\n   local p\n+  [ -f \"$1\" ] || return 1\n   p=\"$(tr -dc '0-9' < \"$1\" 2>/dev/null || true)\" || true\n   [ -n \"${p:-}\" ] && kill -0 \"$p\" 2>/dev/null || return 1\n   cat \"${1%.pid}.url\" 2>/dev/null || true\n",
+  "gitLog": [
+    "fcc596b Восстановление из снапшота возвращало 0 репозиториев (#135)"
+  ],
+  "sessions": [],
+  "topFiles": [
+    "AGENTS.md",
+    "MANIFEST.md",
+    "README.md",
+    "TESTING.md",
+    "agent",
+    "app",
+    "artifacts",
+    "audit.json",
+    "build.gradle.kts",
+    "ci",
+    "code.json",
+    "desktop",
+    "free-multimodal-models.txt",
+    "gradle.properties",
+    "hub",
+    "models-agent.json",
+    "models-hub-linux.json",
+    "models-hub-windows.json",
+    "models-hub.json",
+    "models-opencode.json",
+    "npm-hub",
+    "opencode.json",
+    "pc-local",
+    "restore-session.sh",
+    "saved",
+    "session-agent.json",
+    "session-hub-linux.json",
+    "session-hub-windows.json",
+    "session-hub.json",
+    "session-linux.json",
+    "session-opencode.json",
+    "session-windows.json",
+    "settings.gradle.kts",
+    "tests",
+    "tools",
+    "workflow-cloudflare-fixes.patch"
+  ],
+  "changedCount": 6,
+  "startedAt": "2026-10-10T11:37:12Z",
+  "state": "live",
+  "runId": "38046098933",
+  "runNumber": "371",
+  "repo": "sj0404-collab/zen-panel"
+}
