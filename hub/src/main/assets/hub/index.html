@@ -21,9 +21,6 @@
            padding:14px; margin:8px 0; cursor:pointer; background:#58a6ff; color:#0d0d12; min-height:50px; }
   button.ghost { background:transparent; color:#58a6ff; border:1px solid #262633; }
   button:disabled { opacity:.5; }
-  .log { margin-top:14px; padding:12px 14px; background:#16161f; border:1px solid #262633;
-         border-radius:10px; font-size:13px; min-height:60px; }
-  .log:empty::before { content:"Здесь будет ход запуска…"; color:#55555f; }
   .err { color:#ff7b72; }
   .ok { color:#3fb950; }
   .note { font-size:12px; color:#55555f; margin-top:12px; text-align:center; }
@@ -83,12 +80,20 @@
   .pill.queue { background:#3d2f0b; color:#d29922; }
   .muted { font-size:12px; color:#55555f; padding:4px 0; }
 
-  /* ── the journal ── */
-  .logbar { display:flex; gap:8px; margin-top:16px; }
-  .logbar button { width:auto; flex:0 0 auto; margin:0; padding:7px 12px; min-height:0; font-size:12px; }
-  .log { margin-top:8px; padding:10px 12px; background:#0f0f16; border:1px solid #262633;
+  /* ── the journal: collapsed status line by default, open on demand ──
+     The journal is temporary — it narrates a wait and then only history. On a
+     phone it must not push the controls out of reach, so the whole log area
+     hides behind one line that carries the last entry and the line count. */
+  .logbar { display:flex; gap:6px; align-items:center; margin-top:16px; }
+  .logbar button { width:auto; flex:0 0 auto; margin:0; padding:7px 11px; min-height:0; font-size:12px; }
+  .log-last { flex:1; min-width:0; font-size:12px; line-height:1.3; color:#8a8a9e;
+              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .log-last:empty::before { content:"Ход запуска появится здесь"; color:#55555f; }
+  .log { display:none; margin-top:8px; padding:10px 12px; background:#0f0f16; border:1px solid #262633;
          border-radius:10px; font-size:12px; line-height:1.45; min-height:70px;
          max-height:42vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+  .log.open { display:block; }
+  .log:empty::before { content:"Здесь будет ход запуска…"; color:#55555f; }
   .log div { padding:1px 0; word-break:break-word; }
   .log .ts { color:#55555f; font-family:ui-monospace,monospace; margin-right:6px;
              font-variant-numeric:tabular-nums; }
@@ -177,8 +182,15 @@
     </div>
   </div>
 
+  <!-- The journal is temporary: a phone screen is not a terminal, so it sits
+       collapsed as a one-line status until something goes wrong (an error opens
+       it by itself) or the user asks for it. The full capped log is still
+       there, and «Копировать» hands it over. -->
   <div class="logbar">
-    <button class="ghost" id="log-clear">Очистить журнал</button>
+    <button class="ghost" id="log-toggle" aria-expanded="false">
+      <span id="log-toggle-lbl">Журнал</span></button>
+    <span class="log-last" id="log-last"></span>
+    <button class="ghost" id="log-clear">Очистить</button>
     <button class="ghost" id="log-copy">Копировать</button>
   </div>
   <div id="log" class="log"></div>
@@ -196,6 +208,21 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
 // only grows is a log nobody scrolls. The last few hundred lines are the ones
 // that describe what is happening right now.
 const LOG_MAX = 500;
+// The journal is temporary, so it stays collapsed: one status line carries
+// what it is doing right now, and nothing else is visible until an error
+// (opened automatically — a failure must never hide) or the user's press.
+const LOG_KEY = 'hub_journal';
+let logOpen = false;
+function logSetOpen(v) {
+  logOpen = !!v;
+  const el = $('log'), t = $('log-toggle');
+  if (el) el.className = logOpen ? 'log open' : 'log';
+  if (t) {
+    t.setAttribute('aria-expanded', logOpen ? 'true' : 'false');
+    $('log-toggle-lbl').textContent = logOpen ? 'Журнал ▲' : 'Журнал ▸';
+  }
+  try { localStorage.setItem(LOG_KEY, logOpen ? '1' : ''); } catch (e) {}
+}
 function hhmmss(d) {
   return [d.getHours(), d.getMinutes(), d.getSeconds()]
     .map(n => String(n).padStart(2, '0')).join(':');
@@ -212,7 +239,12 @@ function log(m, cls) {
   line.appendChild(document.createTextNode(String(m == null ? '' : m)));
   el.appendChild(line);
   while (el.childElementCount > LOG_MAX) el.removeChild(el.firstChild);
-  el.scrollTop = el.scrollHeight;
+  // The status line mirrors the newest entry and the line count, so a
+  // collapsed journal still answers "what is it doing".
+  const lastEl = $('log-last');
+  if (lastEl) lastEl.textContent = (line.textContent || '').replace(/^\s+/, '');
+  if (cls === 'err' && !logOpen) logSetOpen(true);
+  if (logOpen) el.scrollTop = el.scrollHeight;
 }
 function logStep(m) { log(m, 'step'); }
 function journalText() {
@@ -975,7 +1007,16 @@ for (const t of document.querySelectorAll('.tab')) {
     if (t.dataset.pane === 'gh') ghRefresh();
   };
 }
-$('log-clear').onclick = () => { $('log').innerHTML = ''; log('Журнал очищен.'); };
+$('log-clear').onclick = () => {
+  $('log').innerHTML = '';
+  const lastEl = $('log-last');
+  if (lastEl) lastEl.textContent = '';
+  log('Журнал очищен.');
+};
+// The collapsed state is remembered on the device, like the token: a person
+// who reads the journal opens it once, a person who does not never has to.
+$('log-toggle').onclick = () => logSetOpen(!logOpen);
+try { logSetOpen(localStorage.getItem(LOG_KEY) === '1'); } catch (e) { logSetOpen(false); }
 $('log-copy').onclick = () => {
   const text = journalText();
   const done = () => { log('Журнал скопирован в буфер.', 'ok'); };
