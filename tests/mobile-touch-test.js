@@ -619,7 +619,7 @@ check('q77 panel distinguishes queued runs',
 check('q78 panel refuses a hub from another run',
   panel.includes('identity.runId') && panel.includes('другой запуск раннера') &&
   fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub/index.html'), 'utf8')
-    .includes('preflightHub(bases[i], zt, runId)'));
+    .includes('preflightHub(bases[i], zk, runId)'));
 
 const termHtmlPath = path.join(__dirname, '..', 'npm-hub/public/term.html');
 // q79: the APK file picker really allows multiple files — the chooser intent
