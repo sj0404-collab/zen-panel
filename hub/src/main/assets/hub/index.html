@@ -659,7 +659,13 @@ async function waitForHub(token, sinceMs, sleepMs, cancelled, runId) {
   throw new Error('Таймаут: хаб не сообщил адрес за 20 минут.');
 }
 async function preflightHub(base, zt, expectedRunId) {
-  const r = await fetch(base + '/api/tools?zt=' + encodeURIComponent(zt));
+  // Free ngrok answers browser fetches with an interstitial page unless this
+  // header is present (server.js whitelists it in CORS). Without it a live
+  // third-leg address would be misread as dead during the probe.
+  let ngrokHost = false;
+  try { ngrokHost = /(^|[.])ngrok(-free)?[.]app$|(^|[.])ngrok[.]io$/.test(new URL(base).host); } catch (e) {}
+  const r = await fetch(base + '/api/tools?zt=' + encodeURIComponent(zt),
+    ngrokHost ? { headers: { 'ngrok-skip-browser-warning': '1' } } : undefined);
   const j = await r.json().catch(() => null);
   if (!j || j.success !== true) throw new Error('Хаб не принял токен (' +
     ((j && j.error) || ('HTTP ' + r.status)) + '). Перезапустите хаб.');
@@ -703,6 +709,7 @@ function describeBaseFailure(bases, errors, zt, spareTried) {
   if (!String(zt || '')) {
     return 'Нет токена запуска (zt): адрес отвечает 401. Откройте хаб тем же устройством, что запускало раннер, либо введите GitHub-токен, которым запускали хаб, и нажмите «Открыть» — запасной вход откроет хаб.';
   }
+  if (bases.length > 2) return 'Ни основной, ни резервный (cloudflare), ни ngrok адрес не отвечает: ' + detail;
   if (bases.length > 1) return 'Ни основной, ни резервный адрес не отвечает: ' + detail;
   return 'Адрес не отвечает: ' + detail;
 }
@@ -834,7 +841,7 @@ function lastOriginToken() {
 }
 function sessionBases(s) {
   const out = []; const seen = {};
-  for (const v of [String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || '')]) {
+  for (const v of [String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || ''), String(s && s.ngrok || '')]) {
     const k = v.replace(/\/+$/, '');
     if (k && !seen[k]) { seen[k] = 1; out.push(k); }
   }

@@ -376,17 +376,23 @@ old = read(file_path)
 new = read(stage_path)
 if new.get('state') != 'live':
     raise SystemExit(1)
-if new.get('url2') or not old.get('url2'):
-    raise SystemExit(1)
 old_run = str(old.get('runId', ''))
 new_run = str(new.get('runId', '')) or run_id
 if old_run and new_run and old_run != new_run:
     raise SystemExit(1)
-new['url2'] = old['url2']
+# url2 = cloudflared reserve, ngrok = third provider leg: a republish that
+# simply did not know about them must not erase either (same race as url2).
+carried = []
+for key in ('url2', 'ngrok'):
+    if not new.get(key) and old.get(key):
+        new[key] = old[key]
+        carried.append(key)
+if not carried:
+    raise SystemExit(1)
 with open(stage_path, 'w', encoding='utf-8') as f:
     json.dump(new, f, ensure_ascii=False, indent=2)
     f.write('\n')
-print('publish_session: preserved url2 from the live descriptor', file=sys.stderr)
+print('publish_session: preserved ' + ', '.join(carried) + ' from the live descriptor', file=sys.stderr)
 PY
 }
 

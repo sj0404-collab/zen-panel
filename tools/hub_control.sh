@@ -161,6 +161,7 @@ print(json.dumps({
         "control_daemon": pc("[h]ub_control.sh"),
         "rescue_ssh": pc("[r]escue_ssh.sh"),
         "tunnel_keeper": pc("[t]unnel_keeper.sh"),
+        "ngrok_keeper": pc("[n]grok_keeper.sh"),
     },
 }, ensure_ascii=False))
 PYH

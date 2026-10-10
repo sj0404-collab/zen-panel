@@ -225,6 +225,8 @@ jobs:
           rm -rf "$STATE_DIR"
 
       - name: Start the hub and open the tunnel
+        env:
+          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
           echo "HUB_LOGS=$HUB_LOGS HOME=$HOME $(ls -ld "$HUB_LOGS" 2>&1)"
@@ -361,6 +363,20 @@ jobs:
             bash "$GITHUB_WORKSPACE/fork/tools/tunnel_keeper.sh" hub >> "$HUB_LOGS/tunnel-keeper.log" 2>&1 &
           echo $! > "$HUB_LOGS/tunnel-keeper.pid"
           echo "tunnel keeper: hub endpoint now carries main + reserve addresses"
+
+          # ngrok third leg: an INDEPENDENT provider address, published into the
+          # live session descriptor as .ngrok (run 376: one trycloudflare
+          # address died mid-session and the phone went offline on a perfectly
+          # healthy hub - a different provider keeps serving through that).
+          if [ -n "${NGROK_AUTHTOKEN:-}" ]; then
+            nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
+              NGROK_AUTHTOKEN="$NGROK_AUTHTOKEN" \
+              bash "$GITHUB_WORKSPACE/fork/tools/ngrok_keeper.sh" hub >> "$HUB_LOGS/ngrok-keeper.log" 2>&1 &
+            echo $! > "$HUB_LOGS/ngrok-keeper.pid"
+            echo "ngrok keeper: hub endpoint now also carries a provider-independent address"
+          else
+            echo "::notice::NGROK_AUTHTOKEN secret is empty - the ngrok reserve leg is off"
+          fi
 
       - name: Start the autopilot for every repo the Files tab cloned
         run: |
