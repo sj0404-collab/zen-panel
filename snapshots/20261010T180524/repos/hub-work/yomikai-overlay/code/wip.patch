@@ -1,3 +1,27 @@
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+index 18b7d9c..d388301 100644
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -34,9 +34,19 @@ jobs:
+           curl -fL -o gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+           unzip -q gradle.zip
+ 
++      - name: Unit tests (debug)
++        run: ./gradle-8.7/bin/gradle :app:testDebugUnitTest --no-daemon --stacktrace
++
+       - name: Build release APK
+         run: ./gradle-8.7/bin/gradle :app:assembleRelease --no-daemon --stacktrace
+ 
++      - name: Upload test report
++        if: failure()
++        uses: actions/upload-artifact@v4
++        with:
++          name: test-report
++          path: app/build/reports/tests/testDebugUnitTest
++
+       - uses: actions/upload-artifact@v4
+         with:
+           name: apk
 diff --git a/app/build.gradle b/app/build.gradle
 index a96e4f3..3ea1bf2 100644
 --- a/app/build.gradle
@@ -19,7 +43,7 @@ index a96e4f3..3ea1bf2 100644
 +    testImplementation 'junit:junit:4.13.2'
  }
 diff --git a/app/src/main/java/app/yomikaioverlay/EdgeTts.kt b/app/src/main/java/app/yomikaioverlay/EdgeTts.kt
-index b12a808..25c8533 100644
+index b12a808..920d5fe 100644
 --- a/app/src/main/java/app/yomikaioverlay/EdgeTts.kt
 +++ b/app/src/main/java/app/yomikaioverlay/EdgeTts.kt
 @@ -131,7 +131,7 @@ object EdgeTts {
@@ -31,15 +55,65 @@ index b12a808..25c8533 100644
          for (c in s) {
              when (c) {
                  '&' -> append("&amp;")
-@@ -236,7 +236,7 @@ object EdgeTts {
+@@ -234,35 +234,43 @@ object EdgeTts {
+ 
+     /**
       * Разбивает текст на куски ≤ [SSML_BYTE_LIMIT] байт UTF-8, не режа символы:
-      * большой текст уходит несколькими SSML-запросами.
+-     * большой текст уходит несколькими SSML-запросами.
++     * большой текст уходит несколькими SSML-запросами. Лимит — в БАЙТАХ:
++     * кириллица занимает 2 байта на символ, поэтому считать символы нельзя.
       */
 -    private fun chunkForSsml(text: String, limit: Int = SSML_BYTE_LIMIT): List<String> {
 +    internal fun chunkForSsml(text: String, limit: Int = SSML_BYTE_LIMIT): List<String> {
++        if (text.isBlank()) return emptyList()
          if (text.toByteArray(Charsets.UTF_8).size <= limit) return listOf(text)
          val chunks = mutableListOf<String>()
          val rest = StringBuilder(text)
+         while (rest.isNotEmpty()) {
+-            var take = limit
+-            while (take > 0) {
+-                val candidate = rest.substring(0, take)
+-                if (candidate.isWholeUtf8()) break
+-                take--
++            // набираем подстроку, пока её UTF-8 размер не упрётся в лимит
++            var take = 0
++            var size = 0
++            while (take < rest.length) {
++                val chSize = utf8Size(rest[take])
++                if (size + chSize > limit && take > 0) break
++                size += chSize
++                take++
+             }
+-            if (take <= 0) take = limit
++            if (take <= 0) take = 1
+             var part = rest.substring(0, take)
+             val amp = part.lastIndexOf('&')
+-            if (amp >= 0 && part.indexOf(';', amp) < 0 && part.length > amp + 1) {
++            if (amp >= 0 && part.indexOf(';', amp) < 0 && part.length > amp) {
++                // не оставляем хвост с «висячим» & (резал бы XML-сущность)
+                 part = part.substring(0, amp)
+             }
+-            chunks += part.trim()
+-            rest.delete(0, part.length)
++            if (part.isNotEmpty()) chunks += part.trim()
++            rest.delete(0, part.length.coerceAtLeast(1))
+         }
+         return chunks.filter(String::isNotBlank)
+     }
+ 
+-    private fun String.isWholeUtf8(): Boolean = try {
+-        this.toByteArray(Charsets.UTF_8).toString(Charsets.UTF_8) == this
+-    } catch (e: Exception) {
+-        false
++    /** Размер символа в UTF-8 (суррогатная пара = 2+2 байта). */
++    private fun utf8Size(ch: Char): Int = when (ch.code) {
++        in 0 until 0x80 -> 1
++        in 0x80 until 0x800 -> 2
++        in 0xD800..0xDFFF -> 2
++        else -> 3
+     }
+ 
+     /** Один SSML-запрос на WebSocket, возвращает конкатенированный MP3. */
 diff --git a/app/src/main/java/app/yomikaioverlay/MainActivity.kt b/app/src/main/java/app/yomikaioverlay/MainActivity.kt
 index fafdd2a..7e7c584 100644
 --- a/app/src/main/java/app/yomikaioverlay/MainActivity.kt
@@ -789,7 +863,7 @@ index ec7e59f..748e0d7 100644
      }
  }
 diff --git a/app/src/main/java/app/yomikaioverlay/ot/GlensOcrEngine.kt b/app/src/main/java/app/yomikaioverlay/ot/GlensOcrEngine.kt
-index 0fd2d95..d6710c7 100644
+index 0fd2d95..a58cfce 100644
 --- a/app/src/main/java/app/yomikaioverlay/ot/GlensOcrEngine.kt
 +++ b/app/src/main/java/app/yomikaioverlay/ot/GlensOcrEngine.kt
 @@ -46,7 +46,7 @@ class GlensOcrEngine : OcrEngine {
@@ -821,7 +895,40 @@ index 0fd2d95..d6710c7 100644
      private var pos = 0
  
      fun hasRemaining() = pos < bytes.size
-@@ -273,7 +273,7 @@ private class ProtoReader(private val bytes: ByteArray) {
+@@ -260,20 +260,35 @@ private class ProtoReader(private val bytes: ByteArray) {
+         }
+     }
+ 
+-    private fun readVarint32(): Int? {
+-        var result = 0; var shift = 0
+-        while (shift < 32) {
++    internal fun readVarint32(): Int? {
++        var result = 0L
++        var shift = 0
++        while (shift < 64) {
+             if (!hasRemaining()) return null
+-            val b = bytes[pos++].toInt() and 0xFF
++            val b = bytes[pos++].toLong() and 0xFF
+             result = result or ((b and 0x7F) shl shift)
+-            if ((b and 0x80) == 0) return result
++            if ((b and 0x80L) == 0L) return result.toInt()
++            shift += 7
++        }
++        return result.toInt()
++    }
++
++    /** Полный 64-битный varint: длинные значения (uint64) больше не рвут поток. */
++    internal fun readVarint64(): Long? {
++        var result = 0L
++        var shift = 0
++        while (shift < 64) {
++            if (!hasRemaining()) return null
++            val b = bytes[pos++].toLong() and 0xFF
++            result = result or ((b and 0x7F) shl shift)
++            if ((b and 0x80L) == 0L) return result
+             shift += 7
+         }
+         return result
      }
  }
  
@@ -830,6 +937,17 @@ index 0fd2d95..d6710c7 100644
      private val out = ByteArrayOutputStream()
  
      fun writeInt32(fieldNumber: Int, value: Int) {
+@@ -309,7 +324,9 @@ private class ProtoWriter {
+ 
+     private fun writeVarint64(value: Long) {
+         var v = value
+-        while ((v and 0x80L.inv()) != 0L) { out.write(((v and 0x7F) or 0x80).toInt()); v = v ushr 7 }
++        // маска ~0x7F (а не ~0x80): иначе в поток уходил лишний нулевой байт
++        // и varint переставал быть каноническим.
++        while ((v and 0x7FL.inv()) != 0L) { out.write(((v and 0x7F) or 0x80).toInt()); v = v ushr 7 }
+         out.write((v and 0x7F).toInt())
+     }
+ }
 diff --git a/app/src/main/java/app/yomikaioverlay/ot/LlmClient.kt b/app/src/main/java/app/yomikaioverlay/ot/LlmClient.kt
 index 519d8c3..c2e9302 100644
 --- a/app/src/main/java/app/yomikaioverlay/ot/LlmClient.kt
@@ -997,16 +1115,15 @@ index 519d8c3..c2e9302 100644
      }
  
 diff --git a/app/src/main/java/app/yomikaioverlay/ot/MangaTranslatorService.kt b/app/src/main/java/app/yomikaioverlay/ot/MangaTranslatorService.kt
-index ec899b0..bc3e484 100644
+index ec899b0..e539ea7 100644
 --- a/app/src/main/java/app/yomikaioverlay/ot/MangaTranslatorService.kt
 +++ b/app/src/main/java/app/yomikaioverlay/ot/MangaTranslatorService.kt
-@@ -16,8 +16,19 @@ object MangaTranslatorService {
-         text: String,
-         targetLang: String = "ru",
+@@ -18,6 +18,20 @@ object MangaTranslatorService {
          sourceLang: String = "auto",
--    ): String {
--        if (text.isBlank()) return ""
-+    ): String = translateOrNull(text, targetLang, sourceLang) ?: text
+     ): String {
+         if (text.isBlank()) return ""
++        return translateOrNull(text, targetLang, sourceLang) ?: text
++    }
 +
 +    /**
 +     * То же, но null при ошибке сети/непарсиваго ответе — чтобы вызывающий
@@ -1022,7 +1139,7 @@ index ec899b0..bc3e484 100644
          return runCatching {
              val encoded = URLEncoder.encode(text, "UTF-8")
              val url = "https://translate.googleapis.com/translate_a/single?client=gtx" +
-@@ -28,16 +39,20 @@ object MangaTranslatorService {
+@@ -28,16 +42,20 @@ object MangaTranslatorService {
                  readTimeout = 15_000
                  setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
              }
@@ -1047,6 +1164,48 @@ index ec899b0..bc3e484 100644
 +        }.getOrNull()
      }
  }
+diff --git a/app/src/main/java/app/yomikaioverlay/ot/RuText.kt b/app/src/main/java/app/yomikaioverlay/ot/RuText.kt
+index cb71b28..4219625 100644
+--- a/app/src/main/java/app/yomikaioverlay/ot/RuText.kt
++++ b/app/src/main/java/app/yomikaioverlay/ot/RuText.kt
+@@ -2,15 +2,20 @@ package app.yomikaioverlay.ot
+ 
+ object RuText {
+     fun clean(raw: String): String {
+-        var s = raw.replace(Regex("(?is)```.*?```"), " ")
+-            .replace(Regex("(?i)^(here is|extracted|translation|перевод)[:\\s]*"), "")
++        var s = raw
++            // код-блоки: убираем маркеры, но сохраняем текст внутри
++            .replace("```", " ")
++            // приписки LLM («Перевод:», «Here is:»); (?iu) — регистронезависимо
++            // с учётом Unicode, иначе «Перевод:» не совпадёт с «перевод».
++            .replace(Regex("(?iu)^(here is|extracted|translation|перевод)[:\\s]*"), "")
+             .replace('ё', 'е')
++            .replace('Ё', 'Е')
+         val lines = s.split('\n').map { line ->
+             val kept = line.split(Regex("\\s+")).filter { w ->
+                 if (w.isEmpty()) false
+                 else {
+                     val cyr = w.count { it in '\u0400'..'\u04FF' }
+-                    val lat = w.count { it in 'A'..'z' }
++                    val lat = w.count { it in 'A'..'Z' || it in 'a'..'z' }
+                     cyr >= lat || w.length <= 2
+                 }
+             }
+diff --git a/app/src/main/java/app/yomikaioverlay/ot/ScriptDetect.kt b/app/src/main/java/app/yomikaioverlay/ot/ScriptDetect.kt
+index 3d682ea..e504619 100644
+--- a/app/src/main/java/app/yomikaioverlay/ot/ScriptDetect.kt
++++ b/app/src/main/java/app/yomikaioverlay/ot/ScriptDetect.kt
+@@ -9,7 +9,8 @@ object ScriptDetect {
+         for (ch in text) {
+             when (ch) {
+                 in 'А'..'я', 'Ё', 'ё' -> cyr++
+-                in 'A'..'z' -> lat++
++                // только буквы: диапазон 'A'..'z' затянул бы [ \ ] ^ _ `
++                in 'A'..'Z', in 'a'..'z' -> lat++
+             }
+         }
+         return cyr > 0 && cyr >= lat
 diff --git a/app/src/main/java/app/yomikaioverlay/ot/Translator.kt b/app/src/main/java/app/yomikaioverlay/ot/Translator.kt
 index 6f3dcd2..2b4ff17 100644
 --- a/app/src/main/java/app/yomikaioverlay/ot/Translator.kt
