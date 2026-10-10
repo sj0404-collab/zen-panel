@@ -37,6 +37,10 @@ async function stubFetch(url, opts) {
     return { ok: !!run, status: run ? 200 : 404, json: async () => run || {} };
   }
   if (u.includes('/api/tools')) {
+    // dead.local is an address that never answers (a dropped tunnel); the feed
+    // only works out of trouble when the reserve is tested. Everything else:
+    // zt=good answers, anything else is a token rejection.
+    if (u.includes('dead.local')) return { ok: false, status: 502, json: async () => ({}) };
     return u.includes('zt=good')
       ? { ok: true, status: 200, json: async () => ({ success: true, runId: '999', tools: [] }) }
       : { ok: false, status: 401, json: async () => ({ success: false, error: 'hub token?' }) };
@@ -134,6 +138,27 @@ function check(name, cond, extra) {
   let msg10 = '';
   try { await window.preflightHub('https://hub.local', 'good', '1000'); } catch (e) { msg10 = e.message; }
   check('c10 preflight rejects another run', /другим запуском/.test(msg10), msg10);
+
+  // Failover to the reserve (Z11 dual tunnels) and honest failure reporting.
+  // firstReachableBase must walk from the dead main to the warm reserve, and
+  // describeBaseFailure must never blame a reserve that was never published.
+  const probeLive = await window.firstReachableBase(['https://dead.local', 'https://hub.local'], 'good', '999');
+  check('c11 walks over to the reserve', probeLive.base === 'https://hub.local' &&
+    probeLive.errors.length === 1 && /не принял токен|HTTP 404/.test(probeLive.errors[0].reason),
+    JSON.stringify(probeLive));
+
+  const probeDead = await window.firstReachableBase(['https://hub.local'], 'bad', '999');
+  check('c12 single dead base probed once', probeDead.base === '' && probeDead.errors.length === 1, JSON.stringify(probeDead));
+  const m12 = window.describeBaseFailure(['https://hub.local'], probeDead.errors, 'bad');
+  check('c12b single address is not blamed on the reserve',
+    /не принял токен/.test(m12) && m12.indexOf('Ни основной') < 0, m12);
+
+  const m13 = window.describeBaseFailure(['https://hub.local'], probeDead.errors, '');
+  check('c13 missing launch token is called out', /токен/.test(m13) && /zt/.test(m13), m13);
+
+  const probeTwo = await window.firstReachableBase(['https://dead.local', 'https://hub.local'], 'bad', '999');
+  const m14 = window.describeBaseFailure(['https://dead.local', 'https://hub.local'], probeTwo.errors, 'bad');
+  check('c14 two dead bases keep the dual-address wording', /Ни основной, ни резервный/.test(m14), m14);
 
   console.log(`HUB-CONNECT: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

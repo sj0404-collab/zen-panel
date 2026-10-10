@@ -619,7 +619,7 @@ check('q77 panel distinguishes queued runs',
 check('q78 panel refuses a hub from another run',
   panel.includes('identity.runId') && panel.includes('другой запуск раннера') &&
   fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub/index.html'), 'utf8')
-    .includes('preflightHub(base, zt, s.runId)'));
+    .includes('preflightHub(bases[i], zt, runId)'));
 
 const termHtmlPath = path.join(__dirname, '..', 'npm-hub/public/term.html');
 // q79: the APK file picker really allows multiple files — the chooser intent
@@ -786,6 +786,18 @@ check('q98 dual tunnels with automatic reserve failover',
   hubControl.includes('url2=') && hubControl.includes('tunnel_keeper') &&
   hubApkIdx.includes('sessionBases') && hubApkIdx.includes('s.url2') &&
   hubApkIdx.includes('резервным адресом') === false && hubApkIdx.includes('резервный адрес'));
+
+// q98b: a reserve that cannot be provisioned (Cloudflare 429) must not be
+// advertised, retried every loop, or blamed by the client. The keeper drops the
+// stale url2 and backs off, open_tunnel names the rate limit, and the hub page
+// reports the real reason instead of a blanket dual-address failure.
+check('q98b dead reserve is dropped, backed off and honestly reported',
+  tunnelKeeper.includes('rm -f "$R_URLFILE"') &&
+  tunnelKeeper.includes('RESERVE_SKIP') && tunnelKeeper.includes('backing off') &&
+  tunnelKeeper.includes('url_for_pidfile') && tunnelKeeper.includes('[ -f "$1" ] || return 1') &&
+  openTunnel.includes('HTTP 429 rate limit') && openTunnel.includes('rm -f "$PIDFILE" "$URLFILE"') &&
+  hubApkIdx.includes('firstReachableBase') && hubApkIdx.includes('describeBaseFailure') &&
+  hubApkIdx.includes('Нет токена запуска'));
 
 // q99: no runner without a press. The relay used to be on by default
 // (idleMin 45), so a hub nobody touched kept dispatching a successor every 45
