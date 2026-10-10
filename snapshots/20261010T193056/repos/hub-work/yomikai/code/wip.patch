@@ -1,0 +1,317 @@
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/OcrBubbleSettingsDialog.kt b/app/src/main/java/eu/kanade/presentation/reader/OcrBubbleSettingsDialog.kt
+index 0d40ab0..6908c04 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/OcrBubbleSettingsDialog.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/OcrBubbleSettingsDialog.kt
+@@ -66,6 +66,10 @@ fun OcrBubbleSettingsDialog(
+     var manualOrder by remember { mutableStateOf(prefs.scanReadingOrder().get()) }
+     var language by remember { mutableStateOf(prefs.autoReadLanguage().get()) }
+     var translate by remember { mutableStateOf(prefs.autoReadTranslate().get()) }
++    var translateSource by remember { mutableStateOf(prefs.autoReadTranslateSource().get()) }
++    var translateTarget by remember { mutableStateOf(prefs.translateTarget().get()) }
++    var overlayOn by remember { mutableStateOf(prefs.readerOverlayEnabled().get()) }
++    var readEverything by remember { mutableStateOf(prefs.autoReadReadEverything().get()) }
+     var voiceIcons by remember { mutableStateOf(prefs.voiceIcons().get()) }
+     var showNumbers by remember { mutableStateOf(prefs.showSpeechNumbers().get()) }
+     var aiGender by remember { mutableStateOf(prefs.aiGenderVoices().get()) }
+@@ -224,7 +228,68 @@ fun OcrBubbleSettingsDialog(
+                         },
+                     )
+                     Column {
+-                        Text("Переводить реплики на русский", style = MaterialTheme.typography.bodyMedium)
++                        Text("Переводить реплики", style = MaterialTheme.typography.bodyMedium)
++                        Text(
++                            "источник ${translateSource} → ${translateTarget} · обменял стрелкой «⇄» в меню OCR",
++                            style = MaterialTheme.typography.bodySmall,
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    }
++                }
++
++                // Наложение на странице — один тумблер на всё: рамки реплик,
++                // номера и значки 🔊. Выключено — страница чистая, звук идёт сам.
++                Row(
++                    verticalAlignment = Alignment.CenterVertically,
++                    modifier = Modifier
++                        .fillMaxWidth()
++                        .clickable {
++                            overlayOn = !overlayOn
++                            prefs.readerOverlayEnabled().set(overlayOn)
++                        },
++                ) {
++                    Checkbox(
++                        checked = overlayOn,
++                        onCheckedChange = {
++                            overlayOn = it
++                            prefs.readerOverlayEnabled().set(it)
++                        },
++                    )
++                    Column {
++                        Text("Наложение на странице", style = MaterialTheme.typography.bodyMedium)
++                        Text(
++                            "рамки реплик, номера, значки 🔊 · выкл = чистая страница",
++                            style = MaterialTheme.typography.bodySmall,
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    }
++                }
++
++                // «Читать каждую букву»: одиночные «а…», «мгм», вздохи и
++                // прочие междометия не отбрасываются фильтром осмысленности.
++                Row(
++                    verticalAlignment = Alignment.CenterVertically,
++                    modifier = Modifier
++                        .fillMaxWidth()
++                        .clickable {
++                            readEverything = !readEverything
++                            prefs.autoReadReadEverything().set(readEverything)
++                        },
++                ) {
++                    Checkbox(
++                        checked = readEverything,
++                        onCheckedChange = {
++                            readEverything = it
++                            prefs.autoReadReadEverything().set(it)
++                        },
++                    )
++                    Column {
++                        Text("Читать каждую букву", style = MaterialTheme.typography.bodyMedium)
++                        Text(
++                            "включая одиночные «а…», «мгм» и прочие междометия",
++                            style = MaterialTheme.typography.bodySmall,
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
+                     }
+                 }
+ 
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderTopBar.kt b/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderTopBar.kt
+index ad4397a..b5d901b 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderTopBar.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderTopBar.kt
+@@ -345,6 +345,65 @@ private fun OcrModelQuickSwitcher() {
+                 }
+             }
+         }
++        // v1.9.x: тумблеры, которые просили в читалке — наложение страницы,
++        // «читать каждую букву» и стрелка обмена языков перевода.
++        androidx.compose.material3.HorizontalDivider()
++        val overlayPref = prefs.readerOverlayEnabled()
++        val overlayOn by overlayPref.changes().collectAsState(initial = overlayPref.get())
++        DropdownMenuItem(
++            text = {
++                androidx.compose.foundation.layout.Column {
++                    Text("Наложение на странице")
++                    Text(
++                        "рамки реплик, номера и значки 🔊 · выкл = чистая страница",
++                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
++                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
++                    )
++                }
++            },
++            trailingIcon = { Switch(checked = overlayOn, onCheckedChange = null) },
++            onClick = { overlayPref.set(!overlayOn) },
++        )
++        val readAllPref = prefs.autoReadReadEverything()
++        val readAllOn by readAllPref.changes().collectAsState(initial = readAllPref.get())
++        DropdownMenuItem(
++            text = {
++                androidx.compose.foundation.layout.Column {
++                    Text("Читать каждую букву")
++                    Text(
++                        "даже одиночные «а…», «мгм», вздохи и междометия",
++                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
++                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
++                    )
++                }
++            },
++            trailingIcon = { Switch(checked = readAllOn, onCheckedChange = null) },
++            onClick = { readAllPref.set(!readAllOn) },
++        )
++        // Стрелка «⇄» как в переводчике: источник и цель меняются местами.
++        DropdownMenuItem(
++            text = {
++                androidx.compose.foundation.layout.Column {
++                    Text("⇄ Обменять языки")
++                    Text(
++                        "сейчас: ${if (srcLang == "auto") "авто" else srcLang} → ${if (tgtLang == "auto") "авто" else tgtLang}",
++                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
++                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
++                    )
++                }
++            },
++            onClick = {
++                // «auto» целью быть не может: при обмене берём язык реплик
++                // кадра (по нему OCR ищет текст), иначе русский.
++                val newSrc = tgtLang
++                val newTgt = if (srcLang != "auto") srcLang else {
++                    val frameLang = prefs.autoReadLanguage().get()
++                    if (frameLang.isNotBlank() && frameLang != "any") frameLang else "ru"
++                }
++                srcPref.set(newSrc)
++                tgtPref.set(newTgt)
++            },
++        )
+         androidx.compose.material3.HorizontalDivider()
+         val bookPref = prefs.bookKnowledgeEnabled()
+         val bookOn by bookPref.changes().collectAsState(initial = bookPref.get())
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/components/AutoReadHighlight.kt b/app/src/main/java/eu/kanade/presentation/reader/components/AutoReadHighlight.kt
+index 4796163..c3b7eaa 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/components/AutoReadHighlight.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/components/AutoReadHighlight.kt
+@@ -59,6 +59,8 @@ fun AutoReadHighlight(
+     imageRect: android.graphics.RectF? = null,
+ ) {
+     val prefs = remember { Injekt.get<OcrPreferences>() }
++    // Наложение целиком выключено — не рисуем ничего: страницу не загораживаем.
++    if (!prefs.readerOverlayEnabled().get()) return
+     // Не кэшируем навсегда: пользователь меняет цвет в настройках — рамки
+     // перекрашиваются со следующей реплики, без перезапуска читалки
+     val accent = Color(prefs.highlightColor().get().toULong().toLong())
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/components/OcrBubbleVoiceOverlay.kt b/app/src/main/java/eu/kanade/presentation/reader/components/OcrBubbleVoiceOverlay.kt
+index dcaad26..ff11fbb 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/components/OcrBubbleVoiceOverlay.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/components/OcrBubbleVoiceOverlay.kt
+@@ -31,6 +31,9 @@ import androidx.compose.ui.unit.IntOffset
+ import androidx.compose.ui.unit.dp
+ import eu.kanade.tachiyomi.data.tts.AutoReadEngine
+ import mihon.domain.ocr.model.OcrBoundingBox
++import mihon.domain.ocr.service.OcrPreferences
++import uy.kohesive.injekt.Injekt
++import uy.kohesive.injekt.api.get
+ import kotlin.math.roundToInt
+ 
+ /**
+@@ -63,6 +66,9 @@ fun OcrBubbleVoiceOverlay(
+     imageRect: android.graphics.RectF? = null,
+ ) {
+     if (regions.isEmpty()) return
++    // Главный тумблер наложения выключен — значков озвучки тоже нет.
++    val prefs = remember { Injekt.get<OcrPreferences>() }
++    if (!prefs.readerOverlayEnabled().get()) return
+     BoxWithConstraints(
+         modifier = modifier.fillMaxSize().semantics { contentDescription = "Бейдж озвучки реплик" },
+     ) {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 7a132cb..c0c7cf2 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -890,6 +890,10 @@ class AutoReadEngine(
+ 
+                 val language = prefs.autoReadLanguage().get()
+                 val translate = prefs.autoReadTranslate().get()
++                // «Читать каждую букву»: одиночные «а…», «мгм», вздохи и любые
++                // другие короткие реплики проходят фильтр осмысленности, каким
++                // бы «мусорным» он их не счёл. Главное — чтобы были буквы.
++                val readEverything = prefs.autoReadReadEverything().get()
+                 // Ручной выбор пары языков («ja→ru», «ru→ja»): «auto» ведёт
+                 // себя как раньше — переводчик решает сам.
+                 val translateSource = prefs.autoReadTranslateSource().get().ifBlank { "auto" }
+@@ -984,11 +988,23 @@ class AutoReadEngine(
+                 if (!wholePage) lines = mergeBubbleLines(lines)
+ 
+                 // 1) фильтр мусора OCR (обрывки «eS la 4», «| | > |», «о»)
+-                //    + фильтр по языку; 2) отсев уже прочитанного
++                //    + фильтр по языку; 2) отсев уже прочитанного.
++                // «Читать каждую букву» (readEverything) оставляет ЛЮБУЮ строку
++                // с буквами — даже одиночную «а…» или «мгм»: фильтр
++                // осмысленности пропускает только «словарные» короткие строки,
++                // а междометия пользователь просит читать обязательно. Промо-
++                // текст сайта при этом всё равно вырезается cleanOcrGarbage.
+                 val fresh = lines
+                     .asSequence()
+                     .map { it.copy(text = cleanOcrGarbage(it.text, language)) }
+-                    .filter { isMeaningful(it.text, language) }
++                    .filter { it.text.isNotBlank() }
++                    .let { seq ->
++                        if (readEverything) {
++                            seq.filter { line -> line.text.any { ch -> ch.isLetter() } }
++                        } else {
++                            seq.filter { isMeaningful(it.text, language) }
++                        }
++                    }
+                     .filter { !isDuplicate(it.text) }
+                     // Рамка обязана лежать внутри страницы и иметь разумный
+                     // размер: иначе голубая подсветка вылезает за текст/экран.
+@@ -1131,12 +1147,31 @@ class AutoReadEngine(
+                 // отдельный HTTP-запрос на каждую реплику — на 15 бабблах
+                 // это 15 последовательных обращений между озвучками).
+                 val target = prefs.translateTarget().get().ifBlank { "ru" }
++                // Гейт перевода: раньше был `language != target`, где language —
++                // ЭТАЛОННЫЙ язык реплик из настроек (по умолчанию «ru»). Из-за
++                // этого китайская манхуа НЕ переводилась: язык кадра «ru» ==
++                // цели «ru», и страница оставалась нечитаемой. Теперь при
++                // источнике «auto» язык определяется по САМОМУ тексту кадра
++                // (кириллица/латиница/кана/хан/хангыль), и перевод идёт, когда
++                // текст реально на другом языке. Для ручной пары («ja→ru»)
++                // сравниваем выбранные языки — как и раньше.
++                val effectiveTranslateSource = if (translateSource != "auto") {
++                    translateSource
++                } else {
++                    dominantLanguage(ordered.map { it.text }).ifBlank { "auto" }
++                }
++                val shouldTranslate = translate &&
++                    effectiveTranslateSource != "auto" &&
++                    effectiveTranslateSource != target
+                 eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+                     title = "Кадр $pageIndex · распознано реплик: ${ordered.size}",
+                     detail = buildString {
+                         append("движок ").append(result.ocrModel.name)
+                         append(" · язык ").append(language)
+-                        if (translate && language != target) append(" · перевод на ").append(target)
++                        if (shouldTranslate) {
++                            append(" · перевод ").append(effectiveTranslateSource)
++                                .append("→").append(target)
++                        }
+                     },
+                 )
+                 // v1.9.134: РЕЖИМ АВТОЧТЕНИЯ ПОД ДВИЖОК (per-model pref).
+@@ -1148,14 +1183,14 @@ class AutoReadEngine(
+                 //  page   — кадр целиком одной озвучкой (см. wholePageMode).
+                 val autoReadMode = prefs.autoReadModeFor(result.ocrModel).get()
+                 val streamMode = autoReadMode == "stream"
+-                val translationsDeferred = if (translate && language != target && streamMode) {
++                val translationsDeferred = if (shouldTranslate && streamMode) {
+                     scope.async {
+-                        runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target, translateSource) }
++                        runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target, effectiveTranslateSource) }
+                             .getOrElse { ordered.map { it.text } }
+                     }
+                 } else null
+-                val translations: List<String> = if (translate && language != target && !streamMode) {
+-                    runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target, translateSource) }
++                val translations: List<String> = if (shouldTranslate && !streamMode) {
++                    runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target, effectiveTranslateSource) }
+                         .getOrElse { ordered.map { it.text } }
+                 } else {
+                     ordered.map { it.text }
+@@ -1298,7 +1333,7 @@ class AutoReadEngine(
+                         translationsDeferred != null -> null
+                         else -> translations.getOrNull(orderedIndex)?.takeIf { it.isNotBlank() }
+                     }
+-                    var speakTextRaw = if (translate && language != target) {
++                    var speakTextRaw = if (shouldTranslate) {
+                         translatedText ?: region.text
+                     } else {
+                         prep?.text?.takeIf { it.isNotBlank() } ?: translatedText ?: region.text
+diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+index 6319e24..db9ff8e 100644
+--- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
++++ b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+@@ -587,4 +587,18 @@ class OcrPreferences(
+      * Выключено = только изображение без текстовых рамок.
+      */
+     fun screenshotShowTextOverlay() = preferenceStore.getBoolean("pref_screenshot_text_overlay", true)
++
++    /**
++     * Наложение поверх страницы в читалке: рамки/пятна реплик, номера и
++     * значки 🔊. Выключено = страница без всяких наложений, озвучка идёт
++     * сама по себе (кто-то читает мангу чисто глазами, а звук — фоном).
++     */
++    fun readerOverlayEnabled() = preferenceStore.getBoolean("pref_reader_overlay_enabled", true)
++
++    /**
++     * Читать ВСЁ, что видно на странице: одиночные буквы, междометия
++     * («а…», «мгм», вздохи) и прочие короткие реплики, которые обычный
++     * фильтр осмысленности отбрасывает как мусор.
++     */
++    fun autoReadReadEverything() = preferenceStore.getBoolean("pref_autoread_read_everything", true)
+ }
