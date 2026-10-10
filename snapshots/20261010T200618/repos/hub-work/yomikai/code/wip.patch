@@ -1,0 +1,198 @@
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 1950512..5d64eb3 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -2969,17 +2969,20 @@ class AutoReadEngine(
+             }
+             // Рамки хранятся в долях 0..1, а сортировщик работает с целыми
+             // Rect: масштабируем на 100000, геометрия и зазоры сохраняются.
+-            val scale = 100_000
+-            fun rectOf(line: Line) = line.boundingBox.let { b ->
+-                // Поля Rect заполняем через свойства, а не через конструктор
+-                // (left, top, right, bottom): mockable-android jar в юнит-тестах
+-                // не пишет значения из этого конструктора, и сортировщик видел
+-                // бы вырожденные рамки (0,0,0,0).
+-                android.graphics.Rect().apply {
+-                    left = (b.left * scale).toInt()
+-                    top = (b.top * scale).toInt()
+-                    right = (b.right * scale).toInt()
+-                    bottom = (b.bottom * scale).toInt()
++
++            // КОЛОНКИ: махва/лента с блоками разной ширины («одна шире, вторая
++            // уже, третья в полэкрана») читается колонка за колонкой — иначе
++            // сортировщик прыгал зигзагом между ними. Колонки упорядочиваются
++            // по направлению чтения: RTL — справа налево, LTR — слева направо.
++            if (order != "vertical") {
++                val columns = splitIntoColumns(lines)
++                if (columns.size >= 2) {
++                    val orderedColumns = when (direction) {
++                        tachiyomi.core.common.util.system.ReadingDirection.RTL ->
++                            columns.sortedByDescending { c -> c.minOf { it.boundingBox.left } }
++                        else -> columns.sortedBy { c -> c.minOf { it.boundingBox.left } }
++                    }
++                    return orderedColumns.flatMap { column -> orderWithinColumn(column, direction) }
+                 }
+             }
+ 
+@@ -2991,15 +2994,7 @@ class AutoReadEngine(
+             if (order != "vertical") {
+                 val bands = groupIntoBands(lines)
+                 if (bands.size > 1) {
+-                    return bands.flatMap { band ->
+-                        if (band.size == 1) {
+-                            band
+-                        } else {
+-                            tachiyomi.core.common.util.system.ReadingOrderSorter
+-                                .sort(band.map(::rectOf), direction)
+-                                .map { band[it] }
+-                        }
+-                    }
++                    return bands.flatMap { band -> orderWithinColumn(band, direction) }
+                 }
+             }
+ 
+@@ -3008,6 +3003,38 @@ class AutoReadEngine(
+             return sortedIndices.map { lines[it] }
+         }
+ 
++        /** Порядок ВНУТРИ колонки/полосы: сверху вниз, при равных Y — по направлению. */
++        private fun orderWithinColumn(
++            lines: List<Line>,
++            direction: tachiyomi.core.common.util.system.ReadingDirection,
++        ): List<Line> {
++            val bands = groupIntoBands(lines)
++            return bands.flatMap { band ->
++                if (band.size == 1) {
++                    band
++                } else {
++                    tachiyomi.core.common.util.system.ReadingOrderSorter
++                        .sort(band.map(::rectOf), direction)
++                        .map { band[it] }
++                }
++            }
++        }
++
++        /** Рамка реплики в целых coordenтах для [ReadingOrderSorter]. */
++        private fun rectOf(line: Line): android.graphics.Rect = line.boundingBox.let { b ->
++            // Поля Rect заполняем через свойства, а не через конструктор
++            // (left, top, right, bottom): mockable-android jar в юнит-тестах
++            // не пишет значения из этого конструктора, и сортировщик видел
++            // бы вырожденные рамки (0,0,0,0).
++            val scale = 100_000
++            android.graphics.Rect().apply {
++                left = (b.left * scale).toInt()
++                top = (b.top * scale).toInt()
++                right = (b.right * scale).toInt()
++                bottom = (b.bottom * scale).toInt()
++            }
++        }
++
+         /**
+          * Раскладывает реплики по горизонтальным полосам: реплика попадает в
+          * текущую полосу, пока не опустилась ниже её низа (с допуском
+@@ -3030,7 +3057,105 @@ class AutoReadEngine(
+             return bands
+         }
+ 
++        /**
++         * Колонки текста: махва/манологи/ленты с блоками разной ширины, где
++         * читать надо колонку до конца, а не прыгать зигзагом. Колонка =
++         * устойчивый X-интервал: реплика входит в колонку, если её X пересекает
++         * интервал колонки хотя бы на [COLUMN_OVERLAP_RATIO] от меньшей ширины.
++         * Мелкие/узкие обрывки (< [COLUMN_MIN_WIDTH] экрана) колонками не
++         * считаются — иначе одна реплика выдумает себе колонку.
++         */
++        private fun splitIntoColumns(lines: List<Line>): List<List<Line>> {
++            if (lines.size < 4) return listOf(lines)
++            val sorted = lines.sortedWith(
++                compareBy<Line> { it.boundingBox.left }.thenBy { it.boundingBox.top },
++            )
++            val columns = mutableListOf<MutableList<Line>>()
++            var columnLeft = 0f
++            var columnRight = 0f
++            for (line in sorted) {
++                val box = line.boundingBox
++                val current = columns.lastOrNull()
++                val overlap =                 if (current == null) {
++                    0f
++                } else {
++                    val inter = minOf(box.right, columnRight) - maxOf(box.left, columnLeft)
++                    val minW = minOf(box.right - box.left, columnRight - columnLeft)
++                    if (minW <= 0f) 0f else inter.coerceAtLeast(0f) / minW
++                }
++                // Новая колонка — только когда рамка заведомо в стороне от
++                // текущей: нет перекрытия И начало правее её конца с зазором.
++                // Всё остальное — продолжение колонки (ширину колонки
++                // растягиваем, иначе «одна шире, вторая уже» распадется на клочки).
++                val startsNewColumn = when {
++                    current == null -> true
++                    overlap >= COLUMN_OVERLAP_RATIO -> false
++                    else -> box.left > columnRight + COLUMN_GAP
++                }
++                if (startsNewColumn) {
++                    columns += mutableListOf(line)
++                    columnLeft = box.left
++                    columnRight = box.right
++                } else {
++                    current += line
++                    columnLeft = minOf(columnLeft, box.left)
++                    columnRight = maxOf(columnRight, box.right)
++                }
++            }
++            // Колонка имеет смысл, только если в ней реальная стопка реплик,
++            // она не клочок, и стопка ПЛОТНАЯ (как абзац ленты). Ряды баблов
++            // классической манги тоже дают «колонки» из 2 реплик, но с большими
++            // разрывами между рядами: такую страницу обязана читать рядовая
++            // логика ниже (TR, TL, BR, BL), иначе порядок поедет.
++            val stacked = columns.filter { it.size >= COLUMN_MIN_LINES }
++            val wideEnough = columns.filter { col ->
++                col.maxOf { it.boundingBox.right } - col.minOf { it.boundingBox.left } >= COLUMN_MIN_WIDTH
++            }
++            val denseEnough = stacked.filter { isDenseColumn(it) }
++            val solidColumns = denseEnough.filter { it in wideEnough }
++            if (solidColumns.size < 2) return listOf(lines)
++            // Реплики, не попавшие в «твёрдые» колонки, не теряем: приклеиваем
++            // к ближайшей колонке по X-перекрытию, иначе в конце общего списка.
++            val claimed = solidColumns.flatten().toSet()
++            val rest = lines - claimed
++            for (line in rest) {
++                val box = line.boundingBox
++                val target = solidColumns.maxByOrNull { col ->
++                    val l = col.minOf { it.boundingBox.left }
++                    val r = col.maxOf { it.boundingBox.right }
++                    (minOf(box.right, r) - maxOf(box.left, l)).coerceAtLeast(0f)
++                }
++                (target as? MutableList<Line>)?.add(line)
++            }
++            return solidColumns.map { col -> col.toList() }
++        }
++
+         private const val BAND_TOLERANCE = 0.02f
++        private const val COLUMN_OVERLAP_RATIO = 0.3f
++        private const val COLUMN_GAP = 0.04f
++        private const val COLUMN_MIN_LINES = 2
++        private const val COLUMN_MIN_WIDTH = 0.18f
++        /** Не больше доли высоты колонки на разрыв между строками абзаца. */
++        private const val COLUMN_MAX_GAP_RATIO = 0.35f
++        /** Доля «плотных» разрывов, выше которой колонка считается абзацем. */
++        private const val COLUMN_DENSE_SHARE = 0.6f
++
++        /**
++         * Колонка — это абзац ленты, а не стек реплик из разных рядов: у абзаца
++         * межстрочные разрывы маленькие относительно высоты колонки, а у рядов
++         * баблов между строками зияют дыры в пол-экрана.
++         */
++        private fun isDenseColumn(column: List<Line>): Boolean {
++            if (column.size < 2) return false
++            val sorted = column.sortedBy { it.boundingBox.top }
++            val height = sorted.last().boundingBox.bottom - sorted.first().boundingBox.top
++            if (height <= 0f) return false
++            val gaps = sorted.zipWithNext { a, b ->
++                (b.boundingBox.top - a.boundingBox.bottom).coerceAtLeast(0f)
++            }
++            val dense = gaps.count { it <= height * COLUMN_MAX_GAP_RATIO }
++            return dense.toFloat() / gaps.size >= COLUMN_DENSE_SHARE
++        }
+ 
+         /**
+          * Чистка OCR-мусора ВНУТРИ реплики (по скриншотам пользователя:
