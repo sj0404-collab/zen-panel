@@ -1,0 +1,361 @@
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotDetailScreen.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotDetailScreen.kt
+index 71e4308..64a65fa 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotDetailScreen.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotDetailScreen.kt
+@@ -115,6 +115,15 @@ class ScreenshotDetailScreen(
+                             Icon(Icons.Outlined.Download, contentDescription = "Сохранить в галерею")
+                         }
+                     }
++                    if (entry != null) {
++                        // Удалить насовсем: внутренний файл + копия в галерее.
++                        IconButton(onClick = {
++                            mihon.data.ocr.OcrScreenshotBuffer.remove(entry.id)
++                            navigator.pop()
++                        }) {
++                            Icon(Icons.Outlined.Delete, contentDescription = "Удалить насовсем")
++                        }
++                    }
+                 },
+             )
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
+index b16294e..9cafe55 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt
+@@ -19,7 +19,10 @@ import androidx.compose.foundation.lazy.LazyColumn
+ import androidx.compose.foundation.lazy.items
+ import androidx.compose.foundation.shape.RoundedCornerShape
+ import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.outlined.Archive
+ import androidx.compose.material.icons.outlined.CameraAlt
++import androidx.compose.material.icons.outlined.Close
++import androidx.compose.material.icons.outlined.Delete
+ import androidx.compose.material.icons.outlined.DeleteSweep
+ import androidx.compose.material.icons.outlined.Download
+ import androidx.compose.material.icons.outlined.Share
+@@ -34,8 +37,10 @@ import androidx.compose.material3.TopAppBar
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.collectAsState
+ import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clip
+@@ -97,14 +102,74 @@ data object ScreenshotTab : Tab {
+         val context = LocalContext.current
+         val scope = rememberCoroutineScope()
+         val entries by OcrScreenshotBuffer.entries.collectAsState()
+-        var showClearDialog = remember { androidx.compose.runtime.mutableStateOf(false) }
++        var showClearDialog by remember { mutableStateOf(false) }
++        // Мультивыбор: тап по карточке в режиме выделения, «В архив»/«Удалить»
++        // применяются к набору (см. clearOnSelection в ниже по файлу).
++        var selected by remember { mutableStateOf(emptySet<Long>()) }
++        val selectionMode = selected.isNotEmpty()
++        androidx.activity.compose.BackHandler(enabled = selectionMode) {
++            selected = emptySet()
++        }
++        // «Отправить в архив» = опубликовать в галерею Pictures/Yomikai и убрать
++        // из буфера: запись переезжает в архив (удаляется насовсем из приложения,
++        // но остаётся файлом на телефоне).
++        fun archiveSelected() {
++            val ids = selected.toSet()
++            scope.launch(Dispatchers.IO) {
++                val published = ids.sumOf { id ->
++                    val entry = entries.firstOrNull { it.id == id }
++                    val publishedOk = entry
++                        ?.takeIf { it.imagePath != null }
++                        ?.let { OcrScreenshotBuffer.publishEntryToGallery(context.applicationContext, it) } != null
++                    if (publishedOk) 1 else 0
++                }
++                OcrScreenshotBuffer.removeAll(ids)
++                withContext(Dispatchers.Main) {
++                    context.toast(
++                        if (published > 0) {
++                            "В архив ушло скриншотов: $published (Pictures/Yomikai)"
++                        } else {
++                            "Не удалось опубликовать скриншоты — нечего архивировать"
++                        },
++                    )
++                }
++            }
++            selected = emptySet()
++        }
+ 
+         Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+             TopAppBar(
+-                title = { Text("Скриншоты") },
++                title = {
++                    Text(if (selectionMode) "Выбрано: ${selected.size}" else "Скриншоты")
++                },
++                navigationIcon = {
++                    if (selectionMode) {
++                        IconButton(onClick = { selected = emptySet() }) {
++                            Icon(Icons.Outlined.Close, contentDescription = "Снять выделение")
++                        }
++                    }
++                },
+                 actions = {
+-                    if (entries.isNotEmpty()) {
+-                        IconButton(onClick = { showClearDialog.value = true }) {
++                    if (selectionMode) {
++                        // В архив — опубликовать выбранные в галерею.
++                        IconButton(onClick = { archiveSelected() }) {
++                            Icon(
++                                Icons.Outlined.Archive,
++                                contentDescription = "Отправить в архив",
++                            )
++                        }
++                        // Удалить насовсем: файлы буфера + копии в галерее.
++                        IconButton(onClick = {
++                            OcrScreenshotBuffer.removeAll(selected)
++                            selected = emptySet()
++                        }) {
++                            Icon(
++                                Icons.Outlined.Delete,
++                                contentDescription = "Удалить насовсем",
++                            )
++                        }
++                    } else if (entries.isNotEmpty()) {
++                        IconButton(onClick = { showClearDialog = true }) {
+                             Icon(
+                                 Icons.Outlined.DeleteSweep,
+                                 contentDescription = "Очистить",
+@@ -149,38 +214,43 @@ data object ScreenshotTab : Tab {
+                     items(entries, key = { it.id }) { entry ->
+                         ScreenshotCard(
+                             entry = entry,
++                            selected = entry.id in selected,
+                             onClick = {
+-                                navigator.push(ScreenshotDetailScreen(entry.id))
++                                if (selectionMode) {
++                                    selected = if (entry.id in selected) selected - entry.id else selected + entry.id
++                                } else {
++                                    navigator.push(ScreenshotDetailScreen(entry.id))
++                                }
+                             },
+                             onShare = { shareScreenshot(context, it) },
+                             onSaveToGallery = { saveScreenshotToGallery(scope, context, it) },
++                            onDelete = { OcrScreenshotBuffer.remove(entry.id) },
+                         )
+                     }
+                 }
+             }
+         }
+ 
+-        if (showClearDialog.value) {
++        if (showClearDialog) {
+             AlertDialog(
+-                onDismissRequest = { showClearDialog.value = false },
++                onDismissRequest = { showClearDialog = false },
+                 title = { Text("Очистить скриншоты?") },
+                 text = {
+-                    // Честно про границы: удаляются только внутренние копии.
+-                    // Опубликованные в Pictures/Yomikai — обычные файлы
+-                    // телефона, и «Очистить» их не трогает.
+-                    Text("Все ${entries.size} скриншотов будут удалены из приложения. " +
+-                        "Копии в Pictures/Yomikai останутся.")
++                    // Удаляем насовсем: внутренние копии И опубликованные в
++                    // Pictures/Yomikai (запись помнит Uri публикации).
++                    Text("Все ${entries.size} скриншотов будут удалены насовсем — " +
++                        "и из приложения, и из галереи Pictures/Yomikai.")
+                 },
+                 confirmButton = {
+                     TextButton(onClick = {
+                         OcrScreenshotBuffer.clear()
+-                        showClearDialog.value = false
++                        showClearDialog = false
+                     }) {
+                         Text("Очистить")
+                     }
+                 },
+                 dismissButton = {
+-                    TextButton(onClick = { showClearDialog.value = false }) {
++                    TextButton(onClick = { showClearDialog = false }) {
+                         Text("Отмена")
+                     }
+                 },
+@@ -195,6 +265,9 @@ private fun ScreenshotCard(
+     onClick: () -> Unit,
+     onShare: (File) -> Unit,
+     onSaveToGallery: (OcrScreenshotEntry) -> Unit,
++    onDelete: () -> Unit = {},
++    /** Режим мультивыбора: карточка подсвечена и тапается как «флажок». */
++    selected: Boolean = false,
+ ) {
+     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+     val imageFile = entry.imagePath?.let { File(it) }?.takeIf { it.exists() }
+@@ -203,7 +276,13 @@ private fun ScreenshotCard(
+             .fillMaxWidth()
+             .padding(horizontal = 12.dp)
+             .clip(RoundedCornerShape(8.dp))
+-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
++            .background(
++                if (selected) {
++                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
++                } else {
++                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
++                },
++            )
+             .clickable(onClick = onClick)
+             .padding(12.dp),
+         horizontalArrangement = Arrangement.spacedBy(12.dp),
+@@ -277,6 +356,17 @@ private fun ScreenshotCard(
+                             modifier = Modifier.size(20.dp),
+                         )
+                     }
++                    // Удалить насовсем: приватный файл + копия в галерее.
++                    IconButton(
++                        onClick = onDelete,
++                        modifier = Modifier.size(36.dp),
++                    ) {
++                        Icon(
++                            Icons.Outlined.Delete,
++                            contentDescription = "Удалить насовсем",
++                            modifier = Modifier.size(20.dp),
++                        )
++                    }
+                 }
+             }
+         }
+diff --git a/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt b/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt
+index 0663058..c658084 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt
+@@ -84,9 +84,13 @@ object OcrScreenshotBuffer {
+     private var imagesDir: File? = null
+     private var initialized = false
+ 
++    /** Контекст приложения: удаление копий из галереи идёт через ContentResolver. */
++    private var appContext: Context? = null
++
+     fun init(context: Context) {
+         if (initialized) return
+         initialized = true
++        appContext = context.applicationContext
+         persistFile = File(context.filesDir, FILE_NAME)
+         imagesDir = File(context.filesDir, IMAGE_DIR_NAME).apply { mkdirs() }
+         load()
+@@ -225,7 +229,53 @@ object OcrScreenshotBuffer {
+             logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: read image failed for $path" }
+             return null
+         }
+-        return publishToGallery(context, bytes, galleryDisplayName(entry.pageIndex, entry.timestamp))
++        val uri = publishToGallery(context, bytes, galleryDisplayName(entry.pageIndex, entry.timestamp))
++        // Запомнили опубликованную копию в ЗАПИСИ: иначе удаление скриншота
++        // оставляло бы её в галерее висеть («удалил только в приложении»).
++        if (uri != null) markGalleryUri(entry.id, uri.toString())
++        return uri
++    }
++
++    /**
++     * Запомнить, что запись опубликована в галерее под [uri]: удаление записи
++     * потом уберёт и эту копию. Журнал сразу персистится — перезапуск не
++     * должен «забывать» связь с галереей.
++     */
++    @Synchronized
++    fun markGalleryUri(id: Long, uri: String) {
++        val updated = _entries.value.map { if (it.id == id) it.copy(galleryUri = uri) else it }
++        if (updated == _entries.value) return
++        _entries.value = updated
++        _lastEntry.value?.let { last -> if (last.id == id) _lastEntry.value = updated.firstOrNull { it.id == id } }
++        version++
++        persist()
++    }
++
++    /**
++     * Удалить запись НАСОВСЕМ: внутренний JPEG + копию в галерее (если
++     * публиковалась) + саму запись. Ровно то, чего не хватало: кнопка
++     * удаления оставляла файл в `Pictures/Yomikai`.
++     */
++    @Synchronized
++    fun remove(id: Long) {
++        val entry = _entries.value.firstOrNull { it.id == id }
++        if (entry != null) deleteEverywhere(entry)
++        _entries.value = _entries.value.filter { it.id != id }
++        if (_lastEntry.value?.id == id) _lastEntry.value = null
++        version++
++        persist()
++    }
++
++    /** То же для набора записей (мультивыбор на вкладке «Скриншоты»). */
++    @Synchronized
++    fun removeAll(ids: Set<Long>) {
++        if (ids.isEmpty()) return
++        val doomed = _entries.value.filter { it.id in ids }
++        doomed.forEach { deleteEverywhere(it) }
++        _entries.value = _entries.value.filterNot { it.id in ids }
++        if (_lastEntry.value?.id in ids) _lastEntry.value = null
++        version++
++        persist()
+     }
+ 
+     /**
+@@ -251,7 +301,7 @@ object OcrScreenshotBuffer {
+ 
+     /** Очистить буфер. */
+     fun clear() {
+-        _entries.value.forEach { deleteImageFile(it) }
++        _entries.value.forEach { deleteEverywhere(it) }
+         _entries.value = emptyList()
+         _lastEntry.value = null
+         version++
+@@ -261,7 +311,7 @@ object OcrScreenshotBuffer {
+     /** Очистить скриншоты одной главы. */
+     fun clearChapter(chapterId: Long) {
+         val (keep, remove) = _entries.value.partition { it.chapterId != chapterId }
+-        remove.forEach { deleteImageFile(it) }
++        remove.forEach { deleteEverywhere(it) }
+         _entries.value = keep
+         if (_lastEntry.value?.chapterId == chapterId) _lastEntry.value = null
+         version++
+@@ -378,6 +428,29 @@ object OcrScreenshotBuffer {
+         }
+     }
+ 
++    /**
++     * Полное удаление записи: внутренний файл + копия в галерее.
++     *
++     * `content://` убираем через ContentResolver (MediaStore), `file://`
++     * (Android 8–9) — файлом плюс перескан медиабазы, иначе галерея будет
++     * показывать «битую» миниатюру до перезагрузки.
++     */
++    private fun deleteEverywhere(entry: OcrScreenshotEntry) {
++        deleteImageFile(entry)
++        val uriString = entry.galleryUri ?: return
++        val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return
++        val resolver = appContext?.contentResolver ?: return
++        if (uri.scheme == "content") {
++            runCatching { resolver.delete(uri, null, null) }
++                .onFailure { logcat(LogPriority.WARN, it) { "OcrScreenshotBuffer: gallery delete failed" } }
++        } else {
++            runCatching {
++                uri.path?.let { File(it).delete() }
++                MediaScannerConnection.scanFile(appContext, arrayOf(uri.path), null, null)
++            }.onFailure { logcat(LogPriority.WARN, it) { "OcrScreenshotBuffer: gallery file delete failed" } }
++        }
++    }
++
+     private fun persist() {
+         val file = persistFile ?: return
+         val entries = _entries.value
+diff --git a/data/src/main/java/mihon/data/ocr/OcrScreenshotEntry.kt b/data/src/main/java/mihon/data/ocr/OcrScreenshotEntry.kt
+index b4f8a6e..b1c6759 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrScreenshotEntry.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrScreenshotEntry.kt
+@@ -43,6 +43,13 @@ data class OcrScreenshotEntry(
+     val imageWidth: Int = 0,
+     val imageHeight: Int = 0,
+     val imagePath: String? = null,
++    /**
++     * Uri опубликованной копии в галерее (`Pictures/Yomikai`), если запись
++     * отправляли туда. Нужен, чтобы удаление скриншота убирало его «насовсем»:
++     * и приватный файл, и общедоступную копию (раньше копия в галерее
++     * оставалась висеть после удаления записи).
++     */
++    val galleryUri: String? = null,
+     val scanRegion: String = "viewport",
+     val sourceWidth: Int = 0,
+     val sourceHeight: Int = 0,

@@ -1,0 +1,500 @@
+diff --git a/README.md b/README.md
+index 6ffc4e0..83b1a34 100644
+--- a/README.md
++++ b/README.md
+@@ -43,13 +43,14 @@ npm run dev:client        # телефон Б: http://<ip>:5174
+ 
+ ## Статус
+ 
+-- [x] Протокол + координатный маппинг + юнит-тесты (12).
++- [x] Протокол + координатный маппинг + юнит-тесты (17).
+ - [x] Signaling relay (LAN).
+ - [x] Host PWA: `getDisplayMedia` + WebRTC + превью + пересылка инпута в helper.
+ - [x] Client PWA: приём видео + tap/swipe/pinch/longpress/key.
+-- [ ] HostHelper APK: `AccessibilityService` + Wi-Fi ADB virtual display.
+-- [ ] Аудио-режимы + adaptive bitrate.
+-- [ ] Интеграция Dual App / инструкция по второму аккаунту.
++- [x] Host PWA: переключатель звука, слайдер битрейта + автоадаптация к потерям,
++      статы соединения (↑ Мбит/с, fps, потеря, rtt) и статы у клиента (↓, fps, rtt).
++- [x] HostHelper APK: `AccessibilityService` + Wi-Fi ADB virtual display.
++- [x] Интеграция Genshin / Dual App — инструкция и риски античита.
+ 
+ ## Тесты и сборка
+ 
+diff --git a/docs/SETUP.md b/docs/SETUP.md
+index 611750d..640658a 100644
+--- a/docs/SETUP.md
++++ b/docs/SETUP.md
+@@ -68,6 +68,31 @@ root; большие файлы можно класть в общую внешн
+   устройства целиком — если не хочешь, чтобы в стрим попал звук видосов хоста,
+   приглуши его (только Android 10+; на 8–9 внутренний звук недоступен).
+ 
++## Genshin-интеграция
++
++- **Режим «по очереди» (безопасный):** игра запущена на хосте в основной учётке,
++  клиент стримит её и управляет. Никаких изменений в приложении.
++- **Режим «второго аккаунта у клиента» — на свой риск:** клон игры (вендорский
++  Dual App) или второй вход. У mihoyo агрессивный античит; клонирование приложения
++  и работа «второго пространства» могут привести к блокировке. Воспроизводимость
++  не гарантируем и рекомендуем для таких целей только смену учётки в основной
++  установке.
++- **Античит (рекомендации):**
++  - не «горячий» фронт клиента: клиент — это просто видео + тучи. Он не
++    модифицирует память игры, не инжектит ничего. Но не используй input-хуки или
++    аим-скрипты поверх ACLG — это бан.
++  - отключи root на хосте (или Magisk Hide для Genshin), если root был;
++  - дай Windows/browser обновиться перед стартом (античит сверяет окружение).
++
++## Производительность (чего ждать на LAN)
++
++- Genshin по WiFi 2.4 ГГц → лаги/артефакты. Используй 5 ГГц, хост и клиент близко.
++- Ставь в игре: 30 fps, низкие/средние настройки, обои и фоновые приложения — off.
++- Битрейт: 3–6 Мбит/с обычно хватает для 720p@30. Слайдер «Макс. битрейт» + галка
++  «Автоадаптация» сами режут поток при потерях (потеря > 2% → −10%, > 8% → −30%).
++- Запускай Host PWA как PWA-приложение (Add to Home screen), чтобы Chrome не
++  троттлил в фоне.
++
+ ## Диагностика
+ 
+ - `ul#log` в Host PWA показывает: захват, сигналинг, DataChannel, инпут.
+diff --git a/packages/client/index.html b/packages/client/index.html
+index 3391ebf..181a7f5 100644
+--- a/packages/client/index.html
++++ b/packages/client/index.html
+@@ -36,6 +36,7 @@
+       <section class="stage">
+         <video id="screen" autoplay playsinline></video>
+         <div id="status" class="status">Не подключено</div>
++        <div id="stats" class="stats"></div>
+         <div id="touch" class="touch-hint">Касание по видео = касание по хосту</div>
+       </section>
+     </main>
+diff --git a/packages/client/src/client.ts b/packages/client/src/client.ts
+index 596412d..12294b7 100644
+--- a/packages/client/src/client.ts
++++ b/packages/client/src/client.ts
+@@ -16,6 +16,7 @@ export interface ClientUi {
+   back: HTMLButtonElement;
+   video: HTMLVideoElement;
+   status: HTMLElement;
++  stats: HTMLElement;
+   touchHint: HTMLElement;
+ }
+ 
+@@ -23,6 +24,9 @@ export class ClientSession {
+   private pc: RTCPeerConnection | null = null;
+   private channel: RTCDataChannel | null = null;
+   private ws: WebSocket | null = null;
++  private statsTimer: number | null = null;
++  private lastBytes = 0;
++  private lastTs = 0;
+ 
+   constructor(private ui: ClientUi) {}
+ 
+@@ -78,7 +82,10 @@ export class ClientSession {
+       };
+       pc.onconnectionstatechange = () => {
+         this.status(`WebRTC: ${pc.connectionState}`);
+-        if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
++        if (pc.connectionState === 'connected') {
++          this.startStats();
++        } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
++          this.stopStats();
+           this.ws?.close();
+         }
+       };
+@@ -119,6 +126,51 @@ export class ClientSession {
+     this.sendInput({ type: 'key', key });
+   }
+ 
++  private async startStats(): Promise<void> {
++    this.stopStats();
++    this.lastBytes = 0;
++    this.lastTs = performance.now();
++    this.statsTimer = window.setInterval(() => void this.statsLoop(), 2000);
++  }
++
++  private stopStats(): void {
++    if (this.statsTimer !== null) {
++      window.clearInterval(this.statsTimer);
++      this.statsTimer = null;
++    }
++  }
++
++  private async statsLoop(): Promise<void> {
++    if (!this.pc) return;
++    let rxBps = 0;
++    let fps = 0;
++    let rtt = 0;
++    try {
++      const report = await this.pc.getStats();
++      const now = performance.now();
++      for (const stat of report.values()) {
++        const s = stat as RTCStats;
++        if (s.type === 'inbound-rtp') {
++          const r = s as RTCStats & { kind?: string; bytesReceived?: number; framesPerSecond?: number };
++          if (r.kind !== 'video') continue;
++          if (!r.bytesReceived) continue;
++          if (this.lastBytes > 0) {
++            rxBps = Math.round(((r.bytesReceived - this.lastBytes) * 8 * 1000) / (now - this.lastTs));
++          }
++          this.lastBytes = r.bytesReceived;
++          this.lastTs = now;
++          fps = r.framesPerSecond ?? 0;
++        } else if (s.type === 'candidate-pair' && (s as RTCStats & { state?: string }).state === 'succeeded') {
++          rtt = ((s as RTCStats & { currentRoundTripTime?: number }).currentRoundTripTime ?? 0) * 1000;
++        }
++      }
++    } catch {
++      return;
++    }
++    this.ui.stats.textContent =
++      `↓ ${(rxBps / 1_000_000).toFixed(1)} Мбит/с · ${fps} fps · rtt ${rtt.toFixed(0)} мс`;
++  }
++
+   private parse<T>(raw: string): T | null {
+     try {
+       return JSON.parse(raw) as T;
+@@ -145,7 +197,9 @@ export class ClientSession {
+     this.pc = null;
+     this.ws = null;
+     this.channel = null;
++    this.stopStats();
+     this.ui.video.srcObject = null;
++    this.ui.stats.textContent = '';
+     this.ui.connect.disabled = false;
+     this.ui.disconnect.disabled = true;
+     this.enableKeys(false);
+diff --git a/packages/client/src/main.ts b/packages/client/src/main.ts
+index 20cab7b..12f63c7 100644
+--- a/packages/client/src/main.ts
++++ b/packages/client/src/main.ts
+@@ -17,6 +17,7 @@ const session = new ClientSession({
+   back: el('back'),
+   video,
+   status: el('status'),
++  stats: el('stats'),
+   touchHint: el('touch'),
+ });
+ 
+diff --git a/packages/client/src/style.css b/packages/client/src/style.css
+index 0ffdaca..a94cad5 100644
+--- a/packages/client/src/style.css
++++ b/packages/client/src/style.css
+@@ -108,6 +108,17 @@ video {
+   font-size: 12px;
+ }
+ 
++.stats {
++  position: absolute;
++  right: 8px;
++  top: 8px;
++  padding: 4px 10px;
++  border-radius: 999px;
++  background: rgba(0, 0, 0, 0.65);
++  font-size: 12px;
++  color: #9aa3b8;
++}
++
+ .touch-hint {
+   position: absolute;
+   right: 8px;
+diff --git a/packages/host/index.html b/packages/host/index.html
+index ad6165a..b29d9c4 100644
+--- a/packages/host/index.html
++++ b/packages/host/index.html
+@@ -33,11 +33,25 @@
+           Помощник (инпут):
+           <input id="helper-url" type="text" placeholder="ws://127.0.0.1:9100" />
+         </label>
++        <label class="check">
++          <input id="audio" type="checkbox" checked />
++          Захват звука
++        </label>
++        <label class="check">
++          <input id="auto" type="checkbox" checked />
++          Автоадаптация битрейта
++        </label>
++        <label class="field">
++          Макс. битрейт:
++          <input id="bitrate" type="range" min="0.5" max="12" step="0.5" value="6" />
++          <span id="bitrate-label">6.0 Мбит/с</span>
++        </label>
+       </section>
+ 
+       <section class="video-wrap">
+         <video id="preview" autoplay muted playsinline></video>
+         <div id="status" class="status">Не подключено</div>
++        <div id="stats" class="stats"></div>
+       </section>
+ 
+       <ul id="log" class="log"></ul>
+diff --git a/packages/host/src/host.ts b/packages/host/src/host.ts
+index 695ca35..004e1c8 100644
+--- a/packages/host/src/host.ts
++++ b/packages/host/src/host.ts
+@@ -2,6 +2,7 @@ import {
+   DATA_CHANNEL_LABEL,
+   decodeClientMessage,
+   encodeSignalingMessage,
++  nextBitrate,
+   PROTOCOL_VERSION,
+   type HostMessage,
+   type SignalingMessage,
+@@ -13,11 +14,18 @@ export interface HostUi {
+   signalUrl: HTMLInputElement;
+   room: HTMLInputElement;
+   helperUrl: HTMLInputElement;
++  audio: HTMLInputElement;
++  bitrate: HTMLInputElement;
++  bitrateLabel: HTMLElement;
++  auto: HTMLInputElement;
+   preview: HTMLVideoElement;
+   status: HTMLElement;
++  stats: HTMLElement;
+   logEl: HTMLElement;
+ }
+ 
++const BITRATE_MIN_BPS = 500_000;
++
+ export class HostSession {
+   private pc: RTCPeerConnection | null = null;
+   private channel: RTCDataChannel | null = null;
+@@ -27,6 +35,11 @@ export class HostSession {
+   private capture: MediaStreamTrack | null = null;
+   private room = 'default';
+   private helperUrl = 'ws://127.0.0.1:9100';
++  private currentBitrateBps = 6_000_000;
++  private maxUserBitrateBps = 6_000_000;
++  private statsTimer: number | null = null;
++  private lastBytes = 0;
++  private lastTs = 0;
+ 
+   constructor(private ui: HostUi) {}
+ 
+@@ -41,9 +54,10 @@ export class HostSession {
+   }
+ 
+   async start(): Promise<void> {
++    const wantAudio = this.ui.audio.checked;
+     this.stream = await navigator.mediaDevices.getDisplayMedia({
+       video: { frameRate: { ideal: 30 } },
+-      audio: true,
++      audio: wantAudio,
+     });
+     this.capture = this.stream.getVideoTracks()[0] ?? null;
+     const audioTrack = this.stream.getAudioTracks()[0] ?? null;
+@@ -55,10 +69,29 @@ export class HostSession {
+     this.room = this.ui.room.value.trim() || 'default';
+     this.helperUrl = this.ui.helperUrl.value.trim() || this.helperUrl;
+ 
++    this.maxUserBitrateBps = this.bitrateFromSlider();
++    this.currentBitrateBps = this.maxUserBitrateBps;
++    this.lastBytes = 0;
++    this.lastTs = 0;
++
++    this.ui.bitrate.addEventListener('input', () => {
++      this.maxUserBitrateBps = this.bitrateFromSlider();
++      if (!this.ui.auto.checked) {
++        this.currentBitrateBps = this.maxUserBitrateBps;
++        void this.applyBitrate(this.currentBitrateBps);
++      }
++    });
++
+     this.connectHelper();
+     this.connectSignaling();
+   }
+ 
++  private bitrateFromSlider(): number {
++    const mbps = Number(this.ui.bitrate.value);
++    this.ui.bitrateLabel.textContent = `${mbps.toFixed(1)} Мбит/с`;
++    return Math.round(mbps * 1_000_000);
++  }
++
+   private videoSize(): [number, number] | null {
+     const t = this.capture;
+     if (!t) return null;
+@@ -153,13 +186,101 @@ export class HostSession {
+     };
+     pc.onconnectionstatechange = () => {
+       this.status(`WebRTC: ${pc.connectionState}`);
+-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
++      if (pc.connectionState === 'connected') {
++        this.startStats();
++      } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
++        this.stopStats();
+         this.sendHost({ type: 'session', state: 'ended', reason: pc.connectionState });
+       }
+     };
+     return pc;
+   }
+ 
++  /** Cap the video encoder bitrate on the send side. LAN-friendly, live-updatable. */
++  private async applyBitrate(bps: number): Promise<void> {
++    if (!this.pc) return;
++    const sender = this.pc.getSenders().find((s) => s.track?.kind === 'video');
++    if (!sender) return;
++    try {
++      const params = sender.getParameters();
++      if (!params.encodings?.length) return;
++      const enc = params.encodings[0];
++      const clamped = Math.max(BITRATE_MIN_BPS, Math.min(bps, this.maxUserBitrateBps));
++      if (enc.maxBitrate !== clamped) {
++        enc.maxBitrate = clamped;
++        params.degradationPreference = 'maintain-framerate';
++        await sender.setParameters(params);
++        this.currentBitrateBps = clamped;
++      }
++    } catch {
++      // браузер может не дать менять параметры в горячем виде — не критично
++    }
++  }
++
++  private async startStats(): Promise<void> {
++    this.stopStats();
++    this.lastBytes = 0;
++    this.lastTs = performance.now();
++    this.statsTimer = window.setInterval(() => void this.statsLoop(), 2000);
++  }
++
++  private stopStats(): void {
++    if (this.statsTimer !== null) {
++      window.clearInterval(this.statsTimer);
++      this.statsTimer = null;
++    }
++  }
++
++  private async statsLoop(): Promise<void> {
++    if (!this.pc) return;
++
++    let txBps = 0;
++    let fps = 0;
++    let lossRatio = 0;
++    let rtt = 0;
++
++    try {
++      const report = await this.pc.getStats();
++      const now = performance.now();
++      for (const stat of report.values()) {
++        const s = stat as RTCStats;
++        if (s.type === 'outbound-rtp' && (s as RTCOutboundRtpStreamStats).kind === 'video') {
++          const o = s as RTCOutboundRtpStreamStats;
++          const sent = o.bytesSent ?? 0;
++          if (this.lastBytes > 0 && sent > 0) {
++            txBps = Math.round(((sent - this.lastBytes) * 8 * 1000) / (now - this.lastTs));
++          }
++          this.lastBytes = sent;
++          this.lastTs = now;
++          fps = o.framesPerSecond ?? 0;
++        } else if (s.type === 'remote-inbound-rtp') {
++          const r = s as RTCStats & { packetsLost?: number; packetsReceived?: number; roundTripTime?: number };
++          const lost = r.packetsLost ?? 0;
++          const recv = r.packetsReceived ?? 0;
++          if (lost + recv > 0) lossRatio = lost / (lost + recv);
++          rtt = (r.roundTripTime ?? 0) * 1000;
++        }
++      }
++    } catch {
++      return;
++    }
++
++    const prev = this.currentBitrateBps;
++    if (this.ui.auto.checked) {
++      const next = nextBitrate(prev, lossRatio, rtt, {
++        min: BITRATE_MIN_BPS,
++        max: this.maxUserBitrateBps,
++      });
++      if (next !== prev) await this.applyBitrate(next);
++    } else if (prev !== this.maxUserBitrateBps) {
++      await this.applyBitrate(this.maxUserBitrateBps);
++    }
++
++    this.ui.stats.textContent =
++      `↑ ${(txBps / 1_000_000).toFixed(1)} Мбит/с · ${fps} fps · потеря ${(lossRatio * 100).toFixed(1)}%` +
++      ` · rtt ${rtt.toFixed(0)} мс · лимит ${(this.currentBitrateBps / 1_000_000).toFixed(1)} Мбит/с`;
++  }
++
+   private async createOffer(): Promise<void> {
+     if (!this.pc) return;
+     const offer = await this.pc.createOffer();
+@@ -200,11 +321,13 @@ export class HostSession {
+     this.pc?.close();
+     this.ws?.close();
+     this.helper?.close();
++    this.stopStats();
+     this.pc = null;
+     this.ws = null;
+     this.helper = null;
+     this.stream = null;
+     this.ui.preview.srcObject = null;
++    this.ui.stats.textContent = '';
+     this.ui.capture.disabled = false;
+     this.ui.stop.disabled = true;
+     this.status('Остановлено');
+diff --git a/packages/host/src/main.ts b/packages/host/src/main.ts
+index 7e99573..edf7fea 100644
+--- a/packages/host/src/main.ts
++++ b/packages/host/src/main.ts
+@@ -12,8 +12,13 @@ const session = new HostSession({
+   signalUrl: el('signal-url'),
+   room: el('room'),
+   helperUrl: el('helper-url'),
++  audio: el('audio'),
++  bitrate: el('bitrate'),
++  bitrateLabel: el('bitrate-label'),
++  auto: el('auto'),
+   preview: el('preview'),
+   status: el('status'),
++  stats: el('stats'),
+   logEl: el('log'),
+ });
+ 
+diff --git a/packages/host/src/style.css b/packages/host/src/style.css
+index 7a2bfa0..1bab9c2 100644
+--- a/packages/host/src/style.css
++++ b/packages/host/src/style.css
+@@ -89,6 +89,14 @@ video {
+   display: block;
+ }
+ 
++.check {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  font-size: 13px;
++  color: #8b94a7;
++}
++
+ .status {
+   position: absolute;
+   left: 8px;
+@@ -99,6 +107,17 @@ video {
+   font-size: 12px;
+ }
+ 
++.stats {
++  position: absolute;
++  right: 8px;
++  bottom: 8px;
++  padding: 4px 10px;
++  border-radius: 999px;
++  background: rgba(0, 0, 0, 0.65);
++  font-size: 12px;
++  color: #9aa3b8;
++}
++
+ .log {
+   list-style: none;
+   padding: 0;
+diff --git a/packages/shared/src/index.ts b/packages/shared/src/index.ts
+index da4b999..88c4b83 100644
+--- a/packages/shared/src/index.ts
++++ b/packages/shared/src/index.ts
+@@ -1,3 +1,4 @@
+ export * from './coordinates.js';
+ export * from './protocol.js';
+-export * from './signaling.js';
+\ No newline at end of file
++export * from './signaling.js';
++export * from './bandwidth.js';
+\ No newline at end of file
