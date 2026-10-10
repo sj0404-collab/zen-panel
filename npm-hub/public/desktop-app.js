@@ -3381,14 +3381,34 @@ function linuxMouseToggle(force) {
 }
 
 // Сенсор: тянешь палец — курсор едет; тап — клик; два тапа — двойной клик.
+//
+// Каждое движение раньше уходило в VNC отдельным сообщением: обычная мышь
+// даёт 100+ событий в секунду, каждое — PointerEvent x11vnc, каждый ответ
+// x11vnc — кусок кадра. На измеренном живом хабе это ровно тот поток, из-за
+// которого x11vnc перестаёт отвечать на health-probe (ложное «нет x11vnc»),
+// экран начинает отставать, а хаб грузится. Теперь накопленный сдвиг
+// уходит ОДНИМ сообщением раз в 16 мс (≈60/с, для VNC с запасом), а пауза
+// между ними гасит всплеск.
 function vMouseInitPad() {
   const pad = document.getElementById('lm-pad');
   if (!pad || pad.__wired) return;
   pad.__wired = true;
   let drag = null, lastTap = 0;
+  let pendingDx = 0, pendingDy = 0, flushTimer = 0;
   const pt = (e) => {
     const t = (e.touches && e.touches[0]) || e;
     return { x: t.clientX || 0, y: t.clientY || 0 };
+  };
+  const flush = () => {
+    flushTimer = 0;
+    if (!pendingDx && !pendingDy) return;
+    const dx = pendingDx, dy = pendingDy;
+    pendingDx = 0; pendingDy = 0;
+    vMouseMove(dx, dy);
+  };
+  const queue = (dx, dy) => {
+    pendingDx += dx; pendingDy += dy;
+    if (!flushTimer) flushTimer = setTimeout(flush, 16);
   };
   const down = (e) => {
     const p = pt(e);
@@ -3405,7 +3425,7 @@ function vMouseInitPad() {
     drag.moved += Math.abs(dx) + Math.abs(dy);
     try { e.preventDefault(); } catch {}
     if (!dx && !dy) return;
-    vMouseMove(dx * VMOUSE_SENS, dy * VMOUSE_SENS);
+    queue(dx * VMOUSE_SENS, dy * VMOUSE_SENS);
   };
   const up = (e) => {
     if (!drag) return;
@@ -3413,6 +3433,9 @@ function vMouseInitPad() {
     drag = null;
     pad.classList.remove('active');
     try { e.preventDefault(); } catch {}
+    // Последний сдвиг должен дойти до клика, иначе курсор «отстаёт на тап».
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = 0; }
+    flush();
     if (!wasTap) return;
     const now = Date.now();
     const dbl = now - lastTap < 320;

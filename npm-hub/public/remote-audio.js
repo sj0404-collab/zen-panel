@@ -31,8 +31,11 @@
   }
 
   // OpusHead identification header (mapping family 0). WebCodecs wants it as
-  // the AudioDecoderConfig.description for codec 'opus'.
-  function opusHead(channels) {
+  // the AudioDecoderConfig.description for codec 'opus'. The input sample rate
+  // MUST be the rate the encoder really uses: a description claiming 48 kHz
+  // for a 16 kHz stream is not a hint the decoder may ignore - it decodes
+  // garbage or nothing, and the client drops to PCM (more bits, more stutter).
+  function opusHead(channels, rate) {
     const b = new Uint8Array(19);
     const magic = 'OpusHead';
     for (let i = 0; i < 8; i++) b[i] = magic.charCodeAt(i);
@@ -40,7 +43,7 @@
     b[8] = 1;                 // version
     b[9] = channels;          // channel count
     dv.setUint16(10, 0, true);    // pre-skip
-    dv.setUint32(12, 48000, true); // input sample rate
+    dv.setUint32(12, rate || 48000, true); // input sample rate (see above)
     dv.setInt16(16, 0, true);     // output gain
     b[18] = 0;                // channel mapping family
     return b;
@@ -59,10 +62,14 @@
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC || !window.WebSocket) return null;
 
-      const canOpus = !forcePcm &&
-        typeof window.AudioDecoder === 'function' &&
-        typeof window.EncodedAudioChunk === 'function';
-      const wantRate = canOpus ? 48000 : 22050;
+      // Reduced bits, on purpose: 16 kHz mono Opus is ~16-24 kbps where the
+      // old 48 kHz stereo was 48+ (and up to 700 kbps as raw PCM). Video
+      // audio does not need more than the voice band, and half the bits on a
+      // phone tunnel is the difference between a steady stream and one that
+      // keeps dropping out. The server defaults agree; the negotiated values
+      // come back in the 'ready' message and drive both the decoder and the
+      // OpusHead description.
+      const wantRate = canOpus ? 16000 : 22050;
       let ctx;
       try { ctx = new AC({ sampleRate: wantRate }); } catch { ctx = new AC(); }
 
@@ -71,7 +78,7 @@
         ws: null,
         close: false,
         codec: canOpus ? 'opus' : 'pcm',
-        channels: 2,
+        channels: 1,
         rate: wantRate,
         decoder: null,
         ready: false,
@@ -174,9 +181,9 @@
           });
           dec.configure({
             codec: 'opus',
-            sampleRate: 48000,
+            sampleRate: state.rate,
             numberOfChannels: state.channels,
-            description: opusHead(state.channels),
+            description: opusHead(state.channels, state.rate),
           });
           state.decoder = dec;
           return true;
