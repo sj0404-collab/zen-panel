@@ -187,7 +187,7 @@ index 24247bb..26edb7b 100644
       * Доминирующий язык текста кадра по письменности: "ru"/"en"/"ja"/"ko"/"zh",
       * "" — букв не нашлось. Нужен, чтобы при источнике «auto» решить, надо ли
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt
-index e037bbe..fc2ee6c 100644
+index e037bbe..48b23ff 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt
 @@ -566,6 +566,11 @@ object TtsSpeaker {
@@ -211,6 +211,65 @@ index e037bbe..fc2ee6c 100644
              )
              ENGINE_ELEVENLABS -> speakElevenLabs(
                  context = context,
+@@ -658,7 +665,7 @@ object TtsSpeaker {
+                 speakerSlot = slot,
+                 speakerName = speakerName,
+             )
+-            else -> speakSystem(context, spoken, effectiveGender, slot, speakerName, role)
++            else -> speakSystem(context, spoken, effectiveGender, slot, speakerName, role, emotionProsody)
+         }
+     }
+ 
+@@ -733,6 +740,11 @@ object TtsSpeaker {
+          * null = определить роль здесь (ручной режим голоса).
+          */
+         resolvedRole: VoiceRole? = null,
++        /**
++         * Эмоция реплики (pitch, rate): множители поверх пресетов пола/возраста.
++         * null = ровный голос.
++         */
++        emotionProsody: Pair<Float, Float>? = null,
+     ) {
+         val slotVoiceRaw = runCatching {
+             val arr = org.json.JSONArray(prefs().voiceSlots().get())
+@@ -782,8 +794,12 @@ object TtsSpeaker {
+             // Пресет голоса пол/возраст: модификаторы питча и темпа.
+             val presetAge = VoicePreset.Age.fromId(p.voicePresetAge().get())
+             val presetGender = VoicePreset.Gender3.fromId(p.voicePresetGender().get())
+-            engine.setSpeechRate((p.speechRate().get() * presetAge.rate).coerceIn(0.5f, 2f))
+-            engine.setPitch(p.speechPitch().get().coerceIn(0.5f, 2f))
++            // Эмоция реплики поверх пресетов: страх выше/быстрее, утешение
++            // ниже/медленнее — голос вживается в роль, а не зачитывает.
++            val emoPitch = emotionProsody?.first?.takeIf { it > 0f && it.isFinite() } ?: 1f
++            val emoRate = emotionProsody?.second?.takeIf { it > 0f && it.isFinite() } ?: 1f
++            engine.setSpeechRate((p.speechRate().get() * presetAge.rate * emoRate).coerceIn(0.4f, 2.5f))
++            engine.setPitch((p.speechPitch().get() * emoPitch).coerceIn(0.5f, 2f))
+             // Пол говорящего (логика из overlay-translator):
+             // 1) явный пресет пользователя для пола; 2) VoiceHelper.pick —
+             // автоподбор по классификации имён (Svetlana/Dmitry/детские);
+@@ -1265,6 +1281,9 @@ object TtsSpeaker {
+         speakerSlot: Int = 0,
+         role: VoiceRole? = null,
+         langHint: String? = null,
++        /** Эмоция реплики в долях темпа/тона (1 = ровно). */
++        emotionRate: Float = 1f,
++        emotionPitch: Float = 1f,
+     ) {
+         val p = prefs()
+         val voice = when {
+@@ -1284,8 +1303,10 @@ object TtsSpeaker {
+         val rolePitch = role?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
+         // Prosody Edge — в процентах темпа и в герцах тона (его ratePercent/
+         // pitchHz), поэтому множители роли и интонации пересчитываются туда же.
+-        val rate = (p.speechRate().get() * roleRate * (rule?.rate ?: 1f)).coerceIn(0.5f, 2f)
+-        val pitch = (p.speechPitch().get() * rolePitch * (rule?.pitch ?: 1f)).coerceIn(0.5f, 2f)
++        val emoRate = emotionRate.takeIf { it > 0f && it.isFinite() } ?: 1f
++        val emoPitch = emotionPitch.takeIf { it > 0f && it.isFinite() } ?: 1f
++        val rate = (p.speechRate().get() * roleRate * (rule?.rate ?: 1f) * emoRate).coerceIn(0.4f, 2.5f)
++        val pitch = (p.speechPitch().get() * rolePitch * (rule?.pitch ?: 1f) * emoPitch).coerceIn(0.5f, 2f)
+         val ratePercent = ((rate - 1f) * 100).toInt().coerceIn(-50, 100)
+         val pitchHz = ((pitch - 1f) * 40).toInt().coerceIn(-50, 50)
+         currentJob = scope.launch {
 diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
 index db9ff8e..1f47827 100644
 --- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
