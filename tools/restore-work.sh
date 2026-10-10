@@ -273,6 +273,17 @@ BLOBS
 BLOBS_FAILED=0
 rebuild_split_blobs "$SNAP" || BLOBS_FAILED=1
 
+# ── Desktop browser profile: logins come back BEFORE the desktop/browser ──
+# starts. --keep-old-files: a half-written profile from a crashed restore is
+# worse than the runner's fresh one.
+if [ -f "$SNAP/browser-profile.tar.gz" ] && [ "${WORK_BACKUP_SKIP_BROWSER:-0}" != "1" ]; then
+  if tar -xzf "$SNAP/browser-profile.tar.gz" -C "$HOME" --keep-old-files 2>>"$HUB_LOGS/restore-work.log"; then
+    log "browser profile restored (google-chrome/chromium)"
+  else
+    log "browser profile extract failed; starting with a fresh one"
+  fi
+fi
+
 find_existing_repo() {
   local meta="$1"
   [ "${WORK_BACKUP_RESTORE_EXISTING:-0}" = "1" ] || return 0

@@ -69,6 +69,11 @@
       // keeps dropping out. The server defaults agree; the negotiated values
       // come back in the 'ready' message and drive both the decoder and the
       // OpusHead description.
+      // Без этого объявления весь файл умирал ReferenceError'ом («canOpus is
+      // not defined») в момент подключения — звук пропадал целиком.
+      const canOpus = !forcePcm &&
+        typeof window.AudioDecoder === 'function' &&
+        typeof window.EncodedAudioChunk === 'function';
       const wantRate = canOpus ? 16000 : 22050;
       let ctx;
       try { ctx = new AC({ sampleRate: wantRate }); } catch { ctx = new AC(); }

@@ -449,6 +449,7 @@ export default class GestureHandler {
         // For these gestures, we always want the event coordinates
         // to be where the gesture began, not the current touch location.
         switch (this._state) {
+            case GH_DRAG:
             case GH_TWODRAG:
             case GH_PINCH:
                 pos = avg.first;
@@ -470,7 +471,10 @@ export default class GestureHandler {
                 detail['magnitudeX'] = distance.last.x;
                 detail['magnitudeY'] = distance.last.y;
             }
-        } else if (this._state === GH_TWODRAG) {
+        } else if (this._state === GH_TWODRAG || this._state === GH_DRAG) {
+            // Однопальцевый drag тоже несёт смещение: на стороне RFB он едет
+            // не как «ЛКМ прижата и тянет» (выделение текста по всем сайтам),
+            // а как прокрутка — телефонное поведение.
             if (type === 'gesturestart') {
                 detail['magnitudeX'] = 0.0;
                 detail['magnitudeY'] = 0.0;

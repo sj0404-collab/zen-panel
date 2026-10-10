@@ -1124,8 +1124,12 @@ export default class RFB extends EventTargetMixin {
                         this._handleTapEvent(ev, 0x2);
                         break;
                     case 'drag':
+                        // Телефонный жест: палец тянет — страница КРУТИТСЯ,
+                        // ЛКМ не прижимается. Иначе любой серфинг по сайтам
+                        // превращался в сплошное выделение текста.
+                        this._gestureLastMagnitudeX = ev.detail.magnitudeX;
+                        this._gestureLastMagnitudeY = ev.detail.magnitudeY;
                         this._fakeMouseMove(ev, pos.x, pos.y);
-                        this._handleMouseButton(pos.x, pos.y, true, 0x1);
                         break;
                     case 'longpress':
                         this._fakeMouseMove(ev, pos.x, pos.y);
@@ -1151,7 +1155,33 @@ export default class RFB extends EventTargetMixin {
                     case 'twotap':
                     case 'threetap':
                         break;
-                    case 'drag':
+                    case 'drag': {
+                        // То же колёсико, что у twodrag: дельта смещения →
+                        // скролл в текущей позиции курсора.
+                        let md = ev.detail;
+                        this._fakeMouseMove(ev, pos.x, pos.y);
+                        while ((md.magnitudeY - this._gestureLastMagnitudeY) > GESTURE_SCRLSENS) {
+                            this._handleMouseButton(pos.x, pos.y, true, 0x8);
+                            this._handleMouseButton(pos.x, pos.y, false, 0x8);
+                            this._gestureLastMagnitudeY += GESTURE_SCRLSENS;
+                        }
+                        while ((md.magnitudeY - this._gestureLastMagnitudeY) < -GESTURE_SCRLSENS) {
+                            this._handleMouseButton(pos.x, pos.y, true, 0x10);
+                            this._handleMouseButton(pos.x, pos.y, false, 0x10);
+                            this._gestureLastMagnitudeY -= GESTURE_SCRLSENS;
+                        }
+                        while ((md.magnitudeX - this._gestureLastMagnitudeX) > GESTURE_SCRLSENS) {
+                            this._handleMouseButton(pos.x, pos.y, true, 0x20);
+                            this._handleMouseButton(pos.x, pos.y, false, 0x20);
+                            this._gestureLastMagnitudeX += GESTURE_SCRLSENS;
+                        }
+                        while ((md.magnitudeX - this._gestureLastMagnitudeX) < -GESTURE_SCRLSENS) {
+                            this._handleMouseButton(pos.x, pos.y, true, 0x40);
+                            this._handleMouseButton(pos.x, pos.y, false, 0x40);
+                            this._gestureLastMagnitudeX -= GESTURE_SCRLSENS;
+                        }
+                        break;
+                    }
                     case 'longpress':
                         this._fakeMouseMove(ev, pos.x, pos.y);
                         break;
@@ -1214,8 +1244,8 @@ export default class RFB extends EventTargetMixin {
                     case 'twodrag':
                         break;
                     case 'drag':
+                        // Кнопка при drag больше не прижимается — отпускать нечего.
                         this._fakeMouseMove(ev, pos.x, pos.y);
-                        this._handleMouseButton(pos.x, pos.y, false, 0x1);
                         break;
                     case 'longpress':
                         this._fakeMouseMove(ev, pos.x, pos.y);

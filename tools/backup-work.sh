@@ -427,7 +427,51 @@ compute_sig() {
     for f in "$HOME/.config/opencode/opencode.json" "$HOME/.opencode.json" ${REPOS_ROOT:+$REPOS_ROOT/*/opencode.json}; do
       [ -f "$f" ] && sha1sum "$f" 2>/dev/null
     done
+    printf 'BROWSER\n'
+    # Логин в браузере стола тоже «изменение»: без этого сигнала вход в почту
+    # попадал в снапшот только когда что-то трогалось в репозиториях.
+    stat -c '%n %s %Y' \
+      "$HOME/.config/google-chrome/Default/Preferences" \
+      "$HOME/.config/google-chrome/Default/Network/Cookies" \
+      "$HOME/.config/google-chrome/Local State" \
+      "$HOME/.config/chromium/Default/Preferences" \
+      "$HOME/.config/chromium/Default/Network/Cookies" 2>/dev/null || true
   } | sha1sum | cut -d' ' -f1
+}
+
+# ── Desktop browser profile ─────────────────────────────────────────────
+# The runner disk dies with the run: every relaunch meant a clean Chrome and
+# the mail login again. Only the durable, small bits are packed (cookies,
+# logins, prefs, local/session storage) — caches/skia/GPU stays out, it is
+# tens of MB and regenerates itself. On Linux CI there is no secret service,
+# so Chrome falls back to the portable built-in key and the profile really
+# does decrypt on the next machine.
+collect_browser_profile() {
+  local stg="$1" prof rel inc list
+  list="$(mktemp)" || return 0
+  : > "$list"
+  for prof in "$HOME/.config/google-chrome" "$HOME/.config/chromium"; do
+    [ -d "$prof" ] || continue
+    rel="${prof#"$HOME"/}"
+    for inc in \
+      "Local State" \
+      "Default/Cookies" "Default/Cookies-journal" \
+      "Default/Login Data" "Default/Login Data For Account" \
+      "Default/Web Data" "Default/Preferences" "Default/Secure Preferences" \
+      "Default/Bookmarks" "Default/Favicons" \
+      "Default/Network/Cookies" "Default/Network/Cookies-journal" \
+      "Default/Network/Network Persistent State" \
+      "Default/Local Storage" "Default/Session Storage" "Default/Extension State" \
+      "Default/Local Extension Settings" "Default/Sync Extension Settings"; do
+      [ -e "$prof/$inc" ] && printf '%s\0' "$rel/$inc" >> "$list"
+    done
+  done
+  if [ -s "$list" ]; then
+    ( cd "$HOME" && tar --null -T "$list" --ignore-failed-read -czf "$stg/browser-profile.tar.gz" 2>/dev/null ) \
+      || rm -f "$stg/browser-profile.tar.gz"
+  fi
+  rm -f "$list"
+  [ -s "$stg/browser-profile.tar.gz" ] || rm -f "$stg/browser-profile.tar.gz"
 }
 
 collect() {
@@ -564,6 +608,7 @@ PY
   # Settings: global config + per-project opencode.json, with a manifest that
   # maps every packed file back to its home (restore replays it 1:1).
   bash "$(dirname "$0")/../tools/_oc_settings_pack.sh" "$stage" "$REPOS_ROOT" 2>/dev/null     || log "opencode settings pack skipped"
+  collect_browser_profile "$stage" || true
 
   if [ -d "$ROOT/.npm-hub/sessions" ]; then
     mkdir -p "$stage/descriptors" || return 1
