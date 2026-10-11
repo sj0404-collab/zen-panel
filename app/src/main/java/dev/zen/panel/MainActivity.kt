@@ -166,7 +166,7 @@ class MainActivity : ComponentActivity() {
                 cm: ConsoleMessage?
             ): Boolean {
                 if (cm == null) return false
-                val line = cm.messageLine ?: return false
+                val line = cm.message() ?: return false
                 if (line.isNotBlank()) {
                     Log.d("ZenPanel", "[${cm.sourceId()}] $line")
                 }
