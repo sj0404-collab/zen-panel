@@ -50,10 +50,19 @@ COOLDOWN="${NGROK_KEEPER_COOLDOWN:-60}"
 API_URL="${NGROK_API_URL:-http://127.0.0.1:4040/api/tunnels}"
 FAILS_REST=30                        # after this many consecutive failed starts, slow down hard
 
-log() { echo "[ngrok-keeper $(date -u '+%H:%M:%S')] $*" | tee -a "$HUB_LOGS/ngrok-keeper.log"; }
+log() { echo "[ngrok-keeper $(date -u '+%H:%M:%S')] $*" >> "$HUB_LOGS/ngrok-keeper.log"; }
+# NB: log() must NOT touch stdout - start_agent runs under $(...) capture, and
+# any leak lands in the published ngrok= address (seen as junk on run 379).
 
 install_ngrok() {
-  command -v ngrok >/dev/null 2>&1 && return 0
+  # A binary restored from a snapshot can arrive without the exec bit
+  # (restore of ~/.local/bin/ngrok on run 379): fix the mode or re-download.
+  found="$(command -v ngrok 2>/dev/null || true)"
+  if [ -n "$found" ]; then
+    chmod +x "$found" 2>/dev/null || true
+    ngrok version >/dev/null 2>&1 && return 0
+    rm -f "$found" 2>/dev/null || true
+  fi
   local dl="$HUB_TMP/ngrok.tgz.$$"
   if curl -fL --retry 3 --connect-timeout 15 -o "$dl" \
       "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz"; then
@@ -162,6 +171,7 @@ while true; do
     continue
   fi
   url="$(start_agent || true)"
+  case "$url" in https://*) ;; *) url="" ;; esac
   if [ -n "$url" ]; then
     FAILS=0
     echo "$url" > "$NGROK_URLFILE"
