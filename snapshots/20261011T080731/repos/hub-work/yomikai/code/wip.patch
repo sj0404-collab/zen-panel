@@ -1,5 +1,5 @@
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
-index 24247bb..26edb7b 100644
+index 24247bb..46fb2f2 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
 @@ -1291,7 +1291,20 @@ class AutoReadEngine(
@@ -81,9 +81,9 @@ index 24247bb..26edb7b 100644
              onState = { speaking ->
                  if (speaking && !started.value) {
                      started.value = true
-@@ -2952,6 +2990,104 @@ class AutoReadEngine(
-             return if (old.length >= new.length) old.contains(new) else new.contains(old)
-         }
+@@ -2549,6 +2587,32 @@ class AutoReadEngine(
+ 
+     // endregion Склейка строк одной реплики
  
 +    /**
 +     * Эмоция реплики и во что она превращается для синтеза.
@@ -91,6 +91,11 @@ index 24247bb..26edb7b 100644
 +     * [pitch]/[rate] — множители высоты и темпа голоса (1 = без изменений).
 +     * Системный TTS применяет их напрямую, Edge — через prosody. [glyph] для
 +     * обслуживания/отладки, в озвучку не попадает.
++     *
++     * Enum лежит НА УРОВНЕ КЛАССА, а не в companion: вложенный в companion
++     * enum невидим как `AutoReadEngine.Emotion` (компилятор требует
++     * `AutoReadEngine.Companion.Emotion`), а тест эмоций обращается именно
++     * по короткому имени.
 +     */
 +    enum class Emotion(val pitch: Float, val rate: Float, val glyph: String) {
 +        NEUTRAL(1f, 1f, ""),
@@ -106,86 +111,97 @@ index 24247bb..26edb7b 100644
 +        SURPRISE(1.22f, 1.2f, "?!"),
 +    }
 +
-+    /**
-+     * Эмоция реплики по словам и пунктуации (RU + общие крики).
-+     *
-+     * Голос должен ВЖИВАТЬСЯ в роль, а не «зачитывать»: страх читается выше и
-+     * быстрее, утешение — ниже и медленнее. Правила нарочно простые и
-+     * предсказуемые: лучше пережать половину реплик, чем угадать наспех.
-+     * Порядок проверок важен: «не бойся!» — это утешение, а не страх.
-+     */
-+    fun guessEmotion(text: String): Emotion {
-+        val t = text.lowercase().trim()
-+        if (t.length < 2) return Emotion.NEUTRAL
-+        // Утешение перебивает страх: «не бойся, я рядом» звучит мягко.
-+        if (listOf(
-+                "не бойся", "не бойтесь", "я рядом", "всё хорошо", "все хорошо",
-+                "спокойно", "спокойствие", "успокой", "обним", "прости", "прощение",
-+                "ты не один", "ты не одна", "всё будет", "все будет", "ничего страшного",
-+                "я с тобой", "береги себя", "будь осторожен", "держись",
-+            ).any { it in t }
-+        ) {
-+            return Emotion.COMFORT
+     // region Чистка мусора OCR
+ 
+     companion object {
+@@ -2952,8 +3016,85 @@ class AutoReadEngine(
+             return if (old.length >= new.length) old.contains(new) else new.contains(old)
+         }
+ 
+-    /**
+-     * Доминирующий язык текста кадра по письменности: "ru"/"en"/"ja"/"ko"/"zh",
++        /**
++         * Эмоция реплики по словам и пунктуации (RU + общие крики).
++         *
++         * Голос должен ВЖИВАТЬСЯ в роль, а не «зачитывать»: страх читается выше и
++         * быстрее, утешение — ниже и медленнее. Правила нарочно простые и
++         * предсказуемые: лучше пережать половину реплик, чем угадать наспех.
++         * Порядок проверок важен: «не бойся!» — это утешение, а не страх.
++         */
++        fun guessEmotion(text: String): Emotion {
++            val t = text.lowercase().trim()
++            if (t.length < 2) return Emotion.NEUTRAL
++            // Утешение перебивает страх: «не бойся, я рядом» звучит мягко.
++            if (listOf(
++                    "не бойся", "не бойтесь", "я рядом", "всё хорошо", "все хорошо",
++                    "спокойно", "спокойствие", "успокой", "обним", "прости", "прощение",
++                    "ты не один", "ты не одна", "всё будет", "все будет", "ничего страшного",
++                    "я с тобой", "береги себя", "будь осторожен", "держись",
++                ).any { it in t }
++            ) {
++                return Emotion.COMFORT
++            }
++            if (listOf(
++                    "боюсь", "боится", "боишься", "боятся", "страх", "страшно", "ужас",
++                    "ужасно", "пуга", "паник", "беги", "бежим", "спасай", "смерт",
++                    "погиб", "убьёт", "убьет", "задрож", "дрожь", "вскрик", "крик",
++                    "помогите", "помоги", "бегом", "опасн", "опасно",
++                ).any { it in t } &&
++                // «не страшно» — успокоение, а не страх.
++                !listOf("не страшно", "не страшен", "без паник").any { it in t }
++            ) {
++                return Emotion.FEAR
++            }
++            if (listOf(
++                    "ненавижу", "бесит", "бешена", "злой", "злость", "замолчи", "уйди",
++                    "прекрати", "как ты смеешь", "как вы смеете", "хватит", "сжечь",
++                    "уничтож", "сдохни", "мерзавец", "гад", "в ярости", "ронять",
++                ).any { it in t }
++            ) {
++                return Emotion.ANGER
++            }
++            if (listOf(
++                    "шепч", "шёпот", "шепот", "тихо", "тиш", "шшш", "молч", "секрет",
++                ).any { it in t }
++            ) {
++                return Emotion.WHISPER
++            }
++            if (listOf(
++                    "плак", "плачу", "груст", "печал", "прощай", "больно", "одиноко",
++                    "один", "слез", "рыда", "тоска", "опустош", "виноват", "жал",
++                ).any { it in t }
++            ) {
++                return Emotion.SADNESS
++            }
++            if (listOf(
++                    "ха-ха", "хаха", "хи-хи", "хихи", "ура", "рада", "рад ", "счаст",
++                    "люблю", "смех", "весел", "замечательно", "отлично", "ура!",
++                ).any { it in t }
++            ) {
++                return Emotion.JOY
++            }
++            if (listOf(
++                    "не может быть", "неужели", "как?!", "что?!", "кто?!", "зачем?!",
++                    "right?", "правда?!", "серьёзно", "серьезно", "ничего себе",
++                ).any { it in t }
++            ) {
++                return Emotion.SURPRISE
++            }
++            // Пунктуация: «!!!» злость/радость, «?!» удивление, «…» грусть, «!?» —
++            // сперва удивление, потом всё остальное.
++            val exclamations = t.count { it == '!' }
++            if (exclamations >= 3) return Emotion.ANGER
++            if (t.contains("?!") || t.contains("!?")) return Emotion.SURPRISE
++            if (t.endsWith("...") || t.endsWith("…")) return Emotion.SADNESS
++            // Один восклицательный знак сам по себе эмоцию не задаёт.
++            return Emotion.NEUTRAL
 +        }
-+        if (listOf(
-+                "боюсь", "боится", "боишься", "боятся", "страх", "страшно", "ужас",
-+                "ужасно", "пуга", "паник", "беги", "бежим", "спасай", "смерт",
-+                "погиб", "убьёт", "убьет", "задрож", "дрожь", "вскрик", "крик",
-+                "помогите", "помоги", "бегом", "опасн", "опасно",
-+            ).any { it in t } &&
-+            // «не страшно» — успокоение, а не страх.
-+            !listOf("не страшно", "не страшен", "без паник").any { it in t }
-+        ) {
-+            return Emotion.FEAR
-+        }
-+        if (listOf(
-+                "ненавижу", "бесит", "бешена", "злой", "злость", "замолчи", "уйди",
-+                "прекрати", "как ты смеешь", "как вы смеете", "хватит", "сжечь",
-+                "уничтож", "сдохни", "мерзавец", "гад", "в ярости", "ронять",
-+            ).any { it in t }
-+        ) {
-+            return Emotion.ANGER
-+        }
-+        if (listOf(
-+                "шепч", "шёпот", "шепот", "тихо", "тиш", "шшш", "молч", "секрет",
-+            ).any { it in t }
-+        ) {
-+            return Emotion.WHISPER
-+        }
-+        if (listOf(
-+                "плак", "плачу", "груст", "печал", "прощай", "больно", "одиноко",
-+                "один", "слез", "рыда", "тоска", "опустош", "виноват", "жал",
-+            ).any { it in t }
-+        ) {
-+            return Emotion.SADNESS
-+        }
-+        if (listOf(
-+                "ха-ха", "хаха", "хи-хи", "хихи", "ура", "рада", "рад ", "счаст",
-+                "люблю", "смех", "весел", "замечательно", "отлично", "ура!",
-+            ).any { it in t }
-+        ) {
-+            return Emotion.JOY
-+        }
-+        if (listOf(
-+                "не может быть", "неужели", "как?!", "что?!", "кто?!", "зачем?!",
-+                "right?", "правда?!", "серьёзно", "серьезно", "ничего себе",
-+            ).any { it in t }
-+        ) {
-+            return Emotion.SURPRISE
-+        }
-+        // Пунктуация: «!!!» злость/радость, «?!» удивление, «…» грусть, «!?» —
-+        // сперва удивление, потом всё остальное.
-+        val exclamations = t.count { it == '!' }
-+        if (exclamations >= 3) return Emotion.ANGER
-+        if (t.contains("?!") || t.contains("!?")) return Emotion.SURPRISE
-+        if (t.endsWith("...") || t.endsWith("…")) return Emotion.SADNESS
-+        // Один восклицательный знак сам по себе эмоцию не задаёт.
-+        return Emotion.NEUTRAL
-+    }
 +
-     /**
-      * Доминирующий язык текста кадра по письменности: "ru"/"en"/"ja"/"ko"/"zh",
++        /**
++         * Доминирующий язык текста кадра по письменности: "ru"/"en"/"ja"/"ko"/"zh",
       * "" — букв не нашлось. Нужен, чтобы при источнике «auto» решить, надо ли
+      * переводить: эталонный язык реплик из настроек (по умолчанию «ru») врал
+      * на китайской манхуа, и перевод молча выключался.
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt
 index e037bbe..48b23ff 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/TtsSpeaker.kt
@@ -270,6 +286,32 @@ index e037bbe..48b23ff 100644
          val ratePercent = ((rate - 1f) * 100).toInt().coerceIn(-50, 100)
          val pitchHz = ((pitch - 1f) * 40).toInt().coerceIn(-50, 50)
          currentJob = scope.launch {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt
+index 9f30242..decb132 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt
+@@ -630,6 +630,8 @@ private fun SoundAutoReadTab() {
+     val advance by prefs.autoReadAutoAdvance().changes()
+         .collectAsState(initial = prefs.autoReadAutoAdvance().get())
+     val icons by prefs.voiceIcons().changes().collectAsState(initial = prefs.voiceIcons().get())
++    val emotion by prefs.emotionalVoices().changes()
++        .collectAsState(initial = prefs.emotionalVoices().get())
+     val autoScan by prefs.autoScanAndSpeak().changes()
+         .collectAsState(initial = prefs.autoScanAndSpeak().get())
+     val language by prefs.autoReadLanguage().changes()
+@@ -682,6 +684,12 @@ private fun SoundAutoReadTab() {
+         subtitle = "Показывать, что реплика уже озвучена",
+         checked = icons,
+     ) { prefs.voiceIcons().set(it) }
++    HubSwitchRow(
++        title = "Эмоциональные голоса",
++        subtitle = "Страх, утешение, гнев, шёпот: голос вживается в роль и читает " +
++            "медленнее/быстрее, выше/ниже",
++        checked = emotion,
++    ) { prefs.emotionalVoices().set(it) }
+     HubSwitchRow(
+         title = "Сканировать и озвучивать страницу целиком",
+         subtitle = "Один снимок экрана и озвучка всей страницы без ожидания реплик",
 diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
 index db9ff8e..1f47827 100644
 --- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
