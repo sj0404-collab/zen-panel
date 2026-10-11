@@ -1,0 +1,97 @@
+diff --git a/app/build.gradle b/app/build.gradle
+index d2b5901..20f5907 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -11,8 +11,8 @@ android {
+         applicationId 'app.yomikaioverlay'
+         minSdk 26
+         targetSdk 34
+-        versionCode 14
+-        versionName '2.3'
++        versionCode 15
++        versionName '2.4'
+     }
+ 
+     signingConfigs {
+diff --git a/app/src/main/java/app/yomikaioverlay/OverlayService.kt b/app/src/main/java/app/yomikaioverlay/OverlayService.kt
+index bcff746..2a1b899 100644
+--- a/app/src/main/java/app/yomikaioverlay/OverlayService.kt
++++ b/app/src/main/java/app/yomikaioverlay/OverlayService.kt
+@@ -1603,24 +1603,23 @@ class OverlayService : Service() {
+     }
+ 
+     /** Окно выбора голоса: список установленных TTS-голосов, тап = выбрать и прослушать. */
+-    private var voiceWin: FrameLayout? = null
++    private var voiceWin: View? = null
+ 
+     private fun openVoicePicker() {
+         if (voiceWin != null) return
+         closeMiniPanel()
+         ensureTts()
+-        val container = FrameLayout(this)
+-        container.setBackgroundColor(Color.parseColor("#CC000000"))
+         val card = LinearLayout(this).apply {
+             orientation = LinearLayout.VERTICAL
+             background = rounded(cardBg, 18f)
++            setPadding(dp(10), dp(10), dp(10), dp(10))
+         }
+         val sp = screenSize()
+         val cw = minOf(dp(360), sp.x - dp(24))
+-        val ch = minOf(dp(460), sp.y - dp(60))
++        val ch = minOf(dp(440), sp.y - dp(140))
+         val scroll = android.widget.ScrollView(this)
+         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+-        val pad = dp(12)
++        val pad = dp(6)
+         list.setPadding(pad, pad, pad, pad)
+         scroll.addView(list)
+         card.addView(scroll, LinearLayout.LayoutParams(cw, ch))
+@@ -1742,15 +1741,23 @@ class OverlayService : Service() {
+             ui.postDelayed({ if (voiceWin != null) fill() }, 900)
+         }
+ 
+-        container.addView(card)
+-        val clp = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT)
+-        clp.gravity = Gravity.CENTER
+-        card.layoutParams = clp
+-        container.setOnClickListener { closeVoicePicker() }
+-        card.setOnClickListener { } // гасим клики по карточке
+-        val lp = overlayLp(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT, true)
+-        try { wm.addView(container, lp) } catch (e: Exception) { }
+-        voiceWin = container
++        // «✕ Закрыть» вместо клика по затемнению — карточка не закрывает экран.
++        card.addView(TextView(this).apply {
++            text = "✕ Закрыть"
++            textSize = 13f
++            setTextColor(txtSub)
++            gravity = Gravity.CENTER
++            setPadding(0, dp(8), 0, 0)
++            setOnClickListener { closeVoicePicker() }
++        })
++
++        // Компактное окно рядом с пузырём, без перекрытия всего экрана.
++        val lp = overlayLp(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, true)
++        val base = mainLp
++        lp.x = (((base?.x ?: (sp.x - dp(76))) - cw - dp(8)).coerceIn(0, (sp.x - cw).coerceAtLeast(0)))
++        lp.y = ((base?.y ?: (sp.y * 0.42f).toInt()) + dp(20)).coerceIn(0, (sp.y - ch - dp(80)).coerceAtLeast(0))
++        try { wm.addView(card, lp) } catch (e: Exception) { }
++        voiceWin = card
+         rebuildPanel()
+     }
+ 
+@@ -1935,7 +1942,6 @@ class OverlayService : Service() {
+             }
+             preview = text
+             previewText?.text = preview
+-            setExpanded(true)
+             notifyStatus(text) // распознанное текстом видно в шторке
+             speak(text)
+         }
+@@ -1947,7 +1953,6 @@ class OverlayService : Service() {
+         lastText = ""
+         repeatCount = 0
+         readBuffer.setLength(0)
+-        setExpanded(true)
+         rebuildPanel()
+         showStopButton()
+         refreshFrame()
