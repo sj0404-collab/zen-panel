@@ -1,0 +1,278 @@
+diff --git a/app/build.gradle b/app/build.gradle
+index 671743e..2867049 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -52,5 +52,8 @@ dependencies {
+     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+     // Edge TTS (WebSocket синтез голосов Microsoft Edge) — как в overlay-translator
+     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
++    // Гибридная пометка текста: on-device ML Kit даёт только координаты блоков
++    // (рамки/номера/порядок чтения), сам текст для озвучки — как раньше, онлайн.
++    implementation 'com.google.android.gms:play-services-mlkit-text-recognition:18.0.2'
+     testImplementation 'junit:junit:4.13.2'
+ }
+diff --git a/app/src/main/java/app/yomikaioverlay/OverlayService.kt b/app/src/main/java/app/yomikaioverlay/OverlayService.kt
+index 7fcc1fe..b6e09b8 100644
+--- a/app/src/main/java/app/yomikaioverlay/OverlayService.kt
++++ b/app/src/main/java/app/yomikaioverlay/OverlayService.kt
+@@ -31,6 +31,7 @@ import android.os.Handler
+ import android.os.HandlerThread
+ import android.os.IBinder
+ import android.os.PowerManager
++import android.os.SystemClock
+ import android.speech.tts.TextToSpeech
+ import android.speech.tts.UtteranceProgressListener
+ import android.util.TypedValue
+@@ -50,8 +51,10 @@ import app.yomikaioverlay.ot.EnginePrefs
+ import app.yomikaioverlay.ot.Engines
+ import app.yomikaioverlay.ot.GlensOcrEngine
+ import app.yomikaioverlay.ot.GoogleAiOcrEngine
++import app.yomikaioverlay.ot.LayoutOcr
+ import app.yomikaioverlay.ot.OpenRouterOcrEngine
+ import app.yomikaioverlay.ot.Rates
++import app.yomikaioverlay.ot.ReadingOrder
+ import app.yomikaioverlay.ot.Region
+ import app.yomikaioverlay.ot.ScriptDetect
+ import app.yomikaioverlay.ot.Translator
+@@ -163,6 +166,22 @@ class OverlayService : Service() {
+     /** Накопительный буфер текста за сессию авточтения. */
+     private val readBuffer = StringBuilder()
+ 
++    // Гибридная пометка текста: ML Kit даёт блоки с координатами (рамки и
++    // номера 1..N), сам текст для озвучки остаётся онлайн (Lens/Zen).
++    private var layoutOcr: LayoutOcr? = null
++    /** Блоки последнего распознавания в координатах экрана, в порядке чтения. */
++    private var layoutBlocks: List<Rect> = emptyList()
++    /** Индекс озвучиваемого в этот момент блока (−1 = нет). */
++    private var activeBlock = -1
++    private val speakTick = object : Runnable {
++        override fun run() { tickSpeak() }
++    }
++    private var speakStartMs = 0L
++    private var speakTotalMs = 1L
++
++    private fun readOrderMode(): String =
++        ReadingOrder.normalize(prefs.getString("read_order", ReadingOrder.DEFAULT))
++
+     /** Отмена «показа пузырь снова» при повторном тапе «Скрыть». */
+     private val restoreBubble = Runnable { showMain(true) }
+ 
+@@ -632,32 +651,67 @@ class OverlayService : Service() {
+             color = frameRed
+             pathEffect = DashPathEffect(floatArrayOf(20f, 12f), 0f)
+         }
+-        private val scanFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+-            style = Paint.Style.FILL
+-            color = Color.parseColor("#2200E676")
+-        }
+-        private val speakFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+-            style = Paint.Style.FILL
+-            color = Color.parseColor("#26FFC24C")
++        // Пометка блоков текста: тонкая рамка + номер, активный — янтарная.
++        private val blockStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
++            style = Paint.Style.STROKE
++            strokeWidth = dp(1.8f).toFloat()
++            color = Color.parseColor("#CCFFFFFF")
+         }
+-        private val speakBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
++        private val blockActive = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+             style = Paint.Style.STROKE
+             strokeWidth = dp(4f).toFloat()
+             color = btnBgAccent
+         }
++        private val badgeBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
++            color = Color.parseColor("#99000000")
++        }
++        private val badgeBgActive = Paint(Paint.ANTI_ALIAS_FLAG).apply {
++            color = btnBgAccent
++        }
++        private val badgeText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
++            color = Color.WHITE
++            textSize = dp(11f).toFloat()
++            textAlign = Paint.Align.CENTER
++            typeface = android.graphics.Typeface.DEFAULT_BOLD
++        }
++        private val badgeTextActive = Paint(badgeText).apply {
++            color = Color.parseColor("#16181D")
++        }
++        private val radius = dp(9f).toFloat()
++
+         override fun onDraw(c: Canvas) {
+             val r = regionRatio()
+             val l = r.left + 2f
+             val t = r.top + 2f
+             val rt = r.right - 2f
+             val rb = r.bottom - 2f
+-            if (speaking) {
+-                c.drawRect(l, t, rt, rb, speakFill)
+-                c.drawRect(l, t, rt, rb, speakBorder)
+-            } else if (scanningFrame) {
+-                c.drawRect(l, t, rt, rb, scanFill)
+-            }
++            // Внешняя рамка области — тонко, без заливки.
+             c.drawRect(l, t, rt, rb, p)
++            // Пометка самих блоков текста в порядке чтения 1..N.
++            val blocks = layoutBlocks
++            if (blocks.isNotEmpty()) {
++                for (i in blocks.indices) {
++                    val b = blocks[i]
++                    if (b.width() <= 0 || b.height() <= 0) continue
++                    val x0 = b.left.toFloat()
++                    val y0 = b.top.toFloat()
++                    val x1 = b.right.toFloat()
++                    val y1 = b.bottom.toFloat()
++                    if (i == activeBlock) {
++                        c.drawRect(x0, y0, x1, y1, blockActive)
++                    } else {
++                        c.drawRect(x0, y0, x1, y1, blockStroke)
++                    }
++                    drawBadge(c, i + 1, x0, y0, i == activeBlock)
++                }
++            }
++        }
++
++        private fun drawBadge(c: Canvas, num: Int, x0: Float, y0: Float, active: Boolean) {
++            val cx = x0 + radius
++            val cy = y0 + radius
++            c.drawCircle(cx, cy, radius, if (active) badgeBgActive else badgeBg)
++            c.drawText(num.toString(), cx, cy + dp(3.7f).toFloat(), if (active) badgeTextActive else badgeText)
+         }
+     }
+ 
+@@ -1274,7 +1328,10 @@ class OverlayService : Service() {
+                     } catch (e: Exception) { }
+                 },
+                 Tile("♪", "Голос") { showMiniPanel("voice") },
+-                Tile("⏱", "Скорость") { showMiniPanel("speed") }
++                Tile("⏱", "Скорость") { showMiniPanel("speed") },
++                Tile("↻", "Чтение: ${ReadingOrder.short(readOrderMode())}") { cycleReadOrder() },
++                Tile("·", "Порядок 1..${if (layoutBlocks.isEmpty()) "—" else layoutBlocks.size}",
++                    active = layoutBlocks.isNotEmpty()) { if (layoutBlocks.isEmpty()) rebuildPanel() }
+             )
+         )
+ 
+@@ -1528,6 +1585,7 @@ class OverlayService : Service() {
+         ocrHandler.post {
+             var text = ""
+             var hint: String? = null
++            var layoutRects: List<Rect> = emptyList()
+             try {
+                 val bmp = captureRegion()
+                 if (bmp == null) {
+@@ -1554,6 +1612,8 @@ class OverlayService : Service() {
+                             ""
+                         }
+                     }
++                    // Гибрид: блоки текста (рамки и порядок чтения) — на устройстве.
++                    layoutRects = computeLayout(bmp)
+                     try { bmp.recycle() } catch (e: Exception) { }
+                 }
+             } catch (e: Exception) { }
+@@ -1568,6 +1628,11 @@ class OverlayService : Service() {
+                 }
+             }
+             ui.post {
++                if (layoutRects.isNotEmpty() || out.isNotBlank()) {
++                    layoutBlocks = layoutRects
++                    activeBlock = if (autoReading) 0 else -1
++                    refreshFrame()
++                }
+                 if (hint != null && out.isBlank()) {
+                     preview = hint
+                     previewText?.text = preview
+@@ -1577,6 +1642,34 @@ class OverlayService : Service() {
+         }
+     }
+ 
++    /** ML Kit: блоки текста на битмапе → координаты экрана, порядок чтения. */
++    private fun computeLayout(bmp: Bitmap): List<Rect> {
++        if (layoutOcr == null) {
++            layoutOcr = try { LayoutOcr() } catch (e: Throwable) { null }
++        }
++        val lo = layoutOcr
++        if (lo == null || !lo.isAvailable) return emptyList()
++        val r = regionRatio()
++        val w = bmp.width.toFloat().coerceAtLeast(1f)
++        val h = bmp.height.toFloat().coerceAtLeast(1f)
++        val rw = (r.right - r.left)
++        val rh = (r.bottom - r.top)
++        val mapped = try {
++            lo.blocks(bmp).map { b ->
++                val bx = b.rect
++                Rect(
++                    r.left + (bx.left / w * rw).toInt(),
++                    r.top + (bx.top / h * rh).toInt(),
++                    r.left + (bx.right / w * rw).toInt(),
++                    r.top + (bx.bottom / h * rh).toInt()
++                )
++            }
++        } catch (e: Throwable) {
++            emptyList()
++        }
++        return ReadingOrder.order(mapped, readOrderMode())
++    }
++
+     // ------------------------------------------------------------------
+     // TTS
+     // ------------------------------------------------------------------
+@@ -1856,6 +1949,7 @@ class OverlayService : Service() {
+     }
+ 
+     private fun speakNow(text: String) {
++        startSpeakClock(text)
+         if (ttsBackend() == "edge") {
+             speakEdge(text)
+             return
+@@ -1883,6 +1977,42 @@ class OverlayService : Service() {
+         }
+     }
+ 
++    /** Часы прогресса озвучивания: подсветка блока i по мере чтения текста. */
++    private fun startSpeakClock(text: String) {
++        ui.removeCallbacks(speakTick)
++        val n = layoutBlocks.size
++        if (n <= 0) {
++            activeBlock = -1
++            refreshFrame()
++            return
++        }
++        val rate = prefs.getFloat("rate", 1.0f).coerceAtLeast(0.25f)
++        speakTotalMs = ((text.length * 1000L) / (16L * rate)).coerceAtLeast(1500L)
++        speakStartMs = SystemClock.elapsedRealtime()
++        activeBlock = 0
++        refreshFrame()
++        ui.postDelayed(speakTick, 400L)
++    }
++
++    private fun tickSpeak() {
++        if (layoutBlocks.isEmpty() || !speaking) {
++            stopSpeakClock()
++            return
++        }
++        val f = (SystemClock.elapsedRealtime() - speakStartMs).toFloat() / speakTotalMs
++        val n = layoutBlocks.size
++        val idx = (f * n).toInt().coerceIn(0, n - 1)
++        if (idx != activeBlock) {
++            activeBlock = idx
++            refreshFrame()
++        }
++        if (f < 1f) ui.postDelayed(speakTick, 400L) else stopSpeakClock()
++    }
++
++    private fun stopSpeakClock() {
++        ui.removeCallbacks(speakTick)
++    }
++
+     /** Синтез сетевым голосом Edge: тексты уходят в Microsoft, кадры — никогда. */
+     private fun speakEdge(text: String) {
+         setSpeaking(true)
+@@ -2008,6 +2138,9 @@ class OverlayService : Service() {
+         mediaPlayer = null
+         setSpeaking(false)
+         scanningFrame = false
++        stopSpeakClock()
++        layoutBlocks = emptyList()
++        activeBlock = -1
+         rebuildPanel()
+         refreshFrame()
+         notifyStatus(if (preview.isNotBlank()) preview else null)
