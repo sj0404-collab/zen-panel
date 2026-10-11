@@ -82,8 +82,16 @@ except Exception:
 ' 2>/dev/null || true
 }
 
-healthy() {  # $1 = url; curl UA passes the ngrok interstitial by design
-  [ -n "${1:-}" ] && curl -sf -m 10 -o /dev/null "$1/" 2>/dev/null
+healthy() {  # $1 = url
+  # The hub answers "/" with 401 to anonymous callers, so curl -sf marked a
+  # perfectly alive leg as dead and this keeper restarted the agent every
+  # ~90s forever (run 377: address churned 07:08 -> 08:06). Healthy = any
+  # HTTP answer at all, EXCEPT the ngrok edge error pages (agent offline).
+  local body
+  body="$(curl -s -m 15 "${1:-}/" 2>/dev/null || true)"
+  [ -n "${body:-}" ] || return 1
+  case "$body" in *"ERR_NGROK"*|*"ngrok.com/docs/errors"*) return 1 ;; esac
+  return 0
 }
 
 publish_full() {  # $1 = ngrok url (always non-empty here)
