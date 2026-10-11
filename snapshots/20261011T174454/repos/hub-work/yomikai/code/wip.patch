@@ -1,0 +1,22 @@
+diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+index 1f47827..02ff2a7 100644
+--- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
++++ b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+@@ -246,6 +246,17 @@ class OcrPreferences(
+     // Требует Google AI ключ; выключено по умолчанию (онлайн, медленнее).
+     fun aiGenderVoices() = preferenceStore.getBoolean("pref_ai_gender_voices", false)
+ 
++    /**
++     * Описывать голосом страницы без текста (развороты-иллюстрации).
++     *
++     * Описание умеют только ОНЛАЙН-движки (Zen / Gemini / OpenRouter):
++     * картинка уходит в облако, ответ занимает секунды. С локальным
++     * кириллическим движком описание просто не вернётся и страница
++     * пролистнется дальше. Выключено по умолчанию, потому что это отправка
++     * картинки в облако.
++     */
++    fun describeTextlessPages() = preferenceStore.getBoolean("pref_describe_textless_pages", false)
++
+     // Целевой язык перевода перед озвучкой. Раньше был жёстко "ru" в коде
+     // AutoReadEngine, из-за чего англоязычный пользователь получал русскую
+     // озвучку независимо от настроек.
