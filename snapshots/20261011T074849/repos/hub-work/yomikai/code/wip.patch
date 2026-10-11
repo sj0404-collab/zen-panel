@@ -270,6 +270,32 @@ index e037bbe..48b23ff 100644
          val ratePercent = ((rate - 1f) * 100).toInt().coerceIn(-50, 100)
          val pitchHz = ((pitch - 1f) * 40).toInt().coerceIn(-50, 50)
          currentJob = scope.launch {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt
+index 9f30242..decb132 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt
+@@ -630,6 +630,8 @@ private fun SoundAutoReadTab() {
+     val advance by prefs.autoReadAutoAdvance().changes()
+         .collectAsState(initial = prefs.autoReadAutoAdvance().get())
+     val icons by prefs.voiceIcons().changes().collectAsState(initial = prefs.voiceIcons().get())
++    val emotion by prefs.emotionalVoices().changes()
++        .collectAsState(initial = prefs.emotionalVoices().get())
+     val autoScan by prefs.autoScanAndSpeak().changes()
+         .collectAsState(initial = prefs.autoScanAndSpeak().get())
+     val language by prefs.autoReadLanguage().changes()
+@@ -682,6 +684,12 @@ private fun SoundAutoReadTab() {
+         subtitle = "Показывать, что реплика уже озвучена",
+         checked = icons,
+     ) { prefs.voiceIcons().set(it) }
++    HubSwitchRow(
++        title = "Эмоциональные голоса",
++        subtitle = "Страх, утешение, гнев, шёпот: голос вживается в роль и читает " +
++            "медленнее/быстрее, выше/ниже",
++        checked = emotion,
++    ) { prefs.emotionalVoices().set(it) }
+     HubSwitchRow(
+         title = "Сканировать и озвучивать страницу целиком",
+         subtitle = "Один снимок экрана и озвучка всей страницы без ожидания реплик",
 diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
 index db9ff8e..1f47827 100644
 --- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
