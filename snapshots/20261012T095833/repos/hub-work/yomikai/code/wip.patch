@@ -1,0 +1,43 @@
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceHelper.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceHelper.kt
+index 97f56507b..1157c5b46 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceHelper.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/VoiceHelper.kt
+@@ -159,7 +159,13 @@ object VoiceHelper {
+         val filtered = all.filter { voice ->
+             languageMatches(voice.locale, language) &&
+                 blacklist.none { blocked -> voice.name.equals(blocked, true) }
+-        }.sortedBy { it.name }
++            // Локальные голоса — выше сетевых. В списке настройки вперемешку стояли
++            // «Другой · ru-supertonic-ru_f1» и «Распознавание… ru-ru-x-dfc-network»,
++            // и сетевой оказывался первым в списке. Тот же порядок, что и при
++            // автоматическом выборе голоса (см. pickFor).
++        }.sortedWith(
++            compareBy<Voice>({ it.isNetworkConnectionRequired }, { it.name }),
++        )
+         if (isRhVoice) {
+             val direct = filtered.filterNot {
+                 it.name.equals("Russian", true) || it.name.equals("English", true)
+diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+index a3c82c4c1..c75838bd8 100644
+--- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
++++ b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+@@ -127,7 +127,18 @@ class OcrPreferences(
+     // Движки: system_tts (системные/локальные голоса), google_web (веб без
+     // API-ключа, с сайта Google Translate), eleven_api (ElevenLabs по ключу)
+     fun voiceEngine() = preferenceStore.getString("pref_voice_engine", "system_tts")
+-    fun voiceName() = preferenceStore.getString("pref_voice_name", "ru-ru-x-dfa-network")
++
++    /**
++     * Основной голос. По умолчанию ПУСТО — голос выбирается автоматически.
++     *
++     * Раньше здесь стоял сетевой голос Google `ru-ru-x-dfa-network`: у новой
++     * установки озвучка уходила в интернет без разрешения и без внятного
++     * запроса. Пустое значение отдаёт выбор VoiceHelper.pickFor, который
++     * ранжирует голоса «локальные → сетевые», поэтому по умолчанию читает
++     * установленный локальный движок, а сетевой включается только если его
++     * выбрали руками.
++     */
++    fun voiceName() = preferenceStore.getString("pref_voice_name", "")
+     fun voiceSlots() = preferenceStore.getString("voice_slots", "[]")
+ 
+     /**
