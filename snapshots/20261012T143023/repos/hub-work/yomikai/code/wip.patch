@@ -1,0 +1,210 @@
+diff --git a/data/src/main/java/mihon/data/ocr/TesseractOcrEngine.kt b/data/src/main/java/mihon/data/ocr/TesseractOcrEngine.kt
+index 786586f..e1e1759 100644
+--- a/data/src/main/java/mihon/data/ocr/TesseractOcrEngine.kt
++++ b/data/src/main/java/mihon/data/ocr/TesseractOcrEngine.kt
+@@ -22,6 +22,16 @@ import java.io.File
+  * `ocr_models/tesseract/` тем же загрузчиком, что и остальные модели: APK не
+  * должен тащить за собой ещё десяток мегабайт.
+  */
++/** Слово из hOCR: рамка, текст, номер строки и уверенность распознавания. */
++internal data class HocrWord(
++    val text: String,
++    val left: Int,
++    val top: Int,
++    val bottom: Int,
++    val line: Int,
++    val confidence: Int,
++)
++
+ internal class TesseractOcrEngine(
+     private val dataDir: File?,
+     private val prefs: OcrPreferences,
+@@ -97,67 +107,145 @@ internal class TesseractOcrEngine(
+         }
+         return try {
+             api.setImage(prepared ?: image)
+-            val raw = api.getUTF8Text().orEmpty()
+-            // getUTF8Text() склеивает слова вплотную и сносит переводы строк —
+-            // для дальнейшей очистки и разбивки на реплики это не годится.
+-            // На странице берём hOCR: в нём есть координаты слов, по ним текст
+-            // снова разбивается на строки.
+-            if (wholePage) runCatching { api.getHOCRText(HOCR_LAYOUT_BLOCKS) }
++            // Ищем через hOCR ВСЕГДА, а не только на странице: уверенность
++            // слов нужна и в одиночном бабле. Именно там Tesseract чаще всего
++            // выдаёт куски рамки панели и заливку как слова — на замере
++            // «(Боеуше» шло с conf 0, а настоящее «не» с conf 90.
++            val cleaned = runCatching { api.getHOCRText(HOCR_LAYOUT_BLOCKS) }
+                 .getOrNull()
+                 ?.takeIf { it.isNotBlank() }
+-                ?.let { hocrFrom(it) }
+-                ?: raw
+-            else {
+-                raw
+-            }
++                ?.let { hocrFrom(it, minShare = PAGE_KEPT_LETTERS_SHARE) }
++                .orEmpty()
++            // hOCR ничего не вернул или текста после отсева не осталось —
++            // отдаём пустоту, а не сырой мусор из getUTF8Text().
++            cleaned
+         } finally {
+             if (prepared != null && prepared !== image && !prepared.isRecycled) prepared.recycle()
+         }
+     }
+ 
+     /**
+-     * Разбор hOCR: Tesseract отдаёт в нём координаты каждого блока, поэтому
+-     * реплики не слипаются в одну простыню, а остаются отдельными строками.
++     * Разбор hOCR в чистый текст.
++     *
++     * hOCR — единственный вывод Tesseract, где у КАЖДОГО слова есть рамка и
++     * уверенность (`x_wconf`). Именно она отличает настоящий текст от линий
++     * панели и рисунка: у слова из арта уверенность 0–20, у настоящего — 80+.
++     *
++     * Важно: уверенность говорит «это текст, а не арт», но НЕ «слово написано
++     * верно». Проверено на реальном бабле: «(Боеуше» — conf 0, «никогда» — 22,
++     * «не» — 90. То есть мусор фильтруется надёжно, а опечатки остаются; за
++     * них отвечает словарь и чистка в AutoReadEngine.
++     *
++     * Раньше здесь печаталась верхняя координата рамки вместо самого слова —
++     * на странице движок выдавал числа вместо текста.
+      */
+-    private fun hocrFrom(hocr: String): String {
+-        val text = StringBuilder()
+-        var previousBottom: Int? = null
+-        WORD_RE.findAll(hocr).forEach { match ->
+-            val bbox = BBOX_RE.find(match.value)
+-            val bottom = bbox?.groupValues?.getOrNull(4)?.toIntOrNull()
+-            val left = bbox?.groupValues?.getOrNull(2)?.toIntOrNull()
+-            val previousLeft = previousLeftRef
+-            if (previousBottom != null && bottom != null) {
+-                val newBlock = bottom - previousBottom > LINE_JUMP_PX ||
+-                    (left != null && previousLeft != null && left < previousLeft - COLUMN_JUMP_PX)
+-                if (newBlock) text.append('\n')
+-                else text.append(' ')
+-            } else if (previousBottom != null) {
+-                text.append(' ')
++    private fun hocrFrom(hocr: String, minShare: Float = 0f): String {
++        val words = WORD_RE.findAll(hocr)
++            .mapNotNull { match ->
++                val left = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null
++                val top = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
++                val bottom = match.groupValues[4].toIntOrNull() ?: return@mapNotNull null
++                val text = match.groupValues[5].trim()
++                if (text.isEmpty()) return@mapNotNull null
++                HocrWord(
++                    text = text,
++                    left = left,
++                    top = top,
++                    bottom = bottom,
++                    line = match.groupValues[6].toIntOrNull() ?: 0,
++                    confidence = match.groupValues[7].toIntOrNull() ?: 0,
++                )
+             }
+-            text.append(match.groupValues[2])
+-            previousLeftRef = left
+-            previousBottom = bottom
+-        }
+-        return text.toString()
+-            .lines()
+-            .joinToString("\n") { it.trim() }
+-            .trim()
++            .toList()
++        if (words.isEmpty()) return ""
++        return cleanWords(words, minShare)
+     }
+ 
+-    private var previousLeftRef: Int? = null
++    /**
++     * Отсев мусора по уверенности и геометрии, затем сборка по строкам.
++     *
++     * Проверка результата обязательна: если после отсева осталось меньше
++     * [PAGE_KEPT_LETTERS_SHARE] букв от исходных, значит мы вычитывали рисунок, а
++     * не текст. Лучше вернуть пустоту — тогда авточтение промолчит, чем
++     * прочитает «БУБУ» (такое уже случалось на странице без текста).
++     */
+ 
+     override fun close() {
+         runCatching { api?.recycle() }
+     }
+ 
+-    private companion object {
+-        /** Слова hOCR: `bbox x0 y0 x1 y1 …>СЛОВО<` */
+-        private val WORD_RE = Regex("""bbox \d+ (\d+) (\d+) (\d+) (\d+) [^>]*>([^<]+)<""")
+-        private val BBOX_RE = Regex("""bbox (\d+) (\d+) (\d+) (\d+)""")
++    internal companion object {
++        /**
++         * Слово hOCR: `bbox L T R B; x_wconf N` внутри `ocr_line N` и текст.
++         * Группы: 1=L, 2=T, 3=R, 4=B, 5=текст, 6=номер строки, 7=уверенность.
++         */
++        private val WORD_RE = Regex(
++            """ocr_line_(\d+)[^>]*>(?:(?!</span>).)*?class='ocrx_word'[^>]*""" +
++                """title='bbox\s+\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+);[^']*""" +
++                """x_wconf\s+(-?\d+)'[^>]*>([^<]+)<""",
++        )
++        internal fun cleanWords(words: List<HocrWord>, minShare: Float = 0f): String {
++            val totalLetters = words.sumOf { it.text.count(Char::isLetter) }
++            if (totalLetters == 0) return ""
++            val heights = words.map { it.bottom - it.top }.filter { it > 0 }.sorted()
++            val medianHeight = heights.getOrNull(heights.size / 2) ?: 1
++            val kept = words.filter { word ->
++                val height = word.bottom - word.top
++                val letters = word.text.count(Char::isLetter)
++                // Уверенность НЕ различает текст и рисунок: на реальной
++                // странице «ЧУВСТВУЮТ» пришло с conf 0, а мусор «ИГРА.» — с
++                // conf 29. Поэтому жёсткий порог здесь съедал настоящие
++                // слова. Правило двух уровней: уверенные проходят всегда,
++                // сомнительные — только если это похоже на слово, а не на
++                // штрих рамки.
++                val trustworthy = word.confidence >= CONFIDENT_WORD_CONFIDENCE ||
++                    (word.confidence >= UNCERTAIN_WORD_CONFIDENCE && letters >= REAL_WORD_LETTERS)
++                trustworthy &&
++                    letters >= MIN_WORD_LETTERS &&
++                    height >= MIN_WORD_HEIGHT_RATIO * medianHeight &&
++                    height <= MAX_WORD_HEIGHT_RATIO * medianHeight
++            }
++            val keptLetters = kept.sumOf { it.text.count(Char::isLetter) }
++            // Страховка от «мы вычитали рисунок»: применяется только к целой
++            // странице (minShare), у бабла не применяется — там настоящие слова
++            // закономерно получают низкую уверенность.
++            if (minShare > 0f && keptLetters < minShare * totalLetters) return ""
++            val byLine = kept.groupBy { it.line }
++            return byLine.entries
++                .sortedBy { entry -> entry.value.minOf { it.top } }
++                .joinToString("\n") { entry ->
++                    entry.value.sortedBy { it.left }.joinToString(" ") { it.text }
++                }
++                .trim()
++        }
++
++        /**
++         * Уверенность, начиная с которой слово считаем настоящим без оговорок.
++         */
++        private const val CONFIDENT_WORD_CONFIDENCE = 60
++
++        /** Ниже этого — штрих рамки или одиночный символ, даже если букв хватает. */
++        private const val UNCERTAIN_WORD_CONFIDENCE = 25
++
++        /** Столько букв нужно, чтобы «слово» сочлось текстом, а не мусором. */
++        private const val REAL_WORD_LETTERS = 4
++
++        /** Слово короче этих долей медианной высоты — штрих, а не буква. */
++        private const val MIN_WORD_HEIGHT_RATIO = 0.3f
++
++        /** Сильно выше медианной — тоже арт (вспышки, заливки). */
++        private const val MAX_WORD_HEIGHT_RATIO = 3.5f
++
++        /** Минимум букв в слове: одиночные точки и чёрточки — мусор. */
++        private const val MIN_WORD_LETTERS = 2
++
++        /**
++         * Доля букв, которую должна пережить чистка. Ниже — мы вычитывали
++         * рисунок, и движок честно отдаёт пустоту вместо мусора.
++         */
++        private const val PAGE_KEPT_LETTERS_SHARE = 0.5f
++
+         /** Формат hOCR: блоки — так слова одной реплики не разлетаются. */
+         private const val HOCR_LAYOUT_BLOCKS = 3
+-        private const val LINE_JUMP_PX = 25
+-        private const val COLUMN_JUMP_PX = 40
+     }
+ }
