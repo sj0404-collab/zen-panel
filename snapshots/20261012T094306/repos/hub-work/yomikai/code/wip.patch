@@ -1,0 +1,79 @@
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 260685c43..ec756d93f 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -2719,6 +2719,19 @@ class AutoReadEngine(
+         // смысла нет: набор шаблонов статичен.
+         private val DIGIT_GLUE_RE = Regex("(?<=[\\p{L}])[0-9]+|[0-9]+(?=[\\p{L}])")
+         private val WHITESPACE_RE = Regex("\\s+")
++
++        /** Слово (буквы и цифры подряд) — единица подмены латиницы. */
++        private val WORD_RE = Regex("[\\p{L}\\p{N}]+")
++
++        /**
++         * Латинские буквы, неотличимые от кириллических. Только они: `l` и `i`
++         * в кириллицу не переводятся (это разные буквы в русском языке).
++         */
++        private val LATIN_TO_CYRILLIC = mapOf(
++            'a' to 'а', 'b' to 'в', 'c' to 'с', 'e' to 'е', 'h' to 'н',
++            'k' to 'к', 'm' to 'м', 'o' to 'о', 'p' to 'р', 't' to 'т',
++            'x' to 'х', 'y' to 'у',
++        )
+         private val REPEATED_CHAR_RE = Regex("(.)\\1{2,}")
+         private val TWO_LETTER_SPLIT_RE = Regex("^[\\p{L}][\\s—–-]+[\\p{L}][.!?…]*$")
+         // Короткое междометие/выкрик с сильной пунктуацией («ГХ!!», «А!»).
+@@ -3688,6 +3701,45 @@ class AutoReadEngine(
+          *    многих) — выбрасываются;
+          *  • остальные строки склеиваются пробелом.
+          */
++        /**
++         * Латинские буквы-омоглифы внутри СЛОВА — в кириллицу.
++         *
++         * Кириллический движок регулярно выдаёт «Взлёт» → «Bзлёт», «Сон» →
++         * «Cон», «здесь» → «здесь» с латинскими A/B/C/E/O/P/x/y. Такое слово
++         * TTS читает по-разному или вообще молчит, поэтому латиницу внутри
++         * слова заменяем на кириллический вид look-alike.
++         *
++         * Слова, где латиницы больше половины, НЕ трогаем: это уже не опечатка
++         * внутри слова, а чужой текст (латинская вывеска в арте манги) — его
++         * должен отсечь фильтр иноязычных надписей, а не подменять здесь.
++         */
++        internal fun replaceLatinLookalikes(text: String): String {
++            val out = StringBuilder(text.length)
++            var last = 0
++            // Идём по совпадениям и копируем промежутки как есть: пунктуация и
++            // тире управляют паузами в озвучке, терять их нельзя.
++            for (match in WORD_RE.findAll(text)) {
++                val word = match.value
++                val letters = word.count { it.isLetter() }
++                val latin = word.count { it in 'a'..'z' || it in 'A'..'Z' }
++                if (letters == 0 || latin == 0 || latin * 2 > letters) continue
++                out.append(text, last, match.range.first)
++                for (ch in word) {
++                    val cyrillic = LATIN_TO_CYRILLIC[ch.lowercaseChar()]
++                    out.append(
++                        if (cyrillic != null && ch.isUpperCase()) {
++                            cyrillic.uppercaseChar()
++                        } else {
++                            cyrillic ?: ch
++                        },
++                    )
++                }
++                last = match.range.last + 1
++            }
++            out.append(text, last, text.length)
++            return out.toString()
++        }
++
+         fun cleanOcrGarbage(text: String, language: String): String {
+             val rawRows = text.lines()
+                 .map { OcrTextCleaner.stripPromotionalText(it).trim() }
+@@ -3707,6 +3759,8 @@ class AutoReadEngine(
+             val rows = rawRows.map { row ->
+                 row.replace(DIGIT_GLUE_RE, " ")
+                     .replace(WHITESPACE_RE, " ").trim()
++            }.map { row ->
++                if (language == "ru") replaceLatinLookalikes(row) else row
+             }.filter { it.isNotBlank() }
+             if (rows.isEmpty()) return ""
+             val kept = rows.filter { row -> isMeaningfulRow(row, language) }
