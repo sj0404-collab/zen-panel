@@ -1,0 +1,1224 @@
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt
+index 6a94c00..ccfca78 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/components/ReaderFloatingControls.kt
+@@ -29,7 +29,6 @@ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.outlined.Tune
+ import androidx.compose.material.icons.outlined.AutoMode
+ import androidx.compose.material.icons.outlined.AutoStories
+-import androidx.compose.material.icons.outlined.ImageSearch
+ import androidx.compose.material.icons.outlined.CameraAlt
+ import androidx.compose.material.icons.outlined.DocumentScanner
+ import androidx.compose.material.icons.outlined.GraphicEq
+@@ -94,13 +93,6 @@ fun ReaderFloatingControls(
+      * только из плавающей кнопки на экране манги (с предварительным сканом).
+      */
+     onAutoReadChapter: () -> Unit = {},
+-    /**
+-     * Описать текущую страницу голосом: запрос к vision-модели выбранного
+-     * OCR-движка. Нужен на разворотах-иллюстрациях, где реплик нет и озвучке
+-     * нечего читать. С локальным движком описание не вернётся — страница
+-     * просто останется как есть.
+-     */
+-    onDescribePage: () -> Unit = {},
+     /** Идёт ли чтение главы — для подписи и цвета кнопки. */
+     chapterReadActive: Boolean = false,
+     onStopSpeak: () -> Unit = {},
+@@ -339,23 +331,6 @@ fun ReaderFloatingControls(
+                                     ),
+                                 ),
+                             ),
+-                            rowUnlessHidden(
+-                                "r_describe_page",
+-                                OcrMenuRow(
+-                                    label = "Описать страницу",
+-                                    action = OcrMenuAction(
+-                                        icon = Icons.Outlined.ImageSearch,
+-                                        onClick = {
+-                                            beepAction()
+-                                            menuOpen = false
+-                                            onDescribePage()
+-                                        },
+-                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+-                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+-                                        contentDescription = "Описать страницу",
+-                                    ),
+-                                ),
+-                            ),
+                             OcrMenuRow(
+                                 label = "Стоп чтения",
+                                 action = OcrMenuAction(
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 387d729..51595b8 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -774,17 +774,11 @@ class AutoReadEngine(
+             // битмап на сборку GC на каждом кадре.
+             val released = java.util.concurrent.atomic.AtomicBoolean(false)
+             var scanBitmap: Bitmap? = null
+-            // Копия кадра для описания разворота. Основной битмап умирает на
+-            // releaseFrame(), а описание может понадобиться позже — когда
+-            // выяснится, что на странице нет ни одной реплики.
+-            var describeBitmap: Bitmap? = null
+             val releaseFrame = {
+                 if (released.compareAndSet(false, true)) {
+                     if (!bitmap.isRecycled) bitmap.recycle()
+                     val scan = scanBitmap
+                     if (scan != null && scan !== bitmap && !scan.isRecycled) scan.recycle()
+-                    val describe = describeBitmap
+-                    if (describe != null && !describe.isRecycled) describe.recycle()
+                 }
+             }
+             try {
+@@ -1048,13 +1042,6 @@ class AutoReadEngine(
+                     runCatching { encodeJpeg(ocrBitmap, JPEG_QUALITY) }.getOrNull()
+                 } else null
+ 
+-                // Копия для описания разворота — тоже ДО recycle. Берём только
+-                // когда функция включена, чтобы не платить памятью на каждом
+-                // кадре у пользователя, которому описание не нужно.
+-                if (prefs.describeTextlessPages().get() && !bitmap.isRecycled) {
+-                    describeBitmap = copyForDescription(bitmap)
+-                }
+-
+                 // Пиксели больше не нужны — освобождаем сразу, не дожидаясь
+                 // конца кадра (releaseFrame идемпотентен, finally его подстрахует).
+                 releaseFrame()
+@@ -1235,35 +1222,6 @@ class AutoReadEngine(
+                         .onFailure { logcat(LogPriority.WARN, it) { "Reading notification failed" } }
+                 }
+ 
+-                // Разворот без текста: озвучивать нечего, и страница молча
+-                // листалась. Если функция включена — спрашиваем у ВЫБРАННОЙ
+-                // vision-модели, что на картинке, и читаем описание вслух.
+-                // Ждём НЕДОЛГО: запрос уходит в облако и легко висит десятки
+-                // секунд, а авточтение стояло бы на каждой пустой странице.
+-                // Не ответила за [DESCRIBE_TIMEOUT_MS] — описание выключаем само,
+-                // иначе чтение встанет в очередь к модели до конца главы.
+-                val describe = describeBitmap
+-                if (ordered.isEmpty() && describe != null && !describe.isRecycled) {
+-                    val answer = withTimeoutOrNull(DESCRIBE_TIMEOUT_MS) {
+-                        describePageImage(describe, pageIndex)
+-                    }
+-                    if (!answer.isNullOrBlank()) {
+-                        lastFrameText = answer
+-                        runCatching { TtsReadingNotifier.show(context, answer, pageLabel) }
+-                        speakAndAwait(SpeechMarkup.strip(answer))
+-                    } else {
+-                        disableDescribeWithReason(
+-                            if (answer == null) {
+-                                "модель не ответила за ${DESCRIBE_TIMEOUT_MS / 1000} с"
+-                            } else {
+-                                "движок не умеет описывать картинки"
+-                            },
+-                        )
+-                    }
+-                }
+-                describeBitmap?.let { if (!it.isRecycled) it.recycle() }
+-                describeBitmap = null
+-
+                 // 3.7) перевод ВСЕЙ страницы одним запросом (раньше был
+                 // отдельный HTTP-запрос на каждую реплику — на 15 бабблах
+                 // это 15 последовательных обращений между озвучками).
+@@ -1624,77 +1582,6 @@ class AutoReadEngine(
+         }
+     }
+ 
+-    /**
+-     * Описание страницы выбранной vision-моделью.
+-     *
+-     * Работает через тот движок, что выбран в настройках OCR, и только если он
+-     * онлайн (Zen / Gemini / OpenRouter): картинка уходит в облако, локальные
+-     * движки описать не умеют и возвращают null. null означает «описания не
+-     * будет» — вызывающий просто листает страницу дальше.
+-     */
+-    suspend fun describePageImage(bitmap: Bitmap, pageIndex: Int): String? {
+-        if (bitmap.isRecycled) return null
+-        eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+-            title = "Описание страницы $pageIndex",
+-            detail = "Движок ${prefs.ocrModel().get().name.lowercase()} запрашивается на картинку",
+-        )
+-        val answer = runCatching {
+-            eu.kanade.tachiyomi.data.ai.AiAgent.askAboutPage(bitmap, DESCRIBE_PAGE_PROMPT)
+-        }.getOrElse { e ->
+-            eu.kanade.tachiyomi.data.ai.AiConsole.error("Описание страницы $pageIndex не удалось: ${e.message}")
+-            null
+-        }
+-        val text = answer?.trim()?.takeIf { it.isNotBlank() && !containsNoTextMarker(it) }
+-        eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+-            title = "Описание страницы $pageIndex",
+-            detail = if (text == null) {
+-                "движок не умеет описывать картинки — страница пролистывается"
+-            } else {
+-                "получено: ${text.take(200)}"
+-            },
+-        )
+-        return text
+-    }
+-
+-    /**
+-     * Выключает описание разворотов само, потому что запрос ответа не дал.
+-     *
+-     * Пока функция включена, авточтение встаёт на паузу у КАЖДОЙ страницы без
+-     * текста и ждёт сеть. Если модель молчит или движок вообще не умеет
+-     * описывать картинки, ждать дальше бессмысленно: чтение встаёт в очередь
+-     * до конца главы. Выключаем и пишем причину в «Консоль ИИ» и в историю.
+-     */
+-    private fun disableDescribeWithReason(reason: String) {
+-        if (!prefs.describeTextlessPages().get()) return
+-        prefs.describeTextlessPages().set(false)
+-        logcat(LogPriority.WARN) { "Описание разворотов выключено: $reason" }
+-        eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+-            title = "Описание разворотов выключено",
+-            detail = reason,
+-        )
+-        OcrHistoryStore.addAutoRead(false, "описание выключено", reason)
+-    }
+-
+-    /** Независимая уменьшенная копия кадра для отправки в vision-модель. */
+-    private fun copyForDescription(bitmap: Bitmap): Bitmap? {
+-        if (bitmap.isRecycled) return null
+-        val maxSide = maxOf(bitmap.width, bitmap.height)
+-        if (maxSide <= 0) return null
+-        return runCatching {
+-            if (maxSide > DESCRIBE_MAX_SIDE) {
+-                val scale = DESCRIBE_MAX_SIDE.toFloat() / maxSide
+-                Bitmap.createScaledBitmap(
+-                    bitmap,
+-                    (bitmap.width * scale).toInt().coerceAtLeast(1),
+-                    (bitmap.height * scale).toInt().coerceAtLeast(1),
+-                    true,
+-                )
+-            } else {
+-                bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+-            }
+-        }.getOrNull()
+-    }
+-
+     /**
+      * Итог «Скриншот сейчас»: что реально удалось сделать с кадром.
+      *
+@@ -2885,920 +2772,6 @@ class AutoReadEngine(
+          */
+         private const val RUSSIAN_LINE_CYRILLIC_SHARE = 0.5f
+ 
+-        /** Сторона копии кадра для описания: vision-модели хватает этого. */
+-        private const val DESCRIBE_MAX_SIDE = 900
+-
+-        /**
+-         * Сколько ждём ответа vision-модели на разворот без текста.
+-         *
+-         * Запрос уходит в облако и может висеть десятки секунд. Пока описание
+-         * включено, авточтение стоит на каждой пустой странице — поэтому ждём
+-         * недолго: не ответила — выключаем описание и листаем дальше.
+-         */
+-        internal const val DESCRIBE_TIMEOUT_MS = 15_000L
+-
+-        /** Вопрос к vision-модели для разворота без текста. */
+-        private const val DESCRIBE_PAGE_PROMPT =
+-            "Опиши этот кадр манги коротко, 2–4 предложения: что изображено, кто в кадре, " +
+-                "что происходит, какое настроение. Если это просто фон или пейзаж без " +
+-                "персонажей, так и напиши. Если можешь прочитать текст на картинке — " +
+-                "приведи его отдельно. Не выдумывай то, чего на кадре нет."
+-
+-        /** Ответы вида «текста на странице нет» — описанием не считаются. */
+-        private val NO_TEXT_MARKERS = listOf(
+-            "нет текста",
+-            "текст отсутствует",
+-            "текста нет",
+-            "no text",
+-        )
+-
+-        /**
+-         * Vision-модель честно отвечает «текста на странице нет» — это не
+-         * описание, и читать такое вслух незачем.
+-         */
+-        internal fun containsNoTextMarker(text: String): Boolean {
+-            val lower = text.lowercase()
+-            return NO_TEXT_MARKERS.any { marker -> lower.contains(marker) }
+-        }
+-
+-        /**
+-         * Сколько последних персонажей движок помнит по полу и имени. Память
+-         * нужна только чтобы отличить «тот же персонаж» от «нового»; на длинной
+-         * главе она росла бы без границ, и каждая реплика сравнивалась бы со
+-         * всеми сразу. Старый персонаж забывается — тогда как раздача его номера
+-         * другому не страшна: на такой сцене голосов всё равно больше нет.
+-         */
+-        private const val MAX_TRACKED_SPEAKERS = 12
+-
+-        /**
+-         * Насколько реплика должна быть похожа на последнюю реплику персонажа,
+-         * чтобы считаться её продолжением (3-граммы). Порог тот же, что был у
+-         * прежней проверки перекрытия кадров, — он ловит и обрезанный OCR-текст.
+-         */
+-        private const val CONTINUATION_SIMILARITY = 0.45f
+-
+-        /**
+-         * Короче этого реплики продолжение не ищем: у «Да!»/«Нет!» нет
+-         * 3-грамм, иначе все короткие возгласы в сцене схлопнулись бы в одного
+-         * персонажа, а разные персонажи — слиплись бы в один голос.
+-         */
+-        private const val MIN_FINGERPRINT = 12
+-
+-        /**
+-         * Максимальная длинная сторона кадра для OCR: минимальное разрешение,
+-         * при котором текст ещё читается. Детектор движка всё равно масштабирует
+-         * кадр до ~736px, поэтому уменьшенный заранее кадр ускоряет конвертацию
+-         * пикселей и онлайн-OCR без потери слов.
+-         */
+-        private const val OCR_SCAN_MAX_EDGE = 1600
+-        /** Портретные/лентовые кадры: мелкий текст требует больше пикселей. */
+-        private const val OCR_SCAN_MAX_EDGE_PORTRAIT = 2048
+-        /** Кадры мельче этой стороны уравниваем вверх. */
+-        private const val OCR_UPSCALE_BELOW_EDGE = 1000
+-        /** Больше чем в 1.5 раза мелкий кадр не растягиваем (время OCR). */
+-        private const val OCR_UPSCALE_MAX = 1.5f
+-
+-        /** Качество JPEG скриншотов во вкладку «Скриншоты». */
+-        private const val JPEG_QUALITY = 78
+-
+-        /**
+-         * Онлайн-движки OCR (ответ идёт по сети). Если такой движок вернул
+-         * очень мало строк — кадр дочитывается локальным разбором баллонов,
+-         * чтобы AI-пропущенная реплика (напр. крупный текст поверх ватермарки)
+-         * не терялась. Офлайн-движки (CYRILLIC/MLKIT) и так дают строки с боксами.
+-         */
+-        private val ONLINE_MODELS = setOf(
+-            OcrModel.GLENS,
+-            OcrModel.ZEN_FREE,
+-            OcrModel.GOOGLE,
+-            OcrModel.OPENROUTER,
+-            OcrModel.OWOCR,
+-        )
+-
+-        /**
+-         * Порог «подозрительно мало»: при меньшем числе осмысленных строк
+-         * онлайн-результата запускается локальный добор баллонов.
+-         */
+-        private const val SUPPLEMENT_BUBBLES_MIN = 3
+-
+-        /**
+-         * Формулировки выученного правила «баллоны», при которых авточтение
+-         * берёт облачки основным путём, а текст полной страницы — запасным.
+-         * Правило пишет агент (или пользователь) обычными словами, поэтому
+-         * список короткий и явный: что не распознали — остаётся как было.
+-         */
+-        private val BUBBLES_ONLY_MARKERS = listOf(
+-            "только бабл",
+-            "только облачк",
+-            "только реплик",
+-            "без текста страницы",
+-            "не читать текст страницы",
+-            "игнорировать текст страницы",
+-            "пропускать текст страницы",
+-        )
+-
+-        /** Возвращает кадр в минимально читаемом разрешении (сам же, если он уже мал). */
+-        private fun downscaleForScan(src: Bitmap): Bitmap {
+-            // Переиспользованный кадр отдавать нельзя: следующий же getPixels
+-            // на нём роняет процесс. Лучше пустой результат, чем падение.
+-            if (src.isRecycled) return src
+-            val longEdge = maxOf(src.width, src.height)
+-            // Портрет/лента: узкие страницы дают мелкий текст в мелком кадре —
+-            // детектор и рекогнайзер режут слова («недоговаривает»). Потолок
+-            // выше для узких, узость и есть тот самый тяжёлый случай.
+-            val maxEdge = if (src.height > src.width) OCR_SCAN_MAX_EDGE_PORTRAIT else OCR_SCAN_MAX_EDGE
+-            if (longEdge > maxEdge) {
+-                val scale = maxEdge.toFloat() / longEdge
+-                return Bitmap.createScaledBitmap(
+-                    src,
+-                    (src.width * scale).toInt().coerceAtLeast(1),
+-                    (src.height * scale).toInt().coerceAtLeast(1),
+-                    true,
+-                )
+-            }
+-            // Маленький кадр — наоборот, апскейл: мелкий кегль на 720-900px
+-            // детектор просто не видит целиком. ×1.5 без фильтрации дешевле
+-            // интерполяции, но билинейная даёт меньше артефактов на буквах.
+-            if (longEdge in 1 until OCR_UPSCALE_BELOW_EDGE) {
+-                val up = minOf(OCR_UPSCALE_MAX, OCR_UPSCALE_BELOW_EDGE.toFloat() / longEdge)
+-                return Bitmap.createScaledBitmap(
+-                    src,
+-                    (src.width * up).toInt().coerceAtLeast(1),
+-                    (src.height * up).toInt().coerceAtLeast(1),
+-                    true,
+-                )
+-            }
+-            return src
+-        }
+-
+-        /** Сжимает кадр в JPEG-байты (для вкладки «Скриншоты»). */
+-        private fun encodeJpeg(bitmap: Bitmap, quality: Int): ByteArray {
+-            val out = java.io.ByteArrayOutputStream()
+-            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+-            return out.toByteArray()
+-        }
+-
+-        /**
+-         * Максимальное время OCR одного кадра в авточтении. Локальный движок
+-         * при первом запуске/загрузке модели, а также онлайн-движок (GLENS /
+-         * Google) при недоступном сервисе БЕЗ этого жёсткого лимита могли
+-         * заморозить авточтение навсегда. По таймауту кадр считается пустым.
+-         */
+-        internal const val OCR_FRAME_TIMEOUT_MS = 25_000L
+-
+-        /**
+-         * Сколько ждать первого `onStart`, прежде чем признать реплику
+-         * неозвучиваемой. Раньше ожидание шло полным [ttsTimeoutMs] (минимум 8 с)
+-         * на КАЖДУЮ реплику, которую движок не смог произнести: пустой текст после
+-         * снятия разметки, ремарка без звучания, незагруженный голос. На странице
+-         * из одной реплики это выглядело как «авточтение остановилось»: ждать
+-         * больше нечего, но цикл молчал 8+ секунд и только потом листал дальше.
+-         */
+-        internal const val TTS_START_GRACE_MS = 1_200L
+-
+-        /**
+-         * Граница, после которой не запустившуюся реплику ждать бессмысленно.
+-         * Вынесена отдельно, чтобы [speakAndAwait] не ждал полный таймаут.
+-         */
+-        internal fun ttsStartedOrGiveUp(started: Boolean, elapsedMs: Long): Boolean =
+-            started || elapsedMs >= TTS_START_GRACE_MS
+-
+-        /**
+-         * Кто из уже известных персонажей продолжает говорить в сцене без
+-         * подписей. Возвращает индекс в списке персонажей этого пола
+-         * (по порядку звучания), либо -1, если продолжающего нет.
+-         *
+-         * Вынесено отдельно от [openTurnSpeaker], потому что это решение
+-         * принимается на каждый бабл, а проверяется должно без Android и без
+-         * инъекций: регрессия здесь сразу слышна как «голоса по кругу».
+-         *
+-         * Правила:
+-         *  • пол сменился → продолжает последний говоривший этого пола: диалог
+-         *    возвращается к прежнему собеседнику;
+-         *  • реплика короткая → тот же голос, что и предыдущая реплика того же пола;
+-         *  • реплика длинная и персонажей этого пола уже двое → отвечает второй,
+-         *    ведь две длинные реплики подряд обычно говорят разные люди;
+-         *  • персонаж один → продолжает он.
+-         */
+-        internal fun continueSpeakerIndex(
+-            sameGenderCount: Int,
+-            genderJustChanged: Boolean,
+-            longLine: Boolean,
+-        ): Int = when {
+-            sameGenderCount <= 0 -> -1
+-            genderJustChanged || !longLine -> sameGenderCount - 1
+-            sameGenderCount >= 2 -> sameGenderCount - 2
+-            else -> 0
+-        }
+-
+-        /**
+-         * Рамка реплики из координат КАДРА в координаты СТРАНИЦЫ.
+-         *
+-         * OCR отдаёт рамки в долях кадра — того окна, что ушло в распознавание.
+-         * Оверлей рисует их относительно прямоугольника страницы, а у вебтуна
+-         * кадр это часть ленты, поэтому без пересчёта значки уезжали не на
+-         * свою реплику. [cropLeft..cropBottom] — какая часть страницы попала в
+-         * кадр, в тех же долях 0..1.
+-         *
+-         * null — пересчитывать нечего: геометрии кадра нет (кадр склеен из
+-         * нескольких страниц) либо она вырожденная. Тогда рамка остаётся
+-         * прежней, как и раньше.
+-         *
+-         * Возвращает [left, top, right, bottom], чтобы проверялось без Android.
+-         */
+-        internal fun frameBoxToPage(
+-            left: Float,
+-            top: Float,
+-            right: Float,
+-            bottom: Float,
+-            cropLeft: Float,
+-            cropTop: Float,
+-            cropRight: Float,
+-            cropBottom: Float,
+-        ): FloatArray? {
+-            val w = cropRight - cropLeft
+-            val h = cropBottom - cropTop
+-            if (w <= 0f || h <= 0f) return null
+-            return floatArrayOf(
+-                cropLeft + left * w,
+-                cropTop + top * h,
+-                cropLeft + right * w,
+-                cropTop + bottom * h,
+-            )
+-        }
+-
+-        /**
+-         * Сколько подряд неозвученных реплик считается «озвучки нет».
+-         *
+-         * Разовый отказ ничего не значит: ремарка без звучания, пустой текст
+-         * после снятия разметки, занятый другим экраном голос. Рерия из трёх —
+-         * уже не совпадение.
+-         */
+-        internal const val REJECTED_STOP_AFTER = 3
+-
+-        /** Сообщение читателю, когда системного TTS-движка на устройстве нет. */
+-        internal const val NO_VOICE_MESSAGE =
+-            "Авточтение остановлено: на устройстве нет TTS-движка. Установите голос " +
+-                "(Настройки → Озвучка) или включите сетевой голос."
+-
+-        /** Сообщение читателю, когда движок есть, но текст он не принимает. */
+-        internal const val REJECTED_VOICE_MESSAGE =
+-            "Авточтение остановлено: голос не озвучивает текст. Проверьте язык и данные " +
+-                "голоса в Настройках → Озвучка."
+-
+-        /**
+-         * Сообщение читателю, когда распознавание кадра устойчиво не удаётся.
+-         *
+-         * Раньше ошибка и пустой результат OCR считались «страница без текста»:
+-         * конвейер дочитывал кадр и листал дальше. Читатель получал главу,
+-         * пролистанную за несколько секунд, без единого слова и без причины.
+-         */
+-        internal const val OCR_FAILED_MESSAGE =
+-            "Авточтение остановлено: не удалось распознать текст страницы. Проверьте " +
+-                "OCR-движ и его языковой пакет в Настройках → Озвучка."
+-
+-        /**
+-         * Сколько кадров подряд должно не дать результата, чтобы остановиться.
+-         *
+-         * Первый кадр после запуска движка может не успеть: модель локального
+-         * OCR грузится на ходу и первый вызов упирается в таймаут. Поэтому
+-         * одиночный отказ пропускаем, а серия из трёх — уже не совпадение,
+-         * и листать дальше нечего.
+-         */
+-        internal const val OCR_FAILED_STOP_AFTER = 3
+-
+-        /**
+-         * Пауза после реплики перед следующей — «ритм голосов».
+-         *
+-         * Раньше пауза была фиксированной (350 мс + 900 мс на отрисовку) и не
+-         * зависела ни от текста, ни от голоса: короткое «Да!» и длинная фраза
+-         * отделялись от следующей реплики одинаково, и чтение звучало как
+-         * метроном с пустым тактом. Теперь пауза вырастает там, где её делает
+-         * сама речь: после многоточия, тире и вопроса пауза длиннее, после
+-         * точки — короче, после восклицания — почти не нужна.
+-         *
+-         * Длинная реплика тоже получает чуть больше воздуха: у человека после
+-         * сложной фразы пауза длиннее, чем после короткой.
+-         *
+-         * Диапазон намеренно узкий (120..800 мс): меньше — реплики слипаются в
+-         * одну, больше — появляется провал, которого в книге не было.
+-         */
+-        internal fun pauseAfterLineMs(text: String, speechRate: Float): Long {
+-            val rate = speechRate.takeIf { it.isFinite() && it > 0f }?.coerceIn(0.5f, 2f) ?: 1f
+-            // Чем быстрее голос, тем короче пауза: иначе на быстром темпе
+-            // возникает ровно тот провал, которого хотелось избежать.
+-            val tail = text.trimEnd().takeLast(3)
+-            val base = when {
+-                tail.endsWith("…") || tail.endsWith("...") || tail.endsWith("—") || tail.endsWith("-") -> 620L
+-                tail.endsWith("?") -> 480L
+-                tail.endsWith("!") -> 160L
+-                tail.endsWith(".") || tail.endsWith("»") || tail.endsWith(".") -> 340L
+-                else -> 260L
+-            }
+-            val byLength = text.trim().length.coerceAtMost(240).toLong() / 4L
+-            val raw = ((base + byLength) / rate).toLong()
+-            return raw.coerceIn(120L, 800L)
+-        }
+-
+-        fun ttsTimeoutMs(textLength: Int, speechRate: Float): Long {
+-            val rate = speechRate.takeIf { it.isFinite() && it > 0f }?.coerceIn(0.5f, 2f) ?: 1f
+-            return (textLength.coerceAtLeast(0) * 220L / rate).toLong() + 8_000L
+-        }
+-
+-        /** Настоящие одно- и двухбуквенные русские слова (союзы/предлоги/междометия). */
+-        private val RUSSIAN_SINGLE_WORD = setOf("а", "и", "в", "с", "у", "о", "я", "к")
+-        private val RUSSIAN_SHORT_WORD = setOf(
+-            "но", "не", "да", "он", "мы", "вы", "ты", "ни", "от", "до", "на",
+-            "за", "по", "из", "ко", "то", "ли", "же", "бы", "ну", "ах", "ох",
+-            "ой", "эх", "уж", "ага", "так", "тот", "это", "се", "об", "при", "про",
+-        )
+-
+-        /** Одно- или двухбуквенное настоящее русское слово. */
+-        fun isShortRussianWord(text: String): Boolean {
+-            val t = text.trim().lowercase()
+-            return t in RUSSIAN_SINGLE_WORD || t in RUSSIAN_SHORT_WORD
+-        }
+-
+-        /**
+-         * Ключ 3-граммы без выделения подстроки.
+-         *
+-         * Раньше здесь был `substring(i, i + 3)` на КАЖДУЮ позицию обеих строк.
+-         * Функция зовётся на каждую реплику против 600 записей истории и против
+-         * всех известных персонажей, то есть десятки тысяч аллокаций на один
+-         * кадр — и это был главный тормоз авточтения. Три UTF-16 кода
+-         * складываются в Long без коллизий, поэтому сравнение идёт по
+-         * примитивам, без мусора на куче.
+-         */
+-        private fun trigramKey(s: String, i: Int): Long =
+-            (s[i].code.toLong() shl 32) or (s[i + 1].code.toLong() shl 16) or s[i + 2].code.toLong()
+-
+-        /** Доля общих 3-грамм: мера «тот же бабл, но OCR дрожит». */
+-        private fun trigramSimilarity(a: String, b: String): Float {
+-            if (a.length < 3 || b.length < 3) return if (a == b) 1f else 0f
+-            val ta = HashSet<Long>((a.length * 4 / 3) + 8)
+-            for (i in 0..a.length - 3) ta.add(trigramKey(a, i))
+-            var common = 0
+-            val total = b.length - 2
+-            for (i in 0..b.length - 3) {
+-                if (trigramKey(b, i) in ta) common++
+-            }
+-            return if (total <= 0) 0f else common.toFloat() / total
+-        }
+-
+-        /**
+-         * Один ли это бабл, а не просто два похожих текста.
+-         *
+-         * Сравнение текста, а не координат: у OCR дрожит текст, а рамка у того же
+-         * бабла прыгает. Поэтому «тот же бабл» — это либо почти равный текст
+-         * (3-граммы), либо случай, когда один текст это почти весь другой.
+-         *
+-         * Простое «один содержит другой» было неверно и стоило верхнего бабла на
+-         * странице: предыдущая страница заканчивалась на «Я не знаю», следующая
+-         * начиналась с «Я не знаю, что делать» — и вторая реплика молча выпадала из
+-         * чтения, потому что первая в неё входила. Тот же механизм съедал любую
+-         * новую реплику, внутри которой встретилась уже прочитанная короткая.
+-         *
+-         * @param old уже озвученная нормализованная строка;
+-         * @param new новая нормализованная строка.
+-         */
+-        internal fun isSameSpokenLine(old: String, new: String): Boolean {
+-            if (old == new) return true
+-            val shorter = minOf(old.length, new.length)
+-            val longer = maxOf(old.length, new.length)
+-            // Разница длин — это разные реплики, и проверять их нечем.
+-            // Именно этот порядок был неверным: короткая новая реплика, целиком
+-            // вошедшая в длинную прочитанную, даёт 100% общих 3-грамм и
+-            // считалась дублем — верхний бабл страницы молча выпадал из чтения.
+-            if (shorter < CONTAINMENT_RATIO * longer) return false
+-            // Сопоставимая длина: дальше решает сходство 3-грамм, а включение
+-            // ловит обрезок края, который сходством иногда не берётся.
+-            if (trigramSimilarity(old, new) >= 0.6f) return true
+-            return if (old.length >= new.length) old.contains(new) else new.contains(old)
+-        }
+-
+-        /**
+-         * Эмоция реплики по словам и пунктуации (RU + общие крики).
+-         *
+-         * Голос должен ВЖИВАТЬСЯ в роль, а не «зачитывать»: страх читается выше и
+-         * быстрее, утешение — ниже и медленнее. Правила нарочно простые и
+-         * предсказуемые: лучше пережать половину реплик, чем угадать наспех.
+-         * Порядок проверок важен: «не бойся!» — это утешение, а не страх.
+-         */
+-        fun guessEmotion(text: String): Emotion {
+-            val t = text.lowercase().trim()
+-            if (t.length < 2) return Emotion.NEUTRAL
+-            // Утешение перебивает страх: «не бойся, я рядом» звучит мягко.
+-            if (listOf(
+-                    "не бойся", "не бойтесь", "я рядом", "всё хорошо", "все хорошо",
+-                    "спокойно", "спокойствие", "успокой", "обним", "прости", "прощение",
+-                    "ты не один", "ты не одна", "всё будет", "все будет", "ничего страшного",
+-                    "я с тобой", "береги себя", "будь осторожен", "держись",
+-                ).any { it in t }
+-            ) {
+-                return Emotion.COMFORT
+-            }
+-            if (listOf(
+-                    "боюсь", "боится", "боишься", "боятся", "страх", "страшно", "ужас",
+-                    "ужасно", "пуга", "паник", "беги", "бежим", "спасай", "смерт",
+-                    "погиб", "убьёт", "убьет", "задрож", "дрожь", "вскрик", "крик",
+-                    "помогите", "помоги", "бегом", "опасн", "опасно",
+-                ).any { it in t } &&
+-                // «не страшно», «\bне» с границей слова: иначе «мне страшно»
+-                // (внутри «мне» сидят буквы «не») ложно считалось успокоением.
+-                !listOf(
+-                    Regex("\\bне\\s+страшн"),
+-                    Regex("\\bне\\s+бо(йся|ится|ишься|ятся)"),
+-                    Regex("\\bбез\\s+паник"),
+-                ).any { it.containsMatchIn(t) }
+-            ) {
+-                return Emotion.FEAR
+-            }
+-            if (listOf(
+-                    "ненавижу", "бесит", "бешена", "злой", "злость", "замолчи", "уйди",
+-                    "прекрати", "как ты смеешь", "как вы смеете", "хватит", "сжечь",
+-                    "уничтож", "сдохни", "мерзавец", "гад", "в ярости", "ронять",
+-                ).any { it in t }
+-            ) {
+-                return Emotion.ANGER
+-            }
+-            if (listOf(
+-                    "шепч", "шёпот", "шепот", "тихо", "тиш", "шшш", "молч", "секрет",
+-                ).any { it in t }
+-            ) {
+-                return Emotion.WHISPER
+-            }
+-            if (listOf(
+-                    "плак", "плачу", "груст", "печал", "прощай", "больно", "одиноко",
+-                    "один", "слез", "рыда", "тоска", "опустош", "виноват", "жал",
+-                ).any { it in t }
+-            ) {
+-                return Emotion.SADNESS
+-            }
+-            if (listOf(
+-                    "ха-ха", "хаха", "хи-хи", "хихи", "ура", "рада", "рад ", "счаст",
+-                    "люблю", "смех", "весел", "замечательно", "отлично", "ура!",
+-                ).any { it in t }
+-            ) {
+-                return Emotion.JOY
+-            }
+-            if (listOf(
+-                    "не может быть", "неужели", "как?!", "что?!", "кто?!", "зачем?!",
+-                    "right?", "правда?!", "серьёзно", "серьезно", "ничего себе",
+-                ).any { it in t }
+-            ) {
+-                return Emotion.SURPRISE
+-            }
+-            // Пунктуация: «!!!» злость/радость, «?!» удивление, «…» грусть, «!?» —
+-            // сперва удивление, потом всё остальное.
+-            val exclamations = t.count { it == '!' }
+-            if (exclamations >= 3) return Emotion.ANGER
+-            if (t.contains("?!") || t.contains("!?")) return Emotion.SURPRISE
+-            if (t.endsWith("...") || t.endsWith("…")) return Emotion.SADNESS
+-            // Один восклицательный знак сам по себе эмоцию не задаёт.
+-            return Emotion.NEUTRAL
+-        }
+-
+-        /**
+-         * Доминирующий язык текста кадра по письменности: "ru"/"en"/"ja"/"ko"/"zh",
+-     * "" — букв не нашлось. Нужен, чтобы при источнике «auto» решить, надо ли
+-     * переводить: эталонный язык реплик из настроек (по умолчанию «ru») врал
+-     * на китайской манхуа, и перевод молча выключался.
+-     */
+-    fun dominantLanguage(texts: List<String>): String {
+-        var cyr = 0
+-        var lat = 0
+-        var kana = 0
+-        var hangul = 0
+-        var han = 0
+-        for (t in texts) {
+-            for (ch in t) {
+-                when {
+-                    ch in '\u0400'..'\u04FF' -> cyr++
+-                    ch in '\u0041'..'\u005A' || ch in '\u0061'..'\u007A' -> lat++
+-                    ch in '\u3040'..'\u30FF' -> kana++
+-                    ch in '\uAC00'..'\uD7AF' -> hangul++
+-                    ch in '\u4E00'..'\u9FFF' -> han++
+-                }
+-            }
+-        }
+-        val top = maxOf(cyr, lat, kana, hangul, han)
+-        if (top == 0) return ""
+-        return when (top) {
+-            cyr -> "ru"
+-            lat -> "en"
+-            kana -> "ja"
+-            hangul -> "ko"
+-            else -> "zh"
+-        }
+-    }
+-
+-    /**
+-     * Упорядочивает реплики кадра в читаемом порядке.
+-     *
+-     * Раньше реплики сортировались одним ключом: манга — по правому краю,
+-     * комикс — по левому, вебтун — по верху. Это давало перекосы («верха
+-     * пропускает») и ломало «лесенку». Теперь:
+-     *  • вертикальная лента читается строго сверху вниз;
+-     *  • при настоящих параллельных колонках текст читается колонка за
+-     *    колонкой (по направлению);
+-     *  • иначе реплики группируются в ряды по вертикали и внутри ряда
+-     *    упорядочиваются по направлению, а ряды идут сверху вниз.
+-     * Так верхние реплики всегда читаются раньше нижних, а «лесенка» со
+-     * сдвигом по X не распадается на «кусок слева / кусок справа».
+-     */
+-        fun orderRegions(lines: List<Line>, order: String): List<Line> {
+-            if (lines.size <= 1) return lines
+-            // Вертикальная лента (вебтун/манхва/маньхуа) читается строго сверху
+-            // вниз. Раньше здесь работал рекурсивный разрезатель, и на «лесенке»
+-            // (реплики со сдвигом по X) он делил кадр на левую и правую группы и
+-            // читал кусок с одной стороны, потом с другой. Для вертикального
+-            // чтения любые боковые группы — ошибка, поэтому порядок задаёт
+-            // только координата Y (при равных Y — X).
+-            if (order == "vertical") {
+-                return lines.sortedWith(
+-                    compareBy<Line> { it.boundingBox.top }.thenBy { it.boundingBox.left },
+-                )
+-            }
+-            val direction = when (order) {
+-                "ltr" -> tachiyomi.core.common.util.system.ReadingDirection.LTR
+-                else -> tachiyomi.core.common.util.system.ReadingDirection.RTL
+-            }
+-
+-            // КОЛОНКИ: реальные параллельные колонки текста (абзацы ленты,
+-            // «стенка» текста) читаются колонка за колонкой — иначе рядовая
+-            // сортировка перемешала бы их строками. splitIntoColumns отдаёт
+-            // >= 2 блока только когда колонки стоят РЯДОМ (перекрываются по Y);
+-            // «лесенка» колонкой не считается.
+-            val columns = splitIntoColumns(lines)
+-            if (columns.size >= 2) {
+-                val orderedColumns = when (direction) {
+-                    tachiyomi.core.common.util.system.ReadingDirection.RTL ->
+-                        columns.sortedByDescending { c -> c.minOf { it.boundingBox.left } }
+-                    else -> columns.sortedBy { c -> c.minOf { it.boundingBox.left } }
+-                }
+-                return orderedColumns.flatMap { column -> orderWithinColumn(column, direction) }
+-            }
+-
+-            // Иначе — рядами сверху вниз: группа близких по вертикали реплик
+-            // читается как один ряд (внутри — по направлению), ряды идут вниз.
+-            // Так «лесенка» со сдвигом по X не распадается на «кусок слева /
+-            // кусок справа».
+-            return rowMajorOrder(lines, direction)
+-        }
+-
+-        /** Порядок ВНУТРИ колонки/полосы: сверху вниз, при равных Y — по направлению. */
+-        private fun orderWithinColumn(
+-            lines: List<Line>,
+-            direction: tachiyomi.core.common.util.system.ReadingDirection,
+-        ): List<Line> {
+-            return rowMajorOrder(lines, direction)
+-        }
+-
+-        /**
+-         * Строки одного блока читаются полосами сверху вниз. Полосы собираются
+-         * по ВЕРТИКАЛЬНОМУ ПЕРЕКРЫТИЮ ([verticalBands]), а не по близости
+-         * верхов, поэтому «волна» (слева посередине → верх → справа посередине)
+-         * читается по направлению, а не как «гора» сверху вниз. Внутри полосы
+-         * порядок задаёт направление: RTL — справа налево, иначе слева направо.
+-         */
+-        private fun rowMajorOrder(
+-            lines: List<Line>,
+-            direction: tachiyomi.core.common.util.system.ReadingDirection,
+-        ): List<Line> {
+-            if (lines.size <= 1) return lines
+-            return verticalBands(lines) { it.boundingBox }.flatMap { band ->
+-                when (direction) {
+-                    tachiyomi.core.common.util.system.ReadingDirection.RTL ->
+-                        band.sortedByDescending { it.boundingBox.left + it.boundingBox.right }
+-                    else -> band.sortedBy { it.boundingBox.left + it.boundingBox.right }
+-                }
+-            }
+-        }
+-
+-        /**
+-         * Раскладывает рамки текста ПО ПАНЕЛЯМ манги.
+-         *
+-         * Панели приходят из детектора уже в порядке чтения (для RTL правая
+-         * верхняя первой), поэтому реплики читаются панель за панелью, а
+-         * внутри панели — по её собственной геометрии. Без этого баблоны шли в
+-         * том порядке, который вернул детектор, и реплики из соседних панелей
+-         * перемешивались между собой.
+-         */
+-        internal fun orderBoxesByPanels(
+-            boxes: List<OcrBoundingBox>,
+-            panels: List<OcrBoundingBox>,
+-            direction: tachiyomi.core.common.util.system.ReadingDirection,
+-        ): List<OcrBoundingBox> = orderBoxesByPanelsWithIndex(boxes, panels, direction).map { it.second }
+-
+-        /**
+-         * Как [orderBoxesByPanels], но вместе с рамкой отдаёт и номер панели,
+-         * в которой она оказалась (-1 — панель не нашлась). Номер панели нужен
+-         * для нумерации реплик на странице: в каждой панели счёт начинается
+-         * заново с 1.
+-         */
+-        internal fun orderBoxesByPanelsWithIndex(
+-            boxes: List<OcrBoundingBox>,
+-            panels: List<OcrBoundingBox>,
+-            direction: tachiyomi.core.common.util.system.ReadingDirection,
+-        ): List<Pair<Int, OcrBoundingBox>> {
+-            // Одна панель на весь лист — обычное дело, и тогда порядок внутри
+-            // неё всё равно нужен: пропускать сортировку нельзя.
+-            if (boxes.size < 2 || panels.isEmpty()) return boxes.map { -1 to it }
+-            val panelIndexOfBox = boxes.map { box -> panelIndexFor(box, panels) }
+-            val buckets = List(panels.size) { mutableListOf<Int>() }
+-            val orphans = mutableListOf<Int>()
+-            panelIndexOfBox.forEachIndexed { position, panelIndex ->
+-                if (panelIndex >= 0) buckets[panelIndex] += position else orphans += position
+-            }
+-            val ordered = mutableListOf<Pair<Int, OcrBoundingBox>>()
+-            buckets.forEachIndexed { panelIndex, positions ->
+-                ordered += orderBoxesWithinPanel(positions.map { boxes[it] }, direction)
+-                    .map { panelIndex to it }
+-            }
+-            ordered += orderBoxesWithinPanel(orphans.map { boxes[it] }, direction).map { -1 to it }
+-            return ordered
+-        }
+-
+-        /**
+-         * Панель рамки: та, в чьей рамке лежит ЦЕНТР реплики. Центр надёжнее
+-         * перекрытия — облачко может вылезать за край панели. Если центр мимо
+-         * всех панелей (текст в поле или в стыке между панелями) — берём панель
+-         * с наибольшим перекрытием, чтобы такой текст всё же попал в чтение.
+-         */
+-        private fun panelIndexFor(
+-            box: OcrBoundingBox,
+-            panels: List<OcrBoundingBox>,
+-        ): Int {
+-            val centerX = (box.left + box.right) / 2f
+-            val centerY = (box.top + box.bottom) / 2f
+-            val containing = panels.indexOfFirst { panel ->
+-                centerX >= panel.left && centerX <= panel.right &&
+-                    centerY >= panel.top && centerY <= panel.bottom
+-            }
+-            if (containing >= 0) return containing
+-            var bestOverlap = 0f
+-            var bestIndex = -1
+-            panels.forEachIndexed { index, panel ->
+-                val overlap = overlapArea(panel, box)
+-                if (overlap > bestOverlap) {
+-                    bestOverlap = overlap
+-                    bestIndex = index
+-                }
+-            }
+-            return bestIndex
+-        }
+-
+-        /** Порядок рамок ВНУТРИ одной панели: полосами по направлению чтения. */
+-        private fun orderBoxesWithinPanel(
+-            boxes: List<OcrBoundingBox>,
+-            direction: tachiyomi.core.common.util.system.ReadingDirection,
+-        ): List<OcrBoundingBox> {
+-            if (boxes.size < 2) return boxes
+-            // Вертикальная лента: строго сверху вниз, при равных Y — по X.
+-            if (direction == tachiyomi.core.common.util.system.ReadingDirection.VERTICAL) {
+-                return boxes.sortedWith(
+-                    compareBy<OcrBoundingBox> { it.top }.thenBy { it.left },
+-                )
+-            }
+-            return verticalBands(boxes) { it }.flatMap { band ->
+-                when (direction) {
+-                    tachiyomi.core.common.util.system.ReadingDirection.RTL ->
+-                        band.sortedByDescending { it.left + it.right }
+-                    else -> band.sortedBy { it.left + it.right }
+-                }
+-            }
+-        }
+-
+-        /**
+-         * Раскладывает рамки на ПОПЕРЕЧНЫЕ ПОЛОСЫ по вертикальному перекрытию,
+-         * а не по разнице верхних краёв.
+-         *
+-         * Так читается «волна»: реплика слева посередине, потом верхняя по
+-         * центру, потом справа посередине. Их вертикали перекрываются — значит
+-         * это одна полоса, и порядок внутри неё задаёт направление чтения
+-         * (справа налево или слева направо). Если мерить по верхнему краю,
+-         * такая раскладка читается как «гора»: верхний бок читается первым,
+-         * а потом «скатывается» вниз — и реплики вразброс.
+-         *
+-         * Настоящий шаг вниз (рамки не перекрываются) даёт следующую полосу,
+-         * поэтому обычная лесенка по-прежнему читается сверху вниз.
+-         */
+-        private fun <T> verticalBands(
+-            items: List<T>,
+-            box: (T) -> OcrBoundingBox,
+-        ): List<List<T>> {
+-            if (items.size < 2) return items.map { listOf(it) }
+-            val bands = mutableListOf<MutableList<T>>()
+-            var bandTop = 0f
+-            var bandBottom = 0f
+-            for (item in items.sortedBy { box(it).top }) {
+-                val current = bands.lastOrNull()
+-                val bounds = box(item)
+-                if (current == null || !overlapsBand(bounds, bandTop, bandBottom)) {
+-                    bands += mutableListOf(item)
+-                    bandTop = bounds.top
+-                    bandBottom = bounds.bottom
+-                } else {
+-                    current += item
+-                    bandTop = minOf(bandTop, bounds.top)
+-                    bandBottom = maxOf(bandBottom, bounds.bottom)
+-                }
+-            }
+-            return bands
+-        }
+-
+-        /** Перекрытие рамки с полосой хотя бы на [BAND_OVERLAP_SHARE] высоты. */
+-        private fun overlapsBand(
+-            bounds: OcrBoundingBox,
+-            bandTop: Float,
+-            bandBottom: Float,
+-        ): Boolean {
+-            val height = bounds.bottom - bounds.top
+-            if (height <= 0f) return false
+-            val overlap = minOf(bandBottom, bounds.bottom) - maxOf(bandTop, bounds.top)
+-            return overlap >= BAND_OVERLAP_SHARE * height
+-        }
+-
+-        private fun overlapArea(a: OcrBoundingBox, b: OcrBoundingBox): Float {
+-            val width = minOf(a.right, b.right) - maxOf(a.left, b.left)
+-            val height = minOf(a.bottom, b.bottom) - maxOf(a.top, b.top)
+-            return if (width > 0f && height > 0f) width * height else 0f
+-        }
+-
+-        /**
+-         * Порядок реплик С УЧЁТОМ ПАНЕЛЕЙ манги.
+-         *
+-         * Панели уже пришли в порядке чтения, поэтому реплики сначала
+-         * раскладываются по ним ([orderBoxesByPanels]), а внутри каждой панели
+-         * применяется обычный порядок [orderRegions]. Пустой список панелей —
+-         * обычное поведение, как без детектора панелей.
+-         */
+-        internal fun orderLinesByPanels(
+-            lines: List<Line>,
+-            order: String,
+-            panels: List<OcrBoundingBox>,
+-        ): List<Line> {
+-            if (lines.size < 2 || panels.isEmpty()) return orderRegions(lines, order)
+-            val direction = when (order) {
+-                "ltr" -> tachiyomi.core.common.util.system.ReadingDirection.LTR
+-                "vertical" -> tachiyomi.core.common.util.system.ReadingDirection.VERTICAL
+-                else -> tachiyomi.core.common.util.system.ReadingDirection.RTL
+-            }
+-            val panelOrder = orderBoxesByPanels(lines.map { it.boundingBox }, panels, direction)
+-            // orderBoxesByPanels вернул те же рамки, что были на входе, поэтому
+-            // исходные строки восстанавливаем по рамке (совпадающие рамки
+-            // группируем, чтобы ничего не потерять).
+-            val byBox = lines.groupBy { it.boundingBox }
+-            return panelOrder.flatMap { byBox[it].orEmpty() }
+-        }
+-
+-    /**
+-     * Нужно ли тратить время на дополнительные проходы по кадру.
+-     *
+-     * OCR всё равно выполняется — без него не понять, что текста нет. Но если
+-     * на кадре нет НИ ОДНОЙ буквы, добор облачков (второй полный проход) и
+-     * скриншот пустой страницы бесполезны. А если предыдущий кадр тоже был
+-     * пустым, кадр почти наверняка из того же разворота-иллюстрации, и ждать
+-     * нечего: пропускаем, пока не встретим читаемую реплику.
+-     */
+-    internal fun skipEmptyPageWork(
+-        enabled: Boolean,
+-        previousFrameWasEmpty: Boolean,
+-        hasAnyLetters: Boolean,
+-    ): Boolean {
+-        if (!enabled) return false
+-        if (!hasAnyLetters) return true
+-        return previousFrameWasEmpty
+-    }
+-
+-    /**
+-     * Доля буквенных символов строки, приходящихся на кириллицу.
+-         * Пустые строки и строки без букв дают 0.
+-         */
+-        internal fun cyrillicShare(text: String): Float {
+-            var letters = 0
+-            var cyrillic = 0
+-            for (ch in text) {
+-                if (!ch.isLetter()) continue
+-                letters++
+-                // Кириллица: U+0400..U+04FF (включая ё, Ё).
+-                if (ch.code in 0x0400..0x04FF) cyrillic++
+-            }
+-            return if (letters == 0) 0f else cyrillic.toFloat() / letters
+-        }
+-
+-        /**
+-         * Убирает иноязычные надписи, когда страница русская.
+-         *
+-         * Переведённая манга сохраняет в арте оригинальные надписи — корешок,
+-         * вывески, звуки. Латинский распознаватель превращает их в мусор
+-         * («КОСГЕ ИНИГМ ФАМ»), и авточтение это произносит. Если страница в
+-         * целом кириллическая (перевод), такие строки выкидываем; если
+-         * страница не кириллическая (английский комикс), ничего не трогаем.
+-         */
+-        internal fun dropForeignLanguageLines(lines: List<Line>): List<Line> {
+-            if (lines.isEmpty()) return lines
+-            val pageShare = lines.sumOf { cyrillicShare(it.text).toDouble() }.toFloat() / lines.size
+-            if (pageShare < RUSSIAN_PAGE_CYRILLIC_SHARE) return lines
+-            return lines.filter { cyrillicShare(it.text) >= RUSSIAN_LINE_CYRILLIC_SHARE }
+-        }
+-
+-        /**
+-         * Колонки текста: махва/манологи/ленты с блоками разной ширины, где
+-         * читать надо колонку до конца, а не прыгать зигзагом. Колонка =
+-         * устойчивый X-интервал: реплика входит в колонку, если её X пересекает
+-         * интервал колонки хотя бы на [COLUMN_OVERLAP_RATIO] от меньшей ширины.
+-         * Мелкие/узкие обрывки (< [COLUMN_MIN_WIDTH] экрана) колонками не
+-         * считаются — иначе одна реплика выдумает себе колонку.
+-         */
+-        private fun splitIntoColumns(lines: List<Line>): List<List<Line>> {
+-            if (lines.size < 4) return listOf(lines)
+-            val sorted = lines.sortedWith(
+-                compareBy<Line> { it.boundingBox.left }.thenBy { it.boundingBox.top },
+-            )
+-            val columns = mutableListOf<MutableList<Line>>()
+-            var columnLeft = 0f
+-            var columnRight = 0f
+-            for (line in sorted) {
+-                val box = line.boundingBox
+-                val current = columns.lastOrNull()
+-                val overlap =                 if (current == null) {
+-                    0f
+-                } else {
+-                    val inter = minOf(box.right, columnRight) - maxOf(box.left, columnLeft)
+-                    val minW = minOf(box.right - box.left, columnRight - columnLeft)
+-                    if (minW <= 0f) 0f else inter.coerceAtLeast(0f) / minW
+-                }
+-                // Новая колонка — только когда рамка заведомо в стороне от
+-                // текущей: нет перекрытия И начало правее её конца с зазором.
+-                // Всё остальное — продолжение колонки (ширину колонки
+-                // растягиваем, иначе «одна шире, вторая уже» распадется на клочки).
+-                val startsNewColumn = when {
+-                    current == null -> true
+-                    overlap >= COLUMN_OVERLAP_RATIO -> false
+-                    else -> box.left > columnRight + COLUMN_GAP
+-                }
+-                if (startsNewColumn) {
+-                    columns += mutableListOf(line)
+-                    columnLeft = box.left
+-                    columnRight = box.right
+-                } else {
+-                    current?.add(line)
+-                    columnLeft = minOf(columnLeft, box.left)
+-                    columnRight = maxOf(columnRight, box.right)
+-                }
+-            }
+-            // Колонка имеет смысл, только если в ней реальная стопка реплик,
+-            // она не клочок, и стопка ПЛОТНАЯ (как абзац ленты). Ряды баблов
+-            // классической манги тоже дают «колонки» из 2 реплик, но с большими
+-            // разрывами между рядами: такую страницу обязана читать рядовая
+-            // логика ниже (TR, TL, BR, BL), иначе порядок поедет.
+-            val stacked = columns.filter { it.size >= COLUMN_MIN_LINES }
+-            val wideEnough = columns.filter { col ->
+-                col.maxOf { it.boundingBox.right } - col.minOf { it.boundingBox.left } >= COLUMN_MIN_WIDTH
+-            }
+-            val denseEnough = stacked.filter { isDenseColumn(it) }
+-            val solidColumns = denseEnough.filter { it in wideEnough }
+-            if (solidColumns.size < 2) return listOf(lines)
+-            // Колонки должны стоять РЯДОМ: их вертикальные диапазоны обязаны
+-            // перекрываться. Если одна колонка целиком выше другой, это не
+-            // параллельные абзацы, а «лесенка» со сдвигом по X — её надо читать
+-            // рядами, иначе получится «кусок с одной стороны, потом с другой».
+-            // Такую страницу отдаём рядовой логике ниже.
+-            val parallelColumns = solidColumns.count { a ->
+-                val aTop = a.minOf { it.boundingBox.top }
+-                val aBottom = a.maxOf { it.boundingBox.bottom }
+-                solidColumns.any { b ->
+-                    (a !== b) &&
+-                        minOf(aBottom, b.maxOf { it.boundingBox.bottom }) >
+-                        maxOf(aTop, b.minOf { it.boundingBox.top })
+-                }
+-            }
+-            if (parallelColumns < 2) return listOf(lines)
+-            // Реплики, не попавшие в «твёрдые» колонки, не теряем: приклеиваем
+-            // к ближайшей колонке по X-перекрытию, иначе в конце общего списка.
+-            val claimed = solidColumns.flatten().toSet()
+-            val rest = lines - claimed
+-            for (line in rest) {
+-                val box = line.boundingBox
+-                val target = solidColumns.maxByOrNull { col ->
+-                    val l = col.minOf { it.boundingBox.left }
+-                    val r = col.maxOf { it.boundingBox.right }
+-                    (minOf(box.right, r) - maxOf(box.left, l)).coerceAtLeast(0f)
+-                }
+-                (target as? MutableList<Line>)?.add(line)
+-            }
+-            return solidColumns.map { col -> col.toList() }
+-        }
+-
+-        /**
+-         * Доля высоты реплики, которую она должна перекрывать с полосой, чтобы
+-         * попасть в неё. Задаёт, что считается «волной»: реплика на 40% выше
+-         * соседней — ещё та же полоса и читается по направлению; ниже — уже
+-         * следующая полоса сверху вниз.
+-         */
+-        private const val BAND_OVERLAP_SHARE = 0.4f
+-
+         private const val COLUMN_OVERLAP_RATIO = 0.3f
+         private const val COLUMN_GAP = 0.04f
+         private const val COLUMN_MIN_LINES = 2
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index a5c6993..d07ca9c 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -1943,56 +1943,7 @@ class ReaderActivity : BaseActivity() {
+         }
+     }
+ 
+-    /**
+-     * Описать текущую страницу голосом.
+-     *
+-     * Нужно на разворотах-иллюстрациях: реплик нет, озвучке нечего читать, и
+-     * страница просто молча листалась. Кадр уходит vision-модели ТОГО ЖЕ
+-     * движка, что выбран для OCR; с локальным кириллическим движком ответа не
+-     * будет — об этом честно сообщаем тостом, а не молчанием.
+-     */
+-    private fun describeCurrentPage() {
+-        val root = binding.root
+-        if (root.width <= 0 || root.height <= 0) {
+-            toast("Не удалось получить кадр страницы")
+-            return
+-        }
+-        val pageNumber = viewModel.state.value.currentPage + 1
+-        toast("Описываю страницу…")
+-        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+-            val rect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+-            val bitmap = cropCurrentSelectionBitmap(rect)
+-            if (bitmap == null) {
+-                toast("Не удалось получить кадр страницы")
+-                return@launch
+-            }
+-            val answer = try {
+-                // Ждём недолго: запрос в облако может висеть десятки секунд.
+-                // Не ответил за отведённое время — описание само выключается,
+-                // иначе авточтение будет вставать на паузу у каждой пустой
+-                // страницы до конца главы.
+-                kotlinx.coroutines.withTimeoutOrNull(
+-                    eu.kanade.tachiyomi.data.tts.AutoReadEngine.DESCRIBE_TIMEOUT_MS,
+-                ) {
+-                    autoReadEngine.describePageImage(bitmap, pageNumber)
+-                }
+-            } finally {
+-                if (!bitmap.isRecycled) bitmap.recycle()
+-            }
+-            if (answer.isNullOrBlank()) {
+-                val reason = if (answer == null) "модель не ответила вовремя" else "движок не умеет описывать картинки"
+-                uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+-                    .describeTextlessPages()
+-                    .set(false)
+-                toast("Описание выключено: $reason")
+-            } else {
+-                autoReadEngine.speakSingle(answer)
+-            }
+-        }
+-    }
+-
+-    /**
+-     * Полное авточтение: читать страницу → (страница стоит, пока не дочитана)
++ → (страница стоит, пока не дочитана)
+      * → перелистнуть → читать следующую. RTL/LTR листает страницы читалки,
+      * вертикальный режим прокручивает на экран.
+      */    fun startAutoReadLoop() {
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt
+index a978328..41cba93 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/settings/SettingsHubScreen.kt
+@@ -558,14 +558,6 @@ private fun SoundRolesTab() {
+         checked = aiGender,
+     ) { prefs.aiGenderVoices().set(it) }
+ 
+-    val describePages by prefs.describeTextlessPages().changes()
+-        .collectAsState(initial = prefs.describeTextlessPages().get())
+-    HubSwitchRow(
+-        title = "Описывать развороты без текста",
+-        subtitle = "Страница без реплик озвучивается описанием картинки. " +
+-            "Нужен ОНЛАЙН-движок (Zen/Gemini/OpenRouter) — картинка уходит в облако",
+-        checked = describePages,
+-    ) { prefs.describeTextlessPages().set(it) }
+ 
+     HubOptions(
+         title = "Пресет голоса",
+diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+index 584c981..a3c82c4 100644
+--- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
++++ b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+@@ -246,17 +246,6 @@ class OcrPreferences(
+     // Требует Google AI ключ; выключено по умолчанию (онлайн, медленнее).
+     fun aiGenderVoices() = preferenceStore.getBoolean("pref_ai_gender_voices", false)
+ 
+-    /**
+-     * Описывать голосом страницы без текста (развороты-иллюстрации).
+-     *
+-     * Описание умеют только ОНЛАЙН-движки (Zen / Gemini / OpenRouter):
+-     * картинка уходит в облако, ответ занимает секунды. С локальным
+-     * кириллическим движком описание просто не вернётся и страница
+-     * пролистнется дальше. Выключено по умолчанию, потому что это отправка
+-     * картинки в облако.
+-     */
+-    fun describeTextlessPages() = preferenceStore.getBoolean("pref_describe_textless_pages", false)
+-
+     /**
+      * Пустые страницы пролистывать дёшево.
+      *
