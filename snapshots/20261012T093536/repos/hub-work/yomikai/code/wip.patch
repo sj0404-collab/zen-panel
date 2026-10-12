@@ -1,0 +1,62 @@
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index 49bfe8f93..eb6f6c2ba 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -182,7 +182,11 @@ class ReaderActivity : BaseActivity() {
+          * AutoReadEngine.pauseAfterLineMs), а это число оставляет только на
+          * перерисовку вьювера — она идёт параллельно, а не после озвучки.
+          */
+-        private const val PAGE_SETTLE_MS = 180L
++        // Сколько ждём, пока вьювер отрисует следующую страницу.
++        // 180 мс не хватало: страница ещё докладывалась, кадр снимался
++        // недокомпонованным, и часть реплик (верх кадра, текст рядом с
++        // картинкой) уезжала за край до того, как распознавалась.
++        private const val PAGE_SETTLE_MS = 700L
+ 
+         /**
+          * Сколько раз повторить захват кадра, прежде чем признать, что листать
+@@ -321,15 +325,17 @@ class ReaderActivity : BaseActivity() {
+         autoscrollJob = lifecycleScope.launch {
+             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                 while (true) {
++                    val frameBusy = autoReadActive && autoReadFrameBusy
+                     when (val viewer = viewModel.state.value.viewer) {
+                         is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer -> {
+-                            // Пейсинг: кадр авточтения занят (скан/OCR/речь) —
+-                            // прокрутка ЗАМЕДЛЯЕТСЯ до трети скорости (v1.9.138:
+-                            // не полный стоп — лента чуть ползёт, глаз не бежит
+-                            // впереди голоса, но и картинка не застывает).
+-                            if (autoReadActive && autoReadFrameBusy) {
+-                                val slow = (speed / 3f).toInt().coerceAtLeast(1)
+-                                viewer.recycler.scrollBy(0, slow)
++                            // Пейсинг: кадр авточтения занят (скан/OCR/речь).
++                            // Раньше здесь лента ползла на ТРЕТЬЕЙ скорости
++                            // («глаз не бежит впереди голоса»), и именно это
++                            // ломало чтение: за время распознавания кадр уезжал
++                            // из-под реплик, поэтому текст сверху и по краям
++                            // просто не попадал в снимок. Теперь вьюпорт стоит
++                            // намертво, пока кадр не доозвучен.
++                            if (frameBusy) {
+                                 kotlinx.coroutines.delay(24)
+                             } else {
+                                 // ~60 Гц; скорость 1..10 → 1..10 px за кадр
+@@ -338,9 +344,16 @@ class ReaderActivity : BaseActivity() {
+                             }
+                         }
+                         is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer -> {
+-                            // Скорость 1..10 → пауза 11..2 сек на страницу
+-                            kotlinx.coroutines.delay((12_000L - speed.toLong() * 1_000L).coerceAtLeast(2_000L))
+-                            viewer.moveToNext()
++                            // Скорость 1..10 → пауза 11..2 сек на страницу.
++                            // Во время авточтения страницу НЕ перелистываем:
++                            // иначе голос ещё читает кадр, а пейджер уже уехал
++                            // на следующую, и реплики терялись.
++                            if (frameBusy) {
++                                kotlinx.coroutines.delay(100)
++                            } else {
++                                kotlinx.coroutines.delay((12_000L - speed.toLong() * 1_000L).coerceAtLeast(2_000L))
++                                viewer.moveToNext()
++                            }
+                         }
+                         else -> kotlinx.coroutines.delay(250)
+                     }
