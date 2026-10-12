@@ -1,0 +1,76 @@
+diff --git a/data/build.gradle.kts b/data/build.gradle.kts
+index ca6c02b19..d1dfd181f 100644
+--- a/data/build.gradle.kts
++++ b/data/build.gradle.kts
+@@ -42,6 +42,9 @@ dependencies {
+     implementation(libs.androidx.sqlite.bundled)
+     implementation(libs.litert)
+     implementation(libs.mlkit.text.recognition)
++    // Настоящий Tesseract с русской моделью: APK без него ввёл полем
++    // «Tesseract», который молча уходил в PP-OCR.
++    implementation(libs.tesseract4android)
+ 
+     implementation(libs.anki.android)
+     implementation(libs.hoshidicts)
+diff --git a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+index 52cfc7faf..a2f017a96 100644
+--- a/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
++++ b/data/src/main/java/mihon/data/ocr/OcrRepositoryImpl.kt
+@@ -107,6 +107,9 @@ class OcrRepositoryImpl(
+ 
+     private var cyrillicEngine: CyrillicOcrEngine? = null
+     private var mlKitEngine: MlKitOcrEngine? = null
++
++    /** Tesseract с русской моделью — тяжёлый, держим один на всё время. */
++    private var tesseractEngine: TesseractOcrEngine? = null
+     private var legacyEngine: LegacyOcrEngine? = null
+     private var fastEngine: FastOcrEngine? = null
+     private var glensEngine: GlensOcrEngine? = null
+@@ -201,6 +204,7 @@ class OcrRepositoryImpl(
+ 
+     internal enum class EngineType {
+         CYRILLIC,
++        TESSERACT,
+         MLKIT,
+         LEGACY,
+         FAST,
+@@ -233,7 +237,7 @@ class OcrRepositoryImpl(
+             OcrModel.OPENROUTER -> EngineType.OPENROUTER
+             OcrModel.GOOGLE -> EngineType.GOOGLE
+             OcrModel.ZEN_FREE -> EngineType.ZEN_FREE
+-            OcrModel.TESSERACT -> EngineType.CYRILLIC
++            OcrModel.TESSERACT -> EngineType.TESSERACT
+         }
+         // ML Kit несёт в APK только латинскую модель. На кириллице он не
+         // «медленно», а просто нечитаем, поэтому и как основной движок, и в
+@@ -345,6 +349,15 @@ class OcrRepositoryImpl(
+                     ::currentTuning,
+                 ).also { cyrillicEngine = it }
+             }
++            EngineType.TESSERACT -> {
++                tesseractEngine ?: TesseractOcrEngine(
++                    dataDir = OcrModelFiles.resolve(
++                        context,
++                        TESSERACT_DATA_PATH,
++                    )?.let { java.io.File(it).parentFile },
++                    prefs = ocrPreferences,
++                ).also { tesseractEngine = it }
++            }
+             EngineType.MLKIT -> {
+                 mlKitEngine ?: MlKitOcrEngine().also { mlKitEngine = it }
+             }
+@@ -1280,6 +1293,14 @@ class OcrRepositoryImpl(
+ 
+             detEngine?.close()
+             detEngine = null
++
++            tesseractEngine?.close()
++            tesseractEngine = null
+         }
+     }
++
++    private companion object {
++        /** Каталог с языковыми данными Tesseract (rus.traineddata и др.). */
++        const val TESSERACT_DATA_PATH = "tesseract/rus.traineddata"
++    }
+ }
