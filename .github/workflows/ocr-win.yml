@@ -1,0 +1,126 @@
+name: OCR (Windows)
+
+# OCR a manga chapter on a Windows runner.
+#
+# Использование:
+#   gh workflow run ocr-win.yml --field engine=normcap
+#   gh workflow run ocr-win.yml --field runner_windows=windows-latest --field engine=all
+#
+# Что делает: ставит Tesseract (rus) + NormCap и прогоняет ансамбль конфигов
+# NormCap по страницам фикстуры tools/ocr-test/fixtures/vol1-ch74.cbz.
+# Результат — сырой OCR (transcript.txt + config_log.tsv + result.json)
+# уходит в artifacts под именем ocr-<engine>-<run>.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_windows:
+        description: "Windows-раннер (метка: windows-latest или имя self-hosted)"
+        type: string
+        default: "windows-latest"
+      engine:
+        description: "Движок: normcap / easyocr / all"
+        type: choice
+        options: [normcap, easyocr, all]
+        default: normcap
+      label:
+        description: "Подпись в списке запусков"
+        type: string
+        default: ""
+
+concurrency:
+  group: zen-panel-ocr-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  ocr-win:
+    runs-on: ${{ inputs.runner_windows }}
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Unpack the chapter fixture
+        shell: pwsh
+        working-directory: fork
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cbz = "tools\ocr-test\fixtures\vol1-ch74.cbz"
+          if (-not (Test-Path $cbz)) { throw "fixture missing: $cbz" }
+          $pages = "$env:TEMP\pages"
+          Remove-Item -Recurse -Force $pages -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $pages | Out-Null
+          python -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" $cbz $pages
+          $n = (Get-ChildItem $pages -File).Count
+          Write-Host "extracted $n files"
+          "PAGES=$pages" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      # ── NormCap ─────────────────────────────────────────────────────
+      - name: Install Tesseract (with Russian)
+        if: inputs.engine == 'normcap' || inputs.engine == 'all'
+        shell: pwsh
+        run: |
+          choco install tesseract -y --no-progress --params "/Language:Russian" 2>&1 | Tee-Object -FilePath "$env:TEMP\choco-tess.log"
+          if ($LASTEXITCODE -ne 0) { Write-Host "choco params unsupported, plain install"; choco install tesseract -y --no-progress }
+          Get-ChildItem "C:\Program Files\Tesseract-OCR" -ErrorAction SilentlyContinue | Select-Object -First 5 Name
+
+      - name: Install NormCap
+        if: inputs.engine == 'normcap' || inputs.engine == 'all'
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --disable-pip-version-check normcap
+
+      - name: Run NormCap OCR (ensemble)
+        if: inputs.engine == 'normcap' || inputs.engine == 'all'
+        shell: pwsh
+        working-directory: fork
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python tools\ocr-test\normcap_ocr.py "$env:PAGES" "$env:GITHUB_WORKSPACE\fork\out\normcap"
+
+      # ── EasyOCR ─────────────────────────────────────────────────────
+      - name: Install EasyOCR
+        if: inputs.engine == 'easyocr' || inputs.engine == 'all'
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --disable-pip-version-check easyocr
+
+      - name: Run EasyOCR
+        if: inputs.engine == 'easyocr' || inputs.engine == 'all'
+        shell: pwsh
+        working-directory: fork
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python tools\ocr-test\easyocr_ocr.py "$env:PAGES" "$env:GITHUB_WORKSPACE\fork\out\easyocr"
+
+      # ── Artifacts ───────────────────────────────────────────────────
+      - name: Upload transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-${{ inputs.engine }}-${{ github.run_number }}
+          path: fork/out
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          "### OCR (${{ inputs.engine }}) on `${{ inputs.runner_windows }}`" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem "$env:GITHUB_WORKSPACE\fork\out" -Recurse -File -ErrorAction SilentlyContinue |
+            ForEach-Object { "- $($_.FullName.Substring($env:GITHUB_WORKSPACE.Length)) ($($_.Length) B)" } |
+            Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
