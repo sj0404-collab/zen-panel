@@ -1,0 +1,213 @@
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/settings/GeneralSettingsPage.kt b/app/src/main/java/eu/kanade/presentation/reader/settings/GeneralSettingsPage.kt
+index 9ecd467..4eaf044 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/settings/GeneralSettingsPage.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/settings/GeneralSettingsPage.kt
+@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.material3.FilterChip
+ import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.Text
++import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.runtime.Composable
+@@ -25,6 +26,8 @@ import tachiyomi.i18n.MR
+ import tachiyomi.presentation.core.components.CheckboxItem
+ import tachiyomi.presentation.core.components.SettingsChipRow
+ import tachiyomi.presentation.core.components.SliderItem
++import tachiyomi.presentation.core.components.CollapsibleBox
++import tachiyomi.presentation.core.components.ListGroupHeader
+ import tachiyomi.presentation.core.i18n.pluralStringResource
+ import tachiyomi.presentation.core.i18n.stringResource
+ import tachiyomi.presentation.core.util.collectAsState
+@@ -186,47 +189,68 @@ internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
+     val ocrStress by ocrPrefs.ruStress().collectAsState()
+     val ocrShape by ocrPrefs.scanShape().collectAsState()
+ 
+-    Text(
+-        text = "Распознавание и голос",
+-        style = MaterialTheme.typography.titleSmall,
+-        modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp),
+-    )
+-    PresetChipRow(
+-        title = "Пол голоса",
+-        options = mapOf("auto" to "Авто", "male" to "Мужской", "female" to "Женский", "neutral" to "Средний"),
+-        current = voiceGender,
+-        onPick = { ocrPrefs.voicePresetGender().set(it) },
+-    )
+-    PresetChipRow(
+-        title = "Возраст голоса",
+-        options = mapOf("infant" to "Младенец", "child" to "Ребёнок", "teen" to "Подросток", "adult" to "Взрослый", "elderly" to "Пожилой"),
+-        current = voiceAge,
+-        onPick = { ocrPrefs.voicePresetAge().set(it) },
+-    )
+-    PresetChipRow(
+-        title = "Пресет типа контента",
+-        options = mihon.data.ocr.OcrContentType.entries.associate { it.id to it.title },
+-        current = ocrContent,
+-        onPick = { ocrPrefs.contentType().set(it) },
+-    )
+-    PresetChipRow(
+-        title = "Подсветка читаемого",
+-        options = mapOf("box" to "Рамка", "underline" to "Подчёркивание", "both" to "Рамка+линия", "bubble" to "Мягкая"),
+-        current = ocrHighlight,
+-        onPick = { ocrPrefs.highlightStyle().set(it) },
+-    )
+-    PresetChipRow(
+-        title = "Ударения (RHVoice)",
+-        options = mapOf("on" to "Включены", "off" to "Выключены"),
+-        current = ocrStress,
+-        onPick = { ocrPrefs.ruStress().set(it) },
+-    )
+-    PresetChipRow(
+-        title = "Форма рамки сканирования",
+-        options = mihon.data.ocr.ScanShape.entries.associate { it.id to (it.icon + " " + it.title) },
+-        current = ocrShape,
+-        onPick = { ocrPrefs.scanShape().set(it) },
+-    )
++    CollapsibleBox(
++        title = stringResource(MR.strings.pref_reader_ocr_voice_section),
++        defaultExpandState = false,
++    ) {
++        PresetChipRow(
++            title = stringResource(MR.strings.pref_voice_gender),
++            options = mapOf(
++                "auto" to stringResource(MR.strings.voice_gender_auto),
++                "male" to stringResource(MR.strings.voice_gender_male),
++                "female" to stringResource(MR.strings.voice_gender_female),
++                "neutral" to stringResource(MR.strings.voice_gender_neutral),
++            ),
++            current = voiceGender,
++            onPick = { ocrPrefs.voicePresetGender().set(it) },
++        )
++        PresetChipRow(
++            title = stringResource(MR.strings.pref_voice_age),
++            options = mapOf(
++                "infant" to stringResource(MR.strings.voice_age_infant),
++                "child" to stringResource(MR.strings.voice_age_child),
++                "teen" to stringResource(MR.strings.voice_age_teen),
++                "adult" to stringResource(MR.strings.voice_age_adult),
++                "elderly" to stringResource(MR.strings.voice_age_elderly),
++            ),
++            current = voiceAge,
++            onPick = { ocrPrefs.voicePresetAge().set(it) },
++        )
++        PresetChipRow(
++            title = stringResource(MR.strings.pref_ocr_content_preset),
++            options = mihon.data.ocr.OcrContentType.entries.associate { it.id to it.title },
++            current = ocrContent,
++            onPick = { ocrPrefs.contentType().set(it) },
++        )
++        PresetChipRow(
++            title = stringResource(MR.strings.pref_ocr_highlight_style),
++            options = mapOf(
++                "box" to stringResource(MR.strings.ocr_highlight_box),
++                "underline" to stringResource(MR.strings.ocr_highlight_underline),
++                "both" to stringResource(MR.strings.ocr_highlight_both),
++                "bubble" to stringResource(MR.strings.ocr_highlight_bubble),
++            ),
++            current = ocrHighlight,
++            onPick = { ocrPrefs.highlightStyle().set(it) },
++        )
++        PresetChipRow(
++            title = stringResource(MR.strings.pref_ocr_ru_stress),
++            options = mapOf(
++                "on" to stringResource(MR.strings.pref_state_on),
++                "off" to stringResource(MR.strings.pref_state_off),
++            ),
++            current = ocrStress,
++            onPick = { ocrPrefs.ruStress().set(it) },
++        )
++        PresetChipRow(
++            title = stringResource(MR.strings.pref_ocr_scan_shape),
++            options = mihon.data.ocr.ScanShape.entries.associate { it.id to "${it.icon} ${it.title}" },
++            isScanShape = true,
++            scanShapes = mihon.data.ocr.ScanShape.entries.associate { it.id to it },
++            current = ocrShape,
++            onPick = { ocrPrefs.scanShape().set(it) },
++        )
++    }
+ }
+ 
+ /** Подпись + горизонтальная лента чипов (русские подписи, как в SAO-панели). */
+@@ -236,23 +260,34 @@ private fun ColumnScope.PresetChipRow(
+     options: Map<String, String>,
+     current: String,
+     onPick: (String) -> Unit,
++    isScanShape: Boolean = false,
++    scanShapes: Map<String, mihon.data.ocr.ScanShape> = emptyMap(),
+ ) {
+-    Text(
+-        text = title,
+-        style = MaterialTheme.typography.labelLarge,
+-        modifier = Modifier.padding(start = 16.dp, top = 8.dp, end = 16.dp),
+-    )
++    ListGroupHeader(text = title)
+     Row(
+         modifier = Modifier
+             .horizontalScroll(rememberScrollState())
+-            .padding(horizontal = 16.dp),
++            .padding(horizontal = 16.dp, bottom = 8.dp),
+         horizontalArrangement = Arrangement.spacedBy(8.dp),
+     ) {
+         options.forEach { (id, label) ->
+             FilterChip(
+                 selected = current == id,
+                 onClick = { onPick(id) },
+-                label = { Text(label) },
++                label = {
++                    if (isScanShape && scanShapes.containsKey(id)) {
++                        val shape = scanShapes[id]!!
++                        Row(
++                            verticalAlignment = Alignment.CenterVertically,
++                            horizontalArrangement = Arrangement.spacedBy(4.dp),
++                        ) {
++                            Text(shape.icon)
++                            Text(shape.title)
++                        }
++                    } else {
++                        Text(label)
++                    }
++                },
+             )
+         }
+     }
+diff --git a/i18n/src/commonMain/moko-resources/base/strings.xml b/i18n/src/commonMain/moko-resources/base/strings.xml
+index f8f373a..fc039a9 100644
+--- a/i18n/src/commonMain/moko-resources/base/strings.xml
++++ b/i18n/src/commonMain/moko-resources/base/strings.xml
+@@ -1361,7 +1361,34 @@
+     <string name="pref_ocr_plugin_selected">Selected</string>
+     <string name="pref_ocr_plugin_online">Online</string>
+     <string name="pref_ocr_plugin_offline">Offline</string>
+-    <string name="pref_ocr_plugin_regions">Detects regions</string>
++        <string name="pref_ocr_plugin_regions">Detects regions</string>
++    <string name="pref_ocr_plugin_unavailable_reason">Unavailable</string>
++    <string name="pref_ocr_engines_count">OCR engines</string>
++    <string name="pref_ocr_available_engines">Available</string>
++    <string name="pref_ocr_total_engines">Total</string>
++    <!-- Reader OCR/TTS -->
++    <string name="pref_reader_ocr_voice_section">OCR and voice</string>
++    <string name="pref_voice_gender">Voice gender</string>
++    <string name="pref_voice_age">Voice age</string>
++    <string name="pref_ocr_content_preset">Content type preset</string>
++    <string name="pref_ocr_highlight_style">Reading highlight style</string>
++    <string name="pref_ocr_ru_stress">Russian stress (RHVoice)</string>
++    <string name="pref_ocr_scan_shape">Scan frame shape</string>
++    <string name="voice_gender_auto">Auto</string>
++    <string name="voice_gender_male">Male</string>
++    <string name="voice_gender_female">Female</string>
++    <string name="voice_gender_neutral">Neutral</string>
++    <string name="voice_age_infant">Infant</string>
++    <string name="voice_age_child">Child</string>
++    <string name="voice_age_teen">Teen</string>
++    <string name="voice_age_adult">Adult</string>
++    <string name="voice_age_elderly">Elderly</string>
++    <string name="ocr_highlight_box">Box</string>
++    <string name="ocr_highlight_underline">Underline</string>
++    <string name="ocr_highlight_both">Box + line</string>
++    <string name="ocr_highlight_bubble">Soft bubble</string>
++    <string name="pref_state_on">On</string>
++    <string name="pref_state_off">Off</string>
+     <string name="pref_ocr_plugin_available">Available</string>
+     <string name="pref_ocr_plugin_unavailable">Unavailable</string>
+     <string name="pref_plugin_requires_network">Internet connection</string>
