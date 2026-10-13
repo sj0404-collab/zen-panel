@@ -7,8 +7,8 @@ Uses NormCap's own detection layer (normcap.detection.ocr) as a library:
   - NormCap's OcrResult.add_linebreaks() for raw text reconstruction
 
 Runs an ensemble of (resize_factor, psm) configs per page and keeps, for every
-page, the config with the most confident words. Output is verbatim OCR — no
-correction, no invented words.
+page, the config with the highest mean word confidence. Output is verbatim OCR —
+no correction, no invented words.
 
 Usage:
   python normcap_ocr.py <pages_dir> <out_dir> [--tess-cmd PATH] [--tessdata DIR]
@@ -111,7 +111,10 @@ def ocr_page(img_path: str, tess_cmd: str, tessdata: str | None) -> tuple[str, s
             print(f"[w] {img_path} {name}: {type(exc).__name__}: {exc}", flush=True)
             continue
         good = [w for w in res.words if w.get("conf", 0) >= 50 and len(w["text"].strip()) >= 2]
-        score = (len(good), round(res.mean_conf, 1), res.num_chars)
+        # Rank by confidence first: sparse PSMs (11/12) win on word count but
+        # drag in art noise. Among configs with a near-equal mean confidence,
+        # prefer the one that read more real words.
+        score = (round(res.mean_conf, 1), len(good), res.num_chars)
         if best is None or score > best[2]:
             best = (name, res.text, score)
     if best is None:
