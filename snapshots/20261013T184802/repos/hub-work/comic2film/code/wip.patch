@@ -1,0 +1,310 @@
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 2ea2e00..3c37b4c 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -4,6 +4,11 @@
+     <uses-permission android:name="android.permission.INTERNET" />
+     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+ 
++    <uses-permission android:name="android.permission.WAKE_LOCK" />
++    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
++    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
++    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
++
+     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+@@ -54,6 +59,11 @@
+                 android:name="android.support.FILE_PROVIDER_PATHS"
+                 android:resource="@xml/file_paths" />
+         </provider>
++
++        <service
++            android:name=".ProgressService"
++            android:exported="false"
++            android:foregroundServiceType="dataSync" />
+     </application>
+ 
+ </manifest>
+diff --git a/app/src/main/java/com/voicecomic/app/AppViewModel.kt b/app/src/main/java/com/voicecomic/app/AppViewModel.kt
+index d64fcb4..7550b01 100644
+--- a/app/src/main/java/com/voicecomic/app/AppViewModel.kt
++++ b/app/src/main/java/com/voicecomic/app/AppViewModel.kt
+@@ -1,11 +1,13 @@
+ package com.voicecomic.app
+ 
+ import android.app.Application
++import android.content.Context
+ import android.graphics.Bitmap
+ import android.graphics.BitmapFactory
+ import android.graphics.Canvas
+ import android.media.MediaPlayer
+ import android.net.Uri
++import android.os.PowerManager
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableIntStateOf
+ import androidx.compose.runtime.mutableStateOf
+@@ -18,9 +20,8 @@ import com.voicecomic.app.ai.CastApply
+ import com.voicecomic.app.ai.CastPlanner
+ import com.voicecomic.app.ai.Msg
+ import com.voicecomic.app.ai.Providers
+-import com.voicecomic.app.audio.EdgeTts
++import com.voicecomic.app.audio.DeviceTts
+ import com.voicecomic.app.audio.MediaAudioDecoder
+-import com.voicecomic.app.audio.Mp3Frames
+ import com.voicecomic.app.audio.Pcm
+ import com.voicecomic.app.audio.VoiceCatalog
+ import com.voicecomic.app.chat.AgentEvent
+@@ -76,7 +77,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         .readTimeout(120, TimeUnit.SECONDS)
+         .callTimeout(180, TimeUnit.SECONDS)
+         .build()
+-    private val tts = EdgeTts(http)
++    private val tts = DeviceTts(app)
+     val ai = AiClient(http)
+     val agentClient = com.voicecomic.app.ai.AgentClient(http)
+     val workspace = com.voicecomic.app.chat.Workspace(app)
+@@ -114,6 +115,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+     private val pageCache = HashMap<String, Bitmap>()
+     private var previewBmp: Bitmap? = null
+ 
++    /** Голоса системного TTS обновляются асинхронно — тик для перерисовки UI. */
++    var voicesTick by mutableIntStateOf(0)
++        private set
++
++    private val powerManager = app.getSystemService(Context.POWER_SERVICE) as? PowerManager
++    private var wakeLock: PowerManager.WakeLock? = null
++
+     init {
+         AiClient.loadTools(app)
+         viewModelScope.launch {
+@@ -186,6 +194,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+ 
+     private suspend fun <T> work(
+         label: String,
++        foreground: Boolean = false,
+         block: suspend (setProgress: (Double, String) -> Unit) -> T
+     ): T? {
+         if (busy) {
+@@ -194,23 +203,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         }
+         busy = true
+         progress = Prog(0.0, label)
++        acquireWakeLock()
++        if (foreground) runCatching { ProgressService.start(getApplication(), label) }
+         return try {
+             block { f, t -> progress = Prog(f, t) }
+         } catch (e: Throwable) {
+             say(e.message ?: e.toString(), "err")
+             null
+         } finally {
++            if (foreground) runCatching { ProgressService.stop(getApplication()) }
++            releaseWakeLock()
+             busy = false
+             progress = null
+         }
+     }
+ 
++    private fun acquireWakeLock() {
++        val pm = powerManager ?: return
++        if (wakeLock?.isHeld == true) return
++        runCatching {
++            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "voicecomic:work").apply {
++                setReferenceCounted(false)
++                acquire(30 * 60 * 1000L)
++            }
++        }
++    }
++
++    private fun releaseWakeLock() {
++        runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
++        wakeLock = null
++    }
++
+     // ---------- импорт ----------
+ 
+     fun importPages(uris: List<Uri>, password: String = "") {
+         if (uris.isEmpty()) return
+         viewModelScope.launch {
+-            work("Анализ файлов…") { set ->
++            work("Анализ файлов…", foreground = true) { set ->
+                 val imported = importer().importPages(uris, password) { f, t -> set(f, t) }
+                 edit { p ->
+                     p.copy(
+diff --git a/app/src/main/java/com/voicecomic/app/audio/Pcm.kt b/app/src/main/java/com/voicecomic/app/audio/Pcm.kt
+index 596ffa7..de18666 100644
+--- a/app/src/main/java/com/voicecomic/app/audio/Pcm.kt
++++ b/app/src/main/java/com/voicecomic/app/audio/Pcm.kt
+@@ -164,6 +164,14 @@ object Pcm {
+         if (e - s >= minClip) out.add(Seg(s, min(e, s + maxClip)))
+     }
+ 
++    /** Усиление/ослабление без клиппинга: системный TTS не умеет volume per-utterance. */
++    fun applyGain(samples: FloatArray, gain: Double): FloatArray {
++        if (gain == 1.0) return samples
++        val out = FloatArray(samples.size)
++        for (i in samples.indices) out[i] = (samples[i] * gain).coerceIn(-1f, 1f)
++        return out
++    }
++
+     fun floatToPcm16(src: FloatArray, from: Int = 0, count: Int = src.size - from): ShortArray {
+         val n = min(count, src.size - from).coerceAtLeast(0)
+         val out = ShortArray(n)
+diff --git a/app/src/main/java/com/voicecomic/app/audio/VoiceCatalog.kt b/app/src/main/java/com/voicecomic/app/audio/VoiceCatalog.kt
+index 565b1a5..771b62c 100644
+--- a/app/src/main/java/com/voicecomic/app/audio/VoiceCatalog.kt
++++ b/app/src/main/java/com/voicecomic/app/audio/VoiceCatalog.kt
+@@ -1,70 +1,26 @@
+ package com.voicecomic.app.audio
+ 
+-/** Каталог голосов Edge-TTS: 110 curated + дозагрузка списка с сервера. */
++/**
++ * Каталог голосов системного TTS устройства. Раньше здесь был каталог Edge-TTS
++ * с дозагрузкой с сервера Microsoft — теперь сеть не нужна, список наполняется
++ * из android.speech.tts.TextToSpeech (см. [DeviceTts]).
++ */
+ object VoiceCatalog {
+ 
+-    data class Voice(val id: String, val lang: String, val gender: String) // gender: m | f
++    /** gender: m | f | "" (движок не сообщает пол — не выдумываем). */
++    data class Voice(val id: String, val lang: String, val gender: String)
+ 
+-    private fun v(id: String, gender: String = "m") = Voice(id, id.take(5), gender)
++    @Volatile
++    private var device: List<Voice> = emptyList()
+ 
+-    private val CURATED: List<Voice> = buildList {
+-        fun add(lang: String, gender: String, vararg names: String) {
+-            names.forEach { add(Voice("$lang-$it" + "Neural", lang, gender)) }
+-        }
+-        add("ru-RU", "m", "Dmitry"); add("ru-RU", "f", "Svetlana", "Dariya"); add("ru-RU", "m", "Pavel")
+-        add("en-US", "m", "Christopher", "Guy", "Andrew", "Brian", "Roger", "Steffan")
+-        add("en-US", "f", "Jenny", "Aria", "EmmaMultilingual", "Amy", "Michelle", "Ana")
+-        add("en-GB", "f", "Sonia"); add("en-GB", "m", "Ryan", "Thomas"); add("en-GB", "f", "Libby")
+-        add("en-AU", "f", "Natasha"); add("en-AU", "m", "William")
+-        add("en-CA", "f", "Clara"); add("en-CA", "m", "Liam")
+-        add("en-IN", "f", "Neerja"); add("en-IN", "m", "Prabhat")
+-        add("en-IE", "f", "Emily"); add("en-IE", "m", "Connor")
+-        add("en-NZ", "f", "Molly"); add("en-NZ", "m", "Mitchell")
+-        add("uk-UA", "f", "Polina"); add("uk-UA", "m", "Ostap")
+-        add("de-DE", "f", "Katja", "Amala"); add("de-DE", "m", "Conrad", "Bernd", "Christoph")
+-        add("de-AT", "f", "Ingrid"); add("de-AT", "m", "Jonas")
+-        add("de-CH", "f", "Leni"); add("de-CH", "m", "Jan")
+-        add("fr-FR", "f", "Denise", "Eloise"); add("fr-FR", "m", "Henri", "Remy")
+-        add("fr-CA", "f", "Sylvie"); add("fr-CA", "m", "Jean")
+-        add("es-ES", "f", "Elvira"); add("es-ES", "m", "Alvaro")
+-        add("es-MX", "f", "Dalia"); add("es-MX", "m", "Jorge")
+-        add("es-AR", "f", "Elena"); add("es-AR", "m", "Tomas")
+-        add("it-IT", "f", "Elsa", "Isabella"); add("it-IT", "m", "Diego")
+-        add("pt-BR", "f", "Francisca"); add("pt-BR", "m", "Antonio")
+-        add("pt-PT", "f", "Raquel"); add("pt-PT", "m", "Duarte")
+-        add("pl-PL", "f", "Zofia"); add("pl-PL", "m", "Marek")
+-        add("tr-TR", "f", "Emel"); add("tr-TR", "m", "Ahmet")
+-        add("ar-SA", "f", "Zariyah"); add("ar-SA", "m", "Hamed")
+-        add("ar-EG", "f", "Salma")
+-        add("he-IL", "f", "Hila"); add("he-IL", "m", "Avri")
+-        add("ja-JP", "f", "Nanami"); add("ja-JP", "m", "Keita")
+-        add("ko-KR", "f", "SunHi"); add("ko-KR", "m", "InJoon")
+-        add("zh-CN", "f", "Xiaoxiao", "Xiaoyi"); add("zh-CN", "m", "Yunxi", "Yunyang")
+-        add("zh-TW", "f", "HsiaoChen"); add("zh-TW", "m", "YunJhe")
+-        add("hi-IN", "f", "Swara"); add("hi-IN", "m", "Madhur")
+-        add("nl-NL", "f", "Colette", "Fenna"); add("nl-NL", "m", "Maarten")
+-        add("sv-SE", "f", "Sofie"); add("sv-SE", "m", "Mattias")
+-        add("nb-NO", "f", "Pernille"); add("nb-NO", "m", "Finn")
+-        add("da-DK", "f", "Christel"); add("da-DK", "m", "Jeppe")
+-        add("fi-FI", "f", "Selma"); add("fi-FI", "m", "Harri")
+-        add("cs-CZ", "f", "Vlasta"); add("cs-CZ", "m", "Antonin")
+-        add("el-GR", "f", "Athina"); add("el-GR", "m", "Nestoras")
+-        add("hu-HU", "f", "Noemi"); add("hu-HU", "m", "Tamas")
+-        add("ro-RO", "f", "Alina"); add("ro-RO", "m", "Emil")
+-        add("vi-VN", "f", "HoaiMy"); add("vi-VN", "m", "NamMinh")
+-        add("th-TH", "f", "Premwadee"); add("th-TH", "m", "Niwat")
+-        add("id-ID", "f", "Gadis"); add("id-ID", "m", "Ardi")
++    /** Наполняется [DeviceTts] после инициализации движка. */
++    fun setDevice(voices: List<Voice>) {
++        device = voices
+     }
+ 
+-    @Volatile
+-    private var extra: List<Voice> = emptyList()
++    fun isReady(): Boolean = device.isNotEmpty()
+ 
+-    fun all(): List<Voice> {
+-        val e = extra
+-        if (e.isEmpty()) return CURATED
+-        val known = CURATED.map { it.id }.toSet()
+-        return CURATED + e.filter { it.id !in known }
+-    }
++    fun all(): List<Voice> = device
+ 
+     fun forLang(prefix: String): List<Voice> {
+         if (prefix.isBlank()) return all()
+@@ -74,11 +30,25 @@ object VoiceCatalog {
+ 
+     fun byId(id: String): Voice? = all().firstOrNull { it.id == id }
+ 
+-    fun defaultVoice(pool: List<Voice> = all()): String = (pool.firstOrNull() ?: all().first()).id
++    fun defaultVoice(pool: List<Voice> = all()): String =
++        (pool.firstOrNull() ?: all().firstOrNull())?.id ?: ""
+ 
+-    /** ru | en-US | zh-CN … — префикс языка реплик. */
++    /** Префикс языка голоса: ru | en-US | zh-CN … */
+     fun voiceGender(id: String): String = byId(id)?.gender ?: ""
+ 
++    /**
++     * Пол из имени голоса. Google TTS часто добавляет маркер вида `#male_1`
++     * или слово male/female; другие движки имя не расшифровывают — тогда "".
++     */
++    fun genderForName(name: String): String {
++        val n = name.lowercase()
++        return when {
++            n.contains("female") -> "f"
++            n.contains("male") -> "m"
++            else -> ""
++        }
++    }
++
+     fun normLocale(locale: String?, fallback: String = "en-US"): String {
+         val parts = (locale ?: "").replace('_', '-').split('-').filter { it.isNotEmpty() }
+         if (parts.isEmpty()) return fallback
+@@ -87,40 +57,4 @@ object VoiceCatalog {
+             ?: parts.drop(1).firstOrNull { it.length == 3 && it.all { c -> c.isDigit() } }
+         return if (region != null) "$lang-${region.uppercase()}" else lang
+     }
+-
+-    /**
+-     * Забирает полный список голосов с сервера Microsoft и мержит в каталог.
+-     * В отличие от браузера, ключ не нужен.
+-     */
+-    suspend fun refreshFromMicrosoft(client: okhttp3.OkHttpClient): Int {
+-        val gec = Gec.value()
+-        val url = "https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list" +
+-            "?trustedclienttoken=${Gec.TRUSTED_CLIENT_TOKEN}" +
+-            "&Sec-MS-GEC=$gec" +
+-            "&Sec-MS-GEC-Version=${Gec.GEC_VERSION}"
+-        val req = okhttp3.Request.Builder().url(url)
+-            .header("Accept-Language", "en-US,en;q=0.9")
+-            .header("User-Agent", "Mozilla/5.0 Chrome/${Gec.CHROMIUM}.0.0.0")
+-            .build()
+-        val body = client.newCall(req).execute().use { resp ->
+-            if (!resp.isSuccessful) return 0
+-            resp.body?.string() ?: return 0
+-        }
+-        val root = kotlinx.serialization.json.Json.parseToJsonElement(body)
+-        val arr = root as? kotlinx.serialization.json.JsonArray ?: return 0
+-        val out = ArrayList<Voice>()
+-        for (item in arr) {
+-            val o = item as? kotlinx.serialization.json.JsonObject ?: continue
+-            fun str(k: String) = o[k]?.let {
+-                (it as? kotlinx.serialization.json.JsonPrimitive)?.content
+-            }
+-            val short = str("ShortName") ?: continue
+-            if (!short.endsWith("Neural")) continue
+-            val loc = str("Locale") ?: short.take(5)
+-            val gender = (str("Gender") ?: "").lowercase().startsWith("f")
+-            out.add(Voice(short, normLocale(loc, short.take(5)), if (gender) "f" else "m"))
+-        }
+-        extra = out
+-        return out.size
+-    }
+ }
