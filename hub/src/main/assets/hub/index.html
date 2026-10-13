@@ -841,7 +841,10 @@ function lastOriginToken() {
 }
 function sessionBases(s) {
   const out = []; const seen = {};
-  for (const v of [String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || ''), String(s && s.ngrok || '')]) {
+  // ngrok legs first since 1.358: the reserved static domain survives every
+  // restart and relay, so the primary address simply never changes. The
+  // trycloudflare pair stays as reserve (it flaps every 15-60 min by design).
+  for (const v of [String(s && s.ngrok || ''), String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || '')]) {
     const k = v.replace(/\/+$/, '');
     if (k && !seen[k]) { seen[k] = 1; out.push(k); }
   }

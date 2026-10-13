@@ -118,7 +118,11 @@ publish_full() {  # $1 = ngrok url (always non-empty here)
 start_agent() {  # echoes the new URL on success, nothing on failure
   local pid url i
   [ -f "$HOME/.config/ngrok/ngrok.yml" ] || ngrok config add-authtoken "$AUTHTOKEN" >/dev/null 2>&1 || true
-  nohup ngrok http "http://127.0.0.1:$PORT" --log=stdout >"$LOG" 2>&1 &
+  # Static reserved domain (free tier, claimed in the dashboard): the address
+  # survives every agent restart, so the panel can treat this leg as PRIMARY.
+  # --url is the current v3 flag (supersedes --domain); empty = old behaviour.
+  local domain="${NGROK_DOMAIN:-filly-above-terrapin.ngrok-free.app}"
+  nohup ngrok http ${domain:+--url="https://$domain"} "http://127.0.0.1:$PORT" --log=stdout >"$LOG" 2>&1 &
   pid=$!
   echo "$pid" > "$PIDFILE"
   url=""
