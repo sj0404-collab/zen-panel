@@ -894,8 +894,9 @@ let lockTimer = null;
     ageEl.textContent = 'Хаб (' + ageMin + ' мин назад) живой. Открываю через ' + left + '…';
     lockTimer = setInterval(() => {
       const next = --left;
-      if (next <= 0) { clearInterval(lockTimer); openLast(); return; }
-      ageEl.textContent = 'Хаб (' + ageMin + ' мин назад) живой. Открываю через ' + next + '…';
+      if (next <= 0) { clearInterval(lockTimer); log('Автооткрытие: проверяю адрес…'); openLast(); return; }
+      const aNow = Math.max(0, Math.round((Date.now() - (last.at || 0)) / 60000));
+      ageEl.textContent = 'Хаб (' + aNow + ' мин) живой. Открою через ' + next + ' — если адрес умрёт, скажу честно.';
     }, 1000);
   } else {
     const b = $('reopen');
@@ -1102,6 +1103,22 @@ async function readSlotRaw(slot) {
   }
   return null;
 }
+// Формат времени для журнала и карточек: 3:02:01 или 42:17.
+function fmtClock(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), ss = sec % 60;
+  return (h ? h + ':' : '') + String(m).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+}
+// Живой счётчик на карточках активных сессий: тикает раз в 15 с,
+// чтобы «кто-то закрывает» сразу было видно по возрасту из 6:00:00.
+setInterval(() => {
+  document.querySelectorAll('#gh-sessions .meta[data-c]').forEach(el => {
+    const created = new Date(el.dataset.c).getTime();
+    if (!created) return;
+    const num = (el.textContent.match(/#(\d+)/) || [])[1] || '?';
+    el.textContent = '#' + num + ' · идёт ' + fmtClock(Math.floor((Date.now() - created) / 1000)) + ' из 6:00:00';
+  });
+}, 15000);
 function minsAgo(iso) {
   const t = Date.parse(iso || '');
   if (!Number.isFinite(t)) return '';
@@ -1148,7 +1165,7 @@ async function ghRefresh() {
         const nm = NAME_OF_RUN[r.path] || r.name || 'сессия';
         return `<div class="row" data-run="${r.id}" data-slot="${esc(slot)}">
           <div class="top"><span class="nm">${esc(nm)}</span>${runStatusPill(r)}</div>
-          <div class="meta">#${r.run_number} · ${esc(minsAgo(r.created_at))}</div>
+          <div class="meta" data-c="${esc(r.created_at)}">#${r.run_number} · идёт ${fmtClock(Math.floor((Date.now() - new Date(r.created_at).getTime()) / 1000))} из 6:00:00</div>
           <div class="acts">
             ${slot ? '<button class="ghost" data-act="open">Открыть</button>' : ''}
             <button class="ghost" data-act="stop">Остановить</button>
@@ -1160,10 +1177,21 @@ async function ghRefresh() {
     const recent = await api(`/repos/${REPO}/actions/runs?per_page=12`, token);
     const list = ((recent && recent.workflow_runs) || [])
       .filter(r => SESSION_WORKFLOWS.has(r.path) || /APK|Tests|Build|Syntax/.test(r.name || ''));
-    runs.innerHTML = list.length ? list.map(r => `<div class="row">
+    runs.innerHTML = list.length ? list.map(r => {
+      let tail = '';
+      if (r.status === 'completed' || r.conclusion) {
+        const dmin = Math.round((new Date(r.updated_at).getTime() - new Date(r.created_at).getTime()) / 60000);
+        tail = ' · ' + (r.conclusion === 'cancelled'
+          ? (dmin >= 350 ? 'легла по лимиту 6 ч' : 'остановлена')
+          : (r.conclusion === 'success' ? 'завершена ok' : (r.conclusion || '—')));
+      } else {
+        tail = ' · идёт ' + fmtClock(Math.floor((Date.now() - new Date(r.created_at).getTime()) / 1000));
+      }
+      return `<div class="row">
         <div class="top"><span class="nm">${esc(r.name || 'workflow')}</span>${runStatusPill(r)}</div>
-        <div class="meta">#${r.run_number} · ${esc(minsAgo(r.created_at))}</div>
-      </div>`).join('') : '<div class="muted">Пусто.</div>';
+        <div class="meta">#${r.run_number} · ${esc(minsAgo(r.created_at))}${tail}</div>
+      </div>`;
+    }).join('') : '<div class="muted">Пусто.</div>';
   } catch (e) {
     const msg = (e && e.message) || String(e);
     box.innerHTML = '<div class="muted">Не загрузилось: ' + esc(msg) + '</div>';
@@ -1228,8 +1256,30 @@ async function openSlot(slot, btn) {
         }
         const run = runs && runs.find(r => isHubRun(r) || (typeof SLOT_OF_RUN !== 'undefined' && SLOT_OF_RUN[r.path] === slot));
         if (run) {
-          const ageMin = Math.max(1, Math.round((Date.now() - new Date(run.created_at).getTime()) / 60000));
-          why = 'запуск ещё идёт (' + ageMin + ' мин) — адрес сам появится, дождись и нажми «Открыть» снова';
+          // Ран жив — значит «завершена» просто старый файл. Не отправляем
+          // пользователя жать «Открыть» вслепую: ждём адрес тут, с часами.
+          const t0 = Date.now();
+          const started = new Date(run.created_at).getTime();
+          try { window.stopWaiting = false; } catch (e) {}
+          log('Хаб ещё поднимается (ран #' + run.run_number + ', идёт '
+            + fmtClock(Math.floor((t0 - started) / 1000)) + '). Жду адрес сам…', '');
+          progStart('Жду адрес хаба (ран #' + run.run_number + ')', { cancellable: true });
+          progT0 = t0; progFill();
+          const tick = setInterval(() => {
+            log('…жду адрес: ' + fmtClock(Math.floor((Date.now() - t0) / 1000))
+              + ' (ран #' + run.run_number + ' идёт ' + fmtClock(Math.floor((Date.now() - started) / 1000)) + ')', '');
+          }, 20000);
+          let s2 = null;
+          try { s2 = await waitForHub(tokenNow(), t0, 5000, () => stopWaiting, run.id); }
+          catch (e) { log('Ожидание адреса: ' + (e && e.message || e), 'err'); }
+          clearInterval(tick);
+          if (s2 && s2.state === 'live') {
+            log('Адрес готов за ' + fmtClock(Math.floor((Date.now() - t0) / 1000)) + '. Открываю…', 'ok');
+            progFinish(true, 'Адрес готов. Открываю…');
+            return openSlot(slot, btn);
+          }
+          why = 'ждал ' + Math.max(1, Math.round((Date.now() - t0) / 60000))
+            + ' мин — адрес не появился (ран, возможно, умер). Жми «Остановить и перезапустить ранер»';
         }
       }
       log('Открыть нельзя: ' + why + '.', 'err');
