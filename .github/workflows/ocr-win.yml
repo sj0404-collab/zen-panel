@@ -119,8 +119,10 @@ jobs:
       - name: Summary
         if: always()
         shell: pwsh
+        env:
+          ENGINE: ${{ inputs.engine }}
         run: |
-          "### OCR (${{ inputs.engine }}) on `${{ inputs.runner_windows }}`" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
-          Get-ChildItem "$env:GITHUB_WORKSPACE\fork\out" -Recurse -File -ErrorAction SilentlyContinue |
-            ForEach-Object { "- $($_.FullName.Substring($env:GITHUB_WORKSPACE.Length)) ($($_.Length) B)" } |
+          "### OCR ($env:ENGINE)" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem -Recurse -File "$env:GITHUB_WORKSPACE/fork/out" -ErrorAction SilentlyContinue |
+            Select-Object FullName, Length | Out-String |
             Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY

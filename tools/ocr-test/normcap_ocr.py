@@ -63,35 +63,48 @@ def find_tesseract(explicit: str | None) -> str:
     raise FileNotFoundError("tesseract binary not found")
 
 
+def _download(url: str, target: Path) -> None:
+    import urllib.request
+
+    print(f"[i] downloading {url}", flush=True)
+    urllib.request.urlretrieve(url, target)
+
+
 def ensure_lang(tess_cmd: str, tessdata: str | None, lang: str) -> str | None:
-    """Make sure `lang` traineddata is available; return tessdata dir to use."""
-    langs = []
+    """Make sure `lang` (+ osd) traineddata is available; return tessdata dir."""
+    langs: list[str] = []
     try:
         langs = tesseract.get_languages(tess_cmd, tessdata)
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001
+        print(f"[w] --list-langs failed: {exc}", flush=True)
     if lang in langs:
+        print(f"[i] '{lang}' already available in tesseract default tessdata", flush=True)
         return tessdata
-    # fallback: download traineddata into a local tessdata dir
+    # Tesseract can't find the language: drop traineddata into a local dir and
+    # point Tesseract at it via --tessdata-dir. `osd` is needed by psm 12.
     local = Path(tessdata) if tessdata else Path.cwd() / "tessdata"
     local.mkdir(parents=True, exist_ok=True)
-    target = local / f"{lang}.traineddata"
-    if not target.exists():
-        import urllib.request
-
-        url = f"https://github.com/tesseract-ocr/tessdata_fast/raw/main/{lang}.traineddata"
-        print(f"[i] downloading {url}", flush=True)
-        urllib.request.urlretrieve(url, target)
+    for code in (lang, "osd"):
+        target = local / f"{code}.traineddata"
+        if not target.exists():
+            url = f"https://github.com/tesseract-ocr/tessdata_fast/raw/main/{code}.traineddata"
+            try:
+                _download(url, target)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[w] could not download {code}: {exc}", flush=True)
     return str(local)
 
 
 def ocr_page(img_path: str, tess_cmd: str, tessdata: str | None) -> tuple[str, str, tuple]:
     img = QImage(img_path)
+    if img.isNull():
+        print(f"[w] {img_path}: QImage failed to load", flush=True)
+        return "NONE", "", (0, 0.0, 0)
     best = None
     for name, rz, psm, lang in CONFIGS:
         try:
             im = preprocess(img, resize_factor=rz, padding=0)
-            args = TessArgs(None, lang, OEM.DEFAULT, psm).as_list()
+            args = TessArgs(tessdata, lang, OEM.DEFAULT, psm).as_list()
             words = tesseract.perform_ocr(tesseract_bin_path=tess_cmd, image=im, args=args)
             res = OcrResult(None, words, im)
         except Exception as exc:  # noqa: BLE001
