@@ -1,0 +1,138 @@
+diff --git a/android/app/src/main/java/dev/pocketrun/core/FileHistory.kt b/android/app/src/main/java/dev/pocketrun/core/FileHistory.kt
+index 4b3cc61..94a8f6c 100644
+--- a/android/app/src/main/java/dev/pocketrun/core/FileHistory.kt
++++ b/android/app/src/main/java/dev/pocketrun/core/FileHistory.kt
+@@ -32,7 +32,7 @@ class FileHistory(private val root: File) {
+     fun snapshot(file: File, projectDir: File): Version? {
+         if (!file.isFile) return null
+         val dir = dirFor(file, projectDir)
+-        val target = File(dir, "${stamp()}_${file.name.take(80)}")
++        val target = File(dir, "${stamp()}__${file.name.take(80)}")
+         return try {
+             file.copyTo(target, overwrite = false)
+             version(target, projectDir.name)
+@@ -90,7 +90,12 @@ class FileHistory(private val root: File) {
+ 
+     private fun version(file: File, project: String): Version = Version(
+         file = file,
+-        stamp = file.name.substringBefore("__").toLongOrNull() ?: 0L,
++        // The name carries the composite sort key (millisecond * TICKS + a
++        // per-process counter); dividing it back out gives the snapshot time
++        // that the history dialog shows. Fall back to the file's own mtime when
++        // the name is unrecognisable, so a stray file still has a sane label.
++        stamp = file.name.substringBefore("__").toLongOrNull()?.div(STAMP_TICKS)
++            ?: file.lastModified(),
+         size = file.length(),
+         project = project,
+     )
+@@ -99,12 +104,15 @@ class FileHistory(private val root: File) {
+         // millisecond << counter: two snapshots in the same millisecond (e.g. a
+         // restore() snapshoting the pre-restore content) must not collide, or
+         // the copy is silently dropped and "restore is undoable" breaks.
+-        "%017d", System.currentTimeMillis() * 10_000 + counter.incrementAndGet() % 10_000,
++        "%017d", System.currentTimeMillis() * STAMP_TICKS + counter.incrementAndGet() % STAMP_TICKS,
+     )
+ 
+     private val counter = AtomicLong()
+ 
+     companion object {
++        /** Room for the per-millisecond counter inside the composite sort key. */
++        private const val STAMP_TICKS = 10_000L
++
+         fun under(workspace: Workspace): FileHistory =
+             FileHistory(File(workspace.root, ".history"))
+     }
+diff --git a/android/app/src/main/java/dev/pocketrun/core/FileOps.kt b/android/app/src/main/java/dev/pocketrun/core/FileOps.kt
+index 404ac862d43e5ffa8657e09f3a91208adceaa008..bf813c4a3a58ee050f0e8607efcca205e672dc2d 100644
+GIT binary patch
+delta 12
+TcmaDRdsB8p3iIYd=2C6|Bq0R2
+
+delta 19
+acmca9`%HF23NxF6t*wGO!{%7#8g2kVd<BvK
+
+diff --git a/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt b/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
+index 3c913c9..bdac455 100644
+--- a/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
++++ b/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
+@@ -1448,6 +1448,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+ 
+     override fun onCleared() {
+         stopWatching()
++        // The executors are single-threaded and daemon, but they own the app's
++        // background work; leaving them running past the ViewModel keeps a
++        // cancelled agent turn or a half-written file alive for no reason.
++        agentExecutor.shutdownNow()
++        ioExecutor.shutdownNow()
+         super.onCleared()
+     }
+ 
+diff --git a/android/app/src/test/java/dev/pocketrun/core/FileOpsTest.kt b/android/app/src/test/java/dev/pocketrun/core/FileOpsTest.kt
+index a7420e3..082c51c 100644
+--- a/android/app/src/test/java/dev/pocketrun/core/FileOpsTest.kt
++++ b/android/app/src/test/java/dev/pocketrun/core/FileOpsTest.kt
+@@ -26,6 +26,14 @@ class FileOpsTest {
+         assertEquals("notes.txt", FileOps.safeName(" notes.txt "))
+     }
+ 
++    @Test
++    fun controlCharactersInANameAreRejected() {
++        assertNull(FileOps.safeName("a\u0000b"))
++        assertNull(FileOps.safeName("line\nbreak"))
++        assertNull(FileOps.safeName("tab\there"))
++        assertEquals("a b", FileOps.safeName("a b"))
++    }
++
+     @Test
+     fun aTakenNameGetsACounter() {
+         val root = dir()
+@@ -201,4 +209,49 @@ class FileHistoryTest {
+         assertEquals(1, history.versionsOf(b, project).size)
+         assertEquals("1", FileText.read(history.versionsOf(a, project).first().file))
+     }
++
++    private fun project(): File = File.createTempFile("pocketrun-hist", "").let {
++        it.delete()
++        it.mkdirs()
++        it
++    }
++
++    @Test
++    fun versionsAreNewestFirstAndCarryARealTimestamp() {
++        val project = project()
++        val history = FileHistory(File(project, ".history"))
++        val file = File(project, "notes.txt")
++        file.writeText("one")
++        val first = history.snapshot(file, project)!!
++        Thread.sleep(5)
++        file.writeText("two")
++        val second = history.snapshot(file, project)!!
++
++        val versions = history.versionsOf(file, project)
++        assertEquals(2, versions.size)
++        assertEquals(second.file.name, versions.first().file.name)
++        assertTrue("newer snapshot sorts first", versions[0].stamp >= versions[1].stamp)
++        // The stamp is the snapshot wall clock, not the composite sort key:
++        // dividing the key back out was what the parse used to forget.
++        assertTrue(
++            "stamp is near now: ${versions[0].stamp}",
++            kotlin.math.abs(versions[0].stamp - System.currentTimeMillis()) < 60_000,
++        )
++        assertEquals("notes.txt", versions[0].label)
++        assertEquals("two", FileText.read(versions[0].file))
++        assertEquals("one", FileText.read(versions[1].file))
++        assertTrue(first.file.name != second.file.name)
++    }
++
++    @Test
++    fun twoSnapshotsInTheSameMillisecondDoNotCollide() {
++        val project = project()
++        val history = FileHistory(File(project, ".history"))
++        val file = File(project, "main.py")
++        file.writeText("v1")
++        assertNotNull(history.snapshot(file, project))
++        assertNotNull(history.snapshot(file, project))
++        // Collision-free names are what makes "restore is undoable" hold.
++        assertEquals(2, history.versionsOf(file, project).size)
++    }
+ }
