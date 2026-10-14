@@ -1,0 +1,54 @@
+[38;5;15m[48;5;232m  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m$ find / -name "*.onnx" -newermt "-2 hours" 2>/dev/null | head -[38;5;15m[48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m10; echo "---"; ls ~/.cache 2>/dev/null | head[38;5;15m                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m/home/runner/.local/lib/python3.12/site-packages/rapidocr/[38;5;15m      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mmodels/ch_PP-OCRv5_det_mobile.onnx[38;5;15m                              [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m/home/runner/.local/lib/python3.12/site-packages/rapidocr/[38;5;15m      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mmodels/PP-OCRv6_det_small.onnx[38;5;15m                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m/home/runner/.local/lib/python3.12/site-packages/rapidocr/[38;5;15m      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mmodels/PP-OCRv6_rec_small.onnx[38;5;15m                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m/home/runner/.local/lib/python3.12/site-packages/rapidocr/[38;5;15m      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mmodels/ch_ppocr_mobile_v2.0_cls_mobile.onnx[38;5;15m                     [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m/home/runner/.local/lib/python3.12/site-packages/rapidocr/[38;5;15m      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mmodels/eslav_PP-OCRv5_rec_mobile.onnx[38;5;15m                           [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m/home/runner/.local/lib/python3.12/site-packages/onnxruntime/[38;5;15m   [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mdatasets/sigmoid.onnx[38;5;15m                                           [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m/home/runner/.local/lib/python3.12/site-packages/onnxrunt…[38;5;15m      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;8mClick to expand[38;5;15m                                                 [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+                                                                       
+     [38;5;215m$[38;5;15m [38;5;215mcd /home/runner/.local/lib/python3.12/site-packages/rapidocr/[38;5;15m   
+       [38;5;215mmodels && python3 - <<'PY' 2>&1 | grep -v "device_discovery"[38;5;15m    
+       [38;5;215mimport onnxruntime as ort, os[38;5;15m                                   
+       [38;5;215mfor f in ["ch_PP-OCRv5_det_mobile.onnx","eslav_PP-[38;5;15m              
+       [38;5;215mOCRv5_rec_mobile.onnx","ch_ppocr_mobile_v2.0_cls_mobile.onnx"][38;5;15m  
+       [38;5;215m:[38;5;15m                                                               
+       [38;5;215m    s=ort.InferenceSession(f, providers=[[38;5;15m                       
+       [38;5;215m"CPUExecutionProvider"])[38;5;15m                                        
+       [38;5;215m    print(f"\n{f}  ({os.path.getsize(f)//1024//1024} МБ)")[38;5;15m      
+       [38;5;215m    for i in s.get_inputs():  print("   in :", i.name, i.[38;5;15m       
+       [38;5;215mshape, i.type)[38;5;15m                                                  
+       [38;5;215m    for o in s.get_outputs(): print("   out:", o.name, o.[38;5;15m       
+       [38;5;215mshape, o.type)[38;5;15m                                                  
+       [38;5;215mPY[38;5;15m                                                              
+       [38;5;215mecho "=== словарь ==="; ls | grep -iv onnx[38;5;15m                      
+                                                                       
+     [38;5;75m▣ [38;5;15m [38;5;255mBuild[38;5;8m · Space Bunny Free[38;5;15m                                       
+                                                                       
+  [38;5;215m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m  [38;5;215m△[38;5;15m [38;5;255mPermission required[38;5;15m                                           [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m    [38;5;8m←[38;5;15m [38;5;255mAccess external directory ~/.local/lib/python3.12/site-[38;5;15m     [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m      [38;5;255mpackages/rapidocr/models[38;5;15m                                    [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m  [38;5;8mPatterns[38;5;15m                                                        [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m  [38;5;255m- /home/runner/.local/lib/python3.12/site-packages/rapidocr/[38;5;15m    [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m  [38;5;255mmodels/*[38;5;15m                                                        [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m[48;5;234m  [48;5;215m [38;5;232mAllow once[38;5;15m [48;5;234m  [38;5;8mAllow always[38;5;15m   [38;5;8mReject[38;5;15m                             [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m[48;5;234m  [38;5;255mctrl+f [38;5;8mfullscreen[38;5;15m  [38;5;255m⇆ [38;5;8mselect[38;5;15m  [38;5;255menter [38;5;8mconfirm[38;5;15m                      [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m[48;5;234m                                                                  [48;5;232m
