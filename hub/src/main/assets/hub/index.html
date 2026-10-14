@@ -110,6 +110,7 @@
   <div class="tabs">
     <button class="tab on" data-pane="hub">Хаб</button>
     <button class="tab" data-pane="gh">GitHub</button>
+    <button class="tab" data-pane="snap">Снапшоты</button>
   </div>
 
   <!-- The run indicator. A dispatch is accepted in under a second and the hub
@@ -161,9 +162,6 @@
     <div class="card">
       <div class="card-h"><span>Запустить</span></div>
       <div class="grid2">
-        <button id="run-desks">Стол Windows</button>
-        <button id="run-agent" class="ghost">CLI-агент</button>
-        <button id="run-opencode" class="ghost">OpenCode</button>
         <button id="run-hub" class="ghost">NPM Hub</button>
       </div>
     </div>
@@ -179,6 +177,26 @@
     <div class="card">
       <div class="card-h"><span>Последние запуски</span></div>
       <div class="rows" id="gh-runs"><div class="muted">Нажмите «Обновить».</div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><span>Мои репозитории</span>
+        <button class="ghost" id="repos-refresh">Обновить</button></div>
+      <div class="rows" id="my-repos"><div class="muted">Твои репозитории: изменения, скачивание, артефакты.</div></div>
+    </div>
+  </div>
+
+  <!-- Снапшоты: что хаб сохранил и когда. Без вранья — возраст по коммитам
+       session-state, журнал читается из самих файлов. -->
+  <div id="pane-snap" style="display:none">
+    <div class="card">
+      <div class="card-h"><span>Снапшоты хаба</span>
+        <button class="ghost" id="snap-refresh">Обновить</button></div>
+      <div class="rows" id="snap-list"><div class="muted">Нажмите «Обновить».</div></div>
+      <div class="rows" id="snap-detail" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><span>Память репозиториев (chats)</span></div>
+      <div class="rows" id="chats-list"><div class="muted">Бэкап каждого репозитория и его возраст.</div></div>
     </div>
   </div>
 
@@ -861,11 +879,11 @@ function lastOriginToken() {
 }
 function sessionBases(s) {
   const out = []; const seen = {};
-  // Four doors: cloudflare main + reserve (flap every 15-60 min but free),
-  // tunnl.gg (SSH stable key address, no bandwidth cap, up to 24 h sessions
-  // - the keeper just reconnects on the same address), ngrok static domain
+  // Door order by user decision 14.10: tunnl.gg FIRST (SSH stable-key
+  // address - no quota, same URL on every reconnect/restart/relay), then the
+  // trycloudflare pair (free but flaps every 15-60 min), ngrok static domain
   // last (monthly quota: after ERR_NGROK_725 it is a wall of fetch errors).
-  for (const v of [String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || ''), String(s && s.tgg || ''), String(s && s.ngrok || '')]) {
+  for (const v of [String(s && s.tgg || ''), String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || ''), String(s && s.ngrok || '')]) {
     const k = v.replace(/\/+$/, '');
     if (k && !seen[k]) { seen[k] = 1; out.push(k); }
   }
@@ -1063,7 +1081,9 @@ for (const t of document.querySelectorAll('.tab')) {
     for (const o of document.querySelectorAll('.tab')) o.className = 'tab' + (o === t ? ' on' : '');
     $('pane-hub').style.display = t.dataset.pane === 'hub' ? '' : 'none';
     $('pane-gh').style.display = t.dataset.pane === 'gh' ? '' : 'none';
-    if (t.dataset.pane === 'gh') ghRefresh();
+    $('pane-snap').style.display = t.dataset.pane === 'snap' ? '' : 'none';
+    if (t.dataset.pane === 'gh') { ghRefresh(); myReposRefresh(); }
+    if (t.dataset.pane === 'snap' && !window.__snapLoaded) { window.__snapLoaded = 1; snapRefresh(); }
   };
 }
 $('log-clear').onclick = () => {
@@ -1382,23 +1402,6 @@ async function startSession(file, inputs, btn, label) {
   }
 }
 $('gh-refresh').onclick = () => ghRefresh();
-$('run-desks').onclick = () => {
-  if (!needToken($('run-desks'))) return;
-  const r = ($('runner').value || '').trim();
-  const inputs = { label: 'desks' };
-  if (r) inputs.runner_windows = r;
-  startSession('desks.yml', inputs, $('run-desks'), 'Стол Windows');
-};
-$('run-agent').onclick = () => {
-  if (!needToken($('run-agent'))) return;
-  startSession('agent.yml', { os: 'linux', label: 'agent', branch: 'agent-work', autosave_minutes: '2' },
-    $('run-agent'), 'CLI-агент');
-};
-$('run-opencode').onclick = () => {
-  if (!needToken($('run-opencode'))) return;
-  startSession('opencode.yml', { os: 'linux', label: 'opencode', branch: 'opencode-work' },
-    $('run-opencode'), 'OpenCode');
-};
 $('run-hub').onclick = () => {
   if (!needToken($('run-hub'))) return;
   const r = ($('runner').value || '').trim();
@@ -1409,6 +1412,170 @@ $('run-hub').onclick = () => {
   savePending(inputs.token);
   startSession('hub.yml', inputs, $('run-hub'), 'NPM Hub');
 };
+// ─── Мои репозитории: как на сайте GitHub — изменения, ZIP, артефакты ───
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' МБ';
+  if (n >= 1024) return Math.round(n / 1024) + ' КБ';
+  return n + ' Б';
+}
+async function ghDownload(url, name, btn) {
+  try {
+    if (btn) btn.disabled = true;
+    log('Скачиваю ' + name + '…');
+    const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + tokenNow(), 'Accept': 'application/vnd.github+json' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const b = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
+    log('Скачано: ' + name + ' (' + fmtBytes(b.size) + ')', 'ok');
+  } catch (e) {
+    log('Скачивание ' + name + ' не удалось: ' + ((e && e.message) || e), 'err');
+  } finally { if (btn) btn.disabled = false; }
+}
+function repoToggle(detail) {
+  if (detail.style.display !== 'none') { detail.style.display = 'none'; detail.innerHTML = ''; return true; }
+  detail.style.display = ''; detail.innerHTML = '<div class="muted">Загружаю…</div>';
+  return false;
+}
+async function repoShowCommits(full, detail) {
+  if (repoToggle(detail)) return;
+  try {
+    const cs = await api('/repos/' + full + '/commits?per_page=5', tokenNow());
+    detail.innerHTML = ((cs || []).map(c => `<div class="row">
+      <div class="top"><span class="nm">${esc((c.sha || '').slice(0, 7))}</span><span class="muted">${esc(minsAgo(c.commit && c.commit.committer && c.commit.committer.date))}</span></div>
+      <div class="meta">${esc((((c.commit && c.commit.message) || '').split('\n'))[0].slice(0, 120))}</div>
+    </div>`).join('')) || '<div class="muted">Коммитов нет.</div>';
+  } catch (e) { detail.innerHTML = '<div class="muted">Ошибка: ' + esc((e && e.message) || String(e)) + '</div>'; }
+}
+async function repoShowArtifacts(full, detail) {
+  if (repoToggle(detail)) return;
+  try {
+    const runs = await api('/repos/' + full + '/actions/runs?status=success&per_page=3', tokenNow());
+    const list = (runs && runs.workflow_runs) || [];
+    if (!list.length) { detail.innerHTML = '<div class="muted">Успешных прогонов не найдено.</div>'; return; }
+    const arts = await api('/repos/' + full + '/actions/runs/' + list[0].id + '/artifacts', tokenNow());
+    const items = (arts && arts.artifacts) || [];
+    if (!items.length) { detail.innerHTML = '<div class="muted">Артефактов нет (прогон #' + list[0].run_number + ').</div>'; return; }
+    detail.innerHTML = items.map(a => `<div class="row">
+      <div class="top"><span class="nm">${esc(a.name)}</span><span class="muted">${fmtBytes(a.size_in_bytes)}</span></div>
+      <div class="acts"><button class="ghost" data-down="${esc(a.archive_download_url)}" data-name="${esc(a.name)}.zip">Скачать</button></div>
+    </div>`).join('');
+    for (const b of detail.querySelectorAll('[data-down]')) {
+      b.onclick = () => ghDownload(b.dataset.down, b.dataset.name, b);
+    }
+  } catch (e) { detail.innerHTML = '<div class="muted">Ошибка: ' + esc((e && e.message) || String(e)) + '</div>'; }
+}
+async function myReposRefresh() {
+  if (!tokenNow()) return;
+  const box = $('my-repos');
+  box.innerHTML = '<div class="muted">Загружаю…</div>';
+  try {
+    const repos = await api('/user/repos?sort=pushed&per_page=25&visibility=all', tokenNow());
+    if (!Array.isArray(repos) || !repos.length) { box.innerHTML = '<div class="muted">Пусто.</div>'; return; }
+    box.innerHTML = repos.map(r => `<div class="row" data-repo="${esc(r.full_name)}" data-br="${esc(r.default_branch || 'main')}">
+      <div class="top"><span class="nm">${esc(r.name)}${r.private ? ' 🔒' : ''}</span><span class="muted">${esc(r.language || '')}</span></div>
+      <div class="meta">${esc(minsAgo(r.pushed_at))} · ${fmtBytes((r.size || 0) * 1024)}</div>
+      <div class="acts">
+        <button class="ghost" data-act="diff">Изменения</button>
+        <button class="ghost" data-act="zip">Скачать ZIP</button>
+        <button class="ghost" data-act="arts">Артефакты</button>
+      </div>
+      <div class="rows" data-box style="display:none;margin-top:6px"></div>
+    </div>`).join('');
+    for (const row of box.querySelectorAll('.row')) {
+      const full = row.dataset.repo, br = row.dataset.br;
+      const detail = row.querySelector('[data-box]');
+      row.querySelector('[data-act="zip"]').onclick = () =>
+        ghDownload('https://api.github.com/repos/' + full + '/zipball/' + encodeURIComponent(br), full.replace('/', '-') + '.zip', null);
+      row.querySelector('[data-act="diff"]').onclick = () => repoShowCommits(full, detail);
+      row.querySelector('[data-act="arts"]').onclick = () => repoShowArtifacts(full, detail);
+    }
+  } catch (e) {
+    box.innerHTML = '<div class="muted">Не загрузилось: ' + esc((e && e.message) || String(e)) + '</div>';
+  }
+}
+// ─── Снапшоты: журнал хаба и память репозиториев (ветка session-state) ───
+function stateRawUrl(p) { return 'https://raw.githubusercontent.com/' + REPO + '/session-state/' + p + '?t=' + Date.now(); }
+async function fetchStateJson(p) {
+  const r = await fetch(stateRawUrl(p), { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return await r.json();
+}
+async function stateFileAge(p) {
+  try {
+    const cs = await api('/repos/' + REPO + '/commits?sha=session-state&path=' + encodeURIComponent(p) + '&per_page=1', tokenNow());
+    return (cs && cs[0] && cs[0].commit && cs[0].commit.committer && cs[0].commit.committer.date) || '';
+  } catch (e) { return ''; }
+}
+async function snapJournal(p) {
+  const box = $('snap-detail');
+  box.innerHTML = '<div class="muted">Читаю ' + esc(p) + '…</div>';
+  try {
+    const d = await fetchStateJson(p);
+    const when = d.stamp ? 'снят ' + minsAgo(d.stamp) + ' (' + d.stamp + ')' : 'без отметки времени';
+    let html = `<div class="row"><div class="top"><span class="nm">${esc(p)}</span></div><div class="meta">${esc(when)}</div></div>`;
+    if (Array.isArray(d.changedFiles)) {
+      html += `<div class="row"><div class="meta">Изменённые файлы (${d.changedFiles.length}):</div></div>`
+        + d.changedFiles.slice(0, 12).map(c => `<div class="row"><div class="meta">${esc(c.code)} ${esc(c.path)}</div></div>`).join('');
+      if (d.gitDiffStat) html += `<div class="row"><div class="meta" style="white-space:pre-wrap">${esc(d.gitDiffStat.split('\n').slice(0, 8).join('\n'))}</div></div>`;
+    }
+    if (typeof d.opencodeMessageCount !== 'undefined') {
+      html += `<div class="row"><div class="meta">opencode: ${d.opencodeMessageCount} сообщ. · чат: ${d.chatCount || 0} · сессий: ${(d.sessions || []).length}</div></div>`;
+    }
+    const msgs = Array.isArray(d.opencodeMessages) ? d.opencodeMessages : [];
+    for (const m of msgs.slice(-3)) {
+      const t = m.at || m.time || m.ts || '';
+      html += `<div class="row"><div class="top"><span class="nm">${t ? esc(minsAgo(t)) : 'сообщение'}</span></div><div class="meta">${esc(JSON.stringify(m).slice(0, 200))}</div></div>`;
+    }
+    box.innerHTML = html;
+  } catch (e) { box.innerHTML = '<div class="muted">Не прочиталось: ' + esc((e && e.message) || String(e)) + '</div>'; }
+}
+async function snapRefresh() {
+  if (!tokenNow()) return;
+  const list = $('snap-list'), chats = $('chats-list');
+  list.innerHTML = '<div class="muted">Загружаю…</div>';
+  try {
+    const files = await api('/repos/' + REPO + '/contents/snapshots?ref=session-state&t=' + Date.now(), tokenNow());
+    const items = (Array.isArray(files) ? files : []).filter(f => /[.]json$/.test(f.name));
+    if (!items.length) {
+      list.innerHTML = '<div class="muted">Снапшотов нет.</div>';
+    } else {
+      const rows = [];
+      for (const f of items) {
+        const age = await stateFileAge('snapshots/' + f.name);
+        rows.push(`<div class="row" data-file="snapshots/${esc(f.name)}">
+          <div class="top"><span class="nm">${esc(f.name)}</span><span class="muted">${fmtBytes(f.size)}</span></div>
+          <div class="meta">${age ? 'снят ' + esc(minsAgo(age)) : 'возраст неизвестен'}</div>
+          <div class="acts"><button class="ghost" data-act="journal">Журнал</button></div>
+        </div>`);
+      }
+      list.innerHTML = rows.join('');
+      for (const row of list.querySelectorAll('.row')) {
+        row.querySelector('[data-act="journal"]').onclick = () => snapJournal(row.dataset.file);
+      }
+    }
+  } catch (e) { list.innerHTML = '<div class="muted">Ошибка: ' + esc((e && e.message) || String(e)) + '</div>'; }
+  chats.innerHTML = '<div class="muted">Загружаю…</div>';
+  try {
+    const files = await api('/repos/' + REPO + '/contents/chats?ref=session-state&t=' + Date.now(), tokenNow());
+    const items = (Array.isArray(files) ? files : []).filter(f => /[.]json$/.test(f.name));
+    if (!items.length) { chats.innerHTML = '<div class="muted">Бэкапов чатов нет.</div>'; return; }
+    const rows = [];
+    for (const f of items) {
+      const age = await stateFileAge('chats/' + f.name);
+      rows.push(`<div class="row">
+        <div class="top"><span class="nm">${esc(f.name.replace(/[.]json$/, ''))}</span><span class="muted">${fmtBytes(f.size)}</span></div>
+        <div class="meta">${age ? 'бэкап ' + esc(minsAgo(age)) : 'возраст неизвестен'}</div>
+      </div>`);
+    }
+    chats.innerHTML = rows.join('');
+  } catch (e) { chats.innerHTML = '<div class="muted">Ошибка: ' + esc((e && e.message) || String(e)) + '</div>'; }
+}
+$('snap-refresh').onclick = () => { $('snap-detail').innerHTML = ''; snapRefresh(); };
+$('repos-refresh').onclick = () => myReposRefresh();
 $('wf-panel-apk').onclick = () => startSession('panel-apk.yml', {}, $('wf-panel-apk'), 'Сборка APK панели');
 $('wf-hub-apk').onclick = () => startSession('hub-apk.yml', {}, $('wf-hub-apk'), 'Сборка APK хаба');
 $('wf-build').onclick = () => startSession('build-win.yml', {}, $('wf-build'), 'Сборка Windows');
