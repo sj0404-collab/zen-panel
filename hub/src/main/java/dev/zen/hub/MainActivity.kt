@@ -29,7 +29,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import org.json.JSONObject
-import java.net.URLDecoder
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * NPM Hub: a connect page served from inside the APK, then the hub itself.
@@ -231,6 +232,41 @@ class MainActivity : ComponentActivity() {
 
     @Suppress("unused")
     private inner class HubDownloadBridge {
+        // A reachability probe a JS fetch cannot do for tunnl.gg: the tunnel
+        // compares User-Agent strings BEFORE CORS runs, so every WebView
+        // fetch dies on a 307 warning page. A native call goes with the app
+        // UA instead. Side effect: seed the tunnl_warned cookie in the shared
+        // CookieManager so the upcoming WebView navigation to the same URL
+        // also skips the warning page (the cookie name carries the subdomain).
+        @android.webkit.JavascriptInterface
+        fun probe(url: String): String {
+            return runCatching {
+                val uri = Uri.parse(url)
+                val host = uri.host ?: return "{"status":-1,"body":""}"
+                if (host.lowercase().endsWith(".tunnl.gg")) {
+                    val sub = host.substringBefore('.')
+                    runCatching {
+                        CookieManager.getInstance().setCookie(
+                            "https://$host", "tunnl_warned_${sub}=1"
+                        )
+                    }
+                }
+                val conn = URL(url).openConnection() as HttpURLConnection
+                conn.connectTimeout = 15000
+                conn.readTimeout = 15000
+                conn.instanceFollowRedirects = false
+                conn.setRequestProperty("User-Agent", "NpmHub/$SHELL_VERSION")
+                conn.setRequestProperty("tunnl-skip-browser-warning", "1")
+                val code = conn.responseCode
+                val body = try {
+                    (if (code < 400) conn.inputStream else conn.errorStream)
+                        ?.readBytes()?.toString(Charsets.UTF_8).orEmpty().take(4096)
+                } catch (noBody: Exception) { "" }
+                conn.disconnect()
+                "{"status":$code,"body":${JSONObject.quote(body)}}"
+            }.getOrElse { "{"status":-1,"body":""}" }
+        }
+
         @android.webkit.JavascriptInterface
         fun download(url: String, auth: String, filename: String) {
             val current = runCatching { web.url }.getOrNull() ?: return
@@ -378,6 +414,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         private val INTERNAL_SUFFIXES = listOf(
             "trycloudflare.com",
+            "tunnl.gg",
             "cfargotunnel.com",
             "ngrok-free.app",
             "ngrok.io",
