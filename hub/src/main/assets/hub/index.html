@@ -72,8 +72,9 @@
   .row .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .row .nm { font-size:14px; font-weight:700; }
   .row .meta { font-size:11px; color:#8a8a9e; margin-top:3px; font-variant-numeric:tabular-nums; }
-  .row .acts { display:flex; gap:6px; margin-top:9px; }
-  .row .acts button { width:auto; flex:1; margin:0; padding:9px 6px; min-height:0; font-size:12px; }
+  .row .acts { display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; }
+  .row .acts button, .row .acts a.ghost { width:auto; flex:1 1 27%; margin:0; padding:9px 6px; min-height:0; font-size:12px; }
+  .row .nm { overflow-wrap:anywhere; }
   .pill { font-size:10px; padding:2px 7px; border-radius:20px; font-weight:700;
           background:#262633; color:#8a8a9e; }
   .pill.live { background:#1d4429; color:#3fb950; }
@@ -1420,6 +1421,17 @@ function fmtBytes(n) {
   return n + ' Б';
 }
 async function ghDownload(url, name, btn, accept) {
+  // В APK fetch умирает на 302-хопе api.github.com -> codeload (CORS, видно
+  // как «Failed to fetch» и на скриншоте 14.10). Нативный мост (1.368+)
+  // берёт URL и токен и качает системным DownloadManager в «Загрузки».
+  if (window.AndroidHub && typeof AndroidHub.download === 'function') {
+    try {
+      AndroidHub.download(url, tokenNow() ? ('Bearer ' + tokenNow()) : '', name || 'download.bin');
+      log('Передано в системные загрузки: ' + name, 'ok');
+      if (btn) { btn.disabled = true; setTimeout(() => { btn.disabled = false; }, 1500); }
+      return;
+    } catch (e) { /* мост старой сборки молчит — уходим в fetch ниже */ }
+  }
   try {
     if (btn) btn.disabled = true;
     log('Скачиваю ' + name + '…');

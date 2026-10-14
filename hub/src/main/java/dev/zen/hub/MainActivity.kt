@@ -118,6 +118,13 @@ class MainActivity : ComponentActivity() {
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
 
+        // Системные загрузки из connect-страницы: GitHub-файлы идут через
+        // api.github.com с Authorization, а WebView-fetch ломается на 302
+        // (чужой origin редиректа, CORS). Мост отдаёт URL системному
+        // DownloadManager вместе с токеном. Доступен ТОЛЬКО родной
+        // connect-странице (hub.symbiosis.local), не страницам хаба.
+        web.addJavascriptInterface(HubDownloadBridge(), "AndroidHub")
+
         web.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 bar.progress = newProgress
@@ -218,6 +225,33 @@ class MainActivity : ComponentActivity() {
                 Toast.makeText(this, "Скачивается…", Toast.LENGTH_SHORT).show()
             }.onFailure {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            }
+        }
+    }
+
+    @Suppress("unused")
+    private inner class HubDownloadBridge {
+        @android.webkit.JavascriptInterface
+        fun download(url: String, auth: String, filename: String) {
+            val current = runCatching { web.url }.getOrNull() ?: return
+            if (!Uri.parse(current).host.equals(HUB_HOST, ignoreCase = true)) return
+            runCatching {
+                val request = DownloadManager.Request(Uri.parse(url)).apply {
+                    if (auth.isNotBlank()) addRequestHeader("Authorization", auth)
+                    setNotificationVisibility(
+                        DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                    )
+                    val name = filename.ifBlank { urlFilename(url) }
+                    setDestinationInExternalPublicDir(
+                        Environment.DIRECTORY_DOWNLOADS, name
+                    )
+                    setMimeType(mimeForName(name))
+                }
+                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                dm.enqueue(request)
+                Toast.makeText(this@MainActivity, "Скачивается…", Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                Toast.makeText(this@MainActivity, "Загрузка не запустилась", Toast.LENGTH_SHORT).show()
             }
         }
     }
