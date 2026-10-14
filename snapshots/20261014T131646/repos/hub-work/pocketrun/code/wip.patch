@@ -1,0 +1,30 @@
+diff --git a/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt b/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt
+index af9b7cc..625e968 100644
+--- a/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt
++++ b/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt
+@@ -46,6 +46,16 @@ class OpenCodeTools(
+     private val shell = MiniShell(workspace, jsRuntime, npxRuntime, busybox)
+     private val skills = Skills(workspace)
+ 
++    /** `.gitignore`/`.ignore` rules for the project root, used by glob/grep/list. */
++    private val ignore: Ignore by lazy { Ignore.load(projectDir, File(workspace.root, "opencode")) }
++
++    /** True when a path (relative to [base]) should be hidden from searches. */
++    private fun hidden(f: File, isDir: Boolean): Boolean {
++        val root = base()
++        val rel = f.relativeToOrNull(root)?.path ?: return false
++        return ignore.isIgnored(rel, isDir)
++    }
++
+     /** Answers pending questions; set by the agent runner. */
+     @Volatile
+     var questionAsker: ((List<Question>) -> String)? = null
+@@ -389,7 +399,7 @@ class OpenCodeTools(
+         val from = (offset - 1).coerceIn(0, lines.size)
+         val to = if (limit > 0) minOf(from + limit, lines.size) else lines.size
+         val picked = lines.subList(from, to)
+-        val body = picked.joinToString("\n")
++        val body = picked.mapIndexed { i, line -> "${from + i + 1}: $line" }.joinToString("\n")
+         return (body.take(MAX_READ) + if (body.length > MAX_READ) "\n… (обрезано)" else "")
+             .ifEmpty { "(пустой файл)" }
+     }
