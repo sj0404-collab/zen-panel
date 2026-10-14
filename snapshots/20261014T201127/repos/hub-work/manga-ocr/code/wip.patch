@@ -1,0 +1,59 @@
+diff --git a/README.md b/README.md
+index 017cfb3..768eae3 100644
+--- a/README.md
++++ b/README.md
+@@ -17,6 +17,7 @@
+ - `scripts/rapidocr_ocr.py` — RapidOCR, ONNX-порт того же PP-OCRv5 `eslav` (без PaddlePaddle).
+ - `scripts/occular_ocr.py` — Occular-OCR: DBNet + SVTR + русская n-gram LM (ONNX, CPU); страницы обрабатываются параллельно (пул процессов), детектор ужат до 1152 px.
+ - `scripts/surya_ocr.py` — Surya (Segformer-детектор + распознаватель, 90+ языков).
++- `scripts/hybrid_vlm_ocr.py` — гибрид: ncnn-DBNet-детектор (vision front-end) + Tesseract-`rus` (распознавание), стриминг/оффлайн, низкая память. Детектор находит блоки текста, блоки режутся и читаются Tesseract'ом (PSM 6), результат сливается (IoU + RU-LM). Два бэкенда детектора: `ppocrv5` (~2.4 МБ) и `yakuyomi` (~153 МБ).
+ - `.github/workflows/ocr-win.yml` — прогон NormCap/EasyOCR на Windows-раннере.
+ - `results/*.txt` — полученные сырые транскрипты.
+ 
+@@ -40,6 +41,46 @@ RapidOCR с восточнославянским распознавателем
+ Surya (Segformer + распознаватель, 90+ языков) на CPU даёт ~90–190 с/стр, полный
+ прогон фикстуры не снят.
+ 
++## Гибрид VLM: DBNet-детектор + Tesseract
++
++`scripts/hybrid_vlm_ocr.py` совмещает языконезависимый детектор строк (DBNet на
++ncnn) с русским распознавателем Tesseract. Детектор отвечает за разметку
++(блоки текста), Tesseract читает каждый блок целиком (PSM 6) — так сохраняется
++языковой контекст, и это точнее построчного распознавания. Поддерживается
++стриминг (`--stdin`, `--stdin-frames`, `--watch`) и оффлайн-работа.
++
++Сравнение на странице манхвы (речь «Ваше святейшество…», скриншот 720×1612):
++
++| Режим | Модели | Скорость | Результат первой строки |
++|---|---|---|---|
++| `--detector ppocrv5` | ~2.4 МБ (дет.) + 3.9 МБ (`rus`) | ~2–3 с/стр (CPU) | `ВАШЕ СВЯТЕИШЕСТВО,` (при `--crop-scale 3`) |
++| `--detector yakuyomi` | ~153 МБ (дет.) + 3.9 МБ (`rus`) | ~5 с/стр (CPU) | `ВАШЕ СВЯТЕЙШЕСТВО,` + читает UI |
++| без детектора (`--profile quality`) | 3.9 МБ (`rus`) | ~30–110 с/стр | `ВАШЕ СВЯТЕЙШЕСТВО,` |
++
++Итог: на чистой одиночной «реплике» лучший результат всё равно у обычного
++Tesseract по всей странице (`--profile fast`, ~2.4 с: `ВАШЕ СВЯТЕЙШЕСТВО, … НАСТАВНИКОМ КРОНПРИНЦА`),
++детектор же добавляет структуру (блоки/боксы) и выигрывает на сложных раскладках
++с несколькими «пузырями» и UI-текстом. Под лимит 5–20 МБ укладывается только
++`ppocrv5` (≈6 МБ суммарно); `yakuyomi`-детектор заметнее по recall (ловит
++мелкий UI-текст), но выбивается из бюджета. Детектор `ppocrv5` требует ncnn +
++numpy + opencv и файлов `PP_OCRv5_mobile_det.ncnn.{param,bin}` (брать из
++`nihui/ncnn-assets`); детектор `yakuyomi` — `dbnet_detect.ncnn.{param,bin}` из
++`joyeli/yakuyomi-engine`.
++
++```bash
++# лёгкий гибрид под бюджет (нужен ncnn/numpy/opencv + tesseract-rus)
++python scripts/hybrid_vlm_ocr.py --detector ppocrv5 \
++  --det-model-dir models --tessdata /path/tessdata --crop-scale 3 page.jpg
++
++# тяжёлый детектор для лучшей точности
++python scripts/hybrid_vlm_ocr.py --detector yakuyomi \
++  --det-model-dir models --tessdata /path/tessdata --max-model-mb 200 page.jpg
++
++# стриминг кадров из stdin (length-prefixed), оффлайн
++python scripts/hybrid_vlm_ocr.py --stdin-frames --detector ppocrv5 \
++  --det-model-dir models --tessdata /path/tessdata
++```
++
+ ## Воспроизведение
+ 
+ ```bash
