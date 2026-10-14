@@ -1,0 +1,597 @@
+diff --git a/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt b/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt
+index 4138971..d73ea05 100644
+--- a/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt
++++ b/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt
+@@ -63,10 +63,29 @@ class OpenCodeTools(
+     /** The current todo list; seeded from the session before each turn. */
+     var todos: List<Sessions.Todo> = emptyList()
+ 
++    /**
++     * Restricts the tools offered to the model (and callable). `null` means
++     * everything; a subagent gets only the tools its type allows.
++     */
++    var allowedTools: Set<String>? = null
++
++    /**
++     * Runs a subagent for the `task` tool. Set on the parent tools instance
++     * (subagents themselves do not get a task tool, so nesting is impossible).
++     */
++    @Volatile
++    var subagentRunner: ((TaskRequest) -> String)? = null
++
+     data class Question(val header: String?, val question: String, val options: List<String>)
+ 
++    data class TaskRequest(val description: String, val prompt: String, val subagentType: String)
++
++    /** True when the model may call this tool (respecting [allowedTools]). */
++    private fun permitted(name: String): Boolean = allowedTools?.contains(name) ?: true
++
+     fun definitions(): JSONArray = JSONArray().apply {
+         fun tool(name: String, description: String, properties: JSONObject, required: List<String>) {
++            if (!permitted(name)) return
+             put(
+                 JSONObject().apply {
+                     put("type", "function")
+@@ -254,11 +273,26 @@ class OpenCodeTools(
+                 .put("body", str("body", "JSON body (api)")),
+             listOf("op"),
+         )
++        if (subagentRunner != null) {
++            tool(
++                "task",
++                "Launch a subagent to handle a self-contained task in its own child session. " +
++                    "Two kinds: `explore` (read-only search: read/list/glob/grep/webfetch — use it to find code fast) and " +
++                    "`general` (full toolset except task, can edit and run commands). The subagent works autonomously " +
++                    "with the prompt you give it and returns its final text. Give it all the context it needs — it cannot ask you.",
++                JSONObject()
++                    .put("description", str("description", "short (3-5 word) description of the task"))
++                    .put("prompt", str("prompt", "the full, self-contained instructions for the subagent"))
++                    .put("subagent_type", str("subagent_type", "explore or general")),
++                listOf("description", "prompt", "subagent_type"),
++            )
++        }
+     }
+ 
+     /** Executes one tool call; never throws — errors come back as text. */
+     fun execute(name: String, argsJson: String): String {
+         return try {
++            if (!permitted(name)) return "error: инструмент '$name' недоступен этому агенту"
+             val args = JSONObject(argsJson.ifBlank { "{}" })
+             // Manual confirmation gate: mutating tools ask the user first.
+             val approver = toolApprover
+@@ -279,6 +313,7 @@ class OpenCodeTools(
+                 "skill" -> doSkill(args)
+                 "question" -> doQuestion(args)
+                 "github" -> doGitHub(args)
++                "task" -> doTask(args)
+                 else -> "unknown tool: $name"
+             }
+         } catch (t: Throwable) {
+@@ -293,6 +328,15 @@ class OpenCodeTools(
+         else -> false
+     }
+ 
++    /** Tools a subagent of [type] may use. */
++    fun subagentTools(type: String): Set<String> = when (type) {
++        "explore" -> setOf("read", "list", "glob", "grep", "webfetch")
++        else -> setOf(
++            "bash", "read", "write", "edit", "list", "glob", "grep",
++            "apply_patch", "todowrite", "webfetch", "skill", "question", "github",
++        )
++    }
++
+     // ---------------------------------------------------------------- tools
+ 
+     private fun base(): File = projectDir ?: workspace.root
+@@ -471,6 +515,20 @@ class OpenCodeTools(
+         return asker(questions)
+     }
+ 
++    private fun doTask(args: JSONObject): String {
++        val runner = subagentRunner ?: return "error: субагенты недоступны в этом режиме"
++        if (!permitted("task")) return "error: субагенты недоступны этому агенту"
++        val prompt = args.optString("prompt").trim()
++        if (prompt.isEmpty()) return "error: нужен непустой prompt для субагента"
++        val type = args.optString("subagent_type", "general").trim().lowercase().ifEmpty { "general" }
++        val description = args.optString("description").takeIf { it.isNotBlank() } ?: "subtask"
++        return try {
++            runner(TaskRequest(description, prompt, type))
++        } catch (t: Throwable) {
++            "error субагента: ${t.message ?: t.javaClass.simpleName}"
++        }
++    }
++
+     private fun doGitHub(args: JSONObject): String {
+         if (githubToken.isBlank()) {
+             return "error: GitHub-токен не задан — откройте ⚙ → GitHub и вставьте PAT (scopes repo, workflow)"
+diff --git a/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt b/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
+index bdac455..f054e8b 100644
+--- a/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
++++ b/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
+@@ -9,6 +9,7 @@ import android.net.Uri
+ import android.provider.OpenableColumns
+ import androidx.core.content.FileProvider
+ import androidx.lifecycle.AndroidViewModel
++import androidx.lifecycle.viewModelScope
+ import dev.pocketrun.BuildConfig
+ import dev.pocketrun.agent.AgentSettings
+ import dev.pocketrun.agent.LlmClient
+@@ -42,9 +43,15 @@ import dev.pocketrun.runtime.shell.Busybox
+ import dev.pocketrun.update.AppUpdate
+ import dev.pocketrun.update.AppUpdater
+ import dev.pocketrun.update.ReleaseInfo
++import kotlinx.coroutines.ExperimentalCoroutinesApi
+ import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.SharingStarted
+ import kotlinx.coroutines.flow.StateFlow
+ import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.flow.combine
++import kotlinx.coroutines.flow.flatMapLatest
++import kotlinx.coroutines.flow.flowOf
++import kotlinx.coroutines.flow.stateIn
+ import kotlinx.coroutines.flow.update
+ import org.json.JSONArray
+ import java.io.File
+@@ -223,11 +230,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         data class Info(val text: String) : AgentItem
+     }
+ 
+-    private val _agentMessages = MutableStateFlow<List<AgentItem>>(emptyList())
+-    val agentMessages: StateFlow<List<AgentItem>> = _agentMessages.asStateFlow()
++    /** A question the agent is blocked on, waiting for the user's answer. */
++    data class PendingQuestion(
++        val questions: List<OpenCodeTools.Question>,
++        val answer: (String) -> Unit,
++    )
+ 
+-    private val _agentRunning = MutableStateFlow(false)
+-    val agentRunning: StateFlow<Boolean> = _agentRunning.asStateFlow()
++    /** A mutating tool call the agent is blocked on in manual confirm mode. */
++    data class PendingApproval(val tool: String, val argsPreview: String, val respond: (Boolean) -> Unit)
++
++    /**
++     * Everything one session needs while its turn runs. Kept apart from the
++     * shared ViewModel state so several sessions can work at the same time:
++     * each tab owns its own messages, counters, cancellation and pending
++     * prompts, and the public flows below just mirror whichever tab is active.
++     */
++    class SessionRun(val id: String, val projectDir: File?) {
++        val messages = MutableStateFlow<List<AgentItem>>(emptyList())
++        val todos = MutableStateFlow<List<Sessions.Todo>>(emptyList())
++        val running = MutableStateFlow(false)
++        val preview = MutableStateFlow("")
++        val steps = MutableStateFlow(0)
++        val rounds = MutableStateFlow(0)
++        val startedAt = MutableStateFlow(0L)
++        val pendingQuestion = MutableStateFlow<PendingQuestion?>(null)
++        val pendingApproval = MutableStateFlow<PendingApproval?>(null)
++        val cancelled = AtomicBoolean(false)
++
++        /** The OpenAI-format history this session's next request is built from. */
++        @Volatile
++        var history: JSONArray = JSONArray()
++
++        /** Set when the session is deleted mid-turn, so the turn stops saving it. */
++        @Volatile
++        var deleted: Boolean = false
++
++        /** Unblocks whoever is waiting on a question/approval when the turn stops. */
++        fun release() {
++            pendingQuestion.value?.answer?.invoke("(отменено пользователем)")
++            pendingApproval.value?.respond?.invoke(false)
++            pendingQuestion.value = null
++            pendingApproval.value = null
++        }
++    }
+ 
+     private val _llmConfig = MutableStateFlow(AgentSettings.read(app))
+     val llmConfig: StateFlow<AgentSettings.Config> = _llmConfig.asStateFlow()
+@@ -241,17 +286,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+     private val _currentSession = MutableStateFlow<Sessions.SessionInfo?>(null)
+     val currentSession: StateFlow<Sessions.SessionInfo?> = _currentSession.asStateFlow()
+ 
+-    private val _todos = MutableStateFlow<List<Sessions.Todo>>(emptyList())
+-    val todos: StateFlow<List<Sessions.Todo>> = _todos.asStateFlow()
+-
+-    /** A question the agent is blocked on, waiting for the user's answer. */
+-    data class PendingQuestion(
+-        val questions: List<OpenCodeTools.Question>,
+-        val answer: (String) -> Unit,
+-    )
+-
+-    private val _pendingQuestion = MutableStateFlow<PendingQuestion?>(null)
+-    val pendingQuestion: StateFlow<PendingQuestion?> = _pendingQuestion.asStateFlow()
++    /** Live turn state, one entry per session that has been opened. */
++    private val _runs = MutableStateFlow<Map<String, SessionRun>>(emptyMap())
++    private val _activeRunId = MutableStateFlow<String?>(null)
++
++    /** The run behind the active tab, or null when no tab is open. */
++    val activeRun: StateFlow<SessionRun?> =
++        combine(_runs, _activeRunId) { runs, id -> id?.let { runs[it] } }
++            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
++
++    @OptIn(ExperimentalCoroutinesApi::class)
++    private fun <T> activeFlow(fallback: T, select: (SessionRun) -> StateFlow<T>): StateFlow<T> =
++        activeRun.flatMapLatest { run -> if (run == null) flowOf(fallback) else select(run) }
++            .stateIn(viewModelScope, SharingStarted.Eagerly, fallback)
++
++    val agentMessages: StateFlow<List<AgentItem>> = activeFlow(emptyList<AgentItem>()) { it.messages }
++    val agentRunning: StateFlow<Boolean> = activeFlow(false) { it.running }
++    val todos: StateFlow<List<Sessions.Todo>> = activeFlow(emptyList<Sessions.Todo>()) { it.todos }
++    val pendingQuestion: StateFlow<PendingQuestion?> = activeFlow(null as PendingQuestion?) { it.pendingQuestion }
++    val pendingApproval: StateFlow<PendingApproval?> = activeFlow(null as PendingApproval?) { it.pendingApproval }
++    val modelPreview: StateFlow<String> = activeFlow("") { it.preview }
++    val agentSteps: StateFlow<Int> = activeFlow(0) { it.steps }
++    val agentRounds: StateFlow<Int> = activeFlow(0) { it.rounds }
++    val turnStartedAt: StateFlow<Long> = activeFlow(0L) { it.startedAt }
++
++    /** Ids of every session with a turn in flight, so a tab can show it. */
++    @OptIn(ExperimentalCoroutinesApi::class)
++    val runningSessionIds: StateFlow<Set<String>> =
++        _runs.flatMapLatest { runs ->
++            if (runs.isEmpty()) flowOf(emptySet())
++            else combine(runs.values.map { it.running }) { flags ->
++                runs.keys.filterIndexed { i, _ -> flags[i] }.toSet()
++            }
++        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+ 
+     /** Model catalog loaded from the configured server (GET /models). */
+     private val _modelCatalog = MutableStateFlow<List<String>>(emptyList())
+@@ -264,38 +331,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+     private val _openTabs = MutableStateFlow<List<Sessions.SessionInfo>>(emptyList())
+     val openTabs: StateFlow<List<Sessions.SessionInfo>> = _openTabs.asStateFlow()
+ 
+-    /** A mutating tool call the agent is blocked on in manual confirm mode. */
+-    data class PendingApproval(val tool: String, val argsPreview: String, val respond: (Boolean) -> Unit)
+-
+-    private val _pendingApproval = MutableStateFlow<PendingApproval?>(null)
+-    val pendingApproval: StateFlow<PendingApproval?> = _pendingApproval.asStateFlow()
+-
+-    /** Live counters of the running turn: tool calls done and model rounds used. */
+-    private val _agentSteps = MutableStateFlow(0)
+-    val agentSteps: StateFlow<Int> = _agentSteps.asStateFlow()
+-
+-    private val _agentRounds = MutableStateFlow(0)
+-    val agentRounds: StateFlow<Int> = _agentRounds.asStateFlow()
+-
+-    /** What the model is streaming right now, so a long generation is not silence. */
+-    private val _modelPreview = MutableStateFlow("")
+-    val modelPreview: StateFlow<String> = _modelPreview.asStateFlow()
+-
+-    private val _turnStartedAt = MutableStateFlow(0L)
+-    val turnStartedAt: StateFlow<Long> = _turnStartedAt.asStateFlow()
+-
+     /** Last user prompt, for the retry button. */
+     @Volatile
+     private var lastPrompt: String? = null
+ 
+-    private val agentExecutor: ExecutorService =
+-        Executors.newSingleThreadExecutor { r -> Thread(r, "pocketrun-agent").apply { isDaemon = true } }
++    /** Several sessions may run at once; each turn takes one thread. */
++    private val agentExecutor: ExecutorService = Executors.newFixedThreadPool(MAX_PARALLEL_TURNS) { r ->
++        Thread(r, "pocketrun-agent").apply { isDaemon = true }
++    }
+ 
+     private val ioExecutor: ExecutorService =
+         Executors.newSingleThreadExecutor { r -> Thread(r, "pocketrun-io").apply { isDaemon = true } }
+ 
+-    private val agentCancelled = AtomicBoolean(false)
+-
+     fun canUseAgent(): Boolean =
+         (licenseState.value as? LicenseManager.LicenseState.Active)?.canUseAgent == true
+ 
+@@ -320,10 +367,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+     }
+ 
+     fun clearAgentChat() {
+-        if (_agentRunning.value) return
+-        _agentMessages.value = emptyList()
+-        _todos.value = emptyList()
+-        _pendingQuestion.value = null
++        val run = activeRun.value ?: return
++        if (run.running.value) return
++        run.messages.value = emptyList()
++        run.todos.value = emptyList()
++        run.pendingQuestion.value = null
+     }
+ 
+     fun refreshSessions() {
+@@ -332,12 +380,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+ 
+     private fun projectName(): String? = _selected.value?.name
+ 
+-    /** Loads a session into the chat without the running-guard (startup, tabs). */
+-    private fun showSession(id: String) {
+-        val session = sessions.load(id) ?: return
+-        _currentSession.value = session.info
+-        _todos.value = session.todos
+-        _agentMessages.value = historyToItems(session.messages)
++    /** The directory a session belongs to (its project, mapped back to a folder). */
++    private fun projectDirFor(info: Sessions.SessionInfo): File? =
++        info.project?.let { name -> _projects.value.firstOrNull { it.name == name }?.dir }
++
++    /** The live run for a session, created on first use. */
++    private fun runFor(info: Sessions.SessionInfo): SessionRun {
++        _runs.value[info.id]?.let { return it }
++        val run = SessionRun(info.id, projectDirFor(info))
++        _runs.update { if (it.containsKey(info.id)) it else it + (info.id to run) }
++        return _runs.value[info.id] ?: run
++    }
++
++    /**
++     * Makes a session the active tab. A session that is not running has its
++     * history and todos reloaded from disk; a running one keeps the live state
++     * it already has (reloading would stomp on the turn in flight).
++     */
++    private fun activate(info: Sessions.SessionInfo) {
++        val run = runFor(info)
++        if (!run.running.value) {
++            val loaded = sessions.load(info.id)
++            if (loaded != null) {
++                run.history = loaded.messages
++                run.messages.value = historyToItems(loaded.messages)
++                run.todos.value = loaded.todos
++            }
++        }
++        _currentSession.value = info
++        _activeRunId.value = info.id
+     }
+ 
+     /** Remembers the active tab and open tabs for the next app launch. */
+@@ -345,32 +416,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         AgentSettings.saveUiState(getApplication(), _currentSession.value?.id, _openTabs.value.map { it.id })
+     }
+ 
+-    /** `/new` — starts a fresh session for the current project. */
+-    fun newSession() {
+-        if (_agentRunning.value) return
+-        val session = sessions.create(project = projectName(), title = null, model = _llmConfig.value.model)
+-        _currentSession.value = session.info
+-        _agentMessages.value = emptyList()
+-        _todos.value = emptyList()
++    /** Creates a fresh session for the current project and opens it as a tab. */
++    private fun createSession(project: String? = projectName()): Sessions.SessionInfo {
++        val session = sessions.create(project = project, title = null, model = _llmConfig.value.model)
++        activate(session.info)
+         registerTab(session.info)
+         refreshSessions()
+         persistAgentUi()
++        return session.info
++    }
++
++    /** `/new` — starts a fresh session for the current project. */
++    fun newSession() {
++        createSession()
+     }
+ 
+     /** Resumes a stored session: history and todos come back into the chat. */
+     fun openSession(id: String) {
+-        if (_agentRunning.value) return
+-        showSession(id)
++        val info = _sessionList.value.firstOrNull { it.id == id }
++            ?: sessions.load(id)?.info
++            ?: return
++        activate(info)
++        registerTab(info)
+         refreshSessions()
+         persistAgentUi()
+     }
+ 
+     fun forkSession(id: String) {
+-        if (_agentRunning.value) return
+         sessions.fork(id)?.let { child ->
++            val run = runFor(child.info)
++            run.history = child.messages
++            run.messages.value = historyToItems(child.messages)
++            run.todos.value = child.todos
+             _currentSession.value = child.info
+-            _todos.value = child.todos
+-            _agentMessages.value = historyToItems(child.messages)
++            _activeRunId.value = child.info.id
+             registerTab(child.info)
+         }
+         refreshSessions()
+@@ -389,14 +468,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+     }
+ 
+     fun deleteSession(id: String) {
++        // Stop a turn that is still in flight so it cannot resurrect the file.
++        _runs.value[id]?.let { run ->
++            run.deleted = true
++            run.cancelled.set(true)
++            run.release()
++        }
+         sessions.delete(id)
++        _runs.update { it - id }
+         _openTabs.value = _openTabs.value.filterNot { it.id == id }
+         if (_currentSession.value?.id == id) {
+             val next = _openTabs.value.firstOrNull()
+-            if (next != null) showSession(next.id) else {
++            if (next != null) {
++                activate(next)
++            } else {
+                 _currentSession.value = null
+-                _agentMessages.value = emptyList()
+-                _todos.value = emptyList()
++                _activeRunId.value = null
+             }
+         }
+         refreshSessions()
+@@ -406,12 +493,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+     /** `opencode export` analog: writes the session to opencode-data/exports/. */
+     fun exportSession(id: String) {
+         val path = sessions.export(id)
+-        _agentMessages.update {
+-            it + AgentItem.Info(
++        pushItem(
++            AgentItem.Info(
+                 if (path != null) "Сессия сохранена: $path"
+                 else "Не удалось экспортировать сессию",
+-            )
+-        }
++            ),
++        )
+     }
+ 
+     private fun historyToItems(messages: JSONArray): List<AgentItem> {
+@@ -435,72 +522,102 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         return items
+     }
+ 
++    /** Appends a bubble to the active tab's conversation. */
++    private fun pushItem(item: AgentItem) {
++        activeRun.value?.messages?.update { it + item }
++    }
++
++    /** The active session, created on demand so a command always has a tab. */
++    private fun ensureSession(): Sessions.SessionInfo =
++        _currentSession.value ?: createSession()
++
+     fun sendToAgent(text: String) {
+         val prompt = text.trim()
+-        if (prompt.isEmpty() || _agentRunning.value) return
++        if (prompt.isEmpty()) return
+ 
+-        // Chat commands, opencode-style.
++        // Chat commands, opencode-style. They always act on the active tab.
+         when (prompt) {
+             "/new" -> {
+                 newSession()
+-                _agentMessages.update { it + AgentItem.Info("Новая сессия${projectName()?.let { " для проекта $it" } ?: ""}.") }
++                pushItem(AgentItem.Info("Новая сессия${projectName()?.let { " для проекта $it" } ?: ""}."))
+                 return
+             }
+             "/init" -> {
++                val info = ensureSession()
+                 if (!requireConfigured()) return
+-                _agentMessages.update { it + AgentItem.User("/init") }
++                runFor(info).messages.update { it + AgentItem.User("/init") }
+                 runAgentTurn(
+                     "Create an AGENTS.md file in the current project root: briefly describe the project " +
+                         "(look at the files first) and add short, useful rules for future agents working in it. " +
+                         "Keep it under 30 lines. Reply with a one-line summary.",
++                    info,
+                 )
+                 return
+             }
+             "/continue" -> {
++                val info = ensureSession()
+                 if (!requireConfigured()) return
+-                _agentMessages.update { it + AgentItem.User("/continue") }
+-                runAgentTurn(OpenCodeAgent.CONTINUE_PROMPT)
++                runFor(info).messages.update { it + AgentItem.User("/continue") }
++                runAgentTurn(OpenCodeAgent.CONTINUE_PROMPT, info)
+                 return
+             }
+             "/skills" -> {
++                ensureSession()
+                 val found = dev.pocketrun.agent.opencode.Skills(workspace).discover(_selected.value?.dir)
+-                _agentMessages.update {
+-                    it + AgentItem.Info(
++                pushItem(
++                    AgentItem.Info(
+                         if (found.isEmpty()) "Навыков не найдено. Создайте свой: папка .opencode/skills/<имя>/SKILL.md в проекте с frontmatter name и description (или попросите агента — он умеет создавать навыки сам)."
+                         else "Навыки:\n" + found.joinToString("\n") { s -> "• ${s.name}${if (s.global) " (глобальный)" else ""} — ${s.description}" },
+-                    )
+-                }
++                    ),
++                )
+                 return
+             }
+             "/help" -> {
+-                _agentMessages.update {
+-                    it + AgentItem.Info(
++                ensureSession()
++                pushItem(
++                    AgentItem.Info(
+                         "Команды: /new — новая сессия · /init — создать AGENTS.md · /continue — продолжить прерванный ход · /skills — список навыков · /help — эта справка.\n\n" +
++                            "Новое задание, пока агент занят, открывает отдельную сессию и выполняется параллельно — вкладки сверху.\n" +
+                             "Навыки: создайте .opencode/skills/<имя>/SKILL.md (frontmatter: name, description) — агент подхватит и сможет загружать; глобальные — workspace/opencode/skills/.\n" +
+                             "Инструкции: AGENTS.md в проекте + глобальный opencode/AGENTS.md, фолбэк CLAUDE.md; список файлов/URL — в opencode/opencode.json (\"instructions\").\n" +
+                             "GitHub: ⚙ → GitHub (PAT с правами repo, workflow) — агент сможет создавать репозитории, Actions-раннеры (ubuntu-latest, там работают npm и opencode), запускать сборку и ждать её через github run_wait (одним вызовом, с логами при падении), забирать артефакты.\n" +
+                             "Подтверждения и лимит раундов: ⚙ → «Подтверждения» и «Раундов на ход». Долгие сборки и ожидание — это нормально: раундов по умолчанию 40.\n" +
+                             "Файл агенту: кнопка 📎 — файл копируется в проект и отправляется агенту.\n" +
+                             "Остановка: ⏹ — ход прерывается, но сессия и история сохраняются (/continue продолжает).",
+-                    )
+-                }
++                    ),
++                )
+                 return
+             }
+         }
+ 
+-        if (!requireConfigured()) return
+-        lastPrompt = prompt
+-        _agentMessages.update { it + AgentItem.User(prompt) }
+-        runAgentTurn(prompt)
++        val active = activeRun.value
++        if (active != null && active.running.value) {
++            // The active tab is busy, so this is a new task: give it its own
++            // session and run it at the same time as the current turn.
++            val info = ensureSession()
++            val agentInfo = if (info.id == active.id) createSession() else info
++            if (!requireConfigured()) return
++            lastPrompt = prompt
++            runFor(agentInfo).messages.update { it + AgentItem.User(prompt) }
++            runAgentTurn(prompt, agentInfo)
++        } else {
++            val info = ensureSession()
++            if (!requireConfigured()) return
++            lastPrompt = prompt
++            runFor(info).messages.update { it + AgentItem.User(prompt) }
++            runAgentTurn(prompt, info)
++        }
+     }
+ 
+     /** Re-runs the last prompt (shown next to errors). */
+     fun retryLast() {
+         val p = lastPrompt ?: return
+-        if (_agentRunning.value || p.isEmpty()) return
++        if (p.isEmpty()) return
++        activeRun.value?.let { if (it.running.value) return }
++        val info = ensureSession()
+         if (!requireConfigured()) return
+-        _agentMessages.update { it + AgentItem.User("$p (повтор)") }
+-        runAgentTurn(p)
++        runFor(info).messages.update { it + AgentItem.User("$p (повтор)") }
++        runAgentTurn(p, info)
+     }
+ 
+     /**
+@@ -508,20 +625,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+      * agent already touched are in place, so "продолжай" is all it needs.
+      */
+     fun continueLast() {
+-        if (_agentRunning.value) return
++        activeRun.value?.let { if (it.running.value) return }
++        val info = ensureSession()
+         if (!requireConfigured()) return
+-        _agentMessages.update { it + AgentItem.User("/continue") }
+-        runAgentTurn(OpenCodeAgent.CONTINUE_PROMPT)
++        runFor(info).messages.update { it + AgentItem.User("/continue") }
++        runAgentTurn(OpenCodeAgent.CONTINUE_PROMPT, info)
+     }
+ 
+     private fun requireConfigured(): Boolean {
+         if (!canUseAgent()) {
+-            _agentMessages.update { it + AgentItem.Error("Агент доступен на плане Pro — активируйте Pro-лицензию.") }
++            pushItem(AgentItem.Error("Агент доступен на плане Pro — активируйте Pro-лицензию."))
+             return false
+         }
+         val config = _llmConfig.value
+         if (!config.isReady) {
+-            _agentMessages.update { it + AgentItem.Info("Сначала настройте модель: базовый URL и имя модели (кнопка ⚙ над чатом). API-ключ не нужен для локальных серверов; для Zen — бесплатный ключ с opencode.ai/auth.") }
++            pushItem(AgentItem.Info("Сначала настройте модель: базовый URL и имя модели (кнопка ⚙ над чатом). API-ключ не нужен для локальных серверов; для Zen — бесплатный ключ с opencode.ai/auth."))
+             return false
+         }
+         return true
+@@ -1582,6 +1700,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         private const val MAX_OUTPUT_LINES = 2_000
+         private const val CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000
+ 
++        /** How many sessions may run turns at the same time. */
++        private const val MAX_PARALLEL_TURNS = 4
++
+         /** How often the project folder is checked for changes made elsewhere. */
+         private const val WATCH_INTERVAL_MS = 2_000L
+ 

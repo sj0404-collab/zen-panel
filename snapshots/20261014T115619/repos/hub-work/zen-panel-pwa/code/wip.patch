@@ -1,0 +1,160 @@
+diff --git a/.github/workflows/android-apk.yml b/.github/workflows/android-apk.yml
+index 376c547..6ed205e 100644
+--- a/.github/workflows/android-apk.yml
++++ b/.github/workflows/android-apk.yml
+@@ -23,20 +23,25 @@ jobs:
+           distribution: 'temurin'
+           java-version: '17'
+ 
++      - name: Set up Android SDK
++        uses: android-actions/setup-android@v3
++
+       - name: Cache Gradle
+         uses: actions/cache@v4
+         with:
+           path: |
+             ~/.gradle/caches
+             ~/.gradle/wrapper
+-          key: ${{ runner.os }}-gradle-${{ hashFiles('code/gradle.properties', 'code/gradle-wrapper.jar') }}
++          key: ${{ runner.os }}-gradle-${{ hashFiles('code/gradle/wrapper/gradle-wrapper.properties', 'code/**/*.gradle.kts') }}
++          restore-keys: |
++            ${{ runner.os }}-gradle-
+ 
+       - name: Grant execute permission for gradlew
+         run: chmod +x code/gradlew
+ 
+       - name: Build Debug APK
+         working-directory: code
+-        run: ./gradlew assembleDebug
++        run: ./gradlew assembleDebug --stacktrace
+ 
+       - name: Upload Debug APK
+         uses: actions/upload-artifact@v4
+@@ -44,13 +49,12 @@ jobs:
+           name: zen-panel-debug-apk
+           path: code/app/build/outputs/apk/debug/*.apk
+ 
+-      - name: Build Release APK
++      - name: Build Release APK (unsigned)
+         working-directory: code
+-        run: |
+-          echo "Keystore not configured - skipping release build"
+-          echo "To build release, add keystore to code/keystore/ and set properties in gradle.properties"
+-
+-      - name: Release Please (optional)
+-        if: false
+-        run: |
+-          echo "Create GitHub Release manually or configure release-please"
+\ No newline at end of file
++        run: ./gradlew assembleRelease --stacktrace
++
++      - name: Upload Release APK (unsigned)
++        uses: actions/upload-artifact@v4
++        with:
++          name: zen-panel-release-apk-unsigned
++          path: code/app/build/outputs/apk/release/*.apk
+diff --git a/.github/workflows/pwa-release.yml b/.github/workflows/pwa-release.yml
+index 6255f09..646e8a2 100644
+--- a/.github/workflows/pwa-release.yml
++++ b/.github/workflows/pwa-release.yml
+@@ -2,8 +2,12 @@ name: PWA Release
+ 
+ on:
+   push:
+-    tags: [v*]
++    tags: ['v*']
+   workflow_dispatch:
++    inputs:
++      version:
++        description: 'Release version without leading v (e.g. 1.0.1)'
++        required: true
+ 
+ jobs:
+   create-release:
+@@ -15,40 +19,43 @@ jobs:
+       - name: Checkout repository
+         uses: actions/checkout@v4
+ 
++      - name: Determine version
++        id: ver
++        run: |
++          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
++            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
++          else
++            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
++          fi
++
++      - name: Write release notes
++        run: |
++          cat > "$RUNNER_TEMP/release_notes.md" <<'EOF'
++          ## Zen Panel
++
++          ### Android app (native)
++          - Native Kotlin UI (Material 3, dark theme)
++          - Real VPN via WireGuard userspace backend (VpnService + route table)
++          - Server list with country selection
++          - Live traffic counters and speed, read from wireguard-go
++          - Foreground notification with country and current speed
++          - Google Search, network status and local traffic log
++          - Extension simulator screen
++
++          ### Install
++          1. Download the APK artifact from the latest workflow run.
++          2. Add your own WireGuard config in the app: Servers -> Add server.
++          3. Pick a server and tap Connect.
++
++          ### Layout
++          - `pwa/` - static PWA files (manifest, service worker, HTML)
++          - `code/` - native Android (Gradle) project
++          EOF
++
+       - name: Create GitHub Release
++        env:
++          GH_TOKEN: ${{ github.token }}
+         run: |
+-          gh release create "v${GITHUB_REF#refs/tags/v}" \
+-            --title "V${GITHUB_REF#refs/tags/v} - PWA Release" \
+-            --notes "## Zen Panel PWA
+-
+-            ### Приложение
+-            - Standalone режим (установка в Via, Chrome, мобильные браузеры)
+-            - Google Search с forward-traffic логированием
+-            - Browsec интеграция (симуляция статуса)
+-            - Extension симулятор окна
+-            - Service Worker кэширование и офлайн-режим
+-            - Иконки для установки на домашний экран
+-
+-            ### Android APK (Zen Panel)
+-            - WebView панель с интерфейсом
+-            - Подключение к self-hosted хабу NPM Hub
+-            - VNC / Linux-экран / Терминалы
+-            - Файловый менеджер, Git операции
+-            - API GitHub (репозитории, workflows, сессии)
+-            - Офлайн-режим через localStorage кэш
+-
+-            ### Установка
+-            1. **PWA**: Откройте в браузере (Via, Chrome), меню → "Установить сайт"
+-            2. **APK**: Соберите релиз вручную (требует keystore и gradle)
+-
+-            ### Структура
+-            - `pwa/` — статические файлы PWA (manifest, service worker, HTML)
+-            - `code/` — Android модуль и корневой проект
+-
+-            ### Ссылки
+-            - GitHub: https://github.com/sj0404-collab/zen-panel-pwa
+-            - PWA файлы: `pwa/`
+-
+-            ---
+-
+-            *Релиз создан автоматически при push тега v*"
+\ No newline at end of file
++          gh release create "v${{ steps.ver.outputs.version }}" \
++            --title "v${{ steps.ver.outputs.version }} - Zen Panel" \
++            --notes-file "$RUNNER_TEMP/release_notes.md"
+diff --git a/code b/code
+deleted file mode 160000
+index 8819be8..0000000
+--- a/code
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit 8819be8ed78327da014f8c54e37f5227c4d00ad6
