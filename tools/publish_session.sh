@@ -260,8 +260,14 @@ for arg in sys.argv[1:]:
 # of live/* files, start from what is already stored on the branch and let
 # this call overwrite only the keys it carries; end/journal writes and the
 # snapshots/* boxes stay a deliberate full replace.
+# state = the transition field of this record and is owned by THIS call:
+# pin the caller's intent BEFORE merging, otherwise an ended/reaped remnant
+# on the branch crawls into the new live record (seen 14.10 run 391: a fresh
+# hub would have reported state=ended forever). startedAt stays AFTER the
+# merge on purpose - for those the branch's original value must win.
 BRANCH_ = os.environ.get('BRANCH', 'session-state')
 FILE_ = os.environ.get('FILE', '')
+data.setdefault('state', 'live')
 if data.get('state', 'live') == 'live' and FILE_.startswith('live/'):
     existing = {}
     try:
