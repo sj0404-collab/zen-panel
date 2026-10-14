@@ -166,7 +166,7 @@ index 4138971..93784e1 100644
          if (githubToken.isBlank()) {
              return "error: GitHub-токен не задан — откройте ⚙ → GitHub и вставьте PAT (scopes repo, workflow)"
 diff --git a/android/app/src/main/java/dev/pocketrun/ui/AgentScreen.kt b/android/app/src/main/java/dev/pocketrun/ui/AgentScreen.kt
-index 6267814..912c732 100644
+index 6267814..5193cc3 100644
 --- a/android/app/src/main/java/dev/pocketrun/ui/AgentScreen.kt
 +++ b/android/app/src/main/java/dev/pocketrun/ui/AgentScreen.kt
 @@ -94,6 +94,7 @@ fun AgentScreen(viewModel: AppViewModel) {
@@ -275,6 +275,16 @@ index 6267814..912c732 100644
                  }
              }
          }
+@@ -346,7 +355,8 @@ private fun AgentEmptyHint() {
+     ) {
+         Text(
+             "opencode-совместимый агент: инструменты bash/read/write/edit/grep/glob,\n" +
+-                "apply_patch, навыки, сессии с resume и fork, инструкции AGENTS.md.",
++                "apply_patch, навыки, сессии с resume и fork, инструкции AGENTS.md,\n" +
++                "субагенты (task) и параллельные сессии — новое задание на ходу откроет свою вкладку.",
+             style = MaterialTheme.typography.bodyMedium,
+             color = MaterialTheme.colorScheme.onSurfaceVariant,
+             modifier = Modifier.padding(horizontal = 16.dp),
 diff --git a/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt b/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
 index bdac455..c78651d 100644
 --- a/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
@@ -1246,3 +1256,105 @@ index bdac455..c78651d 100644
          /** How often the project folder is checked for changes made elsewhere. */
          private const val WATCH_INTERVAL_MS = 2_000L
  
+diff --git a/android/app/src/test/java/dev/pocketrun/agent/opencode/OpenCodeToolsGateTest.kt b/android/app/src/test/java/dev/pocketrun/agent/opencode/OpenCodeToolsGateTest.kt
+index 0f71290..633bcfe 100644
+--- a/android/app/src/test/java/dev/pocketrun/agent/opencode/OpenCodeToolsGateTest.kt
++++ b/android/app/src/test/java/dev/pocketrun/agent/opencode/OpenCodeToolsGateTest.kt
+@@ -148,4 +148,64 @@ class OpenCodeToolsGateTest {
+         h.tools.execute("bash", """{"command":"echo hi"}""")
+         assertEquals(listOf("bash"), seen)
+     }
++
++    @Test
++    fun taskToolIsOfferedOnlyWhenARunnerIsSet() {
++        val h = newTools()
++        assertFalse(h.tools.definitions().toString().contains("\"name\":\"task\""))
++
++        h.tools.subagentRunner = { "done" }
++        assertTrue(h.tools.definitions().toString().contains("\"name\":\"task\""))
++    }
++
++    @Test
++    fun taskToolHandsThePromptToTheRunner() {
++        val h = newTools()
++        var got: OpenCodeTools.TaskRequest? = null
++        h.tools.subagentRunner = { req ->
++            got = req
++            "result: ${req.subagentType}"
++        }
++        val r = h.tools.execute("task", """{"description":"look","prompt":"find X","subagent_type":"explore"}""")
++        assertEquals("result: explore", r)
++        assertEquals("find X", got?.prompt)
++        assertEquals("explore", got?.subagentType)
++    }
++
++    @Test
++    fun taskToolWithoutPromptIsAnError() {
++        val h = newTools()
++        h.tools.subagentRunner = { "unused" }
++        assertTrue(h.tools.execute("task", """{"description":"x","subagent_type":"general"}""").contains("нужен непустой prompt"))
++    }
++
++    @Test
++    fun allowedToolsRestrictBothDefinitionsAndCalls() {
++        val h = newTools()
++        File(h.projectDir, "a.txt").writeText("hi")
++        h.tools.allowedTools = OpenCodeTools.subagentTools("explore")
++
++        val defs = h.tools.definitions().toString()
++        assertTrue(defs.contains("\"name\":\"read\""))
++        assertFalse(defs.contains("\"name\":\"write\""))
++        assertFalse(defs.contains("\"name\":\"bash\""))
++
++        assertTrue(h.tools.execute("read", """{"filePath":"a.txt"}""").contains("hi"))
++        assertTrue(h.tools.execute("write", """{"filePath":"b.txt","content":"x"}""").contains("недоступен"))
++    }
++
++    @Test
++    fun exploreSubagentCannotMutateGeneralCan() {
++        val explore = OpenCodeTools.subagentTools("explore")
++        assertTrue("read" in explore)
++        assertFalse("write" in explore)
++        assertFalse("bash" in explore)
++        assertFalse("task" in explore)
++
++        val general = OpenCodeTools.subagentTools("general")
++        assertTrue("write" in general)
++        assertTrue("bash" in general)
++        assertFalse("task" in general)
++        assertFalse("question" in general)
++    }
+ }
+diff --git a/docs/PLAN.md b/docs/PLAN.md
+index ee88528..a288212 100644
+--- a/docs/PLAN.md
++++ b/docs/PLAN.md
+@@ -270,6 +270,28 @@ Rhino-фолбэк (когда нативного лаунчера нет, на
+ Экраны: активация → список проектов → редактор + терминал → чат агента →
+ пакеты. `MainActivity` сейчас заглушка.
+ 
++### 4.6 Параллельные сессии и субагенты ✅ готово
++
++* `AppViewModel.SessionRun` — состояние одного хода (сообщения, todos,
++  счётчики, вопрос/подтверждение, отмена), вынесено из общих полей; публичные
++  `agentMessages`/`agentRunning`/… — это производные потоки от активной вкладки
++  (`activeFlow` через `flatMapLatest`), плюс `runningSessionIds` для индикатора на
++  вкладках;
++* несколько сессий работают одновременно: `agentExecutor` — пул из
++  `MAX_PARALLEL_TURNS` (4) потоков; `performTurn` синхронный, поэтому его же
++  вызывает и субагент;
++* новое задание на занятой вкладке (`sendToAgent`, `attachFile`) не встаёт в
++  очередь, а открывает свою сессию (`createSession`) и стартует там параллельно;
++  вкладки можно переключать и закрывать на ходу, `⏹` останавливает только
++  текущую сессию;
++* `task`-инструмент: субагент — дочерняя сессия (`parentID`) с ограниченным
++  набором инструментов (`OpenCodeTools.subagentTools`: `explore` — только
++  чтение, `general` — всё кроме `task`), выполняется синхронно на потоке
++  родителя и возвращает последний ассистентский текст; вложенность запрещена
++  (субагентам не выдаётся `task`); в системный промпт добавлен блок «Subagent»;
++* параллельный `bash` больше не затирает общий scratch-файл: имена
++  `cmd-<uuid>.py|js` уникальны и файл удаляется после запуска.
++
+ ---
+ 
+ ## 5. Как проверять

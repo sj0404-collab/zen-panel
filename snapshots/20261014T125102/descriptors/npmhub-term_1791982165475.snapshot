@@ -1,0 +1,54 @@
+[38;5;15m[48;5;232m  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mmetadata.json[38;5;15m                                                   [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m---gradle procs---[38;5;15m                                              [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m518433 /usr/lib/jvm/temurin-17-jdk-amd64/bin/java --add-[38;5;15m        [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mopens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/[38;5;15m    [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mjava.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.[38;5;15m        [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mutil=ALL-UNNAMED --add-opens=java.prefs/java.util.prefs=ALL-[38;5;15m    [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mUNNAMED --add-exports=jdk.compile…[38;5;15m                              [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;8mClick to expand[38;5;15m                                                 [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+                                                                       
+     [38;5;255mThe release APK is still the old unsigned one (11:55). There's [38;5;15m   
+     [38;5;255ma gradle 8.11.1 daemon (PID 715688) and Kotlin compile daemon ([38;5;15m   
+     [38;5;255m728886) still running — likely the build hung. The command [38;5;15m       
+     [38;5;255mproduced no output because [38;5;114mtail -12[38;5;255m waits for EOF, and the [38;5;15m       
+     [38;5;255mbuild hung. Possibly it hung waiting for something (maybe the [38;5;15m    
+     [38;5;255mdaemon lock, or the wireguard lib / signing prompt?).[38;5;15m             
+                                                                       
+     [38;5;255mActually, signing config now references keystore.properties; [38;5;15m     
+     [38;5;255mkeytool generated the keystore fine. The build might have hung [38;5;15m   
+     [38;5;255mon... hmm. Could be that starting [38;5;114m--no-daemon[38;5;255m while another [38;5;15m      
+     [38;5;255mdaemon holds locks? Or the Kotlin daemon.[38;5;15m                         
+                                                                       
+     [38;5;255mLet me kill the gradle/kotlin daemons and retry with a larger [38;5;15m    
+     [38;5;255mtimeout, and use [38;5;114m--console=plain[38;5;255m and redirect to a log file so [38;5;15m   
+     [38;5;255mwe can inspect. Also maybe use [38;5;114m--offline[38;5;255m since deps are cached, [38;5;15m  
+     [38;5;255mto avoid network hangs.[38;5;15m                                           
+                                                                       
+     [38;5;255mLet me kill daemons: [38;5;114m./gradlew --stop[38;5;255m and pkill kotlin daemon. [38;5;15m   
+     [38;5;255mThen rebuild release with output to a log.[38;5;15m                        
+                                                                       
+     [38;5;255mLet me do it.</think>The build hung (stale Gradle/Kotlin [38;5;15m         
+     [38;5;255mdaemons). Let me stop the daemons and rebuild, logging to a [38;5;15m      
+     [38;5;255mfile so I can inspect.[38;5;15m                                            
+                                                                       
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;8m# Running in code[38;5;15m                                               [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m⠇[38;5;15m [38;5;255m./gradlew --stop 2>&1 | tail -3; pkill -f KotlinCompileDaemon [38;5;15m[48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255m2>/dev/null; pkill -f GradleDaemon 2>/dev/null; sleep 3; [38;5;15m     [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mpgrep -af "GradleDaemon|KotlinCompileDaemon" | wc -l[38;5;15m          [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mStopping Daemon(s)[38;5;15m                                              [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m1 Daemon stopped[38;5;15m                                                [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+                                                                       
+     [38;5;75m▣ [38;5;15m [38;5;255mBuild[38;5;8m · Big Pickle[38;5;15m                                             
+                                                                       
+  [38;5;75m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;75m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;75m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;75m┃[38;5;15m[48;5;234m  [38;5;75mBuild[38;5;15m [38;5;8m·[38;5;15m [38;5;255mBig Pickle[38;5;15m [38;5;8mOpenCode[38;5;15m                                     [48;5;232m  
+  [38;5;75m╹[38;5;234m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀[38;5;15m  
+   [38;5;236m⬝⬝⬝⬝⬝⬝⬝⬝[38;5;15m  [38;5;255mesc [38;5;8minterrupt[38;5;15m              [38;5;8m115.1K (58%)[38;5;15m  [38;5;255mctrl+p [38;5;8mcommands[38;5;15m
