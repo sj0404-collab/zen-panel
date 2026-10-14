@@ -1,0 +1,54 @@
+[38;5;15m[48;5;232m                                                                       
+     [38;5;255mLet me run a combined step: check memory, kill daemons, [38;5;15m          
+     [38;5;255mgenerate keys, start server.[38;5;15m                                      
+                                                                       
+     [38;5;255mI'll create a script file to manage the server so I can re-run.[38;5;15m   
+                                                                       
+     [38;5;255mLet me write /tmp/opencode/wg/server-up.sh.[38;5;15m                       
+                                                                       
+     [38;5;255mActually let me just run commands.[38;5;15m                                
+                                                                       
+     [38;5;255mLet me generate keys and start server.</think>Понял механику. [38;5;15m    
+     [38;5;255mГотовлю WireGuard-сервер (userspace) на хосте.[38;5;15m                    
+                                                                       
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m⠙[38;5;15m [38;5;255mset -e[38;5;15m                                                        [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mmkdir -p /tmp/opencode/wg && cd /tmp/opencode/wg[38;5;15m              [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mchmod 700 /tmp/opencode/wg[38;5;15m                                    [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255m[ -f server.key ] || wg genkey > server.key[38;5;15m                   [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255m[ -f client.key ] || wg genkey > client.key[38;5;15m                   [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mwg pubkey < server.key > server.pub[38;5;15m                           [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mwg pubkey < client.key > client.pub[38;5;15m                           [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mecho "server.pub=$(cat server.pub)"[38;5;15m                           [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mecho "client.pub=$(cat client.pub)"[38;5;15m                           [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mecho "--- start wireguard-go ---"[38;5;15m                             [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255msudo pkill -f 'wireguard-go wg0' 2>/dev/null || true[38;5;15m          [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255msudo ip link del wg0 2>/dev/null || true[38;5;15m                      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255msudo wireguard-go wg0 2>&1 | tail -2[38;5;15m                          [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255msleep 1[38;5;15m                                                       [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255msudo ip addr add 10.13.13.1/24 dev wg0[38;5;15m                        [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255msudo ip link set wg0 up[38;5;15m                                       [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255msudo wg set wg0 private-key /tmp/opencode/wg/server.key [38;5;15m      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mlisten-port 51820 peer "$(cat client.pub)" allowed-ips 10.13.[38;5;15m [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255m13.2/32[38;5;15m                                                       [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mecho "--- server state ---"[38;5;15m                                   [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255msudo wg show wg0[38;5;15m                                              [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mip -brief addr show wg0[38;5;15m                                       [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mWarning: writing to world accessible file.[38;5;15m                      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mConsider setting the umask to 077 and trying again.[38;5;15m             [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mWarning: writing to world accessible file.[38;5;15m                      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mConsider setting the umask to 077 and trying again.[38;5;15m             [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mserver.pub=9uaneB0Xw7zzSYFcmQog+cojzrYEumAyX+/vLETUlV8=[38;5;15m         [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mclient.pub=hEpc72/rr6gPFcCmpKtDB9MRxhcNBCUlSxWSCPwWZhc=[38;5;15m         [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m--- start wireguard-go ---[38;5;15m                                      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+                                                                       
+     [38;5;75m▣ [38;5;15m [38;5;255mBuild[38;5;8m · Big Pickle[38;5;15m                                             
+                                                                       
+  [38;5;75m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;75m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;75m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;75m┃[38;5;15m[48;5;234m  [38;5;75mBuild[38;5;15m [38;5;8m·[38;5;15m [38;5;255mBig Pickle[38;5;15m [38;5;8mOpenCode[38;5;15m                                     [48;5;232m  
+  [38;5;75m╹[38;5;234m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀[38;5;15m  
+   [38;5;74m■[38;5;61m■[38;5;239m■[38;5;236m■[38;5;235m■[38;5;60m⬝⬝⬝[38;5;15m  [38;5;255mesc [38;5;8minterrupt[38;5;15m               [38;5;8m34.4K (17%)[38;5;15m  [38;5;255mctrl+p [38;5;8mcommands[38;5;15m
