@@ -1080,6 +1080,7 @@ jobs:
       - name: Start the Linux desktop and open the tunnel
         env:
           TUNNL_SSH_KEY: ${{ secrets.TUNNL_SSH_KEY }}
+          TUNNL_SSH_KEY_VNC: ${{ secrets.TUNNL_SSH_KEY_VNC }}
         run: |
           export VNC_PORT=5901 NOVNC_PORT=6081
           bash "$GITHUB_WORKSPACE/fork/tools/start_desktop.sh" || {
@@ -1132,12 +1133,16 @@ jobs:
           echo $! > "$HUB_LOGS/tunnel-keeper.pid"
           echo "tunnel keeper: vnc endpoint now carries main + reserve addresses"
 
-          # tunnl.gg door for the desktop as well: same stable SSH key, the
-          # address never changes; published as tgg= into session-vnc.json and
-          # the hub prefers it over the flapping trycloudflare pair.
+          # tunnl.gg door for the desktop. KEY split (14.10): the tunnl URL
+          # is bound to the SSH key, and for two days the hub and the desk
+          # were connecting with the SAME key - two sessions fought over one
+          # address, probes alternated "hub 401" and "noVNC directory
+          # listing", clients read tgg as broken every other second. The desk
+          # now authenticates with its own key (new secret), so each side
+          # permanently owns its own stable address.
           if [ -n "${TUNNL_SSH_KEY:-}" ]; then
             nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
-              TUNNL_SSH_KEY="$TUNNL_SSH_KEY" \
+              TUNNL_SSH_KEY="$TUNNL_SSH_KEY" TUNNL_SSH_KEY_VNC="${TUNNL_SSH_KEY_VNC:-}" \
               bash "$GITHUB_WORKSPACE/fork/tools/tunnl_keeper.sh" vnc >> "$HUB_LOGS/tunnl-keeper.log" 2>&1 &
             echo $! > "$HUB_LOGS/tunnl-keeper.pid"
             echo "tunnl keeper: vnc desktop now also carries the stable tunnl.gg address"
