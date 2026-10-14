@@ -195,6 +195,7 @@ if [ "$JOURNAL" = "1" ]; then
   FILE="history/$bucket/run-$_num.json"
 fi
 FILE="$(layout_file "$FILE")"
+export FILE BRANCH
 export SCRUB
 export JSON_MERGE="$(printf '%s\n' "${JSON_FILES[@]}")" 
 
@@ -216,7 +217,7 @@ cleanup_publish() {
 trap cleanup_publish EXIT
 
 python3 - "$@" <<'PY' > "$STAGE"
-import json, os, re, sys, datetime
+import json, os, re, sys, datetime, time, urllib.request
 
 SECRET_RE = re.compile(r'key|token|secret|passw|auth|credential|private|bearer', re.I)
 
@@ -251,6 +252,35 @@ for arg in sys.argv[1:]:
     key, value = arg.split('=', 1)
     if value != '':
         data[key] = value
+
+# Anti tug-of-war (measured 14.10 run 390): several keepers republish the
+# same live descriptor, each with its own subset of legs (url2=, ngrok=,
+# tgg=). Written side-by-side, every publish ERASED the other legs - tgg=
+# survived exactly 35 seconds of a whole 6-hour session. For LIVE publishes
+# of live/* files, start from what is already stored on the branch and let
+# this call overwrite only the keys it carries; end/journal writes and the
+# snapshots/* boxes stay a deliberate full replace.
+BRANCH_ = os.environ.get('BRANCH', 'session-state')
+FILE_ = os.environ.get('FILE', '')
+if data.get('state', 'live') == 'live' and FILE_.startswith('live/'):
+    existing = {}
+    try:
+        _tok = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN') or ''
+        _repo = os.environ.get('GITHUB_REPOSITORY', '')
+        _url = 'https://raw.githubusercontent.com/%s/%s/%s?t=%d' % (
+            _repo, BRANCH_, FILE_, int(time.time()))
+        _req = urllib.request.Request(_url)
+        if _tok:
+            _req.add_header('Authorization', 'Bearer ' + _tok)
+        _r = urllib.request.urlopen(_req, timeout=15)
+        existing = json.loads(_r.read().decode('utf-8'))
+        if not isinstance(existing, dict):
+            existing = {}
+    except Exception as _e:  # file absent / branch absent: first publish
+        sys.stderr.write('publish_session: merge-read of %s skipped (%s)\n' % (FILE_, _e))
+        existing = {}
+    for _k, _v in existing.items():
+        data.setdefault(_k, _v)
 
 data.setdefault('startedAt', datetime.datetime.now(datetime.timezone.utc)
                 .replace(microsecond=0).isoformat().replace('+00:00', 'Z'))
