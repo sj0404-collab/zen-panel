@@ -539,22 +539,41 @@ async function detectSessionConflict(token) {
 // storage): read the session address (raw = free) and try the launch token
 // saved at dispatch, then the last connected one, then an open gate.
 async function tryOpenLive(token) {
-  const s = await readHubSessionRaw();
-  if (!s || s.state !== 'live' || !(s.hubUrl || s.url)) {
+  let s = await readHubSessionRaw();
+  if (!s || s.state !== 'live' || !(s.hubUrl || s.url || s.ngrok)) {
     log('Запуск уже идёт, но адрес хаб ещё не сообщил (или он уже выключен). Подожди пару минут и нажми «Запустить хаб» снова — страница подключится к уже идущему.', 'err');
     return false;
   }
   log('Хаб уже запущен. Подбираю доступ…');
-  const { list: candidates, spare } = await hubCandidates(s);
-  const bases = sessionBases(s);
-  const probe = await firstReachableBase(bases, candidates, s.runId);
+  // Ран жив, а адреса могут молчать ВРЕМЕННО: cloudflare флапует каждые
+  // 15-60 мин (сторож перепубликует свежий адрес за 1-3 мин), а мёртвый на
+  // месяц ngrok (ERR_NGROK_725) телефону неотличим от обрыва сети. Поэтому
+  // при чисто-сетевых ошибках делаем до 4 кругов по 25 с, каждый раз
+  // перечитывая дескриптор — свежий адрес подхватится сам.
+  let candidates = [], spare = '', bases = [], probe = null;
+  for (let round = 0; round < 4; round++) {
+    if (round > 0) {
+      log('Адреса молчат — жду 25 с и пробую снова (круг ' + (round + 1) + '/4)…', '');
+      await new Promise(r => setTimeout(r, 25000));
+      const s2 = await readHubSessionRaw();
+      if (s2 && s2.state === 'live') s = s2;
+    }
+    const hc = await hubCandidates(s);
+    candidates = hc.list; spare = hc.spare;
+    bases = sessionBases(s);
+    probe = await firstReachableBase(bases, candidates, s.runId);
+    if (probe.base) break;
+    const rs = (probe.errors || []).map(e => e && e.reason).filter(Boolean);
+    const allNet = rs.length > 0 && rs.every(r => /failed to fetch|networkerror|load failed/i.test(r));
+    if (!allNet) break; // 401/403 — повтор причины не изменит
+  }
   if (!probe.base) {
     // Различаем «адрес мёртв» (туннель/ран уже убит извне) и «401 чужой токен»:
     // второе лечится запасным входом, первое — только перезапуском.
     const reasons = (probe.errors || []).map(e => e && e.reason).filter(Boolean);
     const dead = reasons.filter(r => /failed to fetch|networkerror|load failed/i.test(r));
     if (dead.length && dead.length === reasons.length) {
-      log('Адрес хаба молчит (туннель мёртв — ран, скорее всего, остановлен извне). Нажмите «Остановить и перезапустить ранер».', 'err');
+      log('Адрес хаба молчит после 4 кругов (~2 мин). Ран жив — значит, cloudflare-туннель в длинном флапе (ngrok вне игры до ~18-го: исчерпан лимит трафика месяца). Подожди 2-3 минуты и нажми снова — сторож к этому моменту перепубликует свежий адрес. Не помогло — «Остановить и перезапустить ранер».', 'err');
     } else {
       const detail = reasons.join('; ');
       log('Хаб запущен, но закрыт токеном запуска' + (detail ? ' (' + detail + ')' : '') + '. Войдите по запасному входу: введите GitHub-токен, которым запускали хаб, и нажмите «Открыть» снова. Либо нажмите «Остановить и перезапустить ранер».', 'err');
@@ -841,10 +860,11 @@ function lastOriginToken() {
 }
 function sessionBases(s) {
   const out = []; const seen = {};
-  // ngrok legs first since 1.358: the reserved static domain survives every
-  // restart and relay, so the primary address simply never changes. The
-  // trycloudflare pair stays as reserve (it flaps every 15-60 min by design).
-  for (const v of [String(s && s.ngrok || ''), String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || '')]) {
+  // 1.358 made ngrok first (static domain never changes), but the account's
+  // MONTHLY bandwidth limit (ERR_NGROK_725) turned that leg into a wall of
+  // silent fetch failures on 14.10. Cloudflare leads again; ngrok stays as
+  // the reserve it was designed as — static domain, steady under flap-days.
+  for (const v of [String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || ''), String(s && s.ngrok || '')]) {
     const k = v.replace(/\/+$/, '');
     if (k && !seen[k]) { seen[k] = 1; out.push(k); }
   }
