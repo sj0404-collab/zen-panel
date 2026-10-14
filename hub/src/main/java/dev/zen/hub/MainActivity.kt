@@ -31,6 +31,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLDecoder
 
 /**
  * NPM Hub: a connect page served from inside the APK, then the hub itself.
@@ -242,7 +243,7 @@ class MainActivity : ComponentActivity() {
         fun probe(url: String): String {
             return runCatching {
                 val uri = Uri.parse(url)
-                val host = uri.host ?: return "{"status":-1,"body":""}"
+                val host = uri.host ?: return """{"status":-1,"body":""}"""
                 if (host.lowercase().endsWith(".tunnl.gg")) {
                     val sub = host.substringBefore('.')
                     runCatching {
@@ -263,8 +264,8 @@ class MainActivity : ComponentActivity() {
                         ?.readBytes()?.toString(Charsets.UTF_8).orEmpty().take(4096)
                 } catch (noBody: Exception) { "" }
                 conn.disconnect()
-                "{"status":$code,"body":${JSONObject.quote(body)}}"
-            }.getOrElse { "{"status":-1,"body":""}" }
+                """{"status":$code,"body":${JSONObject.quote(body)}}"""
+            }.getOrElse { """{"status":-1,"body":""}""" }
         }
 
         @android.webkit.JavascriptInterface
