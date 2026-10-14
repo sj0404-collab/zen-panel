@@ -1,0 +1,54 @@
+[38;5;15m[48;5;232m  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mactions/setup-android@v3[38;5;15m                                        [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mfails because newer cmdline-tools no longer ship a 'tools' [38;5;15m     [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mpackage." 2>&1 | tail -4 && git push origin main 2>&1 | tail -4[38;5;15m [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m[main 6153b9e] ci: drop outdated setup-android step, bump [38;5;15m      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mactions to v5[38;5;15m                                                   [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m 2 files changed, 3 insertions(+), 6 deletions(-)[38;5;15m               [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mTo https://github.com/sj0404-collab/zen-panel-pwa.git[38;5;15m           [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m   958af0c..6153b9e  main -> main[38;5;15m                               [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+                                                                       
+     [38;5;255mWait — the second commit only touched [38;5;114m.github/workflows/[38;5;255m, not [38;5;15m    
+     [38;5;114mcode/**[38;5;255m. The android-apk workflow triggers on push with paths [38;5;15m    
+     [38;5;114mcode/**[38;5;255m OR workflow_dispatch. Since only .github changed, the [38;5;15m    
+     [38;5;255mpush won't trigger the build! I need to trigger via [38;5;15m              
+     [38;5;255mworkflow_dispatch.[38;5;15m                                                
+                                                                       
+     [38;5;255mLet me dispatch the workflow manually: [38;5;114mgh workflow run android-[38;5;15m   
+     [38;5;114mapk.yml --repo ... --ref main[38;5;255m.[38;5;15m                                    
+                                                                       
+     [38;5;255mThen watch it.</think>The push only changed [38;5;114m.github/[38;5;255m, so it [38;5;15m      
+     [38;5;255mwon't auto-trigger (path filter is [38;5;114mcode/**[38;5;255m). Let me dispatch it [38;5;15m  
+     [38;5;255mmanually.[38;5;15m                                                         
+                                                                       
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m$ sleep 3; gh workflow run android-apk.yml --repo sj0404-collab/[38;5;15m[48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mzen-panel-pwa --ref main 2>&1; sleep 8; gh run list --repo [38;5;15m     [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255msj0404-collab/zen-panel-pwa --workflow android-apk.yml --limit [38;5;15m [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m3 2>&1[38;5;15m                                                          [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mhttps://github.com/sj0404-collab/zen-panel-pwa/actions/runs/[38;5;15m    [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m38560949660[38;5;15m                                                     [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255min_progress    Android APK Build  Android APK Build  main  [38;5;15m     [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mworkflow_dispatch  38560949660  9s  2026-10-14T12:03:09Z[38;5;15m        [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mcompleted  failure  feat: native Android app with real [38;5;15m         [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mWireGuard VPN  Android APK Build  main  push  38560791665  24s  [38;5;15m[48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m2026-10-14T12:01:51Z[38;5;15m                                            [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+                                                                       
+     [38;5;255m</think>[38;5;15m                                                          
+                                                                       
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m⠹[38;5;15m [38;5;255mgh run watch 38560949660 --repo sj0404-collab/zen-panel-pwa --[38;5;15m[48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m    [38;5;255mexit-status --interval 20 2>&1 | tail -35[38;5;15m                     [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+                                                                       
+     [38;5;4m▣ [38;5;15m [38;5;255mBuild[38;5;244m · Big Pickle[38;5;15m                                             
+                                                                       
+  [38;5;4m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;4m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;4m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;4m┃[38;5;15m[48;5;234m  [38;5;4mBuild[38;5;15m [38;5;244m·[38;5;15m [38;5;255mBig Pickle[38;5;15m [38;5;244mOpenCode[38;5;15m                                     [48;5;232m  
+  [38;5;4m╹[38;5;234m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀[38;5;15m  
+   [38;5;236m⬝⬝⬝⬝⬝⬝⬝⬝[38;5;15m  [38;5;255mesc [38;5;244minterrupt[38;5;15m              [38;5;244m108.0K (54%)[38;5;15m  [38;5;255mctrl+p [38;5;244mcommands[38;5;15m
