@@ -1,0 +1,54 @@
+[38;5;15m[48;5;232m     [38;5;255memulator as root is messy (adb, files). Simpler: [38;5;114msudo chmod 666 [38;5;15m  
+     [38;5;114m/dev/kvm[38;5;255m so runner can use it. Let me do that.[38;5;15m                    
+                                                                       
+     [38;5;255mAlso need /dev/kvm accessible. Let me chmod.[38;5;15m                      
+                                                                       
+     [38;5;255mAlternatively, run emulator without KVM (software) with [38;5;114m-accel [38;5;15m   
+     [38;5;114moff[38;5;255m — very slow, might not boot in reasonable time. Better use [38;5;15m   
+     [38;5;255mKVM.[38;5;15m                                                              
+                                                                       
+     [38;5;255mLet me chmod /dev/kvm and create AVD.[38;5;15m                             
+                                                                       
+     [38;5;255mLet me proceed.</think>Сервер поднят ([38;5;114mwg0[38;5;255m, порт 51820). Готовлю [38;5;15m  
+     [38;5;255mклиентский конфиг и AVD. Для KVM дам доступ пользователю runner.[38;5;15m  
+                                                                       
+     [38;5;215m$[38;5;15m [38;5;215mcd /tmp/opencode/wg[38;5;15m                                             
+       [38;5;215mcat > client.conf <<EOF[38;5;15m                                         
+       [38;5;215m[Interface][38;5;15m                                                     
+       [38;5;215mPrivateKey = $(cat client.key)[38;5;15m                                  
+       [38;5;215mAddress = 10.13.13.2/24[38;5;15m                                         
+       [38;5;215mDNS = 1.1.1.1[38;5;15m                                                   
+       [38;5;215mMTU = 1280[38;5;15m                                                      
+                                                                       
+       [38;5;215m[Peer][38;5;15m                                                          
+       [38;5;215mPublicKey = $(cat server.pub)[38;5;15m                                   
+       [38;5;215mAllowedIPs = 0.0.0.0/0[38;5;15m                                          
+       [38;5;215mEndpoint = 10.0.2.2:51820[38;5;15m                                       
+       [38;5;215mPersistentKeepalive = 25[38;5;15m                                        
+       [38;5;215mEOF[38;5;15m                                                             
+       [38;5;215mecho "=== client.conf ==="; cat client.conf[38;5;15m                     
+       [38;5;215mecho "=== kvm ==="; sudo chmod 666 /dev/kvm && ls -l /dev/kvm[38;5;15m   
+       [38;5;215mexport ANDROID_SDK_ROOT=$ANDROID_HOME[38;5;15m                           
+       [38;5;215mrm -rf ~/.android/avd/zen.avd ~/.android/avd/zen.ini[38;5;15m            
+       [38;5;215mecho no | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager [38;5;15m    
+       [38;5;215mcreate avd -n zen -k "system-images;android-34;google_apis;[38;5;15m     
+       [38;5;215mx86_64" -d pixel_5 --force 2>&1 | tail -5[38;5;15m                       
+       [38;5;215mecho "=== avds ==="; $ANDROID_HOME/emulator/emulator -list-[38;5;15m     
+       [38;5;215mavds 2>&1[38;5;15m                                                       
+                                                                       
+     [38;5;75m▣ [38;5;15m [38;5;255mBuild[38;5;8m · Big Pickle[38;5;15m                                             
+                                                                       
+  [38;5;215m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m  [38;5;215m△[38;5;15m [38;5;255mPermission required[38;5;15m                                           [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m    [38;5;8m←[38;5;15m [38;5;255mAccess external directory /tmp/opencode/wg[38;5;15m                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m  [38;5;8mPatterns[38;5;15m                                                        [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m  [38;5;255m- /tmp/opencode/wg/*[38;5;15m                                            [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m  [38;5;255m- /home/runner/.android/avd/*[38;5;15m                                   [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m[48;5;234m  [48;5;215m [38;5;232mAllow once[38;5;15m [48;5;234m  [38;5;8mAllow always[38;5;15m   [38;5;8mReject[38;5;15m                             [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m[48;5;234m  [38;5;255mctrl+f [38;5;8mfullscreen[38;5;15m  [38;5;255m⇆ [38;5;8mselect[38;5;15m  [38;5;255menter [38;5;8mconfirm[38;5;15m                      [48;5;232m  
+  [38;5;215m[48;5;233m┃[38;5;15m[48;5;234m                                                                  [48;5;232m
