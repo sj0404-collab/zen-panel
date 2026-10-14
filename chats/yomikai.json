@@ -4,7 +4,7 @@
   "repo": "sj0404-collab/zen-panel",
   "repoName": "yomikai",
   "workdir": "/home/runner/hub-work/yomikai/code",
-  "updatedAt": "2026-10-14T21:33:31Z",
+  "updatedAt": "2026-10-14T22:38:36Z",
   "count": 3,
   "sessions": [
     {
@@ -12,7 +12,7 @@
       "title": "Исправления в последнем коммите",
       "slug": "jolly-mountain",
       "directory": "/home/runner/hub-work/yomikai/code",
-      "timeUpdated": 1792013592143,
+      "timeUpdated": 1792013646210,
       "export": {
         "info": {
           "id": "ses_ec6c42834ffe1tfHrJsHhBupav",
@@ -36,7 +36,7 @@
           "cost": 0,
           "time": {
             "created": 1791961585611,
-            "updated": 1792013592143
+            "updated": 1792013646210
           }
         },
         "messages": [
@@ -49190,8 +49190,10 @@
               "modelID": "space-bunny-free",
               "providerID": "opencode",
               "time": {
-                "created": 1792013592142
+                "created": 1792013592142,
+                "completed": 1792013639244
               },
+              "finish": "tool-calls",
               "id": "msg_13c55664e001RFmf52QvfoWZbw",
               "sessionID": "ses_ec6c42834ffe1tfHrJsHhBupav"
             },
@@ -49219,20 +49221,86 @@
                 "tool": "bash",
                 "callID": "call_01a13c557a7e77e78499618c",
                 "state": {
-                  "metadata": {
-                    "output": " * [new tag]         v2.0.7 -> v2.0.7\n"
-                  },
-                  "status": "running",
+                  "status": "completed",
                   "input": {
                     "command": "cd /home/runner/hub-work/yomikai/code && git tag -a v2.0.7 -m \"v2.0.7 — пак RapidOCR виден в настройках OCR\" 7e8ec70 && git -c credential.helper='!f(){ echo \"username=x-access-token\"; echo \"password=$GH_TOKEN\"; };f' push origin refs/tags/v2.0.7 2>&1 | tail -1; sleep 40; gh run list --workflow=release.yml --limit 1 2>&1 | head -2"
                   },
+                  "output": " * [new tag]         v2.0.7 -> v2.0.7\nin_progress\t\tfix(ui): показать пак RapidOCR в настройках OCR\tRelease\tv2.0.7\tpush\t38641162032\t38s\t2026-10-14T21:33:21Z\n",
+                  "metadata": {
+                    "output": " * [new tag]         v2.0.7 -> v2.0.7\nin_progress\t\tfix(ui): показать пак RapidOCR в настройках OCR\tRelease\tv2.0.7\tpush\t38641162032\t38s\t2026-10-14T21:33:21Z\n",
+                    "exit": 0,
+                    "truncated": false
+                  },
+                  "title": "cd /home/runner/hub-work/yomikai/code && git tag -a v2.0.7 -m \"v2.0.7 — пак RapidOCR виден в настройках OCR\" 7e8ec70 && git -c credential.helper='!f(){ echo \"username=x-access-token\"; echo \"password=$GH_TOKEN\"; };f' push origin refs/tags/v2.0.7 2>&1 | tail -1; sleep 40; gh run list --workflow=release.yml --limit 1 2>&1 | head -2",
                   "time": {
-                    "start": 1792013597382
+                    "start": 1792013597382,
+                    "end": 1792013639176
                   }
                 },
                 "id": "prt_13c557abc001oMLVRHlrg909lh",
                 "sessionID": "ses_ec6c42834ffe1tfHrJsHhBupav",
                 "messageID": "msg_13c55664e001RFmf52QvfoWZbw"
+              },
+              {
+                "reason": "tool-calls",
+                "snapshot": "af8b48bc60c89c87a856f1d928b8370a9719e8d8",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_13c561e2b001VfZ6QaWkupc64C",
+                "sessionID": "ses_ec6c42834ffe1tfHrJsHhBupav",
+                "messageID": "msg_13c55664e001RFmf52QvfoWZbw"
+              }
+            ]
+          },
+          {
+            "info": {
+              "parentID": "msg_13c4d5bba001EJRYJMcWuUcUkU",
+              "role": "assistant",
+              "mode": "build",
+              "agent": "build",
+              "variant": "max",
+              "path": {
+                "cwd": "/home/runner/hub-work/yomikai/code",
+                "root": "/home/runner/hub-work/yomikai/code"
+              },
+              "cost": 0,
+              "modelID": "space-bunny-free",
+              "providerID": "opencode",
+              "time": {
+                "created": 1792013639303,
+                "completed": 1792013646145
+              },
+              "finish": "stop",
+              "id": "msg_13c561e87001sbXfmGJLjhCFWR",
+              "sessionID": "ses_ec6c42834ffe1tfHrJsHhBupav"
+            },
+            "parts": [
+              {
+                "snapshot": "af8b48bc60c89c87a856f1d928b8370a9719e8d8",
+                "type": "step-start",
+                "id": "prt_13c562e9e001eJmOQVYV0vkriv",
+                "sessionID": "ses_ec6c42834ffe1tfHrJsHhBupav",
+                "messageID": "msg_13c561e87001sbXfmGJLjhCFWR"
+              },
+              {
+                "type": "text",
+                "text": "Ты был прав, и это была моя недосмотренность.\n\n## Почему пака не было\n\nПак был в **загрузчике** (`OcrModelDownloader.PACKS`, id 77005), но список паков в экране настроек собирается **вручную** — отдельная строка `ModelPackRow` на каждый пак. Соседние `manga_ocr` и `manga_ocr_fast` оттуда намеренно вырезали как японские модели, и по той же инерции мою строку я не добавил. Итог: пак скачивался, но из интерфейса был недостижим.\n\n## Что исправлено\n\nВ разделе «Офлайн-распознавание» теперь:\n\n1. **RapidOCR eslav** — первой строкой, помечен как движок по умолчанию, с цифрами из твоего замера.\n2. **Русский/Cyrillic PP-OCR** — второй строкой, переименован в «запасной».\n3. При установке пака движок переключается на него автоматически — как уже сделано для cyrillic.\n\n## Заодно проверил смежный баг\n\nВ этом же экране есть `LaunchedEffect`, который при смене движка на `LEGACY`/`FAST`/`TESSERACT` принудительно ставит `CYRILLIC`. На `RAPID` он не трогает — то есть **миграция из 2.0.6 не затрётся**, когда ты откроешь настройки. Это была реальная опасность: если бы он сработал, eslav сбросился бы обратно.\n\nCI `38640108776` — success. Релиз 2.0.7 собирается.\n\n## Что сделать тебе\n\n1. Поставить 2.0.7.\n2. Настройки → OCR → **Офлайн-распознавание** → **RapidOCR eslav** → скачать (~13 МБ).\n3. Открыть страницу 3/10.\n\nПосле установки пака движок переключится сам. Если в настройках всё равно останется Cyrillic — пришли скрин, посмотрю, что там.",
+                "time": {
+                  "start": 1792013643426,
+                  "end": 1792013646058
+                },
+                "id": "prt_13c562ea2001f12K3hPIXzWbAz",
+                "sessionID": "ses_ec6c42834ffe1tfHrJsHhBupav",
+                "messageID": "msg_13c561e87001sbXfmGJLjhCFWR"
+              },
+              {
+                "reason": "stop",
+                "snapshot": "af8b48bc60c89c87a856f1d928b8370a9719e8d8",
+                "type": "step-finish",
+                "cost": 0,
+                "id": "prt_13c56390f0019pvoDByrWHAGJ5",
+                "sessionID": "ses_ec6c42834ffe1tfHrJsHhBupav",
+                "messageID": "msg_13c561e87001sbXfmGJLjhCFWR"
               }
             ]
           }
@@ -67874,8 +67942,8 @@
     }
   ],
   "state": "updated",
-  "stamp": "20261014T213331",
-  "startedAt": "2026-10-14T21:33:36Z",
+  "stamp": "20261014T223836",
+  "startedAt": "2026-10-14T22:38:40Z",
   "runId": "38620486187",
   "runNumber": "392"
 }
