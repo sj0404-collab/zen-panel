@@ -1522,6 +1522,14 @@ async function snapJournal(p) {
         + d.changedFiles.slice(0, 12).map(c => `<div class="row"><div class="meta">${esc(c.code)} ${esc(c.path)}</div></div>`).join('');
       if (d.gitDiffStat) html += `<div class="row"><div class="meta" style="white-space:pre-wrap">${esc(d.gitDiffStat.split('\n').slice(0, 8).join('\n'))}</div></div>`;
     }
+    if (Array.isArray(d.gitLog) && d.gitLog.length) {
+      html += `<div class="row"><div class="meta">Последние коммиты${d.repo ? ' · ' + esc(d.repo) : ''}:</div></div>`
+        + d.gitLog.slice(0, 8).map(l => `<div class="row"><div class="meta">${esc(l)}</div></div>`).join('');
+    }
+    if (Array.isArray(d.sessions) && d.sessions.length) {
+      html += `<div class="row"><div class="meta">Сессий в снапшоте: ${d.sessions.length}</div></div>`
+        + d.sessions.slice(0, 8).map(en => `<div class="row"><div class="meta">${esc(((en.file || '') + ' ' + JSON.stringify(en.data || en)).slice(0, 160))}</div></div>`).join('');
+    }
     if (typeof d.opencodeMessageCount !== 'undefined') {
       html += `<div class="row"><div class="meta">opencode: ${d.opencodeMessageCount} сообщ. · чат: ${d.chatCount || 0} · сессий: ${(d.sessions || []).length}</div></div>`;
     }

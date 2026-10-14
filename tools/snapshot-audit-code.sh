@@ -66,6 +66,71 @@ export_all_chats() {
     bash "$SCRIPT_DIR/export-chats.sh" --all >> "$HUB_LOGS/snapshot-$SLOT.log" 2>&1
 }
 
+# Per-repo code snapshots: EVERY git repo under the hub-work root gets its
+# own snapshots/code-<repo>.json. The global code.json covers only the hub
+# clone itself - that is exactly the «куча репо с сессиями — не сохранилось»
+# hole. A push happens only when the repo moved (md5 of status+HEAD), so idle
+# repos cost nothing on the 120 s daemon cycle.
+snapshot_all_repos() {
+  local root="${HUB_WORK_DIR:-$HOME/hub-work}"
+  [ -d "$root" ] || return 0
+  find "$root" -maxdepth 4 -type d -name .git 2>/dev/null | head -12 | while read -r gitdir; do
+    repo="$(dirname "$gitdir")"
+    name="$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '-')"
+    [ -n "$name" ] || continue
+    # Change signal, BOTH cheap: numstat/status/HEAD md5 catches branch and
+    # line-count movement; a marker-file mtime scan catches same-line-count
+    # in-place edits that porcelain would describe identically (tested: the
+    # naive status-only md5 silently skipped such edits).
+    marker="$HUB_LOGS/repo-snap-$name.stamp"
+    nowhash="$(cd "$repo" 2>/dev/null && { git status --porcelain=v1 2>/dev/null | head -n 200; git diff --numstat HEAD 2>/dev/null | head -n 200; git log --oneline -3 2>/dev/null; } | md5sum | cut -d' ' -f1)"
+    [ -n "$nowhash" ] || continue
+    newer=""
+    [ -f "$marker" ] && newer="$(find "$repo" -path "$gitdir" -prune -o -type f -newer "$marker" -print -quit 2>/dev/null)"
+    if [ -z "$newer" ] && [ "$(cat "$HUB_LOGS/repo-snap-$name.md5" 2>/dev/null || true)" = "$nowhash" ]; then
+      continue
+    fi
+    tmp2="$(mktemp -d)" || continue
+    python3 - "$repo" "$name" "$tmp2" <<'PYREPO'
+import json, os, sys, subprocess, glob
+repo, name, tmp = sys.argv[1], sys.argv[2], sys.argv[3]
+def run(cmd):
+    try: return subprocess.check_output(cmd, cwd=repo, shell=True, text=True, stderr=subprocess.DEVNULL)
+    except Exception: return ""
+out = {"kind":"code","slot": os.environ.get("SLOT",""), "repo": name,
+       "stamp": os.popen("date -u +%Y-%m-%dT%H:%M:%SZ").read().strip(),
+       "changedFiles": [], "gitStatus": "", "gitDiffStat": "", "gitLog": [], "sessions": []}
+out["gitStatus"] = run("git status --porcelain=v1 2>/dev/null | head -n 200")
+out["gitDiffStat"] = run("git diff --stat HEAD 2>/dev/null | head -n 200")
+try:
+    for l in out["gitStatus"].splitlines():
+        if len(l) >= 3:
+            out["changedFiles"].append({"code": l[:2], "path": l[3:]})
+except Exception: pass
+out["gitLog"] = [x for x in run("git log --oneline -20 2>/dev/null").strip().splitlines() if x][:20]
+try:
+    sess_dir = os.path.join(repo, ".zen-agent", "sessions")
+    if os.path.isdir(sess_dir):
+        for p in sorted(glob.glob(os.path.join(sess_dir, "*.json")))[:20]:
+            try: out["sessions"].append({"file": os.path.basename(p), "data": json.load(open(p, encoding="utf-8"))})
+            except Exception: pass
+except Exception: pass
+out["changedCount"] = len(out["changedFiles"])
+with open(os.path.join(tmp, "code.json"), "w", encoding="utf-8") as f:
+    json.dump(out, f, ensure_ascii=False, indent=2)
+PYREPO
+    if [ -s "$tmp2/code.json" ] && publish_snapshot "slot=$SLOT" "file=code-$name.json" "json=$tmp2/code.json" "kind=snapshot-code.json"; then
+      printf '%s' "$nowhash" > "$HUB_LOGS/repo-snap-$name.md5"
+      : > "$marker"
+      log "repo $name -> snapshots/code-$name.json"
+    else
+      log "repo $name publish failed"
+    fi
+    rm -rf "$tmp2"
+  done
+  return 0
+}
+
 do_snapshot() {
   if ! acquire_snapshot_lock; then
     log "another snapshot is already running"
@@ -213,6 +278,9 @@ PY
       log "publish failed for $hist"
     fi
   done
+  # Per-repo snapshots — the «many repos with their own sessions» case:
+  # every repo under hub-work becomes snapshots/code-<repo>.json on change.
+  snapshot_all_repos || log "per-repo snapshot pass had failures"
   log "snapshot $stamp: audit $(wc -c < "$audit_json" 2>/dev/null | tr -d ' ')B code $(wc -c < "$code_json" 2>/dev/null | tr -d ' ')B published=$published/4"
   rm -rf "$tmpdir"
   release_snapshot_lock
