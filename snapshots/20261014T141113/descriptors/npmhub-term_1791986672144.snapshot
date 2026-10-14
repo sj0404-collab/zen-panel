@@ -1,0 +1,54 @@
+[38;5;15m[48;5;232m  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mextra_label Test" 2>&1 | tail -1[38;5;15m                                [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255madb -s emulator-5554 unroot >/dev/null 2>&1[38;5;15m                     [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255msleep 10[38;5;15m                                                        [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255madb -s emulator-5554 logcat -d -v time > /tmp/opencode/logcat5.[38;5;15m [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mtxt 2>&1[38;5;15m                                                        [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mecho "=== uapi/mkdir ==="[38;5;15m                                       [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mgrep -iE "UAPIOpen.*mkdir|Permission denied.*wireguard|Device [38;5;15m  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mstarted|Interface state was" /tmp/opencode/logcat5.txt | tail -8[38;5;15m[48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mStarting service: Intent { act=com.zenpanel.app.action.CONNECT [38;5;15m [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mcmp=com.zenpanel.app/.ZenVpnService (has extras) }[38;5;15m              [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m=== uapi/mkdir ===[38;5;15m                                              [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m10-14 14:11:38.834 E/WireGuard/GoBackend/zen-panel( 7093): [38;5;15m     [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mUAPIOpen: mkdir /data/data/com.wireguard.android: permission [38;5;15m   [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mdenied[38;5;15m                                                          [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m10-14 14:11:38.836 D/WireGuard/GoBackend/zen-panel( 7093): [38;5;15m     [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mInterface state was Down, requested Up, now Up[38;5;15m                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m10-14 14:11:38.836 D/WireGuard/GoBackend/zen-panel( 7093): [38;5;15m     [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mDevice started[38;5;15m                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+                                                                       
+     [38;5;215m+ Thought: 28ms[38;5;15m                                                   
+                                                                       
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m$ export PATH=$ANDROID_HOME/platform-tools:$PATH[38;5;15m                [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m# Why mkdir fails? /data/data is uid-specific traversal; even [38;5;15m  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mwith the dir created as owner, the app itself runs as uid 10192 [38;5;15m[48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mand chown set u0_a192. Let's verify inside app's context.[38;5;15m       [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255madb -s emulator-5554 shell "run-as com.zenpanel.app sh -c 'ls -[38;5;15m [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mld /data/data/com.wireguard.android; touch /data/data/com.[38;5;15m      [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mwireguard.android/x; echo touch_ok'" 2>&1[38;5;15m                       [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mecho "=== perhaps parent /data/data is blocked ==="[38;5;15m             [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255madb -s emulator-5554 shell "run-as com.zenpanel.app sh -c 'ls -[38;5;15m [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mld /data/data; ls -la /data/data | grep wireguard'"[38;5;15m             [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mdrwx------ 2 u0_a192 u0_a192 4096 2026-10-14 14:10 /data/data/[38;5;15m  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mcom.wireguard.android[38;5;15m                                           [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mtouch: '/data/data/com.wireguard.android/x': Permission denied[38;5;15m  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mtouch_ok[38;5;15m                                                        [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255m=== perhaps parent /data/data is blocked ===[38;5;15m                    [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mdrwxrwx--x 227 system system 12288 2026-10-14 14:10 /data/data[38;5;15m  [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m  [38;5;255mls: /data/data: Permission denied[38;5;15m                               [48;5;232m  
+  [38;5;232m[48;5;233m┃[38;5;15m                                                                  [48;5;232m  
+                                                                       
+     [38;5;215m⠹[38;5;15m [38;5;215mThinking[38;5;15m                                                        
+                                                                       
+     [38;5;75m▣ [38;5;15m [38;5;255mBuild[38;5;8m · Cat Jam Free[38;5;15m                                           
+                                                                       
+  [38;5;75m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;75m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;75m┃[38;5;15m[48;5;234m                                                                  [48;5;232m  
+  [38;5;75m┃[38;5;15m[48;5;234m  [38;5;75mBuild[38;5;15m [38;5;8m·[38;5;15m [38;5;255mCat Jam Free[38;5;15m [38;5;8mOpenCode[38;5;15m [38;5;8m·[38;5;15m [1m[38;5;215mmax[0m[38;5;15m[48;5;234m                             [48;5;232m  
+  [38;5;75m╹[38;5;234m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀[38;5;15m  
+   [38;5;239m⬝⬝⬝⬝⬝⬝⬝⬝[38;5;15m  [38;5;255mesc [38;5;8minterrupt[38;5;15m               [38;5;8m61.4K (23%)[38;5;15m  [38;5;255mctrl+p [38;5;8mcommands[38;5;15m

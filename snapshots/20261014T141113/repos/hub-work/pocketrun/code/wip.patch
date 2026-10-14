@@ -1,0 +1,425 @@
+diff --git a/android/app/src/main/java/dev/pocketrun/agent/opencode/HistoryTrimmer.kt b/android/app/src/main/java/dev/pocketrun/agent/opencode/HistoryTrimmer.kt
+index 68ac3bb..50b3157 100644
+--- a/android/app/src/main/java/dev/pocketrun/agent/opencode/HistoryTrimmer.kt
++++ b/android/app/src/main/java/dev/pocketrun/agent/opencode/HistoryTrimmer.kt
+@@ -35,7 +35,7 @@ object HistoryTrimmer {
+      * message) with the oldest, bulkiest parts removed. Returns the very same
+      * array when nothing needs trimming.
+      */
+-    fun trim(messages: JSONArray, maxChars: Int = DEFAULT_MAX_CHARS, toolKeep: Int = TOOL_KEEP): JSONArray {
++        fun trim(messages: JSONArray, maxChars: Int = DEFAULT_MAX_CHARS, toolKeep: Int = TOOL_KEEP): JSONArray {
+         if (messages.length() <= 2) return messages
+         val blocks = blocks(messages)
+         // A history with an orphan `tool` message has to be rebuilt even when it
+@@ -120,7 +120,12 @@ object HistoryTrimmer {
+         return copy
+     }
+ 
+-    private fun sizeOf(messages: JSONArray): Int {
++        /** A token estimate of [messages]: four characters per token, the standard rough proxy. */
++        fun estimateTokens(messages: JSONArray): Int = sizeOf(messages) / CHARS_PER_TOKEN
++
++        private const val CHARS_PER_TOKEN = 4
++
++        private fun sizeOf(messages: JSONArray): Int {
+         var total = 0
+         for (i in 0 until messages.length()) total += messages.opt(i)?.toString()?.length ?: 0
+         return total
+diff --git a/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt b/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
+index 8a36f70..385dc4f 100644
+--- a/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
++++ b/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
+@@ -269,20 +269,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         var deleted: Boolean = false
+ 
+         /**
+-         * Undo support for `/undo`: the pre-turn version of every existing file
+-         * the agent changes, and the path of every file it creates, captured as
+-         * it goes. Cleared at the start of each turn.
++         * `/undo` history: each entry is one reversible step (the conversation
++         * plus every file a turn changed). Newest is last. `/redo` restores the
++         * steps the last undos reverted.
+          */
+-        val turnSnapshots = mutableListOf<Pair<File, Version>>()
+-        val turnCreated = mutableListOf<File>()
+-        val turnFiles = mutableSetOf<String>()
++        val undoStack = ArrayDeque<Change>()
++        val redoStack = ArrayDeque<Change>()
+ 
+-        /**
+-         * Redo support for `/redo`: the post-turn version of every file the last
+-         * undo reverted, and the contents of every created file it deleted.
+-         */
+-        val redoSnapshots = mutableListOf<Pair<File, Version>>()
+-        val redoCreated = mutableListOf<Pair<File, String>>()
++        /** The step being recorded by the in-flight turn, if any. */
++        @Volatile
++        var pendingChange: Change? = null
++
++        /** Rough token estimate of [history] (plus tools/prompt overhead). */
++        val context = MutableStateFlow(0)
++
++        /** When a subagent writes files, they belong to the parent's step. */
++        @Volatile
++        var undoTarget: SessionRun? = null
+ 
+         /** Unblocks whoever is waiting on a question/approval when the turn stops. */
+         fun release() {
+@@ -293,6 +296,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         }
+     }
+ 
++    /** One saved file state: [version] is null when the file must be absent. */
++    class FileState(val file: File, val version: Version?)
++
++    /** A reversible step: the conversation and file states to restore. */
++    class Change {
++        var history: JSONArray = JSONArray()
++        var messages: List<AgentItem> = emptyList()
++        val files = mutableListOf<FileState>()
++        val keys = mutableSetOf<String>()
++    }
++
+     private val _llmConfig = MutableStateFlow(AgentSettings.read(app))
+     val llmConfig: StateFlow<AgentSettings.Config> = _llmConfig.asStateFlow()
+ 
+@@ -339,6 +353,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+     val agentSteps: StateFlow<Int> = activeFlow(0) { it.steps }
+     val agentRounds: StateFlow<Int> = activeFlow(0) { it.rounds }
+     val turnStartedAt: StateFlow<Long> = activeFlow(0L) { it.startedAt }
++    val agentContextTokens: StateFlow<Int> = activeFlow(0) { it.context }
+ 
+     /** Ids of every session with a turn in flight, so a tab can show it. */
+     @OptIn(ExperimentalCoroutinesApi::class)
+@@ -575,20 +590,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+             "/init" -> {
+                 val info = ensureSession()
+                 if (!requireConfigured()) return
+-                runFor(info).messages.update { it + AgentItem.User("/init") }
+                 runAgentTurn(
+                     "Create an AGENTS.md file in the current project root: briefly describe the project " +
+                         "(look at the files first) and add short, useful rules for future agents working in it. " +
+                         "Keep it under 30 lines. Reply with a one-line summary.",
+                     info,
++                    display = "/init",
+                 )
+                 return
+             }
+             "/continue" -> {
+                 val info = ensureSession()
+                 if (!requireConfigured()) return
+-                runFor(info).messages.update { it + AgentItem.User("/continue") }
+-                runAgentTurn(OpenCodeAgent.CONTINUE_PROMPT, info)
++                runAgentTurn(OpenCodeAgent.CONTINUE_PROMPT, info, display = "/continue")
+                 return
+             }
+             "/skills" -> {
+@@ -774,8 +788,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+                 val expanded = Commands.expand(custom, args, _selected.value?.dir)
+                 lastPrompt = expanded
+                 val display = "/$name${if (args.isBlank()) "" else " $args"}"
+-                runFor(info).messages.update { it + AgentItem.User(display) }
+-                runAgentTurn(expanded, info)
++                runAgentTurn(expanded, info, display = display)
+                 return
+             }
+         }
+@@ -788,13 +801,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+             val agentInfo = if (info.id == active.id) createSession() else info
+             if (!requireConfigured()) return
+             lastPrompt = prompt
+-            runFor(agentInfo).messages.update { it + AgentItem.User(prompt) }
+             runAgentTurn(prompt, agentInfo)
+         } else {
+             val info = ensureSession()
+             if (!requireConfigured()) return
+             lastPrompt = prompt
+-            runFor(info).messages.update { it + AgentItem.User(prompt) }
+             runAgentTurn(prompt, info)
+         }
+     }
+@@ -806,8 +817,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         activeRun.value?.let { if (it.running.value) return }
+         val info = ensureSession()
+         if (!requireConfigured()) return
+-        runFor(info).messages.update { it + AgentItem.User("$p (повтор)") }
+-        runAgentTurn(p, info)
++        runAgentTurn(p, info, display = "$p (повтор)")
+     }
+ 
+     /**
+@@ -818,8 +828,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         activeRun.value?.let { if (it.running.value) return }
+         val info = ensureSession()
+         if (!requireConfigured()) return
+-        runFor(info).messages.update { it + AgentItem.User("/continue") }
+-        runAgentTurn(OpenCodeAgent.CONTINUE_PROMPT, info)
++        runAgentTurn(OpenCodeAgent.CONTINUE_PROMPT, info, display = "/continue")
+     }
+ 
+     private fun requireConfigured(): Boolean {
+@@ -840,7 +849,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+      * (one thread each); a session that is already running refuses a second
+      * turn so its history cannot be written from two places at once.
+      */
+-    private fun runAgentTurn(userText: String, info: Sessions.SessionInfo) {
++    private fun runAgentTurn(userText: String, info: Sessions.SessionInfo, display: String? = null) {
+         val config = _llmConfig.value
+         if (!config.isReady) return
+         val run = runFor(info)
+@@ -850,9 +859,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         run.rounds.value = 0
+         run.preview.value = ""
+         run.startedAt.value = System.currentTimeMillis()
+-        run.turnSnapshots.clear()
+-        run.turnCreated.clear()
+-        run.turnFiles.clear()
++        // Capture the boundary for /undo before the turn touches anything.
++        val change = Change().apply {
++            history = run.history
++            messages = run.messages.value
++        }
++        run.pendingChange = change
++        run.messages.update { it + AgentItem.User(display ?: userText) }
+         persistAgentUi()
+ 
+         agentExecutor.execute {
+@@ -866,6 +879,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+                 run.pendingQuestion.value = null
+                 run.pendingApproval.value = null
+                 run.running.value = false
++                commitChange(run)
+                 // The agent writes files itself; the tree must not wait for the
+                 // next poll to show what it did.
+                 agentTouchedFiles()
+@@ -873,6 +887,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         }
+     }
+ 
++    /** Pushes the finished turn onto the undo stack (dropping any redo tail). */
++    private fun commitChange(run: SessionRun) {
++        val change = run.pendingChange ?: return
++        run.pendingChange = null
++        // A turn that neither changed files nor the conversation is not a step.
++        if (change.files.isEmpty() && run.history.length() == change.history.length()) return
++        synchronized(run) {
++            run.undoStack.addLast(change)
++            if (run.undoStack.size > MAX_UNDO) run.undoStack.removeFirst()
++            run.redoStack.clear()
++        }
++    }
++
++    /** Writes an undone/redone conversation back to the session file. */
++    private fun persistRunConversation(run: SessionRun) {
++        val session = sessions.load(run.id) ?: return
++        session.messages = run.history
++        sessions.save(session)
++        refreshSessions()
++        persistAgentUi()
++    }
++
+     /**
+      * One turn, synchronous on the calling thread so a `task` subagent can run
+      * it inline. Assembles tools for the session, streams events into the run's
+@@ -927,7 +963,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         tools.formatters = cfg.formatters
+         if (subagent == null) {
+             // Only top-level agents spawn subagents; nesting stays impossible.
+-            tools.subagentRunner = { request -> runSubagent(info, request, config) }
++            tools.subagentRunner = { request -> runSubagent(info, request, config, run) }
+         }
+         val agent = OpenCodeAgent(
+             workspace, tools, { LlmClient(effective) }, projectDir,
+@@ -952,6 +988,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         // A waiting tool (github run_wait) must notice ⏹ as well.
+         tools.cancelCheck = { run.cancelled.get() }
+ 
++        if (subagent == null) {
++            // Keep the context in view, and squeeze it before it overflows.
++            run.context.value = estimatedTokens(run.history)
++            if (run.history.length() > 1 && run.context.value >= compactLimitTokens) {
++                autoCompact(run, info, effective)
++            }
++        }
++
+         val newHistory = agent.run(userText, run.history) { event -> handleEvent(run, config, event) }
+ 
+         // Persist the turn: history, todos, auto-title from the first message.
+@@ -1059,6 +1103,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         parent: Sessions.SessionInfo,
+         request: OpenCodeTools.TaskRequest,
+         config: AgentSettings.Config,
++        parentRun: SessionRun,
+     ): String {
+         val child = sessions.create(
+             project = parent.project,
+@@ -1067,6 +1112,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+             model = config.model,
+         )
+         val childRun = SessionRun(child.info.id, projectDirFor(child.info))
++        // A subagent's file writes belong to the parent turn's undo step.
++        childRun.undoTarget = parentRun
+         _runs.update { it + (child.info.id to childRun) }
+         childRun.history = child.messages
+         childRun.messages.value = historyToItems(child.messages)
+@@ -1107,91 +1154,104 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+     /**
+      * Remembers a file's state before the agent changes it, so `/undo` can put
+      * it back. Only the first touch of a turn is recorded: that is the state
+-     * the turn started from.
++     * the turn started from. A subagent's writes land in the parent's step.
+      */
+     private fun recordTurnFile(run: SessionRun, file: File, projectDir: File?) {
+         val dir = projectDir ?: return
++        val target = run.undoTarget ?: run
++        val change = target.pendingChange ?: return
+         val key = runCatching { file.canonicalPath }.getOrElse { file.absolutePath }
+-        if (!run.turnFiles.add(key)) return
+-        if (file.isFile) {
+-            history.snapshot(file, dir)?.let { run.turnSnapshots += file to it }
+-        } else {
+-            run.turnCreated += file
+-        }
++        if (!change.keys.add(key)) return
++        val version = if (file.isFile) history.snapshot(file, dir) else null
++        change.files += FileState(file, version)
+     }
+ 
+-    /** `/undo`: reverts every file the last turn changed (write/edit/apply_patch). */
++    /**
++     * `/undo`: reverts the last step — its files and its conversation — and
++     * makes it available to `/redo`. Repeatable for as many steps as ran.
++     */
+     fun undoLastTurn() {
+         val run = activeRun.value ?: return
+         if (run.running.value) {
+             pushItem(AgentItem.Info("Агент ещё работает — сначала остановите ход (⏹)."))
+             return
+         }
+-        val projectDir = run.projectDir ?: _selected.value?.dir
+-        if (projectDir == null) return
+-        if (run.turnSnapshots.isEmpty() && run.turnCreated.isEmpty()) {
+-            pushItem(AgentItem.Info("Нечего отменять: в последнем ходе агент не менял файлы через write/edit/apply_patch (/undo не покрывает изменения, сделанные произвольным bash)."))
++        val change = synchronized(run) { run.undoStack.removeLastOrNull() }
++        if (change == null) {
++            pushItem(AgentItem.Info("Нечего отменять."))
+             return
+         }
+-        val names = mutableListOf<String>()
+-        run.redoSnapshots.clear()
+-        run.redoCreated.clear()
+-        run.turnSnapshots.asReversed().forEach { (file, version) ->
+-            if (file.isFile) history.snapshot(file, projectDir)?.let { run.redoSnapshots += file to it }
+-            if (history.restore(version, file, projectDir)) names += workspace.relativeTo(file)
+-        }
+-        run.turnCreated.reversed().forEach { f ->
+-            if (f.isFile) {
+-                runCatching { run.redoCreated += f to f.readText(Charsets.UTF_8) }
+-                if (f.delete()) names += "-${workspace.relativeTo(f)}"
+-            }
++        val projectDir = run.projectDir ?: _selected.value?.dir
++        if (projectDir == null) return
++        val (names, inverse) = applyChange(run, change, projectDir)
++        persistRunConversation(run)
++        synchronized(run) {
++            run.redoStack.addLast(inverse)
++            if (run.redoStack.size > MAX_UNDO) run.redoStack.removeFirst()
+         }
+-        run.turnSnapshots.clear()
+-        run.turnCreated.clear()
+-        run.turnFiles.clear()
+         agentTouchedFiles()
+         pushItem(
+             AgentItem.Info(
+-                if (names.isEmpty()) "Не удалось отменить изменения."
+-                else "Отменено в последнем ходе:\n" + names.distinct().joinToString("\n") { "• $it" } + "\nВернуть: /redo",
++                if (names.isEmpty()) "Шаг отменён."
++                else "Отменено:\n" + names.joinToString("\n") { "• $it" } + "\nВернуть: /redo",
+             ),
+         )
+     }
+ 
+-    /** `/redo`: re-applies the changes the last `/undo` reverted. */
++    /** `/redo`: re-applies the step the last `/undo` reverted. */
+     fun redoLastTurn() {
+         val run = activeRun.value ?: return
+         if (run.running.value) {
+             pushItem(AgentItem.Info("Агент ещё работает — сначала остановите ход (⏹)."))
+             return
+         }
+-        val projectDir = run.projectDir ?: _selected.value?.dir
+-        if (projectDir == null) return
+-        if (run.redoSnapshots.isEmpty() && run.redoCreated.isEmpty()) {
++        val change = synchronized(run) { run.redoStack.removeLastOrNull() }
++        if (change == null) {
+             pushItem(AgentItem.Info("Нечего возвращать: сначала отмените изменения через /undo."))
+             return
+         }
+-        val names = mutableListOf<String>()
+-        run.redoSnapshots.asReversed().forEach { (file, version) ->
+-            if (file.isFile) history.snapshot(file, projectDir)?.let { run.turnSnapshots += file to it } else run.turnCreated += file
+-            if (history.restore(version, file, projectDir)) names += workspace.relativeTo(file)
+-        }
+-        run.redoCreated.asReversed().forEach { (f, content) ->
+-            if (f.isFile) history.snapshot(f, projectDir)?.let { run.turnSnapshots += f to it } else run.turnCreated += f
+-            runCatching { f.parentFile?.mkdirs(); f.writeText(content, Charsets.UTF_8); names += workspace.relativeTo(f) }
++        val projectDir = run.projectDir ?: _selected.value?.dir
++        if (projectDir == null) return
++        val (names, inverse) = applyChange(run, change, projectDir)
++        persistRunConversation(run)
++        synchronized(run) {
++            run.undoStack.addLast(inverse)
++            if (run.undoStack.size > MAX_UNDO) run.undoStack.removeFirst()
+         }
+-        run.redoSnapshots.clear()
+-        run.redoCreated.clear()
+-        run.turnFiles.clear()
+         agentTouchedFiles()
+         pushItem(
+             AgentItem.Info(
+-                if (names.isEmpty()) "Не удалось вернуть изменения."
+-                else "Возвращено:\n" + names.distinct().joinToString("\n") { "• $it" },
++                if (names.isEmpty()) "Нечего возвращать."
++                else "Возвращено:\n" + names.joinToString("\n") { "• $it" },
+             ),
+         )
+     }
+ 
++    /**
++     * Moves the session to [change]'s state (files + conversation) and returns
++     * the touched names plus the inverse change that would move it back.
++     */
++    private fun applyChange(run: SessionRun, change: Change, projectDir: File): Pair<List<String>, Change> {
++        val names = mutableListOf<String>()
++        val inverse = Change().apply {
++            history = run.history
++            messages = run.messages.value
++        }
++        for (fs in change.files) {
++            // Remember the current state so the inverse can restore it.
++            if (fs.file.isFile) history.snapshot(fs.file, projectDir)?.let { inverse.files += FileState(fs.file, it) }
++            else inverse.files += FileState(fs.file, null)
++            if (fs.version != null) {
++                if (history.restore(fs.version, fs.file, projectDir)) names += workspace.relativeTo(fs.file)
++            } else if (fs.file.exists() && fs.file.deleteRecursively()) {
++                names += "-${workspace.relativeTo(fs.file)}"
++            }
++        }
++        run.history = change.history
++        run.messages.value = change.messages
++        return names.distinct() to inverse
++    }
++
+     /**
+      * `/compact`: replaces the session history with a model-written handoff
+      * summary, so a long chat can continue without overflowing the context.
+@@ -2178,6 +2238,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+         /** How many sessions may run turns at the same time. */
+         private const val MAX_PARALLEL_TURNS = 4
+ 
++        /** How many undo steps a session keeps (and how deep redo can go). */
++        private const val MAX_UNDO = 50
++
+         /** How often the project folder is checked for changes made elsewhere. */
+         private const val WATCH_INTERVAL_MS = 2_000L
+ 
