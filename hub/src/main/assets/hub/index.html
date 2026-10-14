@@ -728,7 +728,8 @@ function describeBaseFailure(bases, errors, zt, spareTried) {
   if (!String(zt || '')) {
     return 'Нет токена запуска (zt): адрес отвечает 401. Откройте хаб тем же устройством, что запускало раннер, либо введите GitHub-токен, которым запускали хаб, и нажмите «Открыть» — запасной вход откроет хаб.';
   }
-  if (bases.length > 2) return 'Ни основной, ни резервный (cloudflare), ни ngrok адрес не отвечает: ' + detail;
+  if (bases.length > 3) return 'Ни cloudflare, ни tunnl.gg, ни ngrok адрес не отвечает: ' + detail;
+  if (bases.length > 2) return 'Ни основной, ни резервный адрес не отвечает: ' + detail;
   if (bases.length > 1) return 'Ни основной, ни резервный адрес не отвечает: ' + detail;
   return 'Адрес не отвечает: ' + detail;
 }
@@ -860,11 +861,11 @@ function lastOriginToken() {
 }
 function sessionBases(s) {
   const out = []; const seen = {};
-  // 1.358 made ngrok first (static domain never changes), but the account's
-  // MONTHLY bandwidth limit (ERR_NGROK_725) turned that leg into a wall of
-  // silent fetch failures on 14.10. Cloudflare leads again; ngrok stays as
-  // the reserve it was designed as — static domain, steady under flap-days.
-  for (const v of [String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || ''), String(s && s.ngrok || '')]) {
+  // Four doors: cloudflare main + reserve (flap every 15-60 min but free),
+  // tunnl.gg (SSH stable key address, no bandwidth cap, up to 24 h sessions
+  // - the keeper just reconnects on the same address), ngrok static domain
+  // last (monthly quota: after ERR_NGROK_725 it is a wall of fetch errors).
+  for (const v of [String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || ''), String(s && s.tgg || ''), String(s && s.ngrok || '')]) {
     const k = v.replace(/\/+$/, '');
     if (k && !seen[k]) { seen[k] = 1; out.push(k); }
   }

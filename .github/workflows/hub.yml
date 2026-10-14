@@ -227,6 +227,7 @@ jobs:
       - name: Start the hub and open the tunnel
         env:
           NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+          TUNNL_SSH_KEY: ${{ secrets.TUNNL_SSH_KEY }}
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
           echo "HUB_LOGS=$HUB_LOGS HOME=$HOME $(ls -ld "$HUB_LOGS" 2>&1)"
@@ -376,6 +377,19 @@ jobs:
             echo "ngrok keeper: hub endpoint now also carries a provider-independent address"
           else
             echo "::notice::NGROK_AUTHTOKEN secret is empty - the ngrok reserve leg is off"
+          fi
+
+          # tunnl.gg fourth leg: SSH-based address tied to a repo-secret key
+          # (stable@) - NO account and NO bandwidth cap. Stays alive the day
+          # ngrok runs into its monthly limit and cloudflare is flap-happy.
+          if [ -n "${TUNNL_SSH_KEY:-}" ]; then
+            nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
+              TUNNL_SSH_KEY="$TUNNL_SSH_KEY" \
+              bash "$GITHUB_WORKSPACE/fork/tools/tunnl_keeper.sh" hub >> "$HUB_LOGS/tunnl-keeper.log" 2>&1 &
+            echo $! > "$HUB_LOGS/tunnl-keeper.pid"
+            echo "tunnl keeper: hub endpoint now also carries a stable tunnl.gg address"
+          else
+            echo "::notice::TUNNL_SSH_KEY secret is empty - the tunnl.gg leg is off"
           fi
 
       - name: Start the autopilot for every repo the Files tab cloned
