@@ -453,6 +453,7 @@ function runnerRender() {
     <div class="runner-btns">
       <button class="btn btn-sm btn-ok" onclick="runnerSave()" id="runner-save" disabled>💾 Сохранить</button>
       <button class="btn btn-sm btn-er" onclick="runnerStop()" id="runner-stop"${onActs ? '' : ' disabled title="Отменяет прогон GitHub Actions — доступно только на Actions-раннере"'}>⏻ Выключить</button>
+      <button class="btn btn-sm btn-er" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled title="Поднимает новый прогон и гасит этот — доступно только на Actions-раннере"'}>🔁 Выключить и открыть новый</button>
     </div>
     <div id="runner-scan"></div>
     <div id="runner-res"></div>
@@ -662,6 +663,18 @@ async function runnerStop() {
   const out = document.getElementById('runner-res');
   if (out) out.innerHTML = r.success
     ? '<div class="runner-res">⏻ Остановка принята — ранер сворачивается ~минуту.</div>'
+    : '<div class="runner-err">' + escHtml(r.error || 'не вышло') + '</div>';
+}
+
+async function runnerRestart() {
+  if (!runnerVisible()) { fmInfo('Кнопки активны только на Actions-раннере.'); return; }
+  if (!(await fmConfirm('Выключить этот ранер НАСОВСЕМ и сразу поднять новый? Всё несохранённое пропадёт — сначала «💾 Сохранить». Новый хаб придёт в приложение сам («Открыть последний») через пару минут.', 'Выключить и открыть новый'))) return;
+  RUNNER_BUSY = true; runnerRender();
+  const r = await fetch('/api/runner/restart', { method: 'POST' }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+  RUNNER_BUSY = false; runnerRender();
+  const out = document.getElementById('runner-res');
+  if (out) out.innerHTML = r.success
+    ? '<div class="runner-res">🔁 Новый ранер запускается, этот гаснет. Вернитесь через «Открыть последний» в приложении — первой дверью будет tgg.</div>'
     : '<div class="runner-err">' + escHtml(r.error || 'не вышло') + '</div>';
 }
 

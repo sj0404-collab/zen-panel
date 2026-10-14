@@ -921,6 +921,7 @@ function runnerRender() {
     <div class="runner-btns">
       <button class="btn btn-sm btn-ok" onclick="runnerSave()" id="runner-save" disabled>💾 Сохранить</button>
       <button class="btn btn-sm btn-er" onclick="runnerStop()" id="runner-stop"${onActs ? '' : ' disabled title="Отменяет прогон GitHub Actions — доступно только на Actions-раннере"'}>⏻ Выключить</button>
+      <button class="btn btn-sm btn-er" onclick="runnerRestart()" id="runner-restart"${onActs ? '' : ' disabled title="Поднимает новый прогон и гасит этот — доступно только на Actions-раннере"'}>🔁 Выключить и открыть новый</button>
     </div>
     <div id="runner-scan"></div>
     <div id="runner-res"></div>
@@ -1131,6 +1132,18 @@ async function runnerStop() {
   const out = document.getElementById('runner-res');
   if (out) out.innerHTML = r.success
     ? '<div class="runner-res">⏻ Остановка принята — ранер сворачивается ~минуту.</div>'
+    : '<div class="runner-err">' + escHtml(r.error || 'не вышло') + '</div>';
+}
+
+async function runnerRestart() {
+  if (!runnerVisible()) { fmInfo('Кнопки активны только на Actions-раннере.'); return; }
+  if (!(await fmConfirm('Выключить этот ранер НАСОВСЕМ и сразу поднять новый? Всё несохранённое пропадёт — сначала «💾 Сохранить». Новый хаб придёт в приложение сам («Открыть последний») через пару минут.', 'Выключить и открыть новый'))) return;
+  RUNNER_BUSY = true; runnerRender();
+  const r = await fetch('/api/runner/restart', { method: 'POST' }).then(x => x.json()).catch(e => ({ success: false, error: e.message }));
+  RUNNER_BUSY = false; runnerRender();
+  const out = document.getElementById('runner-res');
+  if (out) out.innerHTML = r.success
+    ? '<div class="runner-res">🔁 Новый ранер запускается, этот гаснет. Вернитесь через «Открыть последний» в приложении — первой дверью будет tgg.</div>'
     : '<div class="runner-err">' + escHtml(r.error || 'не вышло') + '</div>';
 }
 
@@ -1528,7 +1541,11 @@ function setupTermTouch(termEl, term) {
       e.preventDefault();
       return;
     }
-    if (Math.abs(t.clientY - startY) > 8 || Math.abs(t.clientX - startX) > 8) {
+    // Порог 3px, а не 8: при 8 первые кадры жеста уходили системе —
+    // на части WebView canvas-скролл стартовал одновременно с нашим, и
+    // прокрутка то шла, то не шла (14.10). CSS .xterm-viewport уже
+    // touch-action:none, так что системный плаг тут не вернётся.
+    if (Math.abs(t.clientY - startY) > 3 || Math.abs(t.clientX - startX) > 3) {
       scrolled = true;
       clearTimeout(holdTimer);
       // Прокрутка с открытой клавиатурой неудобна — прячем её только здесь.
@@ -3380,6 +3397,22 @@ function linuxPatchFrame(fr) {
         '#noVNC_connect_dlg{display:none!important}'
       ].join('');
       doc.head.appendChild(st);
+
+      // Достаём ЖИВОЙ RFB: модуль noVNC его не публикует (window.__rfb пуст),
+      // из-за чего pan/мышь из __hub молча не работали, а стол жил в двух
+      // крайностях «мелко / гигантский» без золотой середины (14.10). Тот же
+      // модуль по тому же адресу — синглтон в документе кадра, отсюда он
+      // виден по-настоящему.
+      try {
+        const rfbs = doc.createElement('script');
+        rfbs.type = 'module';
+        rfbs.textContent = 'import("/novnc/app/ui.js").then(function(m){'
+          + 'var w=window;var UI=m&&m.default;'
+          + 'var g=function(){try{if(UI&&UI.rfb&&!w.__rfb)w.__rfb=UI.rfb;}catch(_){}};'
+          + 'g();try{new MutationObserver(g).observe(document.body,{childList:true,subtree:true});}catch(_){}'
+          + '}).catch(function(){});';
+        doc.head.appendChild(rfbs);
+      } catch {}
 
       // Касание = клик в точке касания + перенос курсора: показываем точку
       // (noVNC рисует её только при включённой настройке show_dot).
