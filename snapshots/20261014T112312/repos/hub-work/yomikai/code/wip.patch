@@ -1,0 +1,78 @@
+diff --git a/MANIFEST.md b/MANIFEST.md
+index e8ad5d337..e6b3e4086 100644
+--- a/MANIFEST.md
++++ b/MANIFEST.md
+@@ -5,7 +5,6 @@
+ 
+ - **Клон (работай здесь):** /home/runner/hub-work/yomikai/code
+ - **Ветка:** master
+-
+ - **Только твои временные файлы (сборки, кеши, артефакты):** /home/runner/hub-work/yomikai/tmp
+ - **Манифест:** /home/runner/hub-work/yomikai/code/MANIFEST.md
+ 
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+index 433c2271f..488bfe5a4 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt
+@@ -83,6 +83,19 @@ class AutoReadEngine(
+     /** Текущий тип эмбиента. null = эмбиент выключен. */
+     var ambienceType: eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType? = null
+ 
++    /**
++     * Тип эмбиента, выбранный в настройках. null, если не задан или стоит
++     * "AUTO" — тогда вызывающий код подбирает тип по жанрам манги.
++     * Настройка живёт здесь, потому что [prefs] приватный.
++     */
++    fun configuredAmbienceType(): eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType? {
++        val name = prefs.ambienceType().get()
++        if (name.isBlank() || name == "AUTO") return null
++        return runCatching {
++            eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.valueOf(name)
++        }.getOrNull()
++    }
++
+     /**
+      * Запустить фоновый эмбиент для текущего типа.
+      * Безопасно зывать повторно: если уже играет — просто обновит громкость.
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index cd754b255..561b8400d 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -1982,7 +1982,7 @@ class ReaderActivity : BaseActivity() {
+             val autoType = runCatching {
+                 val keywords = listOfNotNull(
+                     viewModel.manga?.title,
+-                    viewModel.manga?.genres?.joinToString(","),
++                    viewModel.manga?.genre?.joinToString(","),
+                 ).joinToString(" ")
+                 val mood = eu.kanade.tachiyomi.data.books.BookAmbience.moodFor(keywords)
+                 when (mood) {
+@@ -1992,12 +1992,7 @@ class ReaderActivity : BaseActivity() {
+                     else -> eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.NEUTRAL
+                 }
+             }.getOrNull()
+-            val prefType = runCatching {
+-                val name = autoReadEngine.prefs.ambienceType().get()
+-                if (name.isNotBlank() && name != "AUTO") {
+-                    eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.valueOf(name)
+-                } else null
+-            }.getOrNull()
++            val prefType = autoReadEngine.configuredAmbienceType()
+             autoReadEngine.ambienceType = prefType ?: autoType
+             if (autoReadEngine.ambienceType != null) autoReadEngine.startAmbience()
+         }
+diff --git a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+index c9df9c6c5..5f580c321 100644
+--- a/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
++++ b/domain/src/main/java/mihon/domain/ocr/service/OcrPreferences.kt
+@@ -648,4 +648,10 @@ class OcrPreferences(
+      */
+     fun autoReadReadEverything() = preferenceStore.getBoolean("pref_autoread_read_everything", true)
+ 
++    /**
++     * Тип фоновой музыки при авточтении: имя [BookAmbience.AmbienceType]
++     * либо "AUTO" — тогда тип подбирается по жанрам манги на лету.
++     */
++    fun ambienceType() = preferenceStore.getString("pref_ambience_type", "AUTO")
++
+ }
