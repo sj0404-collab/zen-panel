@@ -21,12 +21,23 @@ set -uo pipefail
 VM="${1:-hub}"
 case "$VM" in hub|vnc) ;; *) echo "[tunnl-keeper] unknown VM '$VM' (hub|vnc)" >&2; exit 1 ;; esac
 
+# The tunnl address is derived from the key. If the desk authenticates with
+# the hub's key, both ssh sessions register THE SAME URL and traffic randomly
+# lands on either of them (observed live 14.10: one and the same address
+# alternated "hub 401" with a noVNC directory listing every other probe).
+# The desk therefore uses its own key when provided; the hub leg is untouched
+# and keeps the well-known old address.
+TUNNL_KEY="${TUNNL_SSH_KEY:-}"
+if [ "$VM" = "vnc" ] && [ -n "${TUNNL_SSH_KEY_VNC:-}" ]; then
+  TUNNL_KEY="$TUNNL_SSH_KEY_VNC"
+fi
+
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
 HUB_TMP="${HUB_TMP:-$HOME/.npm-hub/tmp}"
 mkdir -p "$HUB_LOGS" "$HUB_TMP" 2>/dev/null || true
 TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
-KEY="${TUNNL_SSH_KEY:-}"
+KEY="${TUNNL_KEY:-}"
 [ -z "$TOKEN" ] && { echo "[tunnl-keeper] no GitHub token - staying off" >&2; exit 1; }
 [ -z "$KEY" ] && { echo "[tunnl-keeper] TUNNL_SSH_KEY is empty - staying off" >&2; exit 1; }
 
