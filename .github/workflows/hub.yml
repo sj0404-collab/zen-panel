@@ -1078,6 +1078,8 @@ jobs:
             pcmanfm pulseaudio pavucontrol
 
       - name: Start the Linux desktop and open the tunnel
+        env:
+          TUNNL_SSH_KEY: ${{ secrets.TUNNL_SSH_KEY }}
         run: |
           export VNC_PORT=5901 NOVNC_PORT=6081
           bash "$GITHUB_WORKSPACE/fork/tools/start_desktop.sh" || {
@@ -1129,6 +1131,17 @@ jobs:
             bash "$GITHUB_WORKSPACE/fork/tools/tunnel_keeper.sh" vnc >> "$HUB_LOGS/tunnel-keeper.log" 2>&1 &
           echo $! > "$HUB_LOGS/tunnel-keeper.pid"
           echo "tunnel keeper: vnc endpoint now carries main + reserve addresses"
+
+          # tunnl.gg door for the desktop as well: same stable SSH key, the
+          # address never changes; published as tgg= into session-vnc.json and
+          # the hub prefers it over the flapping trycloudflare pair.
+          if [ -n "${TUNNL_SSH_KEY:-}" ]; then
+            nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
+              TUNNL_SSH_KEY="$TUNNL_SSH_KEY" \
+              bash "$GITHUB_WORKSPACE/fork/tools/tunnl_keeper.sh" vnc >> "$HUB_LOGS/tunnl-keeper.log" 2>&1 &
+            echo $! > "$HUB_LOGS/tunnl-keeper.pid"
+            echo "tunnl keeper: vnc desktop now also carries the stable tunnl.gg address"
+          fi
 
           # Same lifelines as the hub job (Z10): this VM holds the desktop the
           # user actually watches - when the hub VM wedges, the queue + tmate

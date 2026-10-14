@@ -19,7 +19,7 @@
 set -uo pipefail
 
 VM="${1:-hub}"
-[ "$VM" = "hub" ] || { echo "[tunnl-keeper] hub VM only" >&2; exit 1; }
+case "$VM" in hub|vnc) ;; *) echo "[tunnl-keeper] unknown VM '$VM' (hub|vnc)" >&2; exit 1 ;; esac
 
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
 HUB_TMP="${HUB_TMP:-$HOME/.npm-hub/tmp}"
@@ -30,14 +30,21 @@ KEY="${TUNNL_SSH_KEY:-}"
 [ -z "$TOKEN" ] && { echo "[tunnl-keeper] no GitHub token - staying off" >&2; exit 1; }
 [ -z "$KEY" ] && { echo "[tunnl-keeper] TUNNL_SSH_KEY is empty - staying off" >&2; exit 1; }
 
-PORT=8090
-URLFILE="$HUB_LOGS/hub-url"         # main cloudflared leg (read-only here)
-R_URLFILE="$HUB_LOGS/hub-url2"      # reserve cloudflared leg (read-only here)
-NGROK_URLFILE="$HUB_LOGS/hub-ngrok.url"  # ngrok leg (read-only here)
-TGG_URLFILE="$HUB_LOGS/hub-tgg.url"
-PIDFILE="$HUB_LOGS/tunnl.pid"
-JSONL="$HUB_LOGS/tunnl.jsonl"
-LOG="$HUB_LOGS/tunnl.log"
+if [ "$VM" = "vnc" ]; then
+  PORT="${TUNNL_VNC_PORT:-6081}"    # noVNC/websockify на деске
+  URLFILE="$HUB_LOGS/vnc-url"
+  R_URLFILE="$HUB_LOGS/vnc-url2"
+  NGROK_URLFILE=""
+else
+  PORT=8090
+  URLFILE="$HUB_LOGS/hub-url"       # main cloudflared leg (read-only here)
+  R_URLFILE="$HUB_LOGS/hub-url2"    # reserve cloudflared leg (read-only here)
+  NGROK_URLFILE="$HUB_LOGS/hub-ngrok.url"  # ngrok leg (read-only here)
+fi
+TGG_URLFILE="$HUB_LOGS/$VM-tgg.url"
+PIDFILE="$HUB_LOGS/tunnl-$VM.pid"
+JSONL="$HUB_LOGS/tunnl-$VM.jsonl"
+LOG="$HUB_LOGS/tunnl-$VM.log"
 KEYFILE="$HOME/.ssh/tunnl_ed25519"
 INTERVAL="${TUNNL_KEEPER_INTERVAL:-15}"
 COOLDOWN="${TUNNL_KEEPER_COOLDOWN:-60}"
@@ -97,18 +104,30 @@ PY
   printf '%s\n' "$url"
 }
 
-healthy() {  # $1 = url: the hub answers "/" with 401 to anonymous callers,
-             # which still proves the pipe is alive. Empty = down.
+healthy() {  # $1 = base url: any HTTP body proves the pipe is alive
+             # (the hub answers "/" 401; the desk's real page is /vnc.html).
+  local target="${1:-}/"
+  [ "$VM" = "vnc" ] && target="${1%/}/vnc.html"
   local body
-  body="$(curl -s -m 15 "${1:-}/" 2>/dev/null || true)"
+  body="$(curl -s -m 15 "$target" 2>/dev/null || true)"
   [ -n "${body:-}" ]
 }
 
-publish_full() {  # $1 = tgg url (always non-empty here)
+publish_full() {  # $1 = tgg base url (always non-empty here)
   local main reserve ng tgg="$1"
   main="$(cat "$URLFILE" 2>/dev/null || true)"
   reserve="$(cat "$R_URLFILE" 2>/dev/null || true)"
-  ng="$(cat "$NGROK_URLFILE" 2>/dev/null || true)"
+  ng=""
+  [ -n "${NGROK_URLFILE:-}" ] && ng="$(cat "$NGROK_URLFILE" 2>/dev/null || true)"
+  if [ "$VM" = "vnc" ]; then
+    # Only the tgg field is ours: url/novncUrl keep the cloudflare pair so
+    # publishers don't tug-of-war; the READER (hub server.js) prefers tgg.
+    GH_TOKEN="$TOKEN" bash "$TOOLS_DIR/publish_session.sh" \
+      "slot=vnc" "kind=Linux-VNC" "os=linux" \
+      "tgg=$tgg/vnc.html" \
+      "label=${HUB_LABEL:-hub}" 2>&1 | tail -1
+    return
+  fi
   GH_TOKEN="$TOKEN" bash "$TOOLS_DIR/publish_session.sh" \
     "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
     ${main:+"url=$main"} ${main:+"hubUrl=$main"} ${main:+"desktop=$main/d"} ${main:+"mobile=$main/m"} \
