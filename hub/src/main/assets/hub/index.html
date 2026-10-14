@@ -702,9 +702,28 @@ async function preflightHub(base, zt, expectedRunId) {
   // third-leg address would be misread as dead during the probe.
   let ngrokHost = false;
   try { ngrokHost = /(^|[.])ngrok(-free)?[.]app$|(^|[.])ngrok[.]io$/.test(new URL(base).host); } catch (e) {}
-  const r = await fetch(base + '/api/tools?zt=' + encodeURIComponent(zt),
-    ngrokHost ? { headers: { 'ngrok-skip-browser-warning': '1' } } : undefined);
-  const j = await r.json().catch(() => null);
+  let tggHost = false;
+  try { tggHost = /(^|[.])tunnl[.]gg$/.test(new URL(base).host); } catch (e) {}
+  let r, j;
+  const probeUrl = base + '/api/tools?zt=' + encodeURIComponent(zt);
+  if (tggHost && typeof AndroidHub !== 'undefined' && AndroidHub && typeof AndroidHub.probe === 'function') {
+    // Нативная проба для tunnl.gg: туннель сравнивает User-Agent, поэтому
+    // любой браузерный fetch (и его CORS-прелюдия) не доходит до хаба - мост
+    // OkHttp ходит с нашим UA 'NpmHub/x' без браузерных ключевых слов, и без
+    // кук туннель его пропускает к хабу 1:1. Заодно мост сажает в
+    // CookieManager куку tunnl_warned, чтобы последующая навигация WebView
+    // на этот же адрес шла без витрины-предупреждения.
+    const pr = JSON.parse(String(AndroidHub.probe(probeUrl)));
+    if (pr.status <= 0) throw new Error('tunnl.gg адрес не ответил');
+    r = { status: pr.status };
+    try { j = JSON.parse(pr.body || 'null'); } catch (e) { j = null; }
+  } else {
+    const probeHeaders = {};
+    if (ngrokHost) probeHeaders['ngrok-skip-browser-warning'] = '1';
+    if (tggHost) probeHeaders['tunnl-skip-browser-warning'] = '1';
+    r = await fetch(probeUrl, Object.keys(probeHeaders).length ? { headers: probeHeaders } : undefined);
+    j = await r.json().catch(() => null);
+  }
   if (!j || j.success !== true) throw new Error('Хаб не принял токен (' +
     ((j && j.error) || ('HTTP ' + r.status)) + '). Перезапустите хаб.');
   if (expectedRunId && j.runId && String(j.runId) !== String(expectedRunId)) {
