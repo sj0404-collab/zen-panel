@@ -1,5 +1,5 @@
 diff --git a/MANIFEST.md b/MANIFEST.md
-index e8ad5d3..e6b3e40 100644
+index e8ad5d337..e6b3e4086 100644
 --- a/MANIFEST.md
 +++ b/MANIFEST.md
 @@ -5,7 +5,6 @@
@@ -11,7 +11,7 @@ index e8ad5d3..e6b3e40 100644
  - **Манифест:** /home/runner/hub-work/yomikai/code/MANIFEST.md
  
 diff --git a/data/src/main/java/mihon/data/ocr/CyrillicOcrEngine.kt b/data/src/main/java/mihon/data/ocr/CyrillicOcrEngine.kt
-index 3ea8f8c..6d28944 100644
+index 3ea8f8cf3..e4f61de76 100644
 --- a/data/src/main/java/mihon/data/ocr/CyrillicOcrEngine.kt
 +++ b/data/src/main/java/mihon/data/ocr/CyrillicOcrEngine.kt
 @@ -1034,10 +1034,12 @@ internal class CyrillicOcrEngine(
@@ -31,7 +31,7 @@ index 3ea8f8c..6d28944 100644
              if (right - left >= 6 && bottom - top >= 6) boxes += Rect(left, top, right, bottom)
          }
          return boxes
-@@ -1113,10 +1115,15 @@ internal class CyrillicOcrEngine(
+@@ -1113,10 +1115,12 @@ internal class CyrillicOcrEngine(
                      var x2 = x
                      while (x2 < w && colInk[x2] >= 0.02f) x2++
                      if (x2 - x >= 6) {
@@ -41,9 +41,6 @@ index 3ea8f8c..6d28944 100644
 -                        val bottom = ((y2 + 2) * sy).toInt().coerceIn(top + 8, image.height)
 +                        val left = ((x - 2) * sx).toInt().coerceIn(0, max(0, image.width - 2))
 +                        val top = ((y - 2) * sy).toInt().coerceIn(0, max(0, image.height - 2))
-+                        // Нижняя граница не должна переезжать за правый/нижний край:
-+                        // иначе coerceIn получает пустой диапазон и падает
-+                        // («maximum 447 is less than minimum …») на рамках у края.
 +                        val right = ((x2 + 2) * sx).toInt()
 +                            .coerceIn(minOf(left + 8, image.width), image.width)
 +                        val bottom = ((y2 + 2) * sy).toInt()
