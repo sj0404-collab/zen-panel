@@ -1,3 +1,44 @@
+diff --git a/android/app/src/main/java/dev/pocketrun/agent/opencode/ApplyPatch.kt b/android/app/src/main/java/dev/pocketrun/agent/opencode/ApplyPatch.kt
+index 1369798..6a52bfa 100644
+--- a/android/app/src/main/java/dev/pocketrun/agent/opencode/ApplyPatch.kt
++++ b/android/app/src/main/java/dev/pocketrun/agent/opencode/ApplyPatch.kt
+@@ -28,7 +28,7 @@ object ApplyPatch {
+ 
+     data class PatchResult(val applied: List<String>, val skipped: List<String>)
+ 
+-    fun apply(patchText: String, resolve: (String) -> File?): PatchResult {
++    fun apply(patchText: String, resolve: (String) -> File?, onBeforeWrite: ((File) -> Unit)? = null): PatchResult {
+         val rawLines = patchText.lines()
+         if (rawLines.firstOrNull()?.trim() != "*** Begin Patch") {
+             throw PatchException("патч должен начинаться с '*** Begin Patch'")
+@@ -65,6 +65,7 @@ object ApplyPatch {
+                     }
+                     val f = resolve(path) ?: throw PatchException("путь вне песочницы: $path")
+                     f.parentFile?.mkdirs()
++                    onBeforeWrite?.invoke(f)
+                     f.writeText(content.toString(), Charsets.UTF_8)
+                     applied += "add $path"
+                 }
+@@ -108,6 +109,7 @@ object ApplyPatch {
+                     val old = f.readText(Charsets.UTF_8)
+                     val updated = applyHunks(old, hunks, path)
+                     val target = moveTo?.let { resolve(it) ?: throw PatchException("путь вне песочницы: $it") } ?: f
++                    onBeforeWrite?.invoke(f)
+                     if (target != f) {
+                         f.delete()
+                         target.parentFile?.mkdirs()
+@@ -118,7 +120,10 @@ object ApplyPatch {
+                 line.trimStart().startsWith("*** Delete File:") -> {
+                     val path = line.trimStart().removePrefix("*** Delete File:").trim()
+                     val f = resolve(path)
+-                    if (f != null && f.isFile && f.delete()) applied += "delete $path" else skipped += "delete $path (не найден)"
++                    if (f != null && f.isFile) {
++                        onBeforeWrite?.invoke(f)
++                        if (f.delete()) applied += "delete $path" else skipped += "delete $path (не найден)"
++                    } else skipped += "delete $path (не найден)"
+                     i++
+                 }
+                 line.isBlank() -> i++
 diff --git a/android/app/src/main/java/dev/pocketrun/agent/opencode/MiniShell.kt b/android/app/src/main/java/dev/pocketrun/agent/opencode/MiniShell.kt
 index 9f2e2c6..3b429e8 100644
 --- a/android/app/src/main/java/dev/pocketrun/agent/opencode/MiniShell.kt
@@ -31,22 +72,30 @@ index 9f2e2c6..3b429e8 100644
  
      // ---------------------------------------------------------------- helpers
 diff --git a/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeAgent.kt b/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeAgent.kt
-index 3555aad..810287a 100644
+index 3555aad..2c79ded 100644
 --- a/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeAgent.kt
 +++ b/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeAgent.kt
-@@ -28,6 +28,8 @@ class OpenCodeAgent(
+@@ -28,6 +28,11 @@ class OpenCodeAgent(
      private val hasGitHub: Boolean = false,
      /** Polled before every request and between tool calls: this is what ⏹ does. */
      private val isCancelled: () -> Boolean = { false },
 +    /** When set, this run is a `task` subagent of the given type (explore/general). */
 +    private val subagentType: String? = null,
++    /** A custom agent selected with `/agent`; its prompt is injected below. */
++    private val agentName: String? = null,
++    private val agentPrompt: String? = null,
      private val maxHistoryChars: Int = HistoryTrimmer.DEFAULT_MAX_CHARS,
  ) {
  
-@@ -216,6 +218,15 @@ class OpenCodeAgent(
+@@ -216,6 +221,20 @@ class OpenCodeAgent(
  
          val prompt = buildString {
              appendLine("You are opencode, an AI coding agent running inside the PocketRun app on Android. You help with code and files in the user's sandbox.")
++            if (agentPrompt != null) {
++                appendLine()
++                appendLine("# Agent: ${agentName ?: "custom"}")
++                appendLine(agentPrompt)
++            }
 +            if (subagentType != null) {
 +                appendLine()
 +                appendLine("# Subagent (\"$subagentType\")")
@@ -60,7 +109,7 @@ index 3555aad..810287a 100644
              appendLine("# Environment")
              appendLine("- Project directory: ${projectDir?.relativeToOrNull(workspace.root)?.path ?: "."} (relative paths in tools resolve there)")
 diff --git a/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt b/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt
-index 4138971..93784e1 100644
+index 4138971..8d83faa 100644
 --- a/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt
 +++ b/android/app/src/main/java/dev/pocketrun/agent/opencode/OpenCodeTools.kt
 @@ -32,6 +32,15 @@ class OpenCodeTools(
@@ -79,7 +128,32 @@ index 4138971..93784e1 100644
      }
  
      private val shell = MiniShell(workspace, jsRuntime, npxRuntime, busybox)
-@@ -63,10 +72,29 @@ class OpenCodeTools(
+@@ -49,6 +58,14 @@ class OpenCodeTools(
+     @Volatile
+     var toolApprover: ((name: String, argsJson: String) -> Boolean)? = null
+ 
++    /**
++     * Permission gate: opencode.json rules + the current mode. Returns the
++     * decision for a call; null means "no opinion" (the tool set decides).
++     * Replaces the old approver-only check when set by the runner.
++     */
++    @Volatile
++    var permissionResolver: ((name: String, argsJson: String) -> OpenCodeConfig.Permission)? = null
++
+     /**
+      * Polled by long-waiting tools (github run_wait) so that ⏹ actually stops
+      * a turn that is only waiting for a CI run.
+@@ -60,13 +77,39 @@ class OpenCodeTools(
+     @Volatile
+     var onTodos: ((List<Sessions.Todo>) -> Unit)? = null
+ 
++    /**
++     * Called right before this tool changes a file, so the runner can snapshot
++     * its current contents for `/undo`. Covers write/edit/apply_patch.
++     */
++    @Volatile
++    var onBeforeWrite: ((File) -> Unit)? = null
++
      /** The current todo list; seeded from the session before each turn. */
      var todos: List<Sessions.Todo> = emptyList()
  
@@ -109,7 +183,7 @@ index 4138971..93784e1 100644
              put(
                  JSONObject().apply {
                      put("type", "function")
-@@ -254,11 +282,26 @@ class OpenCodeTools(
+@@ -254,16 +297,42 @@ class OpenCodeTools(
                  .put("body", str("body", "JSON body (api)")),
              listOf("op"),
          )
@@ -134,9 +208,29 @@ index 4138971..93784e1 100644
          return try {
 +            if (!permitted(name)) return "error: инструмент '$name' недоступен этому агенту"
              val args = JSONObject(argsJson.ifBlank { "{}" })
-             // Manual confirmation gate: mutating tools ask the user first.
-             val approver = toolApprover
-@@ -279,6 +322,7 @@ class OpenCodeTools(
+-            // Manual confirmation gate: mutating tools ask the user first.
+-            val approver = toolApprover
+-            if (approver != null && !isReadOnly(name, args)) {
+-                if (!approver(name, argsJson)) return "(отклонено пользователем)"
++            // Permission gate: opencode.json / agent rules decide allow/ask/deny.
++            // Without a resolver, the old rule stands — mutating tools ask the UI
++            // approver (set in manual mode), reads run freely.
++            val decision = permissionResolver?.invoke(name, argsJson)
++                ?: if (isReadOnly(name, args)) OpenCodeConfig.Permission.ALLOW
++                else if (toolApprover != null) OpenCodeConfig.Permission.ASK
++                else OpenCodeConfig.Permission.ALLOW
++            when (decision) {
++                OpenCodeConfig.Permission.DENY -> return "(запрещено настройками: $name)"
++                OpenCodeConfig.Permission.ASK -> {
++                    val approver = toolApprover
++                        ?: return "(нужно подтверждение для $name — включите режим «Вручную» или разрешите инструмент в opencode.json)"
++                    if (!approver(name, argsJson)) return "(отклонено пользователем)"
++                }
++                OpenCodeConfig.Permission.ALLOW -> Unit
+             }
+             when (name) {
+                 "bash" -> doBash(args)
+@@ -279,6 +348,7 @@ class OpenCodeTools(
                  "skill" -> doSkill(args)
                  "question" -> doQuestion(args)
                  "github" -> doGitHub(args)
@@ -144,7 +238,32 @@ index 4138971..93784e1 100644
                  else -> "unknown tool: $name"
              }
          } catch (t: Throwable) {
-@@ -471,6 +515,20 @@ class OpenCodeTools(
+@@ -329,6 +399,7 @@ class OpenCodeTools(
+         if (path.isBlank()) return "error: пустой путь"
+         val f = resolve(path) ?: return "error: путь вне песочницы"
+         f.parentFile?.mkdirs()
++        onBeforeWrite?.invoke(f)
+         f.writeText(args.optString("content", ""), Charsets.UTF_8)
+         return "wrote ${args.optString("content", "").length} chars to ${workspace.relativeTo(f)}"
+     }
+@@ -346,6 +417,7 @@ class OpenCodeTools(
+             return "error: oldString встречается $count раз — уточните текст или передайте replaceAll: true"
+         }
+         val updated = if (args.optBoolean("replaceAll", false)) text.replace(old, new) else text.replaceFirst(old, new)
++        onBeforeWrite?.invoke(f)
+         f.writeText(updated, Charsets.UTF_8)
+         return "ok: заменено вхождений: ${if (args.optBoolean("replaceAll", false)) count else 1}"
+     }
+@@ -398,7 +470,7 @@ class OpenCodeTools(
+ 
+     private fun doApplyPatch(args: JSONObject): String {
+         return try {
+-            val result = ApplyPatch.apply(args.getString("patchText")) { path -> resolve(path) }
++            val result = ApplyPatch.apply(args.getString("patchText"), { path -> resolve(path) }, onBeforeWrite)
+             buildString {
+                 if (result.applied.isNotEmpty()) appendLine(result.applied.joinToString("\n"))
+                 if (result.skipped.isNotEmpty()) appendLine("skipped: " + result.skipped.joinToString("; "))
+@@ -471,6 +543,20 @@ class OpenCodeTools(
          return asker(questions)
      }
  
@@ -286,10 +405,10 @@ index 6267814..5193cc3 100644
              color = MaterialTheme.colorScheme.onSurfaceVariant,
              modifier = Modifier.padding(horizontal = 16.dp),
 diff --git a/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt b/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
-index bdac455..c78651d 100644
+index bdac455..b457864 100644
 --- a/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
 +++ b/android/app/src/main/java/dev/pocketrun/ui/AppViewModel.kt
-@@ -9,6 +9,7 @@ import android.net.Uri
+@@ -9,10 +9,13 @@ import android.net.Uri
  import android.provider.OpenableColumns
  import androidx.core.content.FileProvider
  import androidx.lifecycle.AndroidViewModel
@@ -297,7 +416,13 @@ index bdac455..c78651d 100644
  import dev.pocketrun.BuildConfig
  import dev.pocketrun.agent.AgentSettings
  import dev.pocketrun.agent.LlmClient
-@@ -42,9 +43,15 @@ import dev.pocketrun.runtime.shell.Busybox
++import dev.pocketrun.agent.opencode.Commands
+ import dev.pocketrun.agent.opencode.OpenCodeAgent
++import dev.pocketrun.agent.opencode.OpenCodeConfig
+ import dev.pocketrun.agent.opencode.OpenCodeTools
+ import dev.pocketrun.agent.opencode.Sessions
+ import dev.pocketrun.core.ContentSearch
+@@ -42,9 +45,15 @@ import dev.pocketrun.runtime.shell.Busybox
  import dev.pocketrun.update.AppUpdate
  import dev.pocketrun.update.AppUpdater
  import dev.pocketrun.update.ReleaseInfo
@@ -313,7 +438,7 @@ index bdac455..c78651d 100644
  import kotlinx.coroutines.flow.update
  import org.json.JSONArray
  import java.io.File
-@@ -223,11 +230,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -223,15 +232,73 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
          data class Info(val text: String) : AgentItem
      }
  
@@ -324,12 +449,12 @@ index bdac455..c78651d 100644
 +        val questions: List<OpenCodeTools.Question>,
 +        val answer: (String) -> Unit,
 +    )
++
++    /** A mutating tool call the agent is blocked on in manual confirm mode. */
++    data class PendingApproval(val tool: String, val argsPreview: String, val respond: (Boolean) -> Unit)
  
 -    private val _agentRunning = MutableStateFlow(false)
 -    val agentRunning: StateFlow<Boolean> = _agentRunning.asStateFlow()
-+    /** A mutating tool call the agent is blocked on in manual confirm mode. */
-+    data class PendingApproval(val tool: String, val argsPreview: String, val respond: (Boolean) -> Unit)
-+
 +    /**
 +     * Everything one session needs while its turn runs. Kept apart from the
 +     * shared ViewModel state so several sessions can work at the same time:
@@ -356,6 +481,15 @@ index bdac455..c78651d 100644
 +        @Volatile
 +        var deleted: Boolean = false
 +
++        /**
++         * Undo support for `/undo`: the pre-turn version of every existing file
++         * the agent changes, and the path of every file it creates, captured as
++         * it goes. Cleared at the start of each turn.
++         */
++        val turnSnapshots = mutableListOf<Pair<File, Version>>()
++        val turnCreated = mutableListOf<File>()
++        val turnFiles = mutableSetOf<String>()
++
 +        /** Unblocks whoever is waiting on a question/approval when the turn stops. */
 +        fun release() {
 +            pendingQuestion.value?.answer?.invoke("(отменено пользователем)")
@@ -367,7 +501,22 @@ index bdac455..c78651d 100644
  
      private val _llmConfig = MutableStateFlow(AgentSettings.read(app))
      val llmConfig: StateFlow<AgentSettings.Config> = _llmConfig.asStateFlow()
-@@ -241,17 +286,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+ 
++    /**
++     * The agent selected with `/agent` for the current project, or null for the
++     * built-in one. Custom agents come from opencode.json and `.opencode/agent`.
++     */
++    private val _activeAgent = MutableStateFlow<String?>(null)
++    val activeAgent: StateFlow<String?> = _activeAgent.asStateFlow()
++
++    /** The merged opencode.json + .opencode config for the selected project. */
++    fun openCodeConfig(): OpenCodeConfig =
++        OpenCodeConfig.load(workspace, _selected.value?.dir)
++
+     /** Sessions: the opencode-style local session store. */
+     val sessions = Sessions(workspace)
+ 
+@@ -241,17 +308,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      private val _currentSession = MutableStateFlow<Sessions.SessionInfo?>(null)
      val currentSession: StateFlow<Sessions.SessionInfo?> = _currentSession.asStateFlow()
  
@@ -418,7 +567,7 @@ index bdac455..c78651d 100644
  
      /** Model catalog loaded from the configured server (GET /models). */
      private val _modelCatalog = MutableStateFlow<List<String>>(emptyList())
-@@ -264,38 +331,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -264,38 +353,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      private val _openTabs = MutableStateFlow<List<Sessions.SessionInfo>>(emptyList())
      val openTabs: StateFlow<List<Sessions.SessionInfo>> = _openTabs.asStateFlow()
  
@@ -461,7 +610,7 @@ index bdac455..c78651d 100644
      fun canUseAgent(): Boolean =
          (licenseState.value as? LicenseManager.LicenseState.Active)?.canUseAgent == true
  
-@@ -320,10 +367,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -320,10 +389,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      }
  
      fun clearAgentChat() {
@@ -477,7 +626,7 @@ index bdac455..c78651d 100644
      }
  
      fun refreshSessions() {
-@@ -332,12 +380,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -332,12 +402,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
  
      private fun projectName(): String? = _selected.value?.name
  
@@ -519,7 +668,7 @@ index bdac455..c78651d 100644
      }
  
      /** Remembers the active tab and open tabs for the next app launch. */
-@@ -345,32 +416,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -345,32 +438,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
          AgentSettings.saveUiState(getApplication(), _currentSession.value?.id, _openTabs.value.map { it.id })
      }
  
@@ -572,7 +721,7 @@ index bdac455..c78651d 100644
              registerTab(child.info)
          }
          refreshSessions()
-@@ -389,14 +468,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -389,14 +490,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      }
  
      fun deleteSession(id: String) {
@@ -598,7 +747,7 @@ index bdac455..c78651d 100644
              }
          }
          refreshSessions()
-@@ -406,12 +493,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -406,12 +515,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      /** `opencode export` analog: writes the session to opencode-data/exports/. */
      fun exportSession(id: String) {
          val path = sessions.export(id)
@@ -615,7 +764,7 @@ index bdac455..c78651d 100644
      }
  
      private fun historyToItems(messages: JSONArray): List<AgentItem> {
-@@ -435,72 +522,102 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -435,72 +544,206 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
          return items
      }
  
@@ -682,10 +831,18 @@ index bdac455..c78651d 100644
              "/help" -> {
 -                _agentMessages.update {
 -                    it + AgentItem.Info(
+-                        "Команды: /new — новая сессия · /init — создать AGENTS.md · /continue — продолжить прерванный ход · /skills — список навыков · /help — эта справка.\n\n" +
 +                ensureSession()
++                val custom = openCodeConfig().commandNames()
 +                pushItem(
 +                    AgentItem.Info(
-                         "Команды: /new — новая сессия · /init — создать AGENTS.md · /continue — продолжить прерванный ход · /skills — список навыков · /help — эта справка.\n\n" +
++                        "Команды: /new — новая сессия · /init — создать AGENTS.md · /continue — продолжить прерванный ход · /skills — список навыков · " +
++                            "/agent <имя> — выбрать агента · /agents — список агентов · /models — модели · /sessions — сессии · /editor — открыть редактор · " +
++                            "/compact — сжать историю · /undo — отменить изменения последнего хода · /help — эта справка" +
++                            (if (custom.isNotEmpty()) " · свои команды: " + custom.joinToString(", ") { "/$it" } else "") + ".\n\n" +
++                            "Свои команды: opencode.json → command, или файл .opencode/command/<имя>.md (frontmatter description/agent/model + шаблон с \$ARGUMENTS, \$1…\$9 и @файл).\n" +
++                            "Агенты: opencode.json → agent, или .opencode/agent/<имя>.md (frontmatter description/model/tools/mode + промпт в теле).\n" +
++                            "Права: opencode.json → permission (allow/ask/deny, для bash — с шаблонами вроде \"rm *\": \"deny\").\n\n" +
 +                            "Новое задание, пока агент занят, открывает отдельную сессию и выполняется параллельно — вкладки сверху.\n" +
                              "Навыки: создайте .opencode/skills/<имя>/SKILL.md (frontmatter: name, description) — агент подхватит и сможет загружать; глобальные — workspace/opencode/skills/.\n" +
                              "Инструкции: AGENTS.md в проекте + глобальный opencode/AGENTS.md, фолбэк CLAUDE.md; список файлов/URL — в opencode/opencode.json (\"instructions\").\n" +
@@ -694,9 +851,105 @@ index bdac455..c78651d 100644
                              "Файл агенту: кнопка 📎 — файл копируется в проект и отправляется агенту.\n" +
                              "Остановка: ⏹ — ход прерывается, но сессия и история сохраняются (/continue продолжает).",
 -                    )
--                }
 +                    ),
 +                )
++                return
++            }
++        }
++
++        // Commands that take arguments, plus custom commands from the config.
++        val parsed = Commands.parse(prompt)
++        if (parsed != null) {
++            val (name, args) = parsed
++            when (name) {
++                "undo" -> {
++                    ensureSession()
++                    undoLastTurn()
++                    return
++                }
++                "compact" -> {
++                    ensureSession()
++                    compactSession()
++                    return
++                }
++                "editor" -> {
++                    _tabRequest.value = TAB_EDITOR
++                    return
+                 }
++                "models" -> {
++                    ensureSession()
++                    val current = _llmConfig.value.model
++                    val listed = _modelCatalog.value
++                    val body = if (listed.isEmpty()) {
++                        "Текущая: $current\nПресеты:\n" + AgentSettings.PRESETS.joinToString("\n") { "• ${it.label} — ${it.model}" }
++                    } else {
++                        "Текущая: $current\nДоступные на сервере:\n" + listed.take(50).joinToString("\n") { "• $it" }
++                    }
++                    pushItem(AgentItem.Info("$body\nСменить: кнопка ⚙ над чатом."))
++                    return
++                }
++                "agents" -> {
++                    ensureSession()
++                    val cfg = openCodeConfig()
++                    val custom = cfg.agentNames()
++                    val text = buildString {
++                        appendLine("Агенты: build (по умолчанию), plan, explore, general")
++                        if (custom.isNotEmpty()) {
++                            appendLine("Пользовательские:")
++                            custom.forEach { n ->
++                                val d = cfg.agent(n)
++                                appendLine("• $n${d?.mode?.let { " [$it]" } ?: ""}${d?.description?.takeIf { it.isNotBlank() }?.let { " — $it" } ?: ""}")
++                            }
++                        }
++                        appendLine("Текущий: ${_activeAgent.value ?: "build"}")
++                        append("Выбрать: /agent <имя>")
++                    }
++                    pushItem(AgentItem.Info(text))
++                    return
++                }
++                "agent" -> {
++                    ensureSession()
++                    if (args.isBlank()) {
++                        pushItem(AgentItem.Info("Укажите имя: /agent <имя>. Список — /agents."))
++                        return
++                    }
++                    val cfg = openCodeConfig()
++                    val target = args.trim()
++                    if (target == "build" || target == "plan" || cfg.agent(target) != null) {
++                        _activeAgent.value = if (target == "build") null else target
++                        pushItem(AgentItem.Info("Агент: $target"))
++                    } else {
++                        pushItem(AgentItem.Error("Неизвестный агент «$target». Список — /agents."))
++                    }
++                    return
++                }
++                "sessions" -> {
++                    ensureSession()
++                    val list = _sessionList.value
++                    val body = if (list.isEmpty()) "Сессий пока нет."
++                    else list.take(20).joinToString("\n") { s ->
++                        val mark = if (s.id == _currentSession.value?.id) "● " else "• "
++                        "$mark${s.title}${s.model?.let { " — $it" } ?: ""}"
++                    }
++                    pushItem(AgentItem.Info("Сессии:\n$body\nОткрыть: вкладка или список сессий (📂 в шапке агента)."))
++                    return
++                }
++            }
++
++            // A custom command from the config expands and runs as a normal turn.
++            val cfg = openCodeConfig()
++            val custom = cfg.command(name)
++            if (custom != null) {
++                val info = ensureSession()
++                if (!requireConfigured()) return
++                if (custom.agent != null && (custom.agent == "build" || custom.agent == "plan" || cfg.agent(custom.agent) != null)) {
++                    _activeAgent.value = if (custom.agent == "build") null else custom.agent
++                }
++                val expanded = Commands.expand(custom, args, _selected.value?.dir)
++                lastPrompt = expanded
++                val display = "/$name${if (args.isBlank()) "" else " $args"}"
++                runFor(info).messages.update { it + AgentItem.User(display) }
++                runAgentTurn(expanded, info)
                  return
              }
          }
@@ -739,7 +992,7 @@ index bdac455..c78651d 100644
      }
  
      /**
-@@ -508,168 +625,255 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -508,168 +751,393 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
       * agent already touched are in place, so "продолжай" is all it needs.
       */
      fun continueLast() {
@@ -791,6 +1044,9 @@ index bdac455..c78651d 100644
 +        run.rounds.value = 0
 +        run.preview.value = ""
 +        run.startedAt.value = System.currentTimeMillis()
++        run.turnSnapshots.clear()
++        run.turnCreated.clear()
++        run.turnFiles.clear()
 +        persistAgentUi()
  
          agentExecutor.execute {
@@ -856,19 +1112,37 @@ index bdac455..c78651d 100644
 +    ) {
 +        val start = System.currentTimeMillis()
 +        val projectDir = run.projectDir ?: _selected.value?.dir
++        val cfg = openCodeConfig()
++        // A custom agent (from /agent) can pin its own model and tool set.
++        val agentDef = if (subagent != null) null else _activeAgent.value?.let { cfg.agent(it) }
++        val effective = if (agentDef?.model != null) config.copy(model = agentDef.model) else config
++        val effectiveTools = agentDef?.tools ?: allowedTools
 +        val tools = OpenCodeTools(workspace, activeNode, npxRuntime, projectDir, config.githubToken, busybox)
-+        tools.allowedTools = allowedTools
++        tools.allowedTools = effectiveTools
++
++        // Permission gate built from opencode.json; the mode is only a fallback.
++        tools.permissionResolver = { name, argsJson ->
++            val args = org.json.JSONObject(argsJson.ifBlank { "{}" })
++            cfg.permissionFor(name, OpenCodeConfig.keyArgFor(name, args))
++                ?: if (tools.isReadOnly(name, args) || subagent != null) OpenCodeConfig.Permission.ALLOW
++                else if (config.confirmMode == AgentSettings.MODE_MANUAL) OpenCodeConfig.Permission.ASK
++                else OpenCodeConfig.Permission.ALLOW
++        }
++        // Snapshot each file before the agent changes it, for /undo.
++        tools.onBeforeWrite = { file -> recordTurnFile(run, file, projectDir) }
 +        if (subagent == null) {
 +            // Only top-level agents spawn subagents; nesting stays impossible.
 +            tools.subagentRunner = { request -> runSubagent(info, request, config) }
 +        }
 +        val agent = OpenCodeAgent(
-+            workspace, tools, { LlmClient(config) }, projectDir,
++            workspace, tools, { LlmClient(effective) }, projectDir,
 +            maxSteps = config.safeMaxSteps,
 +            askMode = config.confirmMode == AgentSettings.MODE_ASK && subagent == null,
 +            hasGitHub = config.hasGitHub,
 +            isCancelled = { run.cancelled.get() },
 +            subagentType = subagent?.subagentType,
++            agentName = agentDef?.name,
++            agentPrompt = agentDef?.prompt,
 +        )
  
 -                // Manual mode: mutating tool calls wait for a tap in the UI.
@@ -892,10 +1166,8 @@ index bdac455..c78651d 100644
 +        // A subagent cannot ask the user, so it gets no interactive hooks.
 +        if (subagent == null) {
 +            tools.questionAsker = { questions -> askQuestions(run, questions) }
-+            // Manual mode: mutating tool calls wait for a tap in the UI.
-+            if (config.confirmMode == AgentSettings.MODE_MANUAL) {
-+                tools.toolApprover = { name, argsJson -> askApproval(run, name, argsJson) }
-+            }
++            // The approver serves both manual mode and opencode.json "ask" rules.
++            tools.toolApprover = { name, argsJson -> askApproval(run, name, argsJson) }
 +        }
  
 -                tools.onTodos = { list ->
@@ -949,10 +1221,10 @@ index bdac455..c78651d 100644
 +        run.history = newHistory
 +        if (run.deleted) return
 +        val session = sessions.load(info.id)
-+            ?: sessions.create(project = info.project, title = info.title, model = config.model)
++            ?: sessions.create(project = info.project, title = info.title, model = effective.model)
 +        session.messages = newHistory
 +        session.todos = run.todos.value
-+        session.info.model = config.model
++        session.info.model = effective.model
 +        if (session.info.title == "Новая сессия") {
 +            val firstUser = firstUserText(newHistory) ?: userText
 +            val auto = firstUser.replace('\n', ' ').trim().take(40).let { if (it.length == 40) it + "…" else it }
@@ -1021,21 +1293,10 @@ index bdac455..c78651d 100644
                          )
                      }
                  }
--            } catch (t: Throwable) {
--                // Anything unexpected must not leave the chat stuck on "working".
--                _agentMessages.update { it + AgentItem.Error(t.message ?: t.javaClass.simpleName) }
--            } finally {
--                _modelPreview.value = ""
--                _pendingQuestion.value = null
--                _pendingApproval.value = null
--                _agentRunning.value = false
--                // The agent writes files itself; the tree must not wait for the
--                // next poll to show what it did.
--                agentTouchedFiles()
-             }
-         }
-     }
- 
++            }
++        }
++    }
++
 +    /** Blocks the turn on the user's answer; the answer arrives from the UI. */
 +    private fun askQuestions(run: SessionRun, questions: List<OpenCodeTools.Question>): String {
 +        val latch = CountDownLatch(1)
@@ -1122,10 +1383,139 @@ index bdac455..c78651d 100644
 +        return "(субагент завершил работу без текстового ответа)"
 +    }
 +
++    // ---------------------------------------------------------------- undo & compact
++
++    /**
++     * Remembers a file's state before the agent changes it, so `/undo` can put
++     * it back. Only the first touch of a turn is recorded: that is the state
++     * the turn started from.
++     */
++    private fun recordTurnFile(run: SessionRun, file: File, projectDir: File?) {
++        val dir = projectDir ?: return
++        val key = runCatching { file.canonicalPath }.getOrElse { file.absolutePath }
++        if (!run.turnFiles.add(key)) return
++        if (file.isFile) {
++            history.snapshot(file, dir)?.let { run.turnSnapshots += file to it }
++        } else {
++            run.turnCreated += file
++        }
++    }
++
++    /** `/undo`: reverts every file the last turn changed (write/edit/apply_patch). */
++    fun undoLastTurn() {
++        val run = activeRun.value ?: return
++        if (run.running.value) {
++            pushItem(AgentItem.Info("Агент ещё работает — сначала остановите ход (⏹)."))
++            return
++        }
++        val projectDir = run.projectDir ?: _selected.value?.dir
++        if (projectDir == null) return
++        if (run.turnSnapshots.isEmpty() && run.turnCreated.isEmpty()) {
++            pushItem(AgentItem.Info("Нечего отменять: в последнем ходе агент не менял файлы через write/edit/apply_patch (/undo не покрывает изменения, сделанные произвольным bash)."))
++            return
++        }
++        val names = mutableListOf<String>()
++        run.turnSnapshots.asReversed().forEach { (file, version) ->
++            if (history.restore(version, file, projectDir)) names += workspace.relativeTo(file)
++        }
++        run.turnCreated.reversed().forEach { f -> if (f.isFile && f.delete()) names += "-${workspace.relativeTo(f)}" }
++        run.turnSnapshots.clear()
++        run.turnCreated.clear()
++        run.turnFiles.clear()
++        agentTouchedFiles()
++        pushItem(
++            AgentItem.Info(
++                if (names.isEmpty()) "Не удалось отменить изменения."
++                else "Отменено в последнем ходе:\n" + names.distinct().joinToString("\n") { "• $it" },
++            ),
++        )
++    }
++
++    /**
++     * `/compact`: replaces the session history with a model-written handoff
++     * summary, so a long chat can continue without overflowing the context.
++     */
++    private fun compactSession() {
++        val run = activeRun.value ?: return
++        if (run.running.value) {
++            pushItem(AgentItem.Info("Агент ещё работает — сожмите историю после завершения хода."))
++            return
++        }
++        val config = _llmConfig.value
++        if (!config.isReady) {
++            pushItem(AgentItem.Info("Сначала настройте модель (⚙)."))
++            return
++        }
++        val info = ensureSession()
++        val transcript = historyText(run.history)
++        if (transcript.isBlank()) {
++            pushItem(AgentItem.Info("История пуста — нечего сжимать."))
++            return
++        }
++        pushItem(AgentItem.Info("Сжимаю историю…"))
++        agentExecutor.execute {
++            try {
++                val request = JSONArray()
++                    .put(
++                        JSONObject().put("role", "system").put(
++                            "content",
++                            "You compress a coding-agent conversation into a dense handoff summary. " +
++                                "Keep: the user's goal, decisions made, files touched and their current state, " +
++                                "commands run and their results, open questions and the exact next steps. " +
++                                "No pleasantries, no repetition — just the facts another agent needs to continue.",
++                        ),
++                    )
++                    .put(JSONObject().put("role", "user").put("content", transcript))
++                val summary = LlmClient(config).chat(request, null).content.orEmpty().trim()
++                if (summary.isBlank()) {
++                    run.messages.update { it + AgentItem.Error("Не удалось получить конспект (пустой ответ модели).") }
++                    return@execute
++                }
++                val compacted = JSONArray().put(
++                    JSONObject().put("role", "user")
++                        .put("content", "Конспект предыдущей работы (история сжата через /compact):\n" + summary),
++                )
++                run.history = compacted
++                val session = sessions.load(info.id)
++                if (session != null) {
++                    session.messages = compacted
++                    sessions.save(session)
++                }
++                run.messages.update { it + AgentItem.Info("История сжата. Конспект:\n" + summary.take(1500)) }
+             } catch (t: Throwable) {
+-                // Anything unexpected must not leave the chat stuck on "working".
+-                _agentMessages.update { it + AgentItem.Error(t.message ?: t.javaClass.simpleName) }
+-            } finally {
+-                _modelPreview.value = ""
+-                _pendingQuestion.value = null
+-                _pendingApproval.value = null
+-                _agentRunning.value = false
+-                // The agent writes files itself; the tree must not wait for the
+-                // next poll to show what it did.
+-                agentTouchedFiles()
++                run.messages.update { it + AgentItem.Error("Сжатие не удалось: ${t.message ?: t.javaClass.simpleName}") }
+             }
+         }
+     }
+ 
++    /** Flattens a history into readable text, for summarization. */
++    private fun historyText(history: JSONArray): String = buildString {
++        for (i in 0 until history.length()) {
++            val m = history.optJSONObject(i) ?: continue
++            when (m.optString("role")) {
++                "user", "assistant" -> {
++                    val c = m.optString("content")
++                    if (c.isNotBlank() && c != "null") appendLine("${m.optString("role")}: $c")
++                }
++                "tool" -> appendLine("tool: ${m.optString("content").take(500)}")
++            }
++        }
++    }.trim()
++
      // ---------------------------------------------------------------- tabs
  
      private fun registerTab(info: Sessions.SessionInfo) {
-@@ -678,12 +882,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -678,12 +1146,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
  
      /** Opens (or switches to) a session tab. */
      fun switchTab(id: String) {
@@ -1139,7 +1529,7 @@ index bdac455..c78651d 100644
          registerTab(info)
          refreshSessions()
          persistAgentUi()
-@@ -691,24 +894,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -691,24 +1158,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
  
      /** A fresh tab with its own new session. */
      fun newTab() {
@@ -1167,7 +1557,7 @@ index bdac455..c78651d 100644
          }
          persistAgentUi()
      }
-@@ -720,7 +920,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -720,7 +1184,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
       * folder and starts a turn so the agent can work with it (read/bash).
       */
      fun attachFile(uri: android.net.Uri) {
@@ -1175,7 +1565,7 @@ index bdac455..c78651d 100644
          val resolver = getApplication<Application>().contentResolver
          val name = runCatching {
              resolver.query(uri, null, null, null, null)?.use { c ->
-@@ -735,20 +934,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -735,20 +1198,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
              resolver.openInputStream(uri)?.use { ins -> target.outputStream().use { ins.copyTo(it) } }
              target.length()
          }.getOrNull()
@@ -1203,7 +1593,7 @@ index bdac455..c78651d 100644
          )
      }
  
-@@ -764,9 +967,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -764,9 +1231,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      }
  
      fun cancelAgent() {
@@ -1217,7 +1607,7 @@ index bdac455..c78651d 100644
      }
  
      // ---------------------------------------------------------------- projects
-@@ -791,13 +995,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -791,13 +1259,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                  _openTabs.value = ui.openTabs.mapNotNull { existing[it] }
                  val activeId = ui.lastSessionId?.takeIf { existing.containsKey(it) }
                      ?: _openTabs.value.firstOrNull()?.id
@@ -1233,7 +1623,7 @@ index bdac455..c78651d 100644
                  }
              }
              else -> Unit // the user closed all tabs — keep the chat empty
-@@ -1448,9 +1652,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -1448,9 +1916,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
  
      override fun onCleared() {
          stopWatching()
@@ -1246,7 +1636,7 @@ index bdac455..c78651d 100644
          agentExecutor.shutdownNow()
          ioExecutor.shutdownNow()
          super.onCleared()
-@@ -1582,6 +1786,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
+@@ -1582,6 +2050,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
          private const val MAX_OUTPUT_LINES = 2_000
          private const val CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000
  
