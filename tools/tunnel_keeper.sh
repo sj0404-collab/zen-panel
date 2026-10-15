@@ -31,9 +31,11 @@ TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 if [ "$VM" = "vnc" ]; then
   PORT=6081; SLOT=vnc; URLFILE="$HUB_LOGS/vnc-url"; HEALTH_PATH="/vnc.html"
   R_URLFILE="$HUB_LOGS/vnc-url2"
+  TGG_URLFILE="$HUB_LOGS/vnc-tgg.url"      # tunnl.gg fourth leg (read-only here)
 else
   PORT=8090; SLOT=hub-linux; URLFILE="$HUB_LOGS/hub-url"; HEALTH_PATH="/"
   R_URLFILE="$HUB_LOGS/hub-url2"
+  TGG_URLFILE="$HUB_LOGS/hub-tgg.url"      # tunnl.gg fourth leg (read-only here)
 fi
 INTERVAL="${KEEPER_INTERVAL:-20}"
 MAIN_FAILS=0
@@ -59,20 +61,25 @@ url_for_pidfile() {  # $1 = pidfile path
 }
 
 publish_pair() {  # args k=v ... (always includes both base urls we know)
-  local main reserve
+  # tgg is carried too: a republish without it whose raw-branch merge-read
+  # flakes wipes the tunnl.gg leg (measured live 15.10 run 396, hub slot).
+  local main reserve tgg
   main="$(cat "$URLFILE" 2>/dev/null || true)"
   reserve="$(cat "$R_URLFILE" 2>/dev/null || true)"
+  tgg="$(cat "$TGG_URLFILE" 2>/dev/null || true)"
   if [ "$SLOT" = "hub-linux" ]; then
     GH_TOKEN="$TOKEN" bash "$TOOLS_DIR/publish_session.sh" \
       "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
       ${main:+"url=$main"} ${main:+"hubUrl=$main"} ${main:+"desktop=$main/d"} ${main:+"mobile=$main/m"} \
       ${reserve:+"url2=$reserve"} \
+      ${tgg:+"tgg=$tgg"} \
       "auth=без пароля" "label=${HUB_LABEL:-hub}" 2>&1 | tail -1
   else
     GH_TOKEN="$TOKEN" bash "$TOOLS_DIR/publish_session.sh" \
       "slot=vnc" "kind=Linux-VNC" "os=linux" \
       ${main:+"url=$main/vnc.html"} ${main:+"novncUrl=$main/vnc.html"} \
       ${reserve:+"url2=$reserve"} \
+      ${tgg:+"tgg=$tgg/vnc.html"} \
       "label=${HUB_LABEL:-hub}" 2>&1 | tail -1
   fi
 }

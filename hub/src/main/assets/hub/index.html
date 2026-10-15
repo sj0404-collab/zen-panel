@@ -676,16 +676,23 @@ async function waitForHub(token, sinceMs, sleepMs, cancelled, runId) {
     if (typeof cancelled === 'function' && cancelled()) return null;
     const s = token && staleReads >= 3 ? await readHubSessionViaApi(token) : await readHubSession(token);
     const born = s && s.startedAt ? new Date(s.startedAt).getTime() : 0;
-    if (s && s.state === 'live' && born >= sinceMs - 15000 && (s.hubUrl || s.url)) return s;
+    // Handoff: a relayed session keeps its ORIGINAL startedAt by design, so a
+    // born-check alone never matches and the wait runs to the 20-minute
+    // timeout holding a perfectly live address (measured 15.10: hub up via
+    // cloudflare + tunnl.gg, phone waited forever). Our runId in the file is
+    // proof enough that this descriptor belongs to the run we just launched.
+    const ownRun = runId && s && String(s.runId || '') === String(runId);
+    if (s && s.state === 'live' && (born >= sinceMs - 15000 || ownRun) && (s.hubUrl || s.url)) return s;
     const gone = await runGone();
     if (gone) {
       log('Ран #' + (runId || '?') + ' завершён извне (' + gone + ') — адреса не будет. Жмите «Остановить и перезапустить ранер».', 'err');
       return null;
     }
     // An 'ended' state only means OUR run died if it was BORN after we
-    // dispatched. Otherwise it is yesterday's corpse, and the file simply
+    // dispatched (or carries OUR runId - same handoff caveat as above).
+    // Otherwise it is yesterday's corpse, and the file simply
     // has not been republished yet — keep waiting like it is not there.
-    if (s && s.state === 'ended' && born >= sinceMs - 15000) {
+    if (s && s.state === 'ended' && (born >= sinceMs - 15000 || ownRun)) {
       log('Сессия хаба помечена завершённой — раннер не сообщил адрес.', 'err');
       return null;
     }

@@ -43,6 +43,7 @@ PORT=8090
 URLFILE="$HUB_LOGS/hub-url"        # main cloudflared leg (read-only here)
 R_URLFILE="$HUB_LOGS/hub-url2"     # reserve cloudflared leg (read-only here)
 NGROK_URLFILE="$HUB_LOGS/hub-ngrok.url"
+TGG_URLFILE="$HUB_LOGS/hub-tgg.url"   # tunnl.gg fourth leg (read-only here)
 PIDFILE="$HUB_LOGS/ngrok.pid"
 LOG="$HUB_LOGS/ngrok.log"
 INTERVAL="${NGROK_KEEPER_INTERVAL:-15}"
@@ -104,13 +105,18 @@ healthy() {  # $1 = url
 }
 
 publish_full() {  # $1 = ngrok url (always non-empty here)
-  local main reserve ng="$1"
+  # Every publish re-sends the FULL descriptor, tgg included: a tgg-less write
+  # whose raw-branch merge-read flakes erases the tunnl.gg leg minutes after
+  # the tunnl keeper put it there (measured live 15.10 run 396).
+  local main reserve tgg ng="$1"
   main="$(cat "$URLFILE" 2>/dev/null || true)"
   reserve="$(cat "$R_URLFILE" 2>/dev/null || true)"
+  tgg="$(cat "$TGG_URLFILE" 2>/dev/null || true)"
   GH_TOKEN="$TOKEN" bash "$TOOLS_DIR/publish_session.sh" \
     "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
     ${main:+"url=$main"} ${main:+"hubUrl=$main"} ${main:+"desktop=$main/d"} ${main:+"mobile=$main/m"} \
     ${reserve:+"url2=$reserve"} \
+    ${tgg:+"tgg=$tgg"} \
     "ngrok=$ng" \
     "auth=без пароля" "label=${HUB_LABEL:-hub}" 2>&1 | tail -1
 }

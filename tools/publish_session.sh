@@ -418,10 +418,13 @@ old_run = str(old.get('runId', ''))
 new_run = str(new.get('runId', '')) or run_id
 if old_run and new_run and old_run != new_run:
     raise SystemExit(1)
-# url2 = cloudflared reserve, ngrok = third provider leg: a republish that
-# simply did not know about them must not erase either (same race as url2).
-carried = []
-for key in ('url2', 'ngrok'):
+  # url2 = cloudflared reserve, ngrok = third provider leg, tgg = tunnl.gg
+  # fourth leg: a republish that simply did not know about them must not erase
+  # any of them (same race as url2; measured live 15.10 run 396: tgg was
+  # erased 50 seconds after the tunnl keeper wrote it whenever the raw-branch
+  # merge-read above flaked and came back empty).
+  carried = []
+  for key in ('url2', 'ngrok', 'tgg'):
     if not new.get(key) and old.get(key):
         new[key] = old[key]
         carried.append(key)
