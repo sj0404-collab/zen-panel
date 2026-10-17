@@ -29,6 +29,13 @@ set -uo pipefail
 VM="${1:-hub}"
 case "$VM" in hub|vnc) ;; *) echo "[localrun-keeper] unknown VM '$VM' (hub|vnc)" >&2; exit 1 ;; esac
 
+# --once: publish once and exit, instead of staying resident as a daemon loop.
+# This is what the regression test drives. A keeper is a daemon, and testing a
+# daemon means leaving one running after the test - which is exactly what hangs
+# a CI job in "Complete job". One pass has no leftover to leak.
+ONCE=0
+[ "${2:-}" = "--once" ] && ONCE=1
+
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
 HUB_TMP="${HUB_TMP:-$HOME/.npm-hub/tmp}"
 mkdir -p "$HUB_LOGS" "$HUB_TMP" 2>/dev/null || true
@@ -158,6 +165,29 @@ trap 'log "stopped"; exit 0' TERM INT
 log "keeper up (port $PORT; no account, no key - publishes .lr; one probe/min, reconnect only after $UNHEALTHY_LIMIT dead probes)"
 
 LAST_URL="$(cat "$LR_URLFILE" 2>/dev/null || true)"
+
+if [ "$ONCE" = 1 ]; then
+  # Single pass, no loop, and the ssh agent is always reaped on the way out -
+  # including on failure, so this path can never leak a process.
+  cleanup_once() {
+    local p=""
+    [ -f "$PIDFILE" ] && p="$(tr -dc '0-9' < "$PIDFILE" 2>/dev/null || true)"
+    [ -n "$p" ] && kill "$p" 2>/dev/null
+    return 0
+  }
+  trap cleanup_once EXIT
+  url="$(start_tunnel || true)"
+  case "$url" in https://*) ;; *) url="" ;; esac
+  if [ -n "$url" ] && healthy "$url"; then
+    echo "$url" > "$LR_URLFILE"
+    log "localhost.run tunnel up: $url"
+    publish_full "$url" || true
+    printf '%s\n' "$url"
+    exit 0
+  fi
+  [ -n "$url" ] && log "localhost.run up but not usable: $url - not publishing"
+  exit 1
+fi
 FAILS=0
 UNHEALTHY=0
 while true; do
