@@ -392,6 +392,16 @@ jobs:
             echo "::notice::TUNNL_SSH_KEY secret is empty - the tunnl.gg leg is off"
           fi
 
+          # localhost.run sixth leg: NO ACCOUNT, NO PASSWORD, NO KEY - it only
+          # needs an ssh client. That is the whole point: every other provider
+          # (ngrok authtoken, a named Cloudflare tunnel, a Tailscale authkey)
+          # turns into an outage the moment its secret is forgotten, and a
+          # forgotten password cannot be reset from an ephemeral runner.
+          nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
+            bash "$GITHUB_WORKSPACE/fork/tools/localrun_keeper.sh" hub >> "$HUB_LOGS/localrun-keeper.log" 2>&1 &
+          echo $! > "$HUB_LOGS/localrun-keeper.pid"
+          echo "localrun keeper: hub endpoint now also carries an account-less address"
+
       - name: Start the autopilot for every repo the Files tab cloned
         run: |
           # THIS IS THE STEP THE HUB WAS MISSING. The hub clones the user's
@@ -466,6 +476,7 @@ jobs:
             pkill -f "[h]ub_control.sh" 2>/dev/null || true
             pkill -f "[r]escue_ssh.sh" 2>/dev/null || true
             pkill -f "[t]unnel_keeper.sh" 2>/dev/null || true
+            pkill -f "[l]ocalrun_keeper.sh" 2>/dev/null || true
             rm -f "$HUB_LOGS/cloudflared-8090-reserve.pid" 2>/dev/null || true
             tmate -S "$HUB_LOGS/tmate.sock" kill-session >/dev/null 2>&1 || true
             if [ -n "${HUB_PID:-}" ]; then kill "$HUB_PID" 2>/dev/null || true; fi
@@ -1148,6 +1159,13 @@ jobs:
             echo "tunnl keeper: vnc desktop now also carries the stable tunnl.gg address"
           fi
 
+          # The account-less door for the desktop too. The hub VM keeps its own
+          # ssh session and therefore its own random address.
+          nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
+            bash "$GITHUB_WORKSPACE/fork/tools/localrun_keeper.sh" vnc >> "$HUB_LOGS/localrun-keeper.log" 2>&1 &
+          echo $! > "$HUB_LOGS/localrun-keeper.pid"
+          echo "localrun keeper: vnc desktop now also carries an account-less address"
+
           # Same lifelines as the hub job (Z10): this VM holds the desktop the
           # user actually watches - when the hub VM wedges, the queue + tmate
           # here stay reachable. Beacons land in control/rescue-vnc.json and
@@ -1182,6 +1200,7 @@ jobs:
             pkill -f "[h]ub_control.sh" 2>/dev/null || true
             pkill -f "[r]escue_ssh.sh" 2>/dev/null || true
             pkill -f "[t]unnel_keeper.sh" 2>/dev/null || true
+            pkill -f "[l]ocalrun_keeper.sh" 2>/dev/null || true
             rm -f "$HUB_LOGS/cloudflared-6081-reserve.pid" 2>/dev/null || true
             tmate -S "$HUB_LOGS/tmate.sock" kill-session >/dev/null 2>&1 || true
             # The X stack is started detached by start_desktop.sh and the

@@ -559,7 +559,10 @@ async function detectSessionConflict(token) {
 // saved at dispatch, then the last connected one, then an open gate.
 async function tryOpenLive(token) {
   let s = await readHubSessionRaw();
-  if (!s || s.state !== 'live' || !(s.hubUrl || s.url || s.ngrok)) {
+  // tgg and lr count as addresses here: they are full legs of the same
+  // descriptor, so a session whose ONLY live door is one of them must not be
+  // reported as "the hub has not reported an address yet".
+  if (!s || s.state !== 'live' || !(s.hubUrl || s.url || s.tgg || s.lr || s.ngrok)) {
     log('Запуск уже идёт, но адрес хаб ещё не сообщил (или он уже выключен). Подожди пару минут и нажми «Запустить хаб» снова — страница подключится к уже идущему.', 'err');
     return false;
   }
@@ -773,7 +776,7 @@ function describeBaseFailure(bases, errors, zt, spareTried) {
   if (!String(zt || '')) {
     return 'Нет токена запуска (zt): адрес отвечает 401. Откройте хаб тем же устройством, что запускало раннер, либо введите GitHub-токен, которым запускали хаб, и нажмите «Открыть» — запасной вход откроет хаб.';
   }
-  if (bases.length > 3) return 'Ни cloudflare, ни tunnl.gg, ни ngrok адрес не отвечает: ' + detail;
+  if (bases.length > 4) return 'Ни cloudflare, ни tunnl.gg, ни ngrok, ни localhost.run адрес не отвечает: ' + detail;
   if (bases.length > 2) return 'Ни основной, ни резервный адрес не отвечает: ' + detail;
   if (bases.length > 1) return 'Ни основной, ни резервный адрес не отвечает: ' + detail;
   return 'Адрес не отвечает: ' + detail;
@@ -908,9 +911,10 @@ function sessionBases(s) {
   const out = []; const seen = {};
   // Door order by user decision 14.10: tunnl.gg FIRST (SSH stable-key
   // address - no quota, same URL on every reconnect/restart/relay), then the
-  // trycloudflare pair (free but flaps every 15-60 min), ngrok static domain
-  // last (monthly quota: after ERR_NGROK_725 it is a wall of fetch errors).
-  for (const v of [String(s && s.tgg || ''), String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || ''), String(s && s.ngrok || '')]) {
+  // trycloudflare pair (free but flaps every 15-60 min), ngrok static domain,
+  // and localhost.run LAST (anonymous, random address per reconnect, and the
+  // service may answer a browser with a notice page - a last resort only).
+  for (const v of [String(s && s.tgg || ''), String(s && (s.hubUrl || s.url) || ''), String(s && s.url2 || ''), String(s && s.ngrok || ''), String(s && s.lr || '')]) {
     const k = v.replace(/\/+$/, '');
     if (k && !seen[k]) { seen[k] = 1; out.push(k); }
   }
