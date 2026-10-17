@@ -33,11 +33,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run the shell suites
-        # The localrun suite runs here too, and deliberately NOT only as part of
-        # tests/package.json: the jsdom chain stops at the first red suite, so
-        # while mobile-touch is red on q4/q101 the tunnel keeper test would
-        # never be reached by the job that claims to run it.
-        run: |
-          bash tests/restore-chats-test.sh
-          bash tests/localrun-keeper-test.sh
+        run: bash tests/restore-chats-test.sh
 

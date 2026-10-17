@@ -3615,9 +3615,10 @@ const vncRemoteStatus = async () => {
     try { text = Buffer.from(r.j.content, 'base64').toString('utf8'); } catch { return { url: null, raw: null }; }
     const d = JSON.parse(text);
     // tgg first: the tunnl.gg keeper republishes the desktop through the
-    // stable SSH-key door; lr next (the account-less localhost.run door, an
-    // anonymous address so it is only a fallback); url/novncUrl stay the
-    // flapping trycloudflare pair.
+    // stable SSH-key door and is the second door that actually works
+    // (localhost.run was measured and removed - it never hands out an address);
+    // lr is still read here so an older live descriptor that carries it is not
+    // suddenly ignored. url/novncUrl stay the flapping trycloudflare pair.
     const url2 = d && d.state !== 'ended' ? (d.tgg || d.lr || d.url || d.novncUrl || null) : null;
     return { url: url2, raw: d };
   } catch { return { url: null, raw: null }; }

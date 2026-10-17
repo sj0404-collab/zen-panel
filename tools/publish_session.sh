@@ -419,10 +419,12 @@ new_run = str(new.get('runId', '')) or run_id
 if old_run and new_run and old_run != new_run:
     raise SystemExit(1)
   # url2 = cloudflared reserve, ngrok = third provider leg, tgg = tunnl.gg
-  # fourth leg, lr = localhost.run sixth leg: a republish that simply did not
-  # know about them must not erase any of them (same race as url2; measured live
-  # 15.10 run 396: tgg was erased 50 seconds after the tunnl keeper wrote it
-  # whenever the raw-branch merge-read above flaked and came back empty).
+  # second door (the one that measurably works), lr = an older descriptor's
+  # localhost.run leg, kept readable so a live file written before that provider
+  # was removed is not silently truncated: a republish that simply did not know
+  # about a key must not erase it (same race as url2; measured live 15.10 run
+  # 396: tgg was erased 50 seconds after the tunnl keeper wrote it whenever the
+  # raw-branch merge-read above flaked and came back empty).
   carried = []
   for key in ('url2', 'ngrok', 'tgg', 'lr'):
     if not new.get(key) and old.get(key):

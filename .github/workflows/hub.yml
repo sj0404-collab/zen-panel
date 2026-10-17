@@ -225,9 +225,11 @@ jobs:
           rm -rf "$STATE_DIR"
 
       - name: Start the hub and open the tunnel
-        # No NGROK_AUTHTOKEN, no TUNNL_SSH_KEY, no TS_AUTHKEY: the two doors
-        # that remain (cloudflare quick tunnel + localhost.run) are chosen
-        # precisely because neither can be broken by a forgotten password.
+        env:
+          TUNNL_SSH_KEY: ${{ secrets.TUNNL_SSH_KEY }}
+        # Only the tunnl SSH key. No NGROK_AUTHTOKEN, no TS_AUTHKEY: the two
+        # doors are a cloudflare quick tunnel (no credential at all) and tunnl.gg
+        # (a key that nobody ever types, because nothing about it is a password).
         run: |
           export HUB_LOGS="$HOME/.npm-hub/logs"; mkdir -p "$HUB_LOGS" 2>/dev/null || true
           echo "HUB_LOGS=$HUB_LOGS HOME=$HOME $(ls -ld "$HUB_LOGS" 2>&1)"
@@ -357,29 +359,31 @@ jobs:
               "auth=без пароля" "tools=$TOOLS" \
               "label=${{ inputs.label }}"
 
-          # TWO DOORS, ON PURPOSE (user decision 17.10). Was five: a
+          # TWO DOORS, BOTH VERIFIED LIVE (user decision 17.10). Was five: a
           # cloudflare main + cloudflare reserve pair, ngrok, tunnl.gg and
-          # localhost.run. Every extra leg is another background daemon that
-          # re-probes the origin every 15 seconds, another secret that can be
-          # forgotten, and another provider whose error page the panel then has
-          # to tell apart from a dead address. Two is enough: if cloudflare is
-          # down the panel walks to localhost.run, and both are credential-free.
-          # Removed on purpose (scripts kept in tools/, only their startup and
-          # their pkill lines went away):
-          #   - tunnel_keeper  - the reserve leg, a second cloudflared doing the
-          #     same job as the first one that the watchdog already reopens.
-          #   - ngrok_keeper   - needs NGROK_AUTHTOKEN; ERR_NGROK_725 after the
-          #     free quota is a dead leg for the rest of the month.
-          #   - tunnl_keeper  - needs TUNNL_SSH_KEY, a secret nobody remembers.
-          #
-          # localhost.run is the second door: NO ACCOUNT, NO PASSWORD, NO KEY,
-          # it only needs an ssh client. A forgotten password cannot be reset
-          # from an ephemeral runner, so it must never be load-bearing.
-
-          nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
-            bash "$GITHUB_WORKSPACE/fork/tools/localrun_keeper.sh" hub >> "$HUB_LOGS/localrun-keeper.log" 2>&1 &
-          echo $! > "$HUB_LOGS/localrun-keeper.pid"
-          echo "localrun keeper: hub endpoint now also carries an account-less address"
+          # localhost.run.
+          #   - tunnel_keeper  - a second cloudflared doing the job the watchdog
+          #     already does, on a runner thrown away every session.
+          #   - ngrok_keeper   - needs NGROK_AUTHTOKEN; after the free quota it is
+          #     dead for the rest of the month (ERR_NGROK_725).
+          #   - localrun_keeper - REMOVED after measuring it: the host accepts
+          #     neither `nokey@localhost.run` (reset during KEXINIT) nor plain
+          #     `localhost.run` (connects, then never prints an address, with or
+          #     without a client key, with or without a pty). A second door that
+          #     cannot open is worse than no second door.
+          # The second door is tunnl.gg: measured live from this machine, an
+          # anonymous request through it reaches the hub and comes back 401 (the
+          # gate asking for the launch token). It needs no account and no
+          # password - only the SSH key in secrets, which nobody ever types.
+          if [ -n "${TUNNL_SSH_KEY:-}" ]; then
+            nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
+              TUNNL_SSH_KEY="$TUNNL_SSH_KEY" \
+              bash "$GITHUB_WORKSPACE/fork/tools/tunnl_keeper.sh" hub >> "$HUB_LOGS/tunnl-keeper.log" 2>&1 &
+            echo $! > "$HUB_LOGS/tunnl-keeper.pid"
+            echo "tunnl keeper: hub endpoint now also carries a stable tunnl.gg address"
+          else
+            echo "::notice::TUNNL_SSH_KEY secret is empty - the second door is off"
+          fi
 
       - name: Start the autopilot for every repo the Files tab cloned
         run: |
@@ -454,7 +458,7 @@ jobs:
             # "Complete job" hang trap, same bracket-pattern kill.
             pkill -f "[h]ub_control.sh" 2>/dev/null || true
             pkill -f "[r]escue_ssh.sh" 2>/dev/null || true
-            pkill -f "[l]ocalrun_keeper.sh" 2>/dev/null || true
+            pkill -f "[t]unnl_keeper.sh" 2>/dev/null || true
             rm -f "$HUB_LOGS/cloudflared-8090-reserve.pid" 2>/dev/null || true
             tmate -S "$HUB_LOGS/tmate.sock" kill-session >/dev/null 2>&1 || true
             if [ -n "${HUB_PID:-}" ]; then kill "$HUB_PID" 2>/dev/null || true; fi
@@ -1071,8 +1075,9 @@ jobs:
             pcmanfm pulseaudio pavucontrol
 
       - name: Start the Linux desktop and open the tunnel
-        # Same two credential-free doors as the hub job - no key material here
-        # either (user decision 17.10).
+        env:
+          TUNNL_SSH_KEY: ${{ secrets.TUNNL_SSH_KEY }}
+          TUNNL_SSH_KEY_VNC: ${{ secrets.TUNNL_SSH_KEY_VNC }}
         run: |
           export VNC_PORT=5901 NOVNC_PORT=6081
           bash "$GITHUB_WORKSPACE/fork/tools/start_desktop.sh" || {
@@ -1119,18 +1124,17 @@ jobs:
               $([ -s "$HUB_LOGS/vnc-url2" ] && echo "url2=$(cat "$HUB_LOGS/vnc-url2")") \
               "label=${{ inputs.label }}"
 
-          # Same two doors on the desktop VM (user decision 17.10): cloudflare main plus
-          # the account-less localhost.run. The reserve/tunnel keeper and the
-          # key-based tunnl.gg leg are gone here for the same reasons as on the
-          # hub VM. A ts.net/tunnl name is bound to one node, so this VM keeps
-          # its own random localhost.run address.
-
-          # The account-less door for the desktop too. The hub VM keeps its own
-          # ssh session and therefore its own random address.
-          nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
-            bash "$GITHUB_WORKSPACE/fork/tools/localrun_keeper.sh" vnc >> "$HUB_LOGS/localrun-keeper.log" 2>&1 &
-          echo $! > "$HUB_LOGS/localrun-keeper.pid"
-          echo "localrun keeper: vnc desktop now also carries an account-less address"
+          # Same two doors on the desktop VM. The desk keeps its own SSH key
+          # (TUNNL_SSH_KEY_VNC): a tunnl address belongs to ONE key, so the hub
+          # and the desk sharing one key made both sessions fight over a single
+          # address - measured live on 14.10.
+          if [ -n "${TUNNL_SSH_KEY:-}" ]; then
+            nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
+              TUNNL_SSH_KEY="$TUNNL_SSH_KEY" TUNNL_SSH_KEY_VNC="${TUNNL_SSH_KEY_VNC:-}" \
+              bash "$GITHUB_WORKSPACE/fork/tools/tunnl_keeper.sh" vnc >> "$HUB_LOGS/tunnl-keeper.log" 2>&1 &
+            echo $! > "$HUB_LOGS/tunnl-keeper.pid"
+            echo "tunnl keeper: vnc desktop now also carries a stable tunnl.gg address"
+          fi
 
           # Same lifelines as the hub job (Z10): this VM holds the desktop the
           # user actually watches - when the hub VM wedges, the queue + tmate
@@ -1165,7 +1169,7 @@ jobs:
             # Background lifelines started above: same "Complete job" hang rule.
             pkill -f "[h]ub_control.sh" 2>/dev/null || true
             pkill -f "[r]escue_ssh.sh" 2>/dev/null || true
-            pkill -f "[l]ocalrun_keeper.sh" 2>/dev/null || true
+            pkill -f "[t]unnl_keeper.sh" 2>/dev/null || true
             rm -f "$HUB_LOGS/cloudflared-6081-reserve.pid" 2>/dev/null || true
             tmate -S "$HUB_LOGS/tmate.sock" kill-session >/dev/null 2>&1 || true
             # The X stack is started detached by start_desktop.sh and the
