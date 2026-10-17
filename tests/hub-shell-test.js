@@ -87,14 +87,17 @@ function stubFetch(url, opts) {
 
   // ── tabs ──
   const tabs = [...document.querySelectorAll('.tab')];
-  eq('h1 the page has two tabs', tabs.length, 2);
+  // Three since the snapshot tab landed: hub / GitHub / снимки. run-desks,
+  // run-agent and run-opencode were dropped from the GitHub pane (the hub runs
+  // everything from one button now), so this list follows the page.
+  eq('h1 the page has three tabs', tabs.length, 3);
   eq('h2 the hub tab starts open', document.getElementById('pane-hub').style.display, '');
   document.querySelector('.tab[data-pane="gh"]').click();
   eq('h3 the GitHub tab opens', document.getElementById('pane-gh').style.display, '');
   eq('h4 and closes the hub tab', document.getElementById('pane-hub').style.display, 'none');
 
   // ── the GitHub tab's controls ──
-  const ids = ['gh-refresh', 'run-desks', 'run-agent', 'run-opencode', 'run-hub',
+  const ids = ['gh-refresh', 'run-hub',
     'wf-panel-apk', 'wf-hub-apk', 'wf-build', 'wf-tests'];
   const missing = ids.filter(id => !document.getElementById(id));
   eq('h5 every control the panel offers is here', missing.join(',') || 'none', 'none');
