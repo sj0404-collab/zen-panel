@@ -769,25 +769,28 @@ check('q97 runner rescue channels: tmate ssh + command queue',
   !hubControl.includes('eval ') &&
   rescueSsh.includes("#{tmate_ssh}") && rescueSsh.includes('control/rescue-$VM.json'));
 
-// q98: TWO doors, and neither of them is flogged (user decision 17.10).
-// Was five: a cloudflare main+reserve pair, ngrok, tunnl.gg and localhost.run.
-// The client still walks main -> second in every open flow, but the second door
-// is now the credential-free localhost.run instead of a second cloudflared, and
-// the keepers probe once a minute rather than every 15 seconds.
+// q98: TWO doors, both measured live from this machine, and neither of them
+// flogged (user decision 17.10). Was five: a cloudflare main+reserve pair,
+// ngrok, tunnl.gg and localhost.run.
+// - cloudflare quick tunnel: an anonymous request through it reaches the hub and
+//   comes back 401 (the gate asking for the launch token).
+// - tunnl.gg: same - 401 from the hub, so the ssh forward really carries traffic.
+// - localhost.run was REMOVED after measuring it: neither `nokey@localhost.run`
+//   (connection reset during KEXINIT) nor plain `localhost.run` (connects, then
+//   never prints an address - with or without a client key, with or without a
+//   pty) ever produced a usable URL. A second door that cannot open is worse
+//   than no second door, so its keeper is gone rather than left as a trap.
 const tunnelKeeper = fs.readFileSync(path.join(__dirname, '..', 'tools/tunnel_keeper.sh'), 'utf8');
 const openTunnel = fs.readFileSync(path.join(__dirname, '..', 'tools/open_tunnel.sh'), 'utf8');
-const localrunKeeper = fs.readFileSync(path.join(__dirname, '..', 'tools/localrun_keeper.sh'), 'utf8');
+const tunnlKeeper = fs.readFileSync(path.join(__dirname, '..', 'tools/tunnl_keeper.sh'), 'utf8');
 const hubApkIdx = fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub/index.html'), 'utf8');
 check('q98 two doors, walked in order, with no second cloudflared',
   openTunnel.includes('127.0.0.1:$PORT') &&
-  localrunKeeper.includes('nokey@localhost.run') &&
-  hubWorkflow.includes('tools/localrun_keeper.sh') &&
-  // The three extra legs are gone from the startup: a background daemon that
-  // re-probes the origin and a secret that can be forgotten are both costs
-  // the panel does not need to pay for a second door it will rarely use.
+  tunnlKeeper.includes('nokey@localhost.run') === false &&
+  tunnlKeeper.includes('stable@proxy.tunnl.gg') &&
+  hubWorkflow.includes('tools/tunnl_keeper.sh') &&
   !hubWorkflow.includes('tools/tunnel_keeper.sh') &&
   !hubWorkflow.includes('tools/ngrok_keeper.sh') &&
-  !hubWorkflow.includes('tools/tunnl_keeper.sh') &&
   hubControl.includes('url2=') && hubControl.includes('tunnel_keeper') &&
   hubApkIdx.includes('sessionBases') && hubApkIdx.includes('s.url2') &&
   hubApkIdx.includes('s.lr') &&
@@ -800,17 +803,22 @@ check('q98b the watchdogs probe once a minute, not every 15 seconds',
   (hubWorkflow.match(/for i in \$\(seq 1 350\); do/g) || []).length >= 2 &&
   (hubWorkflow.match(/sleep 60/g) || []).length >= 2 &&
   !/sleep 15/.test(hubWorkflow) &&
-  localrunKeeper.includes('LR_KEEPER_INTERVAL:-60') &&
-  localrunKeeper.includes('LR_KEEPER_UNHEALTHY_LIMIT:-5') &&
-  localrunKeeper.includes('"$UNHEALTHY" -ge "$UNHEALTHY_LIMIT"'));
+  tunnlKeeper.includes('TUNNL_KEEPER_INTERVAL:-60') &&
+  tunnlKeeper.includes('TUNNL_KEEPER_UNHEALTHY_LIMIT:-5') &&
+  tunnlKeeper.includes('"$UNHEALTHY" -ge "$UNHEALTHY_LIMIT"'));
 
-// q98c: neither remaining door may depend on a secret. A forgotten password on
-// an ephemeral runner cannot be reset from the machine, so a credential-free
-// second door is the whole reason it was chosen.
-check('q98c the second door needs no credential',
-  !localrunKeeper.includes('AUTHKEY') && !localrunKeeper.includes('AUTHTOKEN') &&
-  !hubWorkflow.includes('secrets.NGROK_AUTHTOKEN') && !hubWorkflow.includes('secrets.TUNNL_SSH_KEY') &&
-  localrunKeeper.includes('BatchMode=yes'));
+// q98c: the second door must not be a password. tunnl.gg needs no account and
+// nothing is ever typed - just an SSH key in secrets. The dead provider must
+// stay gone, not quietly return as a third leg.
+check('q98c the second door needs no password, and the dead one stays gone',
+  !hubWorkflow.includes('secrets.NGROK_AUTHTOKEN') &&
+  !hubWorkflow.includes('tools/ngrok_keeper.sh') &&
+  // Only the LAUNCH matters here, not the word: the comment explaining why the
+  // dead provider was removed must stay, so grepping the bare name would punish
+  // the very documentation that stops someone from re-adding it.
+  !hubWorkflow.includes('bash "$GITHUB_WORKSPACE/fork/tools/localrun_keeper.sh') &&
+  tunnlKeeper.includes('IdentitiesOnly=yes') &&
+  tunnlKeeper.includes('ExitOnForwardFailure=yes'));
 
 // q98d: a dead second address must be reported honestly, not as a dual-address
 // failure. open_tunnel still names the rate limit, and the hub page still has

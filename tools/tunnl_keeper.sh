@@ -57,8 +57,13 @@ PIDFILE="$HUB_LOGS/tunnl-$VM.pid"
 JSONL="$HUB_LOGS/tunnl-$VM.jsonl"
 LOG="$HUB_LOGS/tunnl-$VM.log"
 KEYFILE="$HOME/.ssh/tunnl_ed25519"
-INTERVAL="${TUNNL_KEEPER_INTERVAL:-15}"
-COOLDOWN="${TUNNL_KEEPER_COOLDOWN:-60}"
+INTERVAL="${TUNNL_KEEPER_INTERVAL:-60}"
+COOLDOWN="${TUNNL_KEEPER_COOLDOWN:-180}"
+# A reconnect needs this many consecutive dead probes (user decision 17.10:
+# stop the churn). At one probe a minute that is five minutes of provable
+# deadness before the ssh is torn down, so a slow edge or a busy CPU costs
+# nothing - one missed probe never restarts anything.
+UNHEALTHY_LIMIT="${TUNNL_KEEPER_UNHEALTHY_LIMIT:-5}"
 FAILS_REST=30                       # after this many consecutive failed starts, slow down hard
 
 log() { echo "[tunnl-keeper $(date -u '+%H:%M:%S')] $*" >> "$HUB_LOGS/tunnl-keeper.log"; }
@@ -171,8 +176,8 @@ while true; do
       continue
     fi
     UNHEALTHY=$((UNHEALTHY + 1))
-    if [ "$UNHEALTHY" -ge 3 ]; then
-      log "tunnl leg unhealthy $UNHEALTHY probes in a row - reconnecting ssh (same address returns: stable key)"
+    if [ "$UNHEALTHY" -ge "$UNHEALTHY_LIMIT" ]; then
+      log "tunnl leg unhealthy $UNHEALTHY probes in a row (~$((UNHEALTHY * INTERVAL / 60)) min) - reconnecting ssh (same address returns: stable key)"
       kill "$pid" 2>/dev/null || true
       rm -f "$PIDFILE"
       UNHEALTHY=0
