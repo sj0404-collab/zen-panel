@@ -9,7 +9,7 @@
 #   * openbox window manager: xterm terminal, tint2 taskbar, pcmanfm on the
 #     desktop (file manager), a browser and pulseaudio - everything is
 #     reachable from the screen (right-click menu), no panel buttons needed
-#   * x11vnc  -> 127.0.0.1:$VNC_PORT
+#   * x0vncserver (TigerVNC) or x11vnc -> 127.0.0.1:$VNC_PORT
 #   * noVNC   -> 127.0.0.1:$NOVNC_PORT/vnc.html (only if package present)
 #
 # Env:
@@ -41,13 +41,16 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export GALLIUM_DRIVER=llvmpipe
 export EGL_PLATFORM=x11
 
-INSTALL_PKGS="xvfb openbox xterm tint2 x11vnc websockify novnc dbus-x11 \
+INSTALL_PKGS="xvfb openbox xterm tint2 x11vnc tigervnc-standalone-server websockify novnc dbus-x11 \
   mesa-utils libgl1-mesa-dri libgl1 libegl1 libgles2 libglu1-mesa libgbm1 \
   x11-utils x11-xserver-utils pcmanfm pulseaudio pulseaudio-utils pavucontrol feh geany \
   imagemagick xdotool wmctrl xwit xterm idesk tint2 dbus-x11"
 # Проверяем КАЖДЫЙ нужный бинарь: раньше условие смотрело только на Xvfb, и на
 # раннере, где Xvfb есть, а x11vnc нет, установка не запускалась вовсе —
 # x11vnc потом падал с «No such file or directory», а экран оставался чёрным.
+# x0vncserver (TigerVNC) is optional: when it is present it becomes the VNC
+# server, when it is not the script falls back to x11vnc, so a package that
+# failed to install degrades the desktop instead of breaking it.
 MISSING_BINS=""
 for _b in Xvfb openbox x11vnc xterm idesk tint2 feh convert pcmanfm xwit; do
   command -v "$_b" >/dev/null 2>&1 || MISSING_BINS="$MISSING_BINS $_b"
@@ -82,6 +85,9 @@ fi
 # сессии) и заново поднимал весь дисплей. Живой дисплей переиспользуется ниже;
 # мёртвый (сокет без процесса) убирается в ветке запуска Xvfb.
 pkill -f "x11vnc.*$DISPLAY_NUM" 2>/dev/null || true
+# The TigerVNC mirror holds the same rfb port; without this the new one cannot
+# bind and the repair silently leaves the old (stale) server answering.
+pkill -f "x0vncserver.*$DISPLAY_NUM" 2>/dev/null || true
 pkill -f "websockify.*$NOVNC_PORT" 2>/dev/null || true
 sleep 1
 
@@ -315,12 +321,27 @@ if ! command -v x11vnc >/dev/null 2>&1; then
 fi
 
 log "x11vnc -> $VNC_PORT"
-# -wait/-defer собирают изменения в пачку (меньше мелких обновлений = плавнее
-# кино), -threads отдаёт кодирование отдельному потоку.
-x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -localhost -rfbport "$VNC_PORT" \
-  -noxdamage -wirecopyrect top -alwaysshared -wait 2 -defer 2 -threads >"$HUB_LOGS/x11vnc.log" 2>&1 || \
+# TigerVNC first (user decision 17.10): x0vncserver is the native TigerVNC
+# mirror of the existing Xvfb display. It encodes with Tight/ZRLE instead of
+# x11vnc's slow path, which matters on a 2-4 vCPU runner where the old setup
+# choked on a 1080x2400 screen. It mirrors the same display, so nothing else in
+# this script changes - noVNC, websockify and the desktop programs keep working.
+# x11vnc stays as the fallback for a runner where the package is unavailable.
+VNC_KIND=""
+if command -v x0vncserver >/dev/null 2>&1; then
+  log "TigerVNC x0vncserver -> $VNC_PORT"
+  x0vncserver -display "$DISPLAY_NUM" -rfbport "$VNC_PORT" -localhost \
+    -SecurityTypes None -Shared -forever >"$HUB_LOGS/x0vncserver.log" 2>&1 &
+  sleep 2
+  pgrep -f "x0vncserver.*$DISPLAY_NUM" >/dev/null 2>&1 && VNC_KIND="tigervnc"
+fi
+if [ -z "$VNC_KIND" ]; then
+  log "x11vnc -> $VNC_PORT"
   x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -localhost -rfbport "$VNC_PORT" \
-  >"$HUB_LOGS/x11vnc.log" 2>&1
+    -noxdamage -wirecopyrect top -alwaysshared -wait 2 -defer 2 -threads >"$HUB_LOGS/x11vnc.log" 2>&1 || \
+    x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -localhost -rfbport "$VNC_PORT" \
+      >"$HUB_LOGS/x11vnc.log" 2>&1
+fi
 
 # noVNC via websockify (noVNC on Ubuntu ships /usr/share/novnc). If the
 # package is missing, still usable through any VNC client on port VNC_PORT.
@@ -345,12 +366,17 @@ if ! pgrep -x openbox >/dev/null 2>&1; then
   openbox >"$HUB_LOGS/openbox.log" 2>&1 &
   sleep 1
 fi
-if ! pgrep -f "x11vnc.*$DISPLAY_NUM" >/dev/null 2>&1; then
-  log "x11vnc не поднялся сам — запускаю"
-  x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -localhost -rfbport "$VNC_PORT" \
-    -noxdamage -wirecopyrect top -alwaysshared >"$HUB_LOGS/x11vnc.log" 2>&1 || \
+if ! pgrep -f "x0vncserver" >/dev/null 2>&1 && ! pgrep -f "x11vnc.*$DISPLAY_NUM" >/dev/null 2>&1; then
+  log "VNC server не поднялся сам — запускаю"
+  if command -v x0vncserver >/dev/null 2>&1; then
+    x0vncserver -display "$DISPLAY_NUM" -rfbport "$VNC_PORT" -localhost \
+      -SecurityTypes None -Shared -forever >"$HUB_LOGS/x0vncserver.log" 2>&1 &
+    sleep 2
+  fi
+  pgrep -f "x0vncserver" >/dev/null 2>&1 || \
     x11vnc -display "$DISPLAY_NUM" -nopw -forever -shared -bg -localhost -rfbport "$VNC_PORT" \
-      >"$HUB_LOGS/x11vnc.log" 2>&1 || warn "x11vnc не стартовал"
+      -noxdamage -wirecopyrect top -alwaysshared >"$HUB_LOGS/x11vnc.log" 2>&1 || \
+    warn "VNC server не стартовал"
 fi
 if pgrep -x idesk >/dev/null 2>&1; then :; elif command -v idesk >/dev/null 2>&1; then
   idesk >/dev/null 2>&1 & sleep 1

@@ -1106,7 +1106,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            xvfb openbox xterm tint2 idesk x11vnc websockify novnc dbus-x11 \
+            xvfb openbox xterm tint2 idesk x11vnc tigervnc-standalone-server websockify novnc dbus-x11 \
             mesa-utils libgl1-mesa-dri libgl1 libegl1 libgles2 \
             libglu1-mesa libgbm1 x11-utils x11-xserver-utils \
             pcmanfm pulseaudio pavucontrol
@@ -1215,6 +1215,9 @@ jobs:
             pkill -f "Xvfb ${VNC_DISPLAY:-:99}" 2>/dev/null || true
             pkill -f "[o]penbox" 2>/dev/null || true
             pkill -f "x11vnc.*${VNC_DISPLAY:-:99}" 2>/dev/null || true
+            # TigerVNC mirror holds the same rfb port - left running it would
+            # hang "Complete job" exactly like the keepers did.
+            pkill -f "x0vncserver.*${VNC_DISPLAY:-:99}" 2>/dev/null || true
             # Same as the hub job: `if: always()` does not survive a cancel.
             GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
               bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=vnc" "state=ended" \
