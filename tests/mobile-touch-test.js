@@ -820,7 +820,22 @@ check('q98c the second door needs no password, and the dead one stays gone',
   tunnlKeeper.includes('IdentitiesOnly=yes') &&
   tunnlKeeper.includes('ExitOnForwardFailure=yes'));
 
-// q98d: a dead second address must be reported honestly, not as a dual-address
+// q98e: the address the panel is handed must be the STABLE one. Cloudflare
+// drops every 15-30 minutes; if it is still published as `url`, the user gets
+// exactly the churn they asked to stop. So the tunnl address is `url` and the
+// cloudflare address is `url2` - including after the watchdog reopens cloudflare,
+// where overwriting `url` used to be the bug.
+check('q98e the stable address is the primary one and cloudflare is the fallback',
+  hubWorkflow.includes('PRIMARY="$URL"; SECOND=""') &&
+  hubWorkflow.includes('PRIMARY="$(cat "$HUB_LOGS/hub-tgg.url")"') &&
+  hubWorkflow.includes('SECOND="$URL"') &&
+  hubWorkflow.includes('"url=$PRIMARY" "hubUrl=$PRIMARY"') &&
+  hubWorkflow.includes('${SECOND:+"url2=$SECOND"}') &&
+  hubWorkflow.includes('"url=$TGG" "hubUrl=$TGG"') &&
+  hubWorkflow.includes('"url2=$URL"') &&
+  // The panel must try the stable door first, and a reopened cloudflare tunnel
+  // must never be published as the address the user is holding.
+  hubApkIdx.indexOf('s.tgg') < hubApkIdx.indexOf('s.url2'));
 // failure. open_tunnel still names the rate limit, and the hub page still has
 // both the reachability walker and the missing-token explanation.
 check('q98d a dead door is dropped and honestly reported',
