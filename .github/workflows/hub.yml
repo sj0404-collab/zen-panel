@@ -310,6 +310,49 @@ jobs:
           fi
           echo "$URL" > $HUB_LOGS/hub-url
 
+          # PRIMARY IS NOW THE STABLE DOOR (user decision 17.10: cloudflare drops
+          # every 15-30 min). Measured this week against every credential-free
+          # provider, from a real server:
+          #
+          #   tunnl.gg       WORKS - 401 from the hub through the tunnel, and the
+          #                           address is tied to the SSH key, so the same
+          #                           URL returns on every reconnect.
+          #   localhost.run  no    - "Connection reset" during KEXINIT, or it
+          #                           connects and never prints an address (with
+          #                           or without a client key, with or without a
+          #                           pty). Keeper deleted.
+          #   bore.pub       no    - connects, never prints an address.
+          #   serveo.net     no    - "Software caused connection abort".
+          #   pinggy.io      no    - "Network is unreachable".
+          #   playit.gg      no    - connects, never prints an address.
+          #
+          # Cloudflare stays as the fallback - the watchdog reopens it
+          # unattended - but it is no longer the address the panel is handed.
+          if [ -n "${TUNNL_SSH_KEY:-}" ]; then
+            nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
+              TUNNL_SSH_KEY="$TUNNL_SSH_KEY" \
+              bash "$GITHUB_WORKSPACE/fork/tools/tunnl_keeper.sh" hub >> "$HUB_LOGS/tunnl-keeper.log" 2>&1 &
+            echo $! > "$HUB_LOGS/tunnl-keeper.pid"
+            echo "tunnl keeper: hub endpoint now carries a stable tunnl.gg address"
+            # The keeper republishes on its own schedule, but the panel must not
+            # be handed a cloudflare-only descriptor while we are standing right
+            # here. Wait for its address; never fail the run on it.
+            for _ in $(seq 1 45); do
+              [ -s "$HUB_LOGS/hub-tgg.url" ] && break
+              sleep 2
+            done
+          else
+            echo "::notice::TUNNL_SSH_KEY secret is empty - the stable door is off"
+          fi
+
+          # Fall back to cloudflare if tunnl never produced an address, so the
+          # session is always reachable even if the stable door is down.
+          PRIMARY="$URL"; SECOND=""
+          if [ -s "$HUB_LOGS/hub-tgg.url" ]; then
+            PRIMARY="$(cat "$HUB_LOGS/hub-tgg.url")"
+            SECOND="$URL"
+          fi
+
           TOOLS=$(python3 -c "
           import json, urllib.request
           try:
@@ -334,56 +377,34 @@ jobs:
           {
             echo "## NPM Hub"
             echo ""
-            echo "**[Open the hub]($URL)** - no password, pick Desktop or Mobile."
+            echo "**[Open the hub]($PRIMARY)** - no password, pick Desktop or Mobile."
             echo ""
             echo "| | |"
             echo "|---|---|"
-            echo "| Address | \`$URL\` |"
-            echo "| Desktop | \`$URL/d\` |"
-            echo "| Mobile | \`$URL/m\` |"
+            echo "| Address | \`$PRIMARY\` |"
+            echo "| Desktop | \`$PRIMARY/d\` |"
+            echo "| Mobile | \`$PRIMARY/m\` |"
+            ${SECOND:+echo "| Fallback (cloudflare) | \`$SECOND\` |"}
             echo "| CLI agents | $TOOLS |"
             echo "| Models | $MODELS |"
             echo "| Label | \`${{ inputs.label }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "=================================================="
-          echo " Hub: $URL"
+          echo " Hub: $PRIMARY"
           echo " Tools: $TOOLS"
           echo "=================================================="
 
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
               "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
-              "url=$URL" "hubUrl=$URL" "desktop=$URL/d" "mobile=$URL/m" \
-              $([ -s "$HUB_LOGS/hub-url2" ] && echo "url2=$(cat "$HUB_LOGS/hub-url2")") \
+              "url=$PRIMARY" "hubUrl=$PRIMARY" "desktop=$PRIMARY/d" "mobile=$PRIMARY/m" \
+              ${SECOND:+"url2=$SECOND"} \
               "auth=без пароля" "tools=$TOOLS" \
               "label=${{ inputs.label }}"
 
-          # TWO DOORS, BOTH VERIFIED LIVE (user decision 17.10). Was five: a
-          # cloudflare main + cloudflare reserve pair, ngrok, tunnl.gg and
-          # localhost.run.
-          #   - tunnel_keeper  - a second cloudflared doing the job the watchdog
-          #     already does, on a runner thrown away every session.
-          #   - ngrok_keeper   - needs NGROK_AUTHTOKEN; after the free quota it is
-          #     dead for the rest of the month (ERR_NGROK_725).
-          #   - localrun_keeper - REMOVED after measuring it: the host accepts
-          #     neither `nokey@localhost.run` (reset during KEXINIT) nor plain
-          #     `localhost.run` (connects, then never prints an address, with or
-          #     without a client key, with or without a pty). A second door that
-          #     cannot open is worse than no second door.
-          # The second door is tunnl.gg: measured live from this machine, an
-          # anonymous request through it reaches the hub and comes back 401 (the
-          # gate asking for the launch token). It needs no account and no
-          # password - only the SSH key in secrets, which nobody ever types.
-          if [ -n "${TUNNL_SSH_KEY:-}" ]; then
-            nohup env GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" HUB_LABEL='${{ inputs.label }}' \
-              TUNNL_SSH_KEY="$TUNNL_SSH_KEY" \
-              bash "$GITHUB_WORKSPACE/fork/tools/tunnl_keeper.sh" hub >> "$HUB_LOGS/tunnl-keeper.log" 2>&1 &
-            echo $! > "$HUB_LOGS/tunnl-keeper.pid"
-            echo "tunnl keeper: hub endpoint now also carries a stable tunnl.gg address"
-          else
-            echo "::notice::TUNNL_SSH_KEY secret is empty - the second door is off"
-          fi
+          # The tunnl keeper is started above, right after the cloudflare tunnel opens,
+          # so that the address published here is the stable one.
 
       - name: Start the autopilot for every repo the Files tab cloned
         run: |
@@ -566,13 +587,29 @@ jobs:
             URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 $HUB_LOGS/tunnel2.log) || continue
             [ -n "$URL" ] || continue
             echo "$URL" > $HUB_LOGS/hub-url
+
             echo "back up on $URL"
-            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-              bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
-                "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
-                "url=$URL" "hubUrl=$URL" "desktop=$URL/d" "mobile=$URL/m" \
-                $([ -s "$HUB_LOGS/hub-url2" ] && echo "url2=$(cat "$HUB_LOGS/hub-url2")") \
-                "auth=без пароля" "label=${{ inputs.label }}"
+            # A reopened cloudflare tunnel is the FALLBACK address, never the
+            # primary one. Overwriting `url` with a fresh trycloudflare name is
+            # exactly the churn the user complained about: the address the panel
+            # holds changes every time cloudflare flaps.
+            TGG=""
+            [ -s "$HUB_LOGS/hub-tgg.url" ] && TGG="$(cat "$HUB_LOGS/hub-tgg.url")"
+            if [ -n "$TGG" ]; then
+              GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+                bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+                  "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
+                  "url=$TGG" "hubUrl=$TGG" "desktop=$TGG/d" "mobile=$TGG/m" \
+                  "url2=$URL" \
+                  "auth=без пароля" "label=${{ inputs.label }}"
+            else
+              # tunnl is down: a reachable cloudflare beats nothing at all.
+              GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+                bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+                  "slot=hub-linux" "kind=NPM-Hub" "os=linux" \
+                  "url=$URL" "hubUrl=$URL" "desktop=$URL/d" "mobile=$URL/m" \
+                  "auth=без пароля" "label=${{ inputs.label }}"
+            fi
           done
           cleanup_watchdog 0
 
