@@ -121,7 +121,12 @@ for _ in $(seq 1 30); do
 done
 kill "$KEEPER_PID" 2>/dev/null || true
 cleanup_ssh
-wait "$KEEPER_PID" 2>/dev/null || true
+# Belt and braces, and the reason this suite is safe in CI: a leftover process
+# makes the job hang in "Complete job" until the runner timeout, which this repo
+# has already been bitten by twice. Both patterns are absolute paths inside this
+# TMPDIR, so they can only ever match our own stubs.
+pkill -f "$TMP/faketools/localrun_keeper.sh" 2>/dev/null || true
+pkill -f "$TMP/bin/ssh" 2>/dev/null || true
 
 PUB="$(cat "$TMP/publish.log" 2>/dev/null || true)"
 check "an address with no credential is published as lr=" \
@@ -169,7 +174,8 @@ KEEPER_PID=$!
 sleep 12
 kill "$KEEPER_PID" 2>/dev/null || true
 [ -f "$TMP/ssh2.pid" ] && kill "$(tr -dc '0-9' < "$TMP/ssh2.pid")" 2>/dev/null
-wait "$KEEPER_PID" 2>/dev/null || true
+pkill -f "$TMP/faketools/localrun_keeper.sh" 2>/dev/null || true
+pkill -f "$TMP/bin/ssh" 2>/dev/null || true
 check "a notice-page address is not published" \
   "$([ ! -s "$TMP/publish2.log" ] && echo 1 || echo 0)"
 check "the notice-page case is logged" \
