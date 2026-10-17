@@ -29,6 +29,13 @@ set -uo pipefail
 VM="${1:-hub}"
 case "$VM" in hub|vnc) ;; *) echo "[localrun-keeper] unknown VM '$VM' (hub|vnc)" >&2; exit 1 ;; esac
 
+# --once: publish once and exit, instead of staying resident as a daemon loop.
+# This is what the regression test drives. A keeper is a daemon, and testing a
+# daemon means leaving one running after the test - which is exactly what hangs
+# a CI job in "Complete job". One pass has no leftover to leak.
+ONCE=0
+[ "${2:-}" = "--once" ] && ONCE=1
+
 HUB_LOGS="${HUB_LOGS:-$HOME/.npm-hub/logs}"
 HUB_TMP="${HUB_TMP:-$HOME/.npm-hub/tmp}"
 mkdir -p "$HUB_LOGS" "$HUB_TMP" 2>/dev/null || true
@@ -53,9 +60,10 @@ LR_URLFILE="$HUB_LOGS/$VM-lr.url"
 PIDFILE="$HUB_LOGS/localrun-$VM.pid"
 LOG="$HUB_LOGS/localrun-$VM.log"
 KNOWN_HOSTS="$HUB_TMP/localrun-$VM.known_hosts"
-INTERVAL="${LR_KEEPER_INTERVAL:-15}"
-COOLDOWN="${LR_KEEPER_COOLDOWN:-60}"
+INTERVAL="${LR_KEEPER_INTERVAL:-60}"
+COOLDOWN="${LR_KEEPER_COOLDOWN:-180}"
 FAILS_REST=30                           # after this many consecutive failed starts, slow down hard
+UNHEALTHY_LIMIT="${LR_KEEPER_UNHEALTHY_LIMIT:-5}"   # consecutive dead probes before a reconnect
 
 log() { echo "[localrun-keeper $(date -u '+%H:%M:%S')] $*" >> "$HUB_LOGS/localrun-keeper.log"; }
 # NB: log() must NOT touch stdout - start_tunnel runs under $(...) capture, and
@@ -147,10 +155,39 @@ publish_full() {  # $1 = lr base url (always non-empty here)
     "auth=без пароля" "label=${HUB_LABEL:-hub}" 2>&1 | tail -1
 }
 
+# HOW OFTEN
+#   One probe a minute, not one every 15 seconds (user decision 17.10). A dead
+#   probe only counts after UNHEALTHY_LIMIT consecutive misses, so a slow edge,
+#   a GC pause or a game saturating the CPU costs nothing: nothing is restarted
+#   until the address has been unreachable for five straight minutes. That is
+#   the difference between a tunnel that is watched and a tunnel that is flogged.
 trap 'log "stopped"; exit 0' TERM INT
-log "keeper up (port $PORT; no account, no key - publishes .lr)"
+log "keeper up (port $PORT; no account, no key - publishes .lr; one probe/min, reconnect only after $UNHEALTHY_LIMIT dead probes)"
 
 LAST_URL="$(cat "$LR_URLFILE" 2>/dev/null || true)"
+
+if [ "$ONCE" = 1 ]; then
+  # Single pass, no loop, and the ssh agent is always reaped on the way out -
+  # including on failure, so this path can never leak a process.
+  cleanup_once() {
+    local p=""
+    [ -f "$PIDFILE" ] && p="$(tr -dc '0-9' < "$PIDFILE" 2>/dev/null || true)"
+    [ -n "$p" ] && kill "$p" 2>/dev/null
+    return 0
+  }
+  trap cleanup_once EXIT
+  url="$(start_tunnel || true)"
+  case "$url" in https://*) ;; *) url="" ;; esac
+  if [ -n "$url" ] && healthy "$url"; then
+    echo "$url" > "$LR_URLFILE"
+    log "localhost.run tunnel up: $url"
+    publish_full "$url" || true
+    printf '%s\n' "$url"
+    exit 0
+  fi
+  [ -n "$url" ] && log "localhost.run up but not usable: $url - not publishing"
+  exit 1
+fi
 FAILS=0
 UNHEALTHY=0
 while true; do
@@ -169,8 +206,8 @@ while true; do
       continue
     fi
     UNHEALTHY=$((UNHEALTHY + 1))
-    if [ "$UNHEALTHY" -ge 3 ]; then
-      log "localhost.run leg unhealthy $UNHEALTHY probes in a row - reconnecting"
+    if [ "$UNHEALTHY" -ge "$UNHEALTHY_LIMIT" ]; then
+      log "localhost.run leg unhealthy $UNHEALTHY probes in a row (~$((UNHEALTHY * INTERVAL / 60)) min) - reconnecting"
       kill "$pid" 2>/dev/null || true
       rm -f "$PIDFILE"
       UNHEALTHY=0

@@ -769,35 +769,57 @@ check('q97 runner rescue channels: tmate ssh + command queue',
   !hubControl.includes('eval ') &&
   rescueSsh.includes("#{tmate_ssh}") && rescueSsh.includes('control/rescue-$VM.json'));
 
-// q98: with the main address dead the app must walk over to the warm reserve
-// (Z11 dual tunnels). Keeper owns the second cloudflared (TUNNEL_TAG=reserve),
-// publishes url2, both jobs carry it, and the hub APK probes main then reserve
-// in every open flow instead of showing the dead-address banner.
+// q98: TWO doors, and neither of them is flogged (user decision 17.10).
+// Was five: a cloudflare main+reserve pair, ngrok, tunnl.gg and localhost.run.
+// The client still walks main -> second in every open flow, but the second door
+// is now the credential-free localhost.run instead of a second cloudflared, and
+// the keepers probe once a minute rather than every 15 seconds.
 const tunnelKeeper = fs.readFileSync(path.join(__dirname, '..', 'tools/tunnel_keeper.sh'), 'utf8');
 const openTunnel = fs.readFileSync(path.join(__dirname, '..', 'tools/open_tunnel.sh'), 'utf8');
+const localrunKeeper = fs.readFileSync(path.join(__dirname, '..', 'tools/localrun_keeper.sh'), 'utf8');
 const hubApkIdx = fs.readFileSync(path.join(__dirname, '..', 'hub/src/main/assets/hub/index.html'), 'utf8');
-check('q98 dual tunnels with automatic reserve failover',
-  tunnelKeeper.includes('TUNNEL_TAG=reserve') && tunnelKeeper.includes('url2=') &&
-  tunnelKeeper.includes('MAIN_FAILS') && tunnelKeeper.includes('publish_pair') &&
-  openTunnel.includes('TUNNEL_TAG') && openTunnel.includes('${TAG:+-$TAG}') &&
-  hubWorkflow.includes('tools/tunnel_keeper.sh') &&
-  hubWorkflow.includes('hub-url2') && hubWorkflow.includes('vnc-url2') &&
-  hubWorkflow.includes('\u0022[t]unnel_keeper.sh\u0022'.replace(/\\u0022/g, '"')) &&
+check('q98 two doors, walked in order, with no second cloudflared',
+  openTunnel.includes('127.0.0.1:$PORT') &&
+  localrunKeeper.includes('nokey@localhost.run') &&
+  hubWorkflow.includes('tools/localrun_keeper.sh') &&
+  // The three extra legs are gone from the startup: a background daemon that
+  // re-probes the origin and a secret that can be forgotten are both costs
+  // the panel does not need to pay for a second door it will rarely use.
+  !hubWorkflow.includes('tools/tunnel_keeper.sh') &&
+  !hubWorkflow.includes('tools/ngrok_keeper.sh') &&
+  !hubWorkflow.includes('tools/tunnl_keeper.sh') &&
   hubControl.includes('url2=') && hubControl.includes('tunnel_keeper') &&
   hubApkIdx.includes('sessionBases') && hubApkIdx.includes('s.url2') &&
+  hubApkIdx.includes('s.lr') &&
   hubApkIdx.includes('резервным адресом') === false && hubApkIdx.includes('резервный адрес'));
 
-// q98b: a reserve that cannot be provisioned (Cloudflare 429) must not be
-// advertised, retried every loop, or blamed by the client. The keeper drops the
-// stale url2 and backs off, open_tunnel names the rate limit, and the hub page
-// reports the real reason instead of a blanket dual-address failure.
-check('q98b dead reserve is dropped, backed off and honestly reported',
-  tunnelKeeper.includes('rm -f "$R_URLFILE"') &&
-  tunnelKeeper.includes('RESERVE_SKIP') && tunnelKeeper.includes('backing off') &&
-  tunnelKeeper.includes('url_for_pidfile') && tunnelKeeper.includes('[ -f "$1" ] || return 1') &&
+// q98b: the watchdogs must not churn. The old shape re-probed every 15 seconds
+// and could restart on a single missed probe; a lap must cost one curl and a
+// restart must need several dead probes in a row.
+check('q98b the watchdogs probe once a minute, not every 15 seconds',
+  (hubWorkflow.match(/for i in \$\(seq 1 350\); do/g) || []).length >= 2 &&
+  (hubWorkflow.match(/sleep 60/g) || []).length >= 2 &&
+  !/sleep 15/.test(hubWorkflow) &&
+  localrunKeeper.includes('LR_KEEPER_INTERVAL:-60') &&
+  localrunKeeper.includes('LR_KEEPER_UNHEALTHY_LIMIT:-5') &&
+  localrunKeeper.includes('"$UNHEALTHY" -ge "$UNHEALTHY_LIMIT"'));
+
+// q98c: neither remaining door may depend on a secret. A forgotten password on
+// an ephemeral runner cannot be reset from the machine, so a credential-free
+// second door is the whole reason it was chosen.
+check('q98c the second door needs no credential',
+  !localrunKeeper.includes('AUTHKEY') && !localrunKeeper.includes('AUTHTOKEN') &&
+  !hubWorkflow.includes('secrets.NGROK_AUTHTOKEN') && !hubWorkflow.includes('secrets.TUNNL_SSH_KEY') &&
+  localrunKeeper.includes('BatchMode=yes'));
+
+// q98d: a dead second address must be reported honestly, not as a dual-address
+// failure. open_tunnel still names the rate limit, and the hub page still has
+// both the reachability walker and the missing-token explanation.
+check('q98d a dead door is dropped and honestly reported',
   openTunnel.includes('HTTP 429 rate limit') && openTunnel.includes('rm -f "$PIDFILE" "$URLFILE"') &&
   hubApkIdx.includes('firstReachableBase') && hubApkIdx.includes('describeBaseFailure') &&
-  hubApkIdx.includes('Нет токена запуска'));
+  hubApkIdx.includes('Нет токена запуска') &&
+  tunnelKeeper.includes('rm -f "$R_URLFILE"'));
 
 // q99: no runner without a press. The relay used to be on by default
 // (idleMin 45), so a hub nobody touched kept dispatching a successor every 45

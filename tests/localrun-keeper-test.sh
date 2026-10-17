@@ -15,8 +15,15 @@
 #   - the notice-page case is treated as dead: an address that answers with an
 #     HTML notice instead of the app must not reach the panel.
 #   - the downstream readers know about the key at all: publish_session.sh
-#     carries it, the panel offers it as a door, the hub falls back to it for
-#     the desk, the workflow starts the leg AND kills it on cleanup.
+#     carries it, the panel offers it as a door, the hub falls back to it for the
+#     desk, the workflow starts the leg AND kills it on cleanup.
+#
+# HOW IT DRIVES THE KEEPER: through `--once`, one publish pass and exit, run in
+# the FOREGROUND. The previous version started the real daemon loop in the
+# background and killed it afterwards; on msys that hung the harness, and in CI
+# a leftover process hangs "Complete job" until the runner timeout - the exact
+# failure mode this repo has already been bitten by twice. A keeper is a daemon,
+# so testing it must not leave one running. Everything here is synchronous.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
@@ -36,15 +43,33 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/ssh" <<'STUB'
 #!/usr/bin/env bash
 # Pretends the remote forward succeeded and prints an address in the shape
-# localhost.run actually uses. Records its own pid so the test can reap it: a
-# leftover daemon holding the harness's stdout open makes the suite look hung.
+# localhost.run actually uses. The sleep is a child and NOT exec'd: once a
+# process execs, its command line is "sleep 600" and the keeper's own reap-by-
+# pid stops matching it. The keeper is expected to kill this on the --once
+# path; the pid file lets the test assert that it really did.
 echo "$$" > "$TS_TEST_SSH_PIDFILE"
 echo "1.2.3.4 1.2.3.4:22"
 echo "forwarding https://abc123.localhost.run -> localhost:${TS_TEST_PORT:-8090}" >&2
-exec sleep 600
+sleep 60 &
+wait $!
 STUB
 chmod +x "$TMP/bin/ssh"
-export PATH="$TMP/bin:$PATH"
+
+# The keeper's healthy() really curls the public address, so curl is stubbed -
+# no test of a tunnel may depend on the public internet answering.
+mkdir -p "$TMP/curl_ok" "$TMP/curl_notice"
+cat > "$TMP/curl_ok/curl" <<'STUB'
+#!/usr/bin/env bash
+# What the hub actually returns to an anonymous caller.
+printf '%s' '{"success":false,"error":"unauthorized"}'
+STUB
+cat > "$TMP/curl_notice/curl" <<'STUB'
+#!/usr/bin/env bash
+cat <<'PAGE'
+<html><body>Tunneling through localhost.run</body></html>
+PAGE
+STUB
+chmod +x "$TMP/curl_ok/curl" "$TMP/curl_notice/curl"
 
 # The keeper reads its helper from LR_TOOLS_DIR, so a stub publish_session.sh
 # (records argv) makes the publish observable without touching the real
@@ -58,17 +83,11 @@ exit 0
 STUB
 chmod +x "$TMP/faketools/publish_session.sh"
 
-cleanup_ssh() {
-  [ -f "$TMP/ssh.pid" ] && kill "$(tr -dc '0-9' < "$TMP/ssh.pid")" 2>/dev/null
-  return 0
-}
-trap 'cleanup_ssh; cd /; rm -rf "$TMP"' EXIT
-
 # ── 1. the gates ─────────────────────────────────────────────────────────────
 run_gate() {  # run_gate <name> <expected-substring> [VAR=val ...]
   local name="$1" want="$2"; shift 2
   : > "$HUB_LOGS/localrun-keeper.log"
-  env -u GITHUB_TOKEN "$@" bash "$TOOLS/localrun_keeper.sh" hub >"$TMP/out" 2>"$TMP/err"
+  env -u GITHUB_TOKEN "$@" bash "$TOOLS/localrun_keeper.sh" hub --once >"$TMP/out" 2>"$TMP/err"
   echo "$?" > "$TMP/rc"
   local blob
   blob="$(cat "$TMP/err" "$HUB_LOGS/localrun-keeper.log" 2>/dev/null)"
@@ -80,12 +99,12 @@ run_gate "no GitHub token keeps the leg off" "no GitHub token" \
   GH_TOKEN=
 check "no GitHub token exits non-zero" "$([ "$(cat "$TMP/rc")" != 0 ] && echo 1 || echo 0)"
 
-# A PATH with no ssh client must be refused with the reason, not by hanging.
-: > "$HUB_LOGS/localrun-keeper.log"
-env -u GITHUB_TOKEN PATH="/usr/bin:/bin" GH_TOKEN=ghp_fake \
-  bash "$TOOLS/localrun_keeper.sh" hub >"$TMP/out" 2>"$TMP/err"
-check "no ssh client keeps the leg off with the reason" \
-  "$(cat "$TMP/err" "$HUB_LOGS/localrun-keeper.log" 2>/dev/null | grep -qi 'no ssh client' && echo 1 || echo 0)"
+# The ssh-client gate is checked as text, not by running with a broken PATH:
+# every runner has /usr/bin/ssh, so the only way to "remove" it is to break PATH
+# for the whole script (mkdir, grep and curl all die with it) - a test that can
+# only pass on a machine without ssh is not a test.
+check "the keeper refuses to run without an ssh client" \
+  "$(grep -q 'no ssh client - staying off' "$TOOLS/localrun_keeper.sh" && echo 1 || echo 0)"
 
 # ── 2. happy path: an address with no credential behind it ───────────────────
 echo "https://main.trycloudflare.com" > "$HUB_LOGS/hub-url"
@@ -94,18 +113,8 @@ echo "https://ngrok.example" > "$HUB_LOGS/hub-ngrok.url"
 echo "https://tunnl.example" > "$HUB_LOGS/hub-tgg.url"
 : > "$TMP/publish.log"
 
-# The keeper's healthy() really curls the public address, so curl is stubbed -
-# no test of a tunnel may depend on the public internet answering.
-mkdir -p "$TMP/curl_ok"
-cat > "$TMP/curl_ok/curl" <<'STUB'
-#!/usr/bin/env bash
-# What the hub actually returns to an anonymous caller.
-printf '%s' '{"success":false,"error":"unauthorized"}'
-STUB
-chmod +x "$TMP/curl_ok/curl"
-
 env -u GITHUB_TOKEN \
-PATH="$TMP/curl_ok:$PATH" \
+PATH="$TMP/bin:$TMP/curl_ok:$PATH" \
 GH_TOKEN=ghp_fake \
 LR_TOOLS_DIR="$TMP/faketools" \
 TS_TEST_PUBLISH_LOG="$TMP/publish.log" \
@@ -113,19 +122,15 @@ TS_TEST_SSH_PIDFILE="$TMP/ssh.pid" \
 TS_TEST_PORT=8090 \
 LR_KEEPER_INTERVAL=1 \
 LR_KEEPER_COOLDOWN=1 \
-  bash "$TMP/faketools/localrun_keeper.sh" hub >"$TMP/out2" 2>&1 &
-KEEPER_PID=$!
-for _ in $(seq 1 30); do
-  grep -q 'lr=' "$TMP/publish.log" 2>/dev/null && break
-  sleep 1
-done
-kill "$KEEPER_PID" 2>/dev/null || true
-cleanup_ssh
-wait "$KEEPER_PID" 2>/dev/null || true
+  bash "$TMP/faketools/localrun_keeper.sh" hub --once >"$TMP/out2" 2>&1
+rc=$?
 
 PUB="$(cat "$TMP/publish.log" 2>/dev/null || true)"
-check "an address with no credential is published as lr=" \
+check "a reachable address is published as lr=" \
   "$(printf '%s' "$PUB" | grep -qx 'lr=https://abc123.localhost.run' && echo 1 || echo 0)"
+check "--once exits 0 after publishing" "$([ "$rc" = 0 ] && echo 1 || echo 0)"
+check "--once prints the address on stdout" \
+  "$(grep -q 'https://abc123.localhost.run' "$TMP/out2" && echo 1 || echo 0)"
 check "the publish keeps the cloudflare main leg" \
   "$(printf '%s' "$PUB" | grep -qx 'url=https://main.trycloudflare.com' && echo 1 || echo 0)"
 check "the publish keeps the cloudflare reserve leg" \
@@ -138,25 +143,23 @@ check "the desktop/mobile links are still sent" \
   "$(printf '%s' "$PUB" | grep -qx 'desktop=https://main.trycloudflare.com/d' && echo 1 || echo 0)"
 check "the log says the tunnel came up" \
   "$(grep -q 'localhost.run tunnel up' "$HUB_LOGS/localrun-keeper.log" 2>/dev/null && echo 1 || echo 0)"
+# The whole reason --once exists: a test must not leave a tunnel behind.
+if [ -f "$TMP/ssh.pid" ]; then
+  spid="$(tr -dc '0-9' < "$TMP/ssh.pid" 2>/dev/null || true)"
+  sleep 1
+  check "--once leaves no tunnel process running" \
+    "$([ -n "$spid" ] && kill -0 "$spid" 2>/dev/null && echo 0 || echo 1)"
+else
+  check "--once leaves no tunnel process running" 1
+fi
 
 # ── 3. the notice-page address is never published ────────────────────────────
-# Same setup, but the address is the service's HTML notice instead of the app.
-# The keeper must refuse it, so nothing lands in the publish log.
+# Same setup, but the address answers with the service's HTML notice instead of
+# the app. The keeper must refuse it, so nothing lands in the publish log.
 : > "$TMP/publish2.log"
 : > "$HUB_LOGS/localrun-keeper.log"
-rm -f "$TMP/ssh.pid"
-# The stub health target is the real keeper's healthy(): the address answers
-# with the service's own HTML notice instead of the app.
-mkdir -p "$TMP/curl_notice"
-cat > "$TMP/curl_notice/curl" <<'STUB'
-#!/usr/bin/env bash
-cat <<'PAGE'
-<html><body>Tunneling through localhost.run</body></html>
-PAGE
-STUB
-chmod +x "$TMP/curl_notice/curl"
 env -u GITHUB_TOKEN \
-PATH="$TMP/curl_notice:$PATH" \
+PATH="$TMP/bin:$TMP/curl_notice:$PATH" \
 GH_TOKEN=ghp_fake \
 LR_TOOLS_DIR="$TMP/faketools" \
 TS_TEST_PUBLISH_LOG="$TMP/publish2.log" \
@@ -164,16 +167,13 @@ TS_TEST_SSH_PIDFILE="$TMP/ssh2.pid" \
 TS_TEST_PORT=8090 \
 LR_KEEPER_INTERVAL=1 \
 LR_KEEPER_COOLDOWN=1 \
-  bash "$TMP/faketools/localrun_keeper.sh" hub >"$TMP/out3" 2>&1 &
-KEEPER_PID=$!
-sleep 12
-kill "$KEEPER_PID" 2>/dev/null || true
-[ -f "$TMP/ssh2.pid" ] && kill "$(tr -dc '0-9' < "$TMP/ssh2.pid")" 2>/dev/null
-wait "$KEEPER_PID" 2>/dev/null || true
+  bash "$TMP/faketools/localrun_keeper.sh" hub --once >"$TMP/out3" 2>&1
+rc2=$?
 check "a notice-page address is not published" \
   "$([ ! -s "$TMP/publish2.log" ] && echo 1 || echo 0)"
+check "a notice-page address exits non-zero" "$([ "$rc2" != 0 ] && echo 1 || echo 0)"
 check "the notice-page case is logged" \
-  "$(grep -q 'not usable yet' "$HUB_LOGS/localrun-keeper.log" 2>/dev/null && echo 1 || echo 0)"
+  "$(grep -q 'not usable' "$HUB_LOGS/localrun-keeper.log" 2>/dev/null && echo 1 || echo 0)"
 
 # ── 4. the readers know about the key ────────────────────────────────────────
 check "publish_session.sh carries lr over a foreign republish" \
@@ -190,6 +190,8 @@ check "the workflow starts the leg for the desktop" \
   "$(grep -q 'localrun_keeper.sh" vnc' "$REPO/.github/workflows/hub.yml" && echo 1 || echo 0)"
 check "the workflow kills the leg on cleanup (both jobs)" \
   "$([ "$(grep -c 'pkill -f "\[l\]ocalrun_keeper.sh"' "$REPO/.github/workflows/hub.yml")" -ge 2 ] && echo 1 || echo 0)"
+check "the keeper does not reconnect every few seconds" \
+  "$(grep -q 'LR_KEEPER_INTERVAL:-60' "$TOOLS/localrun_keeper.sh" && echo 1 || echo 0)"
 
 echo "----"
 echo "pass=$pass fail=$fail"
