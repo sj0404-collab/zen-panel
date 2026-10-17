@@ -53,9 +53,10 @@ LR_URLFILE="$HUB_LOGS/$VM-lr.url"
 PIDFILE="$HUB_LOGS/localrun-$VM.pid"
 LOG="$HUB_LOGS/localrun-$VM.log"
 KNOWN_HOSTS="$HUB_TMP/localrun-$VM.known_hosts"
-INTERVAL="${LR_KEEPER_INTERVAL:-15}"
-COOLDOWN="${LR_KEEPER_COOLDOWN:-60}"
+INTERVAL="${LR_KEEPER_INTERVAL:-60}"
+COOLDOWN="${LR_KEEPER_COOLDOWN:-180}"
 FAILS_REST=30                           # after this many consecutive failed starts, slow down hard
+UNHEALTHY_LIMIT="${LR_KEEPER_UNHEALTHY_LIMIT:-5}"   # consecutive dead probes before a reconnect
 
 log() { echo "[localrun-keeper $(date -u '+%H:%M:%S')] $*" >> "$HUB_LOGS/localrun-keeper.log"; }
 # NB: log() must NOT touch stdout - start_tunnel runs under $(...) capture, and
@@ -147,8 +148,14 @@ publish_full() {  # $1 = lr base url (always non-empty here)
     "auth=без пароля" "label=${HUB_LABEL:-hub}" 2>&1 | tail -1
 }
 
+# HOW OFTEN
+#   One probe a minute, not one every 15 seconds (user decision 17.10). A dead
+#   probe only counts after UNHEALTHY_LIMIT consecutive misses, so a slow edge,
+#   a GC pause or a game saturating the CPU costs nothing: nothing is restarted
+#   until the address has been unreachable for five straight minutes. That is
+#   the difference between a tunnel that is watched and a tunnel that is flogged.
 trap 'log "stopped"; exit 0' TERM INT
-log "keeper up (port $PORT; no account, no key - publishes .lr)"
+log "keeper up (port $PORT; no account, no key - publishes .lr; one probe/min, reconnect only after $UNHEALTHY_LIMIT dead probes)"
 
 LAST_URL="$(cat "$LR_URLFILE" 2>/dev/null || true)"
 FAILS=0
@@ -169,8 +176,8 @@ while true; do
       continue
     fi
     UNHEALTHY=$((UNHEALTHY + 1))
-    if [ "$UNHEALTHY" -ge 3 ]; then
-      log "localhost.run leg unhealthy $UNHEALTHY probes in a row - reconnecting"
+    if [ "$UNHEALTHY" -ge "$UNHEALTHY_LIMIT" ]; then
+      log "localhost.run leg unhealthy $UNHEALTHY probes in a row (~$((UNHEALTHY * INTERVAL / 60)) min) - reconnecting"
       kill "$pid" 2>/dev/null || true
       rm -f "$PIDFILE"
       UNHEALTHY=0
