@@ -1,0 +1,37 @@
+diff --git a/koma-web.html b/koma-web.html
+index 493f185..55604db 100644
+--- a/koma-web.html
++++ b/koma-web.html
+@@ -3504,11 +3504,29 @@ async function recognizePage(imgCanvas, R, onProgress, band) {
+   let largePasses = 0;
+ 
+   const decodeLine = async (canvas, ln, wide) => {
+-    const c = makeCanvas(Math.max(1, ln.right - ln.left), Math.max(1, ln.bottom - ln.top));
++    const w = Math.max(1, ln.right - ln.left), h = Math.max(1, ln.bottom - ln.top);
++    const c = makeCanvas(w, h);
+     c.getContext('2d', { willReadFrequently: true })
+-      .drawImage(canvas, ln.left, ln.top, ln.right - ln.left, ln.bottom - ln.top, 0, 0, c.width, c.height);
++      .drawImage(canvas, ln.left, ln.top, w, h, 0, 0, w, h);
+     crops++;
+-    const [text, conf] = await decodeBetter(c, R, { wide });
++    let [text, conf] = await decodeBetter(c, R, { wide });
++    // Титульная строка «жизнь, будучи старшей» на кропе по боксу строки читается
++    // как «оддучив»: CTC теряет «б» и «у» на обрезанном низу. Точный перебор
++    // (см. brute-result.json) показал: если расширить низ кропа вниз на 15 %
++    // высоты строки — реальными пикселями страницы, а не белыми полями — та же
++    // модель без подмены слов читает «жизнь, будучи старшей» (conf 0.80).
++    // Пробуем расширенный кроп только когда в строке есть незнакомые слова.
++    if (text && !allWordsKnown(text)) {
++      const extH = Math.min(h + Math.max(2, Math.round(h * 0.15)), canvas.height - ln.top);
++      if (extH > h) {
++        const e = makeCanvas(w, extH);
++        e.getContext('2d', { willReadFrequently: true })
++          .drawImage(canvas, ln.left, ln.top, w, extH, 0, 0, w, extH);
++        crops++;
++        const [t2, c2] = await decodeBetter(e, R, { wide });
++        if (textScore(t2, c2) > textScore(text, conf)) { text = t2; conf = c2; }
++      }
++    }
+     return { text, conf };
+   };
+ 
