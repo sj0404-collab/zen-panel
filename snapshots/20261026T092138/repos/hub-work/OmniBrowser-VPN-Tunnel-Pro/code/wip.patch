@@ -1,0 +1,147 @@
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+index 53b17f5..c10b3c9 100644
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -30,6 +30,17 @@ jobs:
+           chmod +x gradlew
+           ./gradlew testDebugUnitTest assembleRelease --stacktrace
+ 
++      - name: Run Android Lint
++        run: ./gradlew lintDebug --stacktrace
++
++      - name: Upload Lint Report
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: lint-report
++          path: app/build/reports/lint-results-debug.*
++          if-no-files-found: ignore
++
+       - name: Prepare Signed APK Artifact
+         run: |
+           mkdir -p dist
+diff --git a/app/src/main/java/com/winwasm64/MainActivity.kt b/app/src/main/java/com/winwasm64/MainActivity.kt
+index ad02cc5..bf6976a 100644
+--- a/app/src/main/java/com/winwasm64/MainActivity.kt
++++ b/app/src/main/java/com/winwasm64/MainActivity.kt
+@@ -70,10 +70,11 @@ class MainActivity : ComponentActivity() {
+             packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+ 
+     private fun pipParams(playing: Boolean): PictureInPictureParams {
+-        val b = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
+-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+-            b.setActions(pipActions(playing))
++        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
++            throw UnsupportedOperationException("Picture-in-picture requires Android 8.0+")
+         }
++        val b = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
++        b.setActions(pipActions(playing))
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+             b.setAutoEnterEnabled(playing)
+             b.setSeamlessResizeEnabled(true)
+diff --git a/app/src/main/java/com/winwasm64/ui/WindowsWasm64DesktopScreen.kt b/app/src/main/java/com/winwasm64/ui/WindowsWasm64DesktopScreen.kt
+index 0733347..194d450 100644
+--- a/app/src/main/java/com/winwasm64/ui/WindowsWasm64DesktopScreen.kt
++++ b/app/src/main/java/com/winwasm64/ui/WindowsWasm64DesktopScreen.kt
+@@ -7,6 +7,7 @@ import android.os.Looper
+ import android.webkit.ValueCallback
+ import androidx.activity.compose.BackHandler
+ import androidx.compose.foundation.verticalScroll
++import androidx.core.content.ContextCompat
+ import androidx.core.view.WindowCompat
+ import androidx.core.view.WindowInsetsCompat
+ import androidx.core.view.WindowInsetsControllerCompat
+@@ -28,6 +29,7 @@ import android.app.Activity
+ import android.app.DownloadManager
+ import android.content.Context
+ import android.content.Intent
++import android.content.pm.PackageManager
+ import android.graphics.Bitmap
+ import android.net.Uri
+ import android.net.VpnService
+@@ -105,6 +107,11 @@ import kotlin.concurrent.thread
+ import kotlin.math.sin
+ import kotlinx.coroutines.delay
+ 
++@SuppressLint("JavascriptInterface")
++private fun WebView.installBlobBridge(bridge: BlobDownloadBridge) {
++    addJavascriptInterface(bridge, "OmniBlobSaver")
++}
++
+ private fun playNativeAudioChime(freqHz: Double = 523.25, durationMs: Int = 110) {
+     thread(isDaemon = true) {
+         try {
+@@ -314,10 +321,26 @@ fun WindowsWasm64DesktopScreen(initialIntentUri: String? = null) {
+ 
+     val notifPermLauncher = rememberLauncherForActivityResult(
+         contract = ActivityResultContracts.RequestPermission()
+-    ) { _ ->
++    ) { granted ->
++        if (!granted) {
++            Toast.makeText(
++                context,
++                "Уведомления отключены — прогресс загрузок не будет виден в шторке",
++                Toast.LENGTH_LONG
++            ).show()
++        }
+     }
+ 
+     LaunchedEffect(Unit) {
++        // Android 13+: без POST_NOTIFICATIONS не показываются прогресс загрузок, обновления и статус VPN.
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
++            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
++            !prefs.getBoolean("notif_perm_asked", false)
++        ) {
++            prefs.edit().putBoolean("notif_perm_asked", true).apply()
++            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
++        }
++
+         // Восстанавливаем индивидуальные серверы для каждого приложения
+         prefs.getStringSet("vpn_app_server_map", emptySet())?.forEach { entry ->
+             val pkg = entry.substringBefore("=", "").trim()
+@@ -412,7 +435,7 @@ fun WindowsWasm64DesktopScreen(initialIntentUri: String? = null) {
+     var findCurrent by remember { mutableIntStateOf(0) }
+     var longPressImageUrl by remember { mutableStateOf<String?>(null) }
+     var fileChooserCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+-    val blobBridge = remember { BlobDownloadBridge(context.applicationContext) }
++    val blobBridge: BlobDownloadBridge = remember { BlobDownloadBridge(context.applicationContext) }
+ 
+     // v4.3.0: плавающая кнопка «Скачать видео» → шторка с вариантами качества / только аудио
+     var grabSheet by remember { mutableStateOf<MediaGrabState?>(null) }
+@@ -1056,7 +1079,7 @@ fun WindowsWasm64DesktopScreen(initialIntentUri: String? = null) {
+                 }
+             }
+ 
+-            addJavascriptInterface(blobBridge, "OmniBlobSaver")
++            installBlobBridge(blobBridge)
+ 
+             setFindListener { activeMatch, matches, _ ->
+                 findCurrent = activeMatch
+diff --git a/app/src/main/java/com/winwasm64/ui/browser/MediaGrabber.kt b/app/src/main/java/com/winwasm64/ui/browser/MediaGrabber.kt
+index c700de4..53a6f6c 100644
+--- a/app/src/main/java/com/winwasm64/ui/browser/MediaGrabber.kt
++++ b/app/src/main/java/com/winwasm64/ui/browser/MediaGrabber.kt
+@@ -1236,7 +1236,7 @@ object MediaGrabber {
+         // --- видео: по одному варианту на высоту; mp4 (avc1/av01) предпочтительнее — склеивается в mp4
+         val videoOnly = formats.filter { it.isVideo && !it.muxed && it.h > 0 }
+         val muxed = formats.filter { it.isVideo && it.muxed && it.h > 0 }
+-        val heights = (videoOnly.map { it.h } + muxed.map { it.h }).toSortedSet().reversed()
++        val heights = (videoOnly.map { it.h } + muxed.map { it.h }).distinct().sortedDescending()
+         for (h in heights) {
+             val mp4v = videoOnly.filter { it.h == h && it.container == "mp4" }.sortedWith(compareBy<YtFormat> { if (it.codec.startsWith("avc1")) 0 else 1 }.thenByDescending { it.fps }.thenByDescending { it.br }).firstOrNull()
+             val webmv = videoOnly.filter { it.h == h && it.container == "webm" }.maxByOrNull { it.br }
+diff --git a/app/src/main/java/com/winwasm64/vpn/AppsVpnTileService.kt b/app/src/main/java/com/winwasm64/vpn/AppsVpnTileService.kt
+index 80b6fe0..daddb82 100644
+--- a/app/src/main/java/com/winwasm64/vpn/AppsVpnTileService.kt
++++ b/app/src/main/java/com/winwasm64/vpn/AppsVpnTileService.kt
+@@ -31,6 +31,7 @@ class AppsVpnTileService : TileService() {
+     }
+ 
+     @Suppress("DEPRECATION")
++    @android.annotation.SuppressLint("StartActivityAndCollapseDeprecated")
+     override fun onClick() {
+         super.onClick()
+         if (BrowsecVpnService.isRunning) {
+diff --git a/gradlew b/gradlew
+old mode 100644
+new mode 100755
