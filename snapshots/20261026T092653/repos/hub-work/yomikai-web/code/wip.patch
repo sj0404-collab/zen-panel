@@ -1,0 +1,372 @@
+diff --git a/check.py b/check.py
+index 38ae878..a245c0f 100644
+--- a/check.py
++++ b/check.py
+@@ -5,12 +5,38 @@
+ вызывается, но не объявлена (storeModelFiles is not defined), или обработчик
+ ссылается на id, которого нет в разметке.
+ """
++import os
+ import re
+ import sys
+ 
+ CALL_PARTS = ['part2.js', 'part3.js', 'part4.js', 'part5.js']
+-DECL_PARTS = ['part0-wasm.js', 'part0-dict.js'] + CALL_PARTS
+-html = open('part1.html', encoding='utf-8').read()
++PART_FILES = ['part1.html', 'part0-wasm.js', 'part0-dict.js'] + CALL_PARTS
++
++
++def load_sources():
++    """Исходники рядом (part-файлы) или вырезаем их из собранного монолита."""
++    if all(os.path.exists(p) for p in PART_FILES):
++        html = open('part1.html', encoding='utf-8').read()
++        wasm_src = open('part0-wasm.js', encoding='utf-8').read()
++        dict_src = open('part0-dict.js', encoding='utf-8').read()
++        app_src = '\n'.join(open(p, encoding='utf-8').read() for p in CALL_PARTS)
++        return html, wasm_src, dict_src, app_src
++
++    html = open('koma-web.html', encoding='utf-8').read()
++    script = html[html.index('<script>') + 8:html.rindex('</script>')]
++    wasm_start = script.index('const ORT_WASM_GZ')
++    dict_start = script.index('const DICT_GZ_B64')
++    app_start = script.index("'use strict';", dict_start)
++    wasm_src = script[wasm_start:dict_start]
++    # part0-dict.js тоже должен уметь base64 → байты, как отдельный файл.
++    b64_start = wasm_src.index('function b64ToBytes')
++    b64_end = wasm_src.index('/** gzip', b64_start)
++    dict_src = wasm_src[b64_start:b64_end] + '\n' + script[dict_start:app_start]
++    app_src = script[app_start:]
++    return html, wasm_src, dict_src, app_src
++
++
++html, wasm_src_decl, dict_src_decl, app_src = load_sources()
+ 
+ 
+ def strip_block_comments(text):
+@@ -43,13 +69,11 @@ def strip_block_comments(text):
+     return '\n'.join(out)
+ 
+ 
+-decl_src = '\n'.join(open(p, encoding='utf-8').read() for p in DECL_PARTS)
+-# part0-dict.js не входит в поиск вызовов: там 2 МБ base64, лексер на нём спотыкается.
+-decl_extra = '\n'.join(open(p, encoding='utf-8').read() for p in ['part0-dict.js'])
+-call_src = strip_block_comments('\n'.join(open(p, encoding='utf-8').read() for p in CALL_PARTS))
+-declared_extra = set(re.findall(r'function\s+([A-Za-z_$][\w$]*)', decl_extra))
++# base64 в wasm/dict-частях не участвует в поиске вызовов: лексер на нём спотыкается.
++decl_src = wasm_src_decl + '\n' + dict_src_decl + '\n' + app_src
++call_src = strip_block_comments(app_src)
+ 
+-declared = set(re.findall(r'function\s+([A-Za-z_$][\w$]*)', decl_src)) | declared_extra
++declared = set(re.findall(r'function\s+([A-Za-z_$][\w$]*)', decl_src))
+ declared |= set(re.findall(r'(?:const|let|var)\s+([A-Za-z_$][\w$]*)', decl_src))
+ declared |= set(re.findall(r'class\s+([A-Za-z_$][\w$]*)', decl_src))
+ declared |= set(re.findall(r'^\s{2,}([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{', decl_src, re.M))
+diff --git a/dom_shim.js b/dom_shim.js
+index c7c0ef0..b3f927c 100644
+--- a/dom_shim.js
++++ b/dom_shim.js
+@@ -1,7 +1,10 @@
+ // Полноценная DOM-заглушка для тестов обработчиков (bindUI и т.п.).
+ // Раньше лежала в /tmp и терялась вместе с песочницей.
+ const fs = require('fs');
+-const html = fs.readFileSync(__dirname + '/part1.html', 'utf8');
++const htmlPath = fs.existsSync(__dirname + '/part1.html')
++  ? __dirname + '/part1.html'
++  : __dirname + '/koma-web.html';
++const html = fs.readFileSync(htmlPath, 'utf8');
+ 
+ const ids = [...html.matchAll(/id="([^"]+)"/g)].map(m => m[1]);
+ const els = new Map();
+diff --git a/test-async-run.cjs b/test-async-run.cjs
+index 3e214cc..9c0a94a 100644
+--- a/test-async-run.cjs
++++ b/test-async-run.cjs
+@@ -16,8 +16,7 @@ global.ort = {
+   Tensor: class { constructor(type, data, dims) { this.type = type; this.data = data; this.dims = dims; } },
+ };
+ 
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const trimmed = body.slice(0, body.indexOf('(async function boot()'));
+ const api = new Function(trimmed + '; return {detectBoxes, decodeCrop, decodeBetter, makeCanvas, OCR, DEFAULT_RULES};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+diff --git a/test-bands.cjs b/test-bands.cjs
+index 1de5792..d4a7612 100644
+--- a/test-bands.cjs
++++ b/test-bands.cjs
+@@ -24,8 +24,7 @@ global.document.getElementById = (id) => (id === 'strip' ? strip : {
+ });
+ global.ort = { env: { wasm: {} }, Tensor: class {} };
+ 
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const api = new Function(body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {Reader, RULES, DEFAULT_RULES, sanitizeRules, recognizePage, makeCanvas, lineInBand};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+diff --git a/test-buttons.cjs b/test-buttons.cjs
+index d65cba5..4b8259d 100644
+--- a/test-buttons.cjs
++++ b/test-buttons.cjs
+@@ -24,15 +24,14 @@ global.window.addEventListener = () => {};
+ global.navigator = { userAgent: 'Mozilla/5.0 (Linux; Android 14) Chrome/130.0.0.0 Mobile' };
+ global.ort = { env: { wasm: {} }, Tensor: class {} };
+ 
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const api = new Function('toast', body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {bindUI, OCR, Words, DB, selfTestEngine};')(() => {});
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+ 
+ (async () => {
+   api.bindUI();
+-  const html = fs.readFileSync('/home/user/koma-web/part1.html', 'utf8');
++  const html = require('./koma-src.cjs').html;
+   const ids = [...html.matchAll(/<button[^>]*id="([\w-]+)"/g)].map(m => m[1]);
+   // closeSheets2..4 висят через $$-селектор, а не по одному — их проверяет check.py
+   const dead = ids.filter(id => !handlers.has(id) && !/^text(Prev|Next)$/.test(id) && !/^closeSheets\d?$/.test(id));
+diff --git a/test-cache.cjs b/test-cache.cjs
+index a92add6..5c2149a 100644
+--- a/test-cache.cjs
++++ b/test-cache.cjs
+@@ -9,8 +9,7 @@ global.document.querySelector = () => null;
+ global.document.querySelectorAll = () => [];
+ 
+ global.ort = { env: { wasm: {} }, Tensor: class { constructor(t, d, dims) { this.data = d; this.dims = dims; } } };
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const trimmed = body.slice(0, body.indexOf('(async function boot()'));
+ const api = new Function(trimmed + '; return {Reader, State, decodeBetter, DEFAULT_RULES, makeCanvas, OCR};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+diff --git a/test-dict-embed.cjs b/test-dict-embed.cjs
+index 025a446..641aff7 100644
+--- a/test-dict-embed.cjs
++++ b/test-dict-embed.cjs
+@@ -5,12 +5,10 @@ require('./shim.js');
+ delete global.indexedDB;
+ global.window.addEventListener = () => {};
+ global.navigator = { userAgent: 'Node' };
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
+-// part0-dict.js содержит вшитый словарь и b64ToBytes — грузим вместе
+-const dictSrc = fs.readFileSync('/home/user/koma-web/part0-dict.js', 'utf8');
+-// Собираем как в реальной странице: сначала часть со словарём, потом приложение.
+-const combined = dictSrc + '\n' + body.slice(0, body.indexOf('(async function boot()'));
++// dictSrc содержит вшитый словарь и b64ToBytes — грузим вместе с приложением,
++// как в реальной странице: сначала часть со словарём, потом приложение.
++const { dictSrc, app } = require('./koma-src.cjs');
++const combined = dictSrc + '\n' + app.slice(0, app.indexOf('(async function boot()'));
+ const api = new Function(combined + '; return {Words, DB, embeddedDictText, DICT_GZ_B64};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+ 
+@@ -22,7 +20,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process
+   ok(lines.length === 250000, 'слов в словаре: ' + lines.length);
+   ok(lines[0].startsWith('я ') && lines[0].split(' ')[1] === '5081568', 'первое слово по частоте: «' + lines[0] + '»');
+   const md5 = crypto.createHash('md5').update(text, 'utf8').digest('hex');
+-  const src = crypto.createHash('md5').update(fs.readFileSync('/home/user/lab/ru_250k.txt', 'utf8'), 'utf8').digest('hex');
++  const src = '777568de00e5b7c5ea963ba9e919f63e'; // эталон ru_250k.txt из APK
+   ok(md5 === src, 'разжатый словарь побайтово равен исходному ru_250k.txt');
+ 
+   const ready = await api.Words.load();
+diff --git a/test-dom.cjs b/test-dom.cjs
+index 5c93452..323f492 100644
+--- a/test-dom.cjs
++++ b/test-dom.cjs
+@@ -4,8 +4,7 @@ const fs = require('fs');
+ const { getById } = require('./dom_shim.js');
+ // Собираем приложение из частей: в самом HTML теперь вшит движок на 7 МБ,
+ // и вырезать оттуда код регулярками — плохая идея.
+-const body = ['part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const trimmed = body.slice(0, body.indexOf('(async function boot()'));
+ new Function(trimmed + '; global.__api={bindUI,Library,DB};')();
+ const { bindUI, DB } = global.__api;
+diff --git a/test-engine.cjs b/test-engine.cjs
+index ea62c55..11ebe56 100644
+--- a/test-engine.cjs
++++ b/test-engine.cjs
+@@ -3,8 +3,7 @@ require('./dom_shim.js');
+ const fs = require('fs');
+ // Собираем приложение из частей: в самом HTML теперь вшит движок на 7 МБ,
+ // и вырезать оттуда код регулярками — плохая идея.
+-const body = ['part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const trimmed = body.slice(0, body.indexOf('(async function boot()'));
+ global.ort = {
+   env: { wasm: {} }, logLevel: 'error',
+diff --git a/test-files.cjs b/test-files.cjs
+index a2f36bb..57be108 100644
+--- a/test-files.cjs
++++ b/test-files.cjs
+@@ -21,8 +21,7 @@ global.navigator = { userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel) Chrome/1
+ global.ort = { env: { wasm: {} }, Tensor: class {} };
+ global.toastLog = [];
+ 
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const api = new Function('toast',
+   body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {Library, DB, FILES, bindUI, escapeHtml};')((m) => global.toastLog.push(String(m)));
+diff --git a/test-join.cjs b/test-join.cjs
+index a309b36..ed3e1c9 100644
+--- a/test-join.cjs
++++ b/test-join.cjs
+@@ -7,13 +7,13 @@ global.window.addEventListener = () => {};
+ global.document.getElementById = () => ({ textContent: '', innerHTML: '', style: {}, classList: { contains: () => false, add() {}, remove() {}, toggle() {} }, addEventListener() {} });
+ global.document.querySelector = () => null;
+ global.ort = { env: { wasm: {} }, Tensor: class {} };
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js'].map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').appCore;
+ const api = new Function(body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {Words, readingOrder, sanitizeRules, DEFAULT_RULES, normText};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+ 
+ (async () => {
+-  const txt = fs.readFileSync('/home/user/lab/ru_250k.txt', 'utf8');
++  const txt = require('./koma-src.cjs').dictText();
+   const rank = new Map(); let n = 0;
+   for (const line of txt.split('\n')) { const w = (line.split(/\s+/)[0] || '').toLowerCase(); if (!w) continue; if (!rank.has(w)) rank.set(w, n); n++; }
+   const W = api.Words; W.rank = rank; W.size = n; W.ready = true;
+diff --git a/test-junk.cjs b/test-junk.cjs
+index a26396c..cf4bb00 100644
+--- a/test-junk.cjs
++++ b/test-junk.cjs
+@@ -9,7 +9,7 @@ global.document.getElementById = (id) => ({
+ });
+ global.document.querySelector = () => null;
+ global.ort = { env: { wasm: {} }, Tensor: class {} };
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js'].map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').appCore;
+ const api = new Function(body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {Words, RULES};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+diff --git a/test-logic.cjs b/test-logic.cjs
+index c4259d7..07c667e 100644
+--- a/test-logic.cjs
++++ b/test-logic.cjs
+@@ -1,6 +1,5 @@
+-require('/tmp/shim.js');
+-const fs=require('fs');
+-const src = fs.readFileSync('/tmp/all.js','utf8');
++require('./shim.js');
++const src = require('./koma-src.cjs').app;
+ // вырезаем только части 2-3 (без UI/boot)
+ const cut = src.indexOf('/* ───────────────────────── 8. Читалка');
+ const code = src.slice(0, cut);
+diff --git a/test-mergeben.cjs b/test-mergeben.cjs
+index d2a4270..9397a3b 100644
+--- a/test-mergeben.cjs
++++ b/test-mergeben.cjs
+@@ -11,8 +11,7 @@ global.document.getElementById = (id) => ({
+ });
+ global.document.querySelector = () => null;
+ global.ort = { env: { wasm: {} }, Tensor: class {} };
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const api = new Function(body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {mergeBandLines};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+diff --git a/test-ort-wasm.cjs b/test-ort-wasm.cjs
+index e0e840a..06bace5 100644
+--- a/test-ort-wasm.cjs
++++ b/test-ort-wasm.cjs
+@@ -1,7 +1,7 @@
+ // Вшитые WASM-бинари: разжимаются, отдаются движку как blob-URL, размеры сходятся.
+ const fs = require('fs');
+ const crypto = require('crypto');
+-const src = fs.readFileSync('/home/user/koma-web/part0-wasm.js', 'utf8');
++const src = require('./koma-src.cjs').wasmSrc;
+ 
+ const blobs = [];
+ global.URL = { createObjectURL: (b) => { blobs.push(b); return 'blob:test/' + blobs.length; }, revokeObjectURL() {} };
+diff --git a/test-page.cjs b/test-page.cjs
+index f0fee89..75f1b84 100644
+--- a/test-page.cjs
++++ b/test-page.cjs
+@@ -37,8 +37,7 @@ global.window.innerHeight = 800;
+ global.navigator = { userAgent: 'Node' };
+ global.ort = { env: { wasm: {} }, Tensor: class {} };
+ 
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const api = new Function(body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {Reader, readingOrder, DEFAULT_RULES, sanitizeRules};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+diff --git a/test-rescan.cjs b/test-rescan.cjs
+index f33b0bc..7b8ba89 100644
+--- a/test-rescan.cjs
++++ b/test-rescan.cjs
+@@ -25,8 +25,7 @@ global.document.querySelectorAll = () => [];
+ global.document.createElement = (tag) => (tag === 'canvas' ? realCreate('canvas') : el('tmp' + Math.random()));
+ global.ort = { env: { wasm: {} }, Tensor: class { constructor(t, d, dims) { this.data = d; this.dims = dims; } } };
+ 
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const api = new Function(body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {Reader, State, OCR, Buffer, renderTextSheet, DEFAULT_RULES};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+diff --git a/test-scan-crash.cjs b/test-scan-crash.cjs
+index c23601a..e9cace1 100644
+--- a/test-scan-crash.cjs
++++ b/test-scan-crash.cjs
+@@ -22,8 +22,7 @@ global.document.querySelector = (sel) => (sel === '#strip' ? el('strip') : el(St
+ global.document.querySelectorAll = () => [];
+ global.ort = { env: { wasm: {} }, Tensor: class { constructor(t, d, dims) { this.data = d; this.dims = dims; } } };
+ 
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const api = new Function(body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {Reader, State, OCR, Words, cleanLines, RULES, TTS};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+diff --git a/test-text.cjs b/test-text.cjs
+index ca69958..960a7e2 100644
+--- a/test-text.cjs
++++ b/test-text.cjs
+@@ -4,8 +4,7 @@ require('./shim.js');
+ global.window.addEventListener = () => {};
+ global.navigator = { userAgent: 'Node' };
+ global.document.addEventListener = () => {};
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const api = new Function(body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {cleanSpeech, readingOrder, bubblesOf, DEFAULT_RULES, sanitizeRules, joinBubbleText};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+diff --git a/test-voice.cjs b/test-voice.cjs
+index 7648d7a..d5c7e86 100644
+--- a/test-voice.cjs
++++ b/test-voice.cjs
+@@ -32,8 +32,7 @@ global.SpeechSynthesisUtterance = class {
+   constructor(text) { this.text = text; this.lang = ''; this.rate = 1; this.volume = 1; this.voice = null; }
+ };
+ 
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const api = new Function(body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {TTS, Reader, toast, RULES, selfTestVoice};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+diff --git a/test-words.cjs b/test-words.cjs
+index 65daeea..3642199 100644
+--- a/test-words.cjs
++++ b/test-words.cjs
+@@ -4,8 +4,7 @@ require('./shim.js');
+ delete global.indexedDB;
+ global.window.addEventListener = () => {};
+ global.navigator = { userAgent: 'Node' };
+-const body = ['part0-wasm.js', 'part2.js', 'part3.js', 'part4.js', 'part5.js']
+-  .map(f => fs.readFileSync('/home/user/koma-web/' + f, 'utf8')).join('\n');
++const body = require('./koma-src.cjs').app;
+ const api = new Function(body.slice(0, body.indexOf('(async function boot()'))
+   + '; return {Words, DB, readingOrder, DEFAULT_RULES, sanitizeRules};')();
+ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
